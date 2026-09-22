@@ -2,7 +2,9 @@
 //! flight, so the UI can cancel one or send the browser back to it, and the
 //! browser openers the connect and test paths hand the flow.
 
-use crate::oidc::{BrowserOpener, OidcError, OidcSession};
+use crate::connections::OidcProfileConfig;
+use crate::oidc::{attach_human_callback, BrowserOpener, OidcError, OidcSession};
+use mongodb::options::{AuthMechanism, ClientOptions};
 use crate::state::{AppState, LockExt};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -92,6 +94,58 @@ pub fn reopen_oidc_login_impl(
         return Ok(());
     };
     open(&url).map_err(|error| error.locale_key().to_string())
+}
+
+/// How a connect or test call runs a human OIDC login, should its connection
+/// string ask for one. Grouped because every such call needs all four.
+pub struct HumanLogin<'a> {
+    /// The profile's OIDC settings; `None` leaves the driver's defaults.
+    pub config: Option<&'a OidcProfileConfig>,
+    /// The id the UI minted to cancel or reopen this login, if any.
+    pub login_id: Option<String>,
+    pub open: BrowserOpener,
+    /// For the IdP. Production uses a plain client with normal TLS trust;
+    /// only tests substitute one that also trusts a TEST-ONLY CA.
+    pub http: reqwest::Client,
+}
+
+impl<'a> HumanLogin<'a> {
+    /// A login the user started and is watching: the system browser opens.
+    pub fn interactive(config: Option<&'a OidcProfileConfig>, login_id: Option<String>, open: BrowserOpener) -> Self {
+        Self { config, login_id, open, http: reqwest::Client::new() }
+    }
+
+    /// For callers no human is watching: no browser ever opens.
+    pub fn unattended() -> Self {
+        Self::interactive(None, None, no_browser_opener())
+    }
+}
+
+/// Whether parsed options authenticate with `MONGODB-OIDC`.
+pub fn uses_oidc(options: &ClientOptions) -> bool {
+    options.credential.as_ref().and_then(|c| c.mechanism.as_ref()) == Some(&AuthMechanism::MongoDbOidc)
+}
+
+/// The one place a client-construction site turns a `MONGODB-OIDC`
+/// connection into a human login: register `session` so the UI can reach it,
+/// then attach the driver callback with the profile's allowed hosts. Every
+/// other mechanism is left exactly as parsed and registers nothing.
+///
+/// The caller keeps the returned registration alive for the length of its
+/// call; dropping it removes the entry.
+pub fn prepare_human_login<'s>(
+    options: &mut ClientOptions,
+    sessions: &'s OidcSessions,
+    login: HumanLogin<'_>,
+    session: Arc<OidcSession>,
+) -> Result<Option<LoginRegistration<'s>>, String> {
+    if !uses_oidc(options) {
+        return Ok(None);
+    }
+    let registration = register_login(sessions, login.login_id, session.clone())?;
+    let allowed_hosts = login.config.map(|c| c.allowed_hosts.as_slice()).unwrap_or(&[]);
+    attach_human_callback(options, session, allowed_hosts, login.open, login.http);
+    Ok(Some(registration))
 }
 
 /// The opener for user-initiated connects and tests: the system browser.
@@ -282,6 +336,64 @@ mod tests {
 
         let held = sessions.lock().unwrap().get("login-1").cloned().unwrap();
         assert!(Arc::ptr_eq(&held, &first));
+    }
+
+    // ---- prepare_human_login ---------------------------------------------
+
+    async fn parsed(uri: &str) -> mongodb::options::ClientOptions {
+        mongodb::options::ClientOptions::parse(uri).await.expect("a literal URI parses without I/O")
+    }
+
+    #[tokio::test]
+    async fn an_oidc_connection_registers_its_login_under_the_callers_id() {
+        let sessions = OidcSessions::default();
+        let mut options = parsed("mongodb://127.0.0.1:1/?authMechanism=MONGODB-OIDC&authSource=$external").await;
+        let session = quiet_session();
+        let login = HumanLogin { login_id: Some("login-1".into()), ..HumanLogin::unattended() };
+
+        let registration = prepare_human_login(&mut options, &sessions, login, session.clone()).unwrap();
+
+        assert!(registration.is_some());
+        let held = sessions.lock().unwrap().get("login-1").cloned().expect("registered under the caller's id");
+        assert!(Arc::ptr_eq(&held, &session));
+        drop(registration);
+        assert!(live_ids(&sessions).is_empty());
+    }
+
+    /// Only OIDC has a login to cancel; every other mechanism leaves the
+    /// registry alone.
+    #[tokio::test]
+    async fn a_non_oidc_connection_registers_nothing() {
+        let sessions = OidcSessions::default();
+        let mut options = parsed("mongodb://u:pw@127.0.0.1:1/?authMechanism=SCRAM-SHA-256&authSource=admin").await;
+        let login = HumanLogin { login_id: Some("login-1".into()), ..HumanLogin::unattended() };
+
+        let registration = prepare_human_login(&mut options, &sessions, login, quiet_session()).unwrap();
+
+        assert!(registration.is_none());
+        assert!(live_ids(&sessions).is_empty());
+    }
+
+    /// `ALLOWED_HOSTS` reaches the driver through the profile config, never
+    /// the URI (which the driver would reject).
+    #[tokio::test]
+    async fn the_profiles_allowed_hosts_reach_the_driver_credential() {
+        let sessions = OidcSessions::default();
+        let mut options = parsed("mongodb://127.0.0.1:1/?authMechanism=MONGODB-OIDC&authSource=$external").await;
+        let config = crate::connections::OidcProfileConfig { allowed_hosts: vec!["*.corp.example".into()] };
+        let login = HumanLogin { config: Some(&config), ..HumanLogin::unattended() };
+
+        let _registration = prepare_human_login(&mut options, &sessions, login, quiet_session()).unwrap();
+
+        let properties = options
+            .credential
+            .as_ref()
+            .and_then(|c| c.mechanism_properties.as_ref())
+            .expect("allowed hosts must land in the mechanism properties");
+        assert_eq!(
+            properties.get_array("ALLOWED_HOSTS").unwrap(),
+            &vec![mongodb::bson::Bson::String("*.corp.example".into())]
+        );
     }
 
     // ---- openers ---------------------------------------------------------
