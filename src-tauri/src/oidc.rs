@@ -68,7 +68,7 @@ pub enum OidcError {
     TimedOut,
 }
 
-/// Reduce IdP-supplied text to `[a-z0-9_-]`, capped at 40 chars. OAuth error
+/// Reduce IdP-supplied text to `[A-Za-z0-9_-]`, capped at 40 chars. OAuth error
 /// codes are that shape; anything else is not worth rendering.
 fn sanitise_code(raw: &str) -> String {
     raw.chars()
@@ -78,6 +78,12 @@ fn sanitise_code(raw: &str) -> String {
 }
 
 impl OidcError {
+    /// Create an IdP OAuth error with the code sanitised at construction time.
+    /// This ensures no rendering path can ever observe the raw value.
+    pub fn idp_oauth_error(raw: &str) -> Self {
+        Self::IdpOauthError { code: sanitise_code(raw) }
+    }
+
     pub fn locale_key(&self) -> &'static str {
         match self {
             Self::ConsentDenied => "auth.oidc.errors.consentDenied",
@@ -99,12 +105,31 @@ impl OidcError {
 
     #[cfg(test)]
     pub fn all_for_test() -> Vec<OidcError> {
+        // Exhaustiveness check: if a new variant is added to the enum, this match
+        // will fail to compile until it is listed below in the vector.
+        let _ = match Self::ConsentDenied {
+            Self::ConsentDenied => (),
+            Self::PortUnavailable => (),
+            Self::BrowserLaunchFailed => (),
+            Self::StateMismatch => (),
+            Self::IdpOauthError { .. } => (),
+            Self::TokenExchangeFailed => (),
+            Self::HostNotAllowed => (),
+            Self::TokenRejected => (),
+            Self::LoginOkPingFailed => (),
+            Self::MissingClientId => (),
+            Self::InsecureEndpoint => (),
+            Self::DiscoveryFailed => (),
+            Self::Cancelled => (),
+            Self::TimedOut => (),
+        };
+
         vec![
             Self::ConsentDenied,
             Self::PortUnavailable,
             Self::BrowserLaunchFailed,
             Self::StateMismatch,
-            Self::IdpOauthError { code: "access_denied".into() },
+            Self::idp_oauth_error("access_denied"),
             Self::TokenExchangeFailed,
             Self::HostNotAllowed,
             Self::TokenRejected,
@@ -120,27 +145,25 @@ impl OidcError {
 
 impl std::fmt::Display for OidcError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
+        let msg = match self {
+            Self::ConsentDenied => "the login was denied",
+            Self::PortUnavailable => "could not bind a loopback callback port",
+            Self::BrowserLaunchFailed => "could not open the system browser",
+            Self::StateMismatch => "the login callback did not match this request",
             Self::IdpOauthError { code } => {
-                write!(f, "identity provider returned an OAuth error: {}", sanitise_code(code))
+                return write!(f, "identity provider returned an OAuth error: {code}");
             }
-            other => f.write_str(match other {
-                Self::ConsentDenied => "the login was denied",
-                Self::PortUnavailable => "could not bind a loopback callback port",
-                Self::BrowserLaunchFailed => "could not open the system browser",
-                Self::StateMismatch => "the login callback did not match this request",
-                Self::TokenExchangeFailed => "the token exchange failed",
-                Self::HostNotAllowed => "the MongoDB host is outside ALLOWED_HOSTS",
-                Self::TokenRejected => "the token was rejected",
-                Self::LoginOkPingFailed => "login succeeded but the database ping failed",
-                Self::MissingClientId => "the deployment supplied no OIDC client id",
-                Self::InsecureEndpoint => "the identity provider endpoint is not HTTPS",
-                Self::DiscoveryFailed => "could not read the identity provider's metadata",
-                Self::Cancelled => "the login was cancelled",
-                Self::TimedOut => "the browser login expired",
-                Self::IdpOauthError { .. } => unreachable!("handled above"),
-            }),
-        }
+            Self::TokenExchangeFailed => "the token exchange failed",
+            Self::HostNotAllowed => "the MongoDB host is outside ALLOWED_HOSTS",
+            Self::TokenRejected => "the token was rejected",
+            Self::LoginOkPingFailed => "login succeeded but the database ping failed",
+            Self::MissingClientId => "the deployment supplied no OIDC client id",
+            Self::InsecureEndpoint => "the identity provider endpoint is not HTTPS",
+            Self::DiscoveryFailed => "could not read the identity provider's metadata",
+            Self::Cancelled => "the login was cancelled",
+            Self::TimedOut => "the browser login expired",
+        };
+        f.write_str(msg)
     }
 }
 
@@ -201,6 +224,7 @@ mod tests {
     }
 
     /// The whole point of the taxonomy: a rendered error is safe to log.
+    /// This test verifies that neither Display nor Debug output contains secrets.
     #[test]
     fn no_error_ever_renders_secret_material() {
         const SECRETS: [&str; 5] = [
@@ -210,6 +234,8 @@ mod tests {
             "super-secret-verifier",
             "https://idp.example.com/callback?code=test-auth-code",
         ];
+
+        // Test all variants from all_for_test
         for error in OidcError::all_for_test() {
             let rendered = format!("{error} | {error:?}");
             for secret in SECRETS {
@@ -219,18 +245,42 @@ mod tests {
                 );
             }
         }
+
+        // Also test IdpOauthError explicitly with secret-bearing codes, verifying
+        // both Display and Debug outputs are redacted. This is the critical test
+        // for the redaction guarantee on the variant that carries attacker-influenced data.
+        for secret in SECRETS {
+            let error = OidcError::idp_oauth_error(secret);
+            let display = format!("{error}");
+            let debug = format!("{error:?}");
+
+            assert!(
+                !display.contains(secret),
+                "Display leaked {secret} in: {display}"
+            );
+            assert!(
+                !debug.contains(secret),
+                "Debug leaked {secret} in: {debug}"
+            );
+        }
     }
 
     /// An IdP-supplied OAuth error code is attacker-influenced text. Keep it to a
     /// short, boring shape so it cannot smuggle a token or newline into a log.
+    /// This test verifies that sanitisation happens at construction time.
     #[test]
     fn oauth_error_codes_are_sanitised() {
-        let error = OidcError::IdpOauthError {
-            code: "access_denied\nBearer test-access-token".to_string(),
-        };
+        let raw_code = "access_denied\nBearer test-access-token";
+        let error = OidcError::idp_oauth_error(raw_code);
         let rendered = format!("{error}");
+
         assert!(rendered.contains("access_denied"));
         assert!(!rendered.contains("test-access-token"));
         assert!(!rendered.contains('\n'));
+
+        // Verify Debug also doesn't leak the original code
+        let debug = format!("{error:?}");
+        assert!(!debug.contains("test-access-token"));
+        assert!(!debug.contains('\n'));
     }
 }
