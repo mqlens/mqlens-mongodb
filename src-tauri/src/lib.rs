@@ -37,6 +37,7 @@ mod windows;
 mod workspace;
 mod write_guard;
 pub mod biometric;
+pub mod oidc;
 pub use db::aggregate::{execute_aggregate_impl, explain_aggregate_query_impl};
 pub use db::ddl::{
     create_collection_impl, create_view_impl, drop_collection_impl, drop_database_impl,

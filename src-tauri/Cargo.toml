@@ -73,4 +73,11 @@ fs4 = "0.13"
 tiny_http = "0.12.0"
 # Matches capability window patterns in tests the way Tauri's ACL does.
 glob = "0.3"
+# RS256 signing for the mock OIDC provider in tests only (#430). Never a
+# runtime dependency: production never mints tokens, it only receives them.
+jsonwebtoken = "9"
+# Derives the JWKS `n`/`e` fields from the mock IdP's test-only RSA key
+# (#430). Pinned to the exact version already locked transitively (via
+# mongodb's aws-auth) so this addition cannot change resolution elsewhere.
+rsa = "=0.10.0-rc.18"
 

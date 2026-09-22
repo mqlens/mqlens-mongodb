@@ -1,0 +1,1 @@
+# TEST-ONLY RSA key for the mock OIDC provider. Not a secret. Never used outside tests.
