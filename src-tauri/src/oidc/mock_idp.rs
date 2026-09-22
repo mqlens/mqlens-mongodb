@@ -7,10 +7,7 @@ use base64::Engine as _;
 use rsa::traits::PublicKeyParts;
 use std::sync::{Arc, Mutex};
 
-// Task 2 will move this to `oidc.rs` as `pub(crate) const B64` and switch
-// this file to `use super::B64`.
-const B64: base64::engine::general_purpose::GeneralPurpose =
-    base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use super::B64;
 
 /// One recorded call to `POST /token`, for tests to assert on afterwards.
 ///
