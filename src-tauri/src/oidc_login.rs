@@ -166,25 +166,31 @@ pub fn no_browser_opener() -> BrowserOpener {
 
 /// Whether a connection string asks for `MONGODB-OIDC`, decided from the
 /// string alone — no `ClientOptions::parse`, which can perform SRV and TXT
-/// lookups. Mirrors the driver: option names are case-insensitive and values
-/// percent-decoded; `;` is accepted as a separator because
-/// `normalize_mongodb_uri_options` turns it into `&` before the driver sees
-/// it. The value is compared case-insensitively, a superset of the driver's
-/// exact match, since a guard should err towards refusing.
+/// lookups.
+///
+/// It reads the exact string the driver is given — the URI after
+/// `normalize_mongodb_uri_options`, which turns `;` into `&` and puts any
+/// `#…` back after the query — and tokenises it the way driver 3.9.0's
+/// `ConnectionString::parse` does: the query starts at the first `?`, options
+/// split on `&` only, with no fragment handling (so `#&authMechanism=…` is
+/// still an option), keys compared lowercased, values percent-decoded. Two
+/// deliberate supersets, since a guard should err towards refusing: the key
+/// is trimmed, and the value is trimmed and compared case-insensitively where
+/// the driver wants an exact `MONGODB-OIDC`.
 ///
 /// The URI is the only place the mechanism can come from: an SRV TXT record
 /// may carry only `authSource`, `replicaSet` and `loadBalanced`.
 pub fn uri_requests_oidc(uri: &str) -> bool {
-    let Some((_, query)) = uri.split_once('?') else {
+    let normalized = crate::connections::normalize_mongodb_uri_options(uri);
+    let Some((_, query)) = normalized.split_once('?') else {
         return false;
     };
-    let query = query.split('#').next().unwrap_or_default();
-    query.split(['&', ';']).any(|pair| {
+    query.split('&').any(|pair| {
         let Some((key, value)) = pair.split_once('=') else {
             return false;
         };
         let value = percent_encoding::percent_decode_str(value).decode_utf8_lossy();
-        key.trim().eq_ignore_ascii_case("authMechanism") && value.trim().eq_ignore_ascii_case("MONGODB-OIDC")
+        key.trim().to_lowercase() == "authmechanism" && value.trim().eq_ignore_ascii_case("MONGODB-OIDC")
     })
 }
 
@@ -474,8 +480,37 @@ mod tests {
             "mongodb://h/db?authMechanism=MONGODB%2DOIDC",
             "mongodb+srv://cluster.example.com/?retryWrites=true;authMechanism=MONGODB-OIDC",
             "mongodb://h/?authMechanism= MONGODB-OIDC ",
+            // The driver has no fragment handling: after `#` the `&` still
+            // starts a new option, and normalisation puts the fragment back.
+            "mongodb://h/?appName=x#&authMechanism=MONGODB-OIDC&authSource=$external",
         ] {
             assert!(uri_requests_oidc(uri), "must detect OIDC in {uri}");
+        }
+    }
+
+    /// The guard must read a URI exactly as the driver does. Each entry here
+    /// is first confirmed to parse as MONGODB-OIDC by the driver itself — fed
+    /// the normalised string, which is what the connect path hands it — so a
+    /// tokenising difference on any axis (where the query starts, fragments,
+    /// separators, key case, percent-encoding) shows up as a miss. Literal
+    /// hosts only, so parsing does no I/O.
+    #[tokio::test]
+    async fn every_uri_the_driver_parses_as_oidc_is_refused() {
+        for uri in [
+            "mongodb://h/?authMechanism=MONGODB-OIDC&authSource=$external",
+            "mongodb://h/?appName=x#&authMechanism=MONGODB-OIDC&authSource=$external",
+            "mongodb://h/?appName=a#b&authMechanism=MONGODB-OIDC&authSource=$external",
+            "mongodb://h/#?authMechanism=MONGODB-OIDC&authSource=$external",
+            "mongodb://h/?authmechanism=MONGODB%2DOIDC&authSource=%24external",
+            "mongodb://h/?AUTHMECHANISM=MONGODB-OIDC&authSource=$external",
+            "mongodb://h1:27017,h2:27018/db?retryWrites=true;authMechanism=MONGODB-OIDC;authSource=$external",
+        ] {
+            let normalized = crate::connections::normalize_mongodb_uri_options(uri);
+            let options = mongodb::options::ClientOptions::parse(&normalized)
+                .await
+                .unwrap_or_else(|e| panic!("premise: the driver must parse {uri}: {e}"));
+            assert!(uses_oidc(&options), "premise: the driver must read {uri} as MONGODB-OIDC");
+            assert!(uri_requests_oidc(uri), "the guard must refuse {uri}, which the driver reads as OIDC");
         }
     }
 
