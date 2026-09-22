@@ -374,6 +374,17 @@ const CALLBACK_SUCCESS_PAGE: &str =
      <p>Login complete. You can close this window and return to MQLens.</p>\
      </body></html>";
 
+/// Shown for a callback that is not a completed login — an `error` (denied
+/// consent or any other OAuth error) or a request with neither `error` nor
+/// `code`. Deliberately generic and, like the other pages, a pure static
+/// literal with no interpolation: it must never echo the error code, since
+/// that is exactly the material `interpret_callback`/`WhitelistedCode`
+/// exist to keep out of anything rendered back to the user.
+const CALLBACK_NOT_COMPLETED_PAGE: &str =
+    "<!DOCTYPE html><html><head><title>MQLens</title></head><body>\
+     <p>Login was not completed. You can close this window and return to MQLens.</p>\
+     </body></html>";
+
 /// Shown to a second request against an already-completed callback (a
 /// reload, a replay, a second tab) — the first request already took the
 /// one-shot sender, so this one never touches it.
@@ -382,18 +393,33 @@ const CALLBACK_REPLAY_PAGE: &str =
      <p>This login has already completed. You can close this window.</p>\
      </body></html>";
 
+/// Which page a callback's own query parameters call for, decided before
+/// the request is answered — `handle_callback` must not respond "success"
+/// for a request that the params themselves show was a denial or was
+/// malformed, even though the real state/error/code interpretation
+/// (`interpret_callback`) only happens later, inside `wait()`.
+fn callback_outcome_page(params: &CallbackParams) -> &'static str {
+    if params.error.is_some() {
+        CALLBACK_NOT_COMPLETED_PAGE
+    } else if params.code.is_some() {
+        CALLBACK_SUCCESS_PAGE
+    } else {
+        CALLBACK_NOT_COMPLETED_PAGE
+    }
+}
+
 fn handle_callback(
     uri: axum::http::Uri,
     result_tx: std::sync::Arc<StdMutex<Option<oneshot::Sender<CallbackParams>>>>,
 ) -> axum::response::Html<&'static str> {
     let params = parse_callback_params(uri.query().unwrap_or(""));
-    let sent = result_tx
-        .lock()
-        .expect("callback result mutex poisoned")
-        .take()
-        .map(|tx| tx.send(params));
-    match sent {
-        Some(_) => axum::response::Html(CALLBACK_SUCCESS_PAGE),
+    let outcome_page = callback_outcome_page(&params);
+    let sender = result_tx.lock().expect("callback result mutex poisoned").take();
+    match sender {
+        Some(tx) => {
+            let _ = tx.send(params);
+            axum::response::Html(outcome_page)
+        }
         None => axum::response::Html(CALLBACK_REPLAY_PAGE),
     }
 }
@@ -487,6 +513,18 @@ impl LoopbackListener {
         if let Some(tx) = self.shutdown_tx.lock().expect("shutdown mutex poisoned").take() {
             let _ = tx.send(());
         }
+    }
+}
+
+/// A caller that drops a bound `LoopbackListener` without ever calling
+/// `wait()` or `shutdown()` — an early `?` on an unrelated error, most
+/// likely — must not leave the spawned server task and its bound socket
+/// running until the process exits. `shutdown()` is already `&self` and
+/// idempotent, so this introduces no new invariant beyond the one
+/// `shutdown()` and `wait()` already uphold.
+impl Drop for LoopbackListener {
+    fn drop(&mut self) {
+        self.shutdown();
     }
 }
 
@@ -916,6 +954,69 @@ mod tests {
         let waiter = tokio::spawn(async move { listener.wait("state-abc").await });
         get(&format!("{redirect}?state=state-abc")).await;
         assert_eq!(waiter.await.unwrap(), Err(OidcError::TokenExchangeFailed));
+    }
+
+    #[tokio::test]
+    async fn a_dropped_listener_releases_its_port_without_waiting() {
+        let listener = LoopbackListener::bind().await.unwrap();
+        let redirect = listener.redirect_uri.clone();
+        drop(listener);
+
+        let released = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                if reqwest::Client::new().get(&redirect).send().await.is_err() {
+                    return;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await;
+        assert!(
+            released.is_ok(),
+            "the socket must be released after the listener is dropped without wait()/shutdown()"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_denied_login_does_not_claim_success_in_the_browser() {
+        let listener = LoopbackListener::bind().await.unwrap();
+        let redirect = listener.redirect_uri.clone();
+        let waiter = tokio::spawn(async move { listener.wait("state-abc").await });
+        let response = get(&format!("{redirect}?error=access_denied&state=state-abc")).await;
+        let page = response.text().await.unwrap();
+        assert!(!page.contains("Login complete"), "a denied login must not show the success page: {page}");
+        assert!(waiter.await.unwrap().is_err());
+    }
+
+    #[tokio::test]
+    async fn a_malformed_callback_does_not_claim_success_in_the_browser() {
+        let listener = LoopbackListener::bind().await.unwrap();
+        let redirect = listener.redirect_uri.clone();
+        let waiter = tokio::spawn(async move { listener.wait("state-abc").await });
+        let response = get(&format!("{redirect}?state=state-abc")).await;
+        let page = response.text().await.unwrap();
+        assert!(!page.contains("Login complete"), "a malformed callback must not show the success page: {page}");
+        assert!(waiter.await.unwrap().is_err());
+    }
+
+    #[tokio::test]
+    async fn concurrent_requests_deliver_exactly_one_result() {
+        let listener = LoopbackListener::bind().await.unwrap();
+        let redirect = listener.redirect_uri.clone();
+        let waiter = tokio::spawn(async move { listener.wait("state-abc").await });
+
+        let url_a = format!("{redirect}?code=code-a&state=state-abc");
+        let url_b = format!("{redirect}?code=code-b&state=state-abc");
+        let (response_a, response_b) = tokio::join!(get(&url_a), get(&url_b));
+        let (page_a, page_b) = (response_a.text().await.unwrap(), response_b.text().await.unwrap());
+
+        let successes = [&page_a, &page_b].into_iter().filter(|p| p.as_str() == CALLBACK_SUCCESS_PAGE).count();
+        let replays = [&page_a, &page_b].into_iter().filter(|p| p.as_str() == CALLBACK_REPLAY_PAGE).count();
+        assert_eq!(successes, 1, "exactly one concurrent request must see the success page");
+        assert_eq!(replays, 1, "exactly one concurrent request must see the replay page");
+
+        let result = waiter.await.unwrap();
+        assert!(result == Ok("code-a".to_string()) || result == Ok("code-b".to_string()), "got {result:?}");
     }
 
     #[tokio::test]
