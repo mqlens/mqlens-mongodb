@@ -6471,6 +6471,7 @@ dependencies = [
  "rusqlite",
  "russh",
  "rust_xlsxwriter",
+ "rustls",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -6488,6 +6489,7 @@ dependencies = [
  "tempfile",
  "tiny_http",
  "tokio",
+ "tokio-rustls",
  "uuid",
  "zip 8.6.0",
 ]

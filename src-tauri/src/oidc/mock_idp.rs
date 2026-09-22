@@ -49,18 +49,66 @@ pub struct MockIdp {
     // Keeps the listener alive for as long as the MockIdp is; dropping the
     // last Arc closes the socket and the serving thread exits its loop.
     _server: Arc<tiny_http::Server>,
+    // Only for `start_tls`: dropping it stops the TLS front's accept loop.
+    _tls_front: Option<tokio::sync::oneshot::Sender<()>>,
+    tls_addr: Option<std::net::SocketAddr>,
 }
 
 impl MockIdp {
     /// Starts serving on `127.0.0.1` at an OS-assigned port, in a background
     /// thread that lives as long as the returned handle.
     pub fn start() -> MockIdp {
-        let server =
-            tiny_http::Server::http("127.0.0.1:0").expect("bind mock IdP to a loopback port");
+        let server = bind_loopback();
         let issuer = format!("http://{}", server.server_addr());
+        Self::serve(server, issuer, None)
+    }
 
-        let pem_path =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/oidc-test-key.pem");
+    /// Serves over HTTPS as `https://{host}:{port}` — the issuer a real
+    /// `mongod` can be pointed at, since it refuses plain-HTTP issuers.
+    ///
+    /// The routes are the same `tiny_http` server as [`MockIdp::start`], on
+    /// a random loopback port; a TLS front on `port` terminates TLS with the
+    /// TEST-ONLY leaf certificate for `host.docker.internal` in `fixtures/`
+    /// and forwards the plaintext to it. Clients must trust
+    /// `fixtures/oidc-test-ca.pem` and verify as usual.
+    ///
+    /// The front binds `MQLENS_TEST_OIDC_IDP_BIND` (default `127.0.0.1`).
+    /// Docker Desktop delivers `host.docker.internal` traffic to host
+    /// loopback; on Linux it arrives on the docker bridge's gateway address,
+    /// which `scripts/oidc-percona-fixture.sh` prints for CI to set.
+    pub fn start_tls(host: &str, port: u16) -> MockIdp {
+        let server = bind_loopback();
+        let backend = server
+            .server_addr()
+            .to_ip()
+            .expect("the mock IdP listens on an IP address");
+        let bind = std::env::var("MQLENS_TEST_OIDC_IDP_BIND").unwrap_or_else(|_| "127.0.0.1".into());
+        let front = std::net::TcpListener::bind((bind.as_str(), port))
+            .unwrap_or_else(|e| panic!("bind the mock IdP's TLS front to {bind}:{port}: {e}"));
+        let mut tls_addr = front.local_addr().expect("the TLS front has a local address");
+        if tls_addr.ip().is_unspecified() {
+            // Bound to every interface: loopback is one of them, and unlike
+            // 0.0.0.0 it is a connectable destination on every OS.
+            tls_addr.set_ip(std::net::Ipv4Addr::LOCALHOST.into());
+        }
+        let shutdown = spawn_tls_front(front, backend);
+        let mut idp = Self::serve(server, format!("https://{host}:{port}"), Some(shutdown));
+        idp.tls_addr = Some(tls_addr);
+        idp
+    }
+
+    /// Where `start_tls`'s front actually listens, for a client that must
+    /// reach the issuer's host name without DNS. `None` for [`MockIdp::start`].
+    pub fn tls_addr(&self) -> Option<std::net::SocketAddr> {
+        self.tls_addr
+    }
+
+    fn serve(
+        server: tiny_http::Server,
+        issuer: String,
+        tls_front: Option<tokio::sync::oneshot::Sender<()>>,
+    ) -> MockIdp {
+        let pem_path = fixture_path("oidc-test-key.pem");
         let pem = std::fs::read_to_string(&pem_path).unwrap_or_else(|e| {
             panic!(
                 "read test-only OIDC signing key at {}: {e}",
@@ -98,6 +146,8 @@ impl MockIdp {
         MockIdp {
             inner,
             _server: server,
+            _tls_front: tls_front,
+            tls_addr: None,
         }
     }
 
@@ -131,6 +181,84 @@ impl MockIdp {
     pub fn reject_refresh_tokens(&self) {
         self.inner.reject_refresh_tokens.store(true, Ordering::SeqCst);
     }
+}
+
+fn bind_loopback() -> tiny_http::Server {
+    tiny_http::Server::http("127.0.0.1:0").expect("bind mock IdP to a loopback port")
+}
+
+fn fixture_path(name: &str) -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures").join(name)
+}
+
+/// The TEST-ONLY server identity from `fixtures/`: a leaf for
+/// `host.docker.internal` signed by `oidc-test-ca.pem`. Uses ring
+/// explicitly because the dependency graph enables two rustls providers, so
+/// there is no unambiguous process default.
+fn tls_server_config() -> rustls::ServerConfig {
+    use rustls::pki_types::pem::PemObject as _;
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+
+    let cert_path = fixture_path("oidc-test-idp.crt.pem");
+    let certs = CertificateDer::pem_file_iter(&cert_path)
+        .and_then(|certs| certs.collect::<Result<Vec<_>, _>>())
+        .unwrap_or_else(|e| panic!("read TEST-ONLY IdP certificate {}: {e}", cert_path.display()));
+    let key_path = fixture_path("oidc-test-idp.key.pem");
+    let key = PrivateKeyDer::from_pem_file(&key_path)
+        .unwrap_or_else(|e| panic!("read TEST-ONLY IdP key {}: {e}", key_path.display()));
+
+    rustls::ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+        .with_safe_default_protocol_versions()
+        .expect("ring supports the default TLS versions")
+        .with_no_client_auth()
+        .with_single_cert(certs, key)
+        .expect("the TEST-ONLY IdP certificate and key match")
+}
+
+/// Accepts TLS on `front` and pipes each decrypted connection to the plain
+/// `tiny_http` server at `backend`. Runs on its own thread and runtime so it
+/// works under any test runtime flavour, and stops when the returned sender
+/// is dropped (with the `MockIdp` that owns it).
+fn spawn_tls_front(
+    front: std::net::TcpListener,
+    backend: std::net::SocketAddr,
+) -> tokio::sync::oneshot::Sender<()> {
+    let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(tls_server_config()));
+    front
+        .set_nonblocking(true)
+        .expect("make the TLS front non-blocking for tokio");
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+
+    std::thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build the TLS front's runtime");
+        runtime.block_on(async move {
+            let front =
+                tokio::net::TcpListener::from_std(front).expect("hand the TLS front to tokio");
+            loop {
+                tokio::select! {
+                    _ = &mut shutdown_rx => return,
+                    accepted = front.accept() => {
+                        let Ok((tcp, _)) = accepted else { continue };
+                        let acceptor = acceptor.clone();
+                        tokio::spawn(async move {
+                            // A failed handshake (an untrusting client) just
+                            // drops the connection, as a real server would.
+                            let Ok(mut tls) = acceptor.accept(tcp).await else { return };
+                            let Ok(mut plain) = tokio::net::TcpStream::connect(backend).await else {
+                                return;
+                            };
+                            let _ = tokio::io::copy_bidirectional(&mut tls, &mut plain).await;
+                        });
+                    }
+                }
+            }
+        });
+    });
+
+    shutdown_tx
 }
 
 fn now_secs() -> u64 {

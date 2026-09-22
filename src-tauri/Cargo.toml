@@ -80,4 +80,11 @@ jsonwebtoken = "9"
 # (#430). Pinned to the exact version already locked transitively (via
 # mongodb's aws-auth) so this addition cannot change resolution elsewhere.
 rsa = "=0.10.0-rc.18"
+# TLS in front of the mock IdP for the real Percona handshake test (#430):
+# mongod refuses a plain-HTTP issuer. Both are already locked transitively
+# (via reqwest/mongodb), with ring as the provider, so this adds no crates.
+# Not tiny_http's own `ssl-rustls` feature: that pins rustls ^0.20 and ring
+# 0.16, both carrying unpatched RUSTSEC advisories (2024-0336, 2025-0009).
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+tokio-rustls = { version = "0.26", default-features = false }
 

@@ -1,0 +1,28 @@
+# TEST-ONLY TLS identity for the mock OIDC provider (#430). Not a secret. Never used outside tests.
+
+oidc-test-ca.pem        TEST-ONLY CA certificate ("MQLens TEST-ONLY OIDC CA").
+oidc-test-idp.crt.pem   TEST-ONLY leaf certificate, SAN DNS:host.docker.internal, signed by the CA above.
+oidc-test-idp.key.pem   TEST-ONLY private key for that leaf (PKCS#8, P-256).
+
+Used only by src-tauri/src/oidc/handshake_tests.rs: mongod refuses a plain-HTTP
+OIDC issuer, so the mock IdP serves TLS with this leaf, the throwaway Percona
+container started by scripts/oidc-percona-fixture.sh trusts this CA, and the
+test's own HTTP client trusts it. Nothing else trusts it; never install it
+into a real trust store.
+
+The CA's private key was discarded after signing, so no further certificates
+can be issued under this CA. Both certificates expire in 2046. To regenerate
+(Git Bash needs MSYS_NO_PATHCONV=1 for the -subj arguments):
+
+  openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
+    -keyout ca.key -out oidc-test-ca.pem -days 7300 \
+    -subj "/CN=MQLens TEST-ONLY OIDC CA" \
+    -addext "basicConstraints=critical,CA:TRUE" \
+    -addext "keyUsage=critical,keyCertSign,cRLSign"
+  openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
+    -keyout leaf.key -out leaf.csr -subj "/CN=host.docker.internal"
+  printf 'basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=serverAuth\nsubjectAltName=DNS:host.docker.internal\n' > leaf.ext
+  openssl x509 -req -in leaf.csr -CA oidc-test-ca.pem -CAkey ca.key -CAcreateserial \
+    -out oidc-test-idp.crt.pem -days 7300 -extfile leaf.ext
+  openssl pkcs8 -topk8 -nocrypt -in leaf.key -out oidc-test-idp.key.pem
+  rm ca.key ca.srl leaf.key leaf.csr leaf.ext

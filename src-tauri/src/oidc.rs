@@ -845,6 +845,9 @@ fn to_driver_error(error: OidcError) -> mongodb::error::Error {
 pub mod mock_idp;
 
 #[cfg(test)]
+mod handshake_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use mock_idp::MockIdp;
@@ -1501,13 +1504,23 @@ mod tests {
     /// is a synchronous callback (real browser launchers are synchronous),
     /// so it cannot itself await a response.
     pub(super) fn simulating_opener() -> (BrowserOpener, Arc<StdMutex<Vec<String>>>) {
+        simulating_opener_with(reqwest::Client::new())
+    }
+
+    /// `simulating_opener`, browsing with `http` — for an IdP that only a
+    /// specially configured client can reach (Task 10's TLS mock IdP, whose
+    /// CA and host name a default client knows nothing about).
+    pub(super) fn simulating_opener_with(
+        http: reqwest::Client,
+    ) -> (BrowserOpener, Arc<StdMutex<Vec<String>>>) {
         let opened = Arc::new(StdMutex::new(Vec::new()));
         let recorder = opened.clone();
         let opener: BrowserOpener = Arc::new(move |url: &str| {
             recorder.lock().unwrap().push(url.to_string());
             let url = url.to_string();
+            let http = http.clone();
             tokio::spawn(async move {
-                let _ = reqwest::Client::new().get(&url).send().await;
+                let _ = http.get(&url).send().await;
             });
             Ok(())
         });

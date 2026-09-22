@@ -110,6 +110,17 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: src-tauri
+      # The real MONGODB-OIDC handshake test (#430) needs Percona configured
+      # with the test's mock IdP as an identity provider. That takes
+      # `--setParameter` arguments and a TEST-ONLY CA installed before mongod
+      # starts, neither of which `services:` can do, so a script runs the
+      # container. It prints the MQLENS_TEST_OIDC_* variables the test reads;
+      # when they are unset the test skips.
+      - name: Start the MONGODB-OIDC Percona fixture
+        run: bash scripts/oidc-percona-fixture.sh start >> "$GITHUB_ENV"
       - name: Backend tests with coverage
         # Fail the build if line coverage drops below 70% (the agreed target floor).
         run: cargo llvm-cov --manifest-path src-tauri/Cargo.toml --summary-only --fail-under-lines 70 --ignore-filename-regex 'src-tauri/src/(lib|main)\.rs'
+      - name: Stop the MONGODB-OIDC Percona fixture
+        if: always()
+        run: bash scripts/oidc-percona-fixture.sh stop
