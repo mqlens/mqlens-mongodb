@@ -790,6 +790,13 @@ use mongodb::options::{AuthMechanism, ClientOptions};
 /// `http` is injected rather than built here so callers can supply a client
 /// with different TLS trust (e.g. a test's self-signed CA) without this
 /// function ever touching the MongoDB connection's own TLS settings.
+///
+/// The callback attachment itself is not observable through driver 3.9.0's
+/// public API — `Callback`'s internals are `pub(crate)`, so nothing outside
+/// the driver crate can distinguish an attached human callback from the
+/// default one just by inspecting `ClientOptions` afterward. That the
+/// closure actually reaches `run_flow` is proven only by a real handshake
+/// (Task 10), not by any test in this module.
 pub fn attach_human_callback(
     options: &mut ClientOptions,
     session: Arc<OidcSession>,
@@ -1764,40 +1771,35 @@ mod tests {
             Arc::new(|_: &str| Ok(()))
         }
 
+        /// `attach_human_callback`'s callback attachment itself is not
+        /// observable through driver 3.9.0's public API: `Callback`'s
+        /// internals (`FunctionInner`, its cache) are `pub(crate)`, so nothing
+        /// outside the driver crate can tell an attached human callback apart
+        /// from the default one just by inspecting `ClientOptions`. That the
+        /// closure actually reaches `run_flow` is proven only by Task 10's
+        /// real handshake test. What *is* observable here, and what this
+        /// test actually checks, is the mechanism guard's other real effect:
+        /// a non-`MONGODB-OIDC` credential must come back byte-for-byte
+        /// unchanged, including a field the OIDC branch does write
+        /// (`mechanism_properties`) — so a missing or broken early return
+        /// would show up as a genuine equality failure, not merely as an
+        /// unset field.
         #[tokio::test]
-        async fn the_callback_attaches_only_for_mongodb_oidc() {
-            let mut oidc = ClientOptions::parse(
-                "mongodb://localhost:27017/?authMechanism=MONGODB-OIDC&authSource=$external",
-            )
-            .await
-            .unwrap();
-            attach_human_callback(
-                &mut oidc,
-                noop_session(),
-                &[],
-                noop_opener(),
-                reqwest::Client::new(),
-            );
-            assert_eq!(
-                oidc.credential.as_ref().unwrap().mechanism,
-                Some(AuthMechanism::MongoDbOidc)
-            );
-
-            // SCRAM must be left exactly as parsed.
+        async fn a_non_oidc_credential_is_left_exactly_as_parsed() {
             let mut scram = ClientOptions::parse(
                 "mongodb://user:pass@localhost:27017/?authMechanism=SCRAM-SHA-256",
             )
             .await
             .unwrap();
-            let before = format!("{:?}", scram.credential);
+            let before = scram.credential.clone();
             attach_human_callback(
                 &mut scram,
                 noop_session(),
-                &[],
+                &["mongo.corp.example.com".to_string()],
                 noop_opener(),
                 reqwest::Client::new(),
             );
-            assert_eq!(format!("{:?}", scram.credential), before, "SCRAM must be untouched");
+            assert_eq!(scram.credential, before, "SCRAM must be untouched");
         }
 
         #[tokio::test]
@@ -1861,6 +1863,26 @@ mod tests {
                 .as_ref()
                 .is_some_and(|p| p.get_array("ALLOWED_HOSTS").is_ok());
             assert!(!has_hosts, "no explicit hosts means the driver's secure defaults apply");
+        }
+
+        /// A URI with no credential at all (no auth mechanism, no userinfo)
+        /// must not panic — the `let Some(credential) = ... else { return }`
+        /// guard is the only thing standing between this and an unwrap on
+        /// `None`.
+        #[tokio::test]
+        async fn a_uri_with_no_credential_is_a_no_op() {
+            let mut options = ClientOptions::parse("mongodb://localhost:27017/")
+                .await
+                .unwrap();
+            assert!(options.credential.is_none(), "test assumption: no credential was parsed");
+            attach_human_callback(
+                &mut options,
+                noop_session(),
+                &["mongo.corp.example.com".to_string()],
+                noop_opener(),
+                reqwest::Client::new(),
+            );
+            assert!(options.credential.is_none());
         }
     }
 }
