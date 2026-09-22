@@ -396,6 +396,58 @@ mod tests {
         );
     }
 
+    // ---- the connect path ------------------------------------------------
+
+    /// Accepts and never answers: the driver gets as far as trying to reach
+    /// the server, with no MongoDB anywhere.
+    async fn silent_server() -> u16 {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((socket, _)) = listener.accept().await {
+                held.push(socket);
+            }
+        });
+        port
+    }
+
+    /// Connect has no phase channel, so the only way the UI can cancel its
+    /// login is by the id it minted before invoking. The entry must exist
+    /// under that id while the call runs, and be gone once it fails.
+    #[tokio::test]
+    async fn an_oidc_connect_registers_its_login_while_in_flight_and_removes_it_when_it_fails() {
+        let state = AppState::new();
+        let port = silent_server().await;
+        let uri = format!(
+            "mongodb://127.0.0.1:{port}/?authMechanism=MONGODB-OIDC&authSource=$external&serverSelectionTimeoutMS=1500"
+        );
+
+        let call = crate::connect_db_with_oidc_impl(
+            &state,
+            &uri,
+            None,
+            None,
+            Some("connect-login".into()),
+            no_browser_opener(),
+        );
+        let watch = async {
+            for _ in 0..200 {
+                if state.oidc_sessions.lock().unwrap().contains_key("connect-login") {
+                    return true;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+            false
+        };
+        let (result, registered) = tokio::join!(call, watch);
+
+        assert!(registered, "the login must be registered under the caller's id while connect runs");
+        assert!(result.is_err(), "nothing answers, so the connect must fail");
+        assert!(live_ids(&state.oidc_sessions).is_empty(), "a failed connect must leave no login behind");
+        assert!(state.connections.lock().unwrap().is_empty());
+    }
+
     // ---- openers ---------------------------------------------------------
 
     #[test]

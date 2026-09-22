@@ -750,10 +750,42 @@ fn get_mongosh_session(state: &AppState, session_id: &str) -> Result<Arc<Mongosh
         .ok_or_else(|| "mongosh session not found".to_string())
 }
 
+/// Connect with no human watching — every caller except the `connect_db`
+/// command, the MCP connect tool among them. An OIDC login reached here gets
+/// an opener that never opens a browser.
 pub async fn connect_db_impl(
     state: &AppState,
     uri: &str,
     ssh: Option<&ssh_tunnel::SshConfig>,
+) -> Result<String, String> {
+    connect_db_with_oidc_impl(state, uri, ssh, None, None, oidc_login::no_browser_opener()).await
+}
+
+/// Connect, running a human MONGODB-OIDC login if the URI asks for one.
+///
+/// `login_id` is minted by the frontend before it invokes, so it can cancel
+/// or reopen the login while this call is still in flight (the connection id
+/// is only minted in here, too late for that). Connect streams no phase
+/// events: the browser opening is the visible signal. `oidc` carries the
+/// profile's allowed hosts, which never go in the URI.
+pub async fn connect_db_with_oidc_impl(
+    state: &AppState,
+    uri: &str,
+    ssh: Option<&ssh_tunnel::SshConfig>,
+    oidc: Option<&connections::OidcProfileConfig>,
+    login_id: Option<String>,
+    open: oidc::BrowserOpener,
+) -> Result<String, String> {
+    connect_db_with_login(state, uri, ssh, oidc_login::HumanLogin::interactive(oidc, login_id, open)).await
+}
+
+/// `connect_db_with_oidc_impl`, with the IdP HTTP client injectable so the
+/// real-server tests can trust their TEST-ONLY CA.
+pub(crate) async fn connect_db_with_login(
+    state: &AppState,
+    uri: &str,
+    ssh: Option<&ssh_tunnel::SshConfig>,
+    login: oidc_login::HumanLogin<'_>,
 ) -> Result<String, String> {
     let connection_id = Uuid::new_v4().to_string();
     if uri.starts_with("mongodb://mock") {
@@ -782,6 +814,13 @@ pub async fn connect_db_impl(
 
     client_options.app_name = Some("MQLens-Engine".to_string());
     apply_main_timeouts(&mut client_options);
+
+    // No phase streaming on connect, so the session's sink has nowhere to go.
+    // Held to the end of the call: dropping it removes the login's entry. The
+    // driver's callback keeps its own handle, so reauthentication still works
+    // for the client's lifetime (see `oidc_login::LoginRegistration`).
+    let session = oidc::OidcSession::new(Arc::new(|_| {}));
+    let _login = oidc_login::prepare_human_login(&mut client_options, &state.oidc_sessions, login, session)?;
 
     let client = Client::with_options(client_options)
         .map_err(|e| format!("Failed to create client: {}", e))?;
