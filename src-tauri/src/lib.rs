@@ -815,11 +815,19 @@ pub(crate) async fn connect_db_with_login(
     client_options.app_name = Some("MQLens-Engine".to_string());
     apply_main_timeouts(&mut client_options);
 
-    // No phase streaming on connect, so the session's sink has nowhere to go.
-    // Held to the end of the call: dropping it removes the login's entry. The
-    // driver's callback keeps its own handle, so reauthentication still works
-    // for the client's lifetime (see `oidc_login::LoginRegistration`).
-    let session = oidc::OidcSession::new(Arc::new(|_| {}));
+    // Connect streams no phases, but still records what the login reported,
+    // so a failed ping is explained by the login as a locale key rather than
+    // the driver's English. The registration is held to the end of the call:
+    // dropping it removes the login's entry. The driver's callback keeps its
+    // own handle, so reauthentication still works for the client's lifetime
+    // (see `oidc_login::LoginRegistration`).
+    let report = Arc::new(std::sync::Mutex::new(oidc_login::LoginReport::default()));
+    let recorder = report.clone();
+    let session = oidc::OidcSession::new(Arc::new(move |phase| {
+        if let Ok(mut report) = recorder.lock_safe() {
+            report.record(&phase);
+        }
+    }));
     let _login = oidc_login::prepare_human_login(&mut client_options, &state.oidc_sessions, login, session)?;
 
     let client = Client::with_options(client_options)
@@ -827,9 +835,12 @@ pub(crate) async fn connect_db_with_login(
 
     // Verify connection by running a ping command
     let db = client.database("admin");
-    db.run_command(mongodb::bson::doc! { "ping": 1 })
-        .await
-        .map_err(|e| format!("Database ping failed: {}", e))?;
+    db.run_command(mongodb::bson::doc! { "ping": 1 }).await.map_err(|e| {
+        match report.lock_safe().ok().and_then(|report| report.ping_failure_key()) {
+            Some(key) => key.to_string(),
+            None => format!("Database ping failed: {}", e),
+        }
+    })?;
 
     {
         let mut connections = state.connections.lock_safe()?;

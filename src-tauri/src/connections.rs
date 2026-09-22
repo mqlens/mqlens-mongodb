@@ -1030,16 +1030,14 @@ pub(crate) fn authenticate_update(phase: crate::oidc::OidcPhase) -> PhaseUpdate 
     }
 }
 
-/// Emit one step of the login and remember a failure, so a ping that then
-/// fails can be reported as the login failure that caused it.
+/// Emit one step of the login and record it, so a ping that then fails can
+/// be explained by the login.
 fn forward_login_phase(
     phase: crate::oidc::OidcPhase,
     emit: &(dyn Fn(PhaseUpdate) + Send + Sync),
-    login_failure: &mut Option<crate::oidc::OidcError>,
+    report: &mut crate::oidc_login::LoginReport,
 ) {
-    if let crate::oidc::OidcPhase::Failed(error) = &phase {
-        *login_failure = Some(error.clone());
-    }
+    report.record(&phase);
     emit(authenticate_update(phase));
 }
 
@@ -1189,30 +1187,39 @@ pub async fn run_connection_test_with_oidc(
     let admin = client.database("admin");
     let ping = std::future::IntoFuture::into_future(admin.run_command(mongodb::bson::doc! { "ping": 1 }));
     tokio::pin!(ping);
-    let mut login_failure = None;
+    let mut report = crate::oidc_login::LoginReport::default();
     let outcome = loop {
         tokio::select! {
             outcome = &mut ping => break outcome,
-            Some(phase) = progress.recv() => forward_login_phase(phase, emit, &mut login_failure),
+            Some(phase) = progress.recv() => forward_login_phase(phase, emit, &mut report),
         }
     };
     // The flow reports before it returns to the driver, so anything it said
     // is already queued; forward it before the ping's own result.
     while let Ok(phase) = progress.try_recv() {
-        forward_login_phase(phase, emit, &mut login_failure);
+        forward_login_phase(phase, emit, &mut report);
     }
 
-    match (outcome, login_failure) {
-        (Ok(_), _) => {
+    let error = match outcome {
+        Ok(_) => {
             emit(PhaseUpdate::ok(TestPhase::Ping));
-            Ok(())
+            return Ok(());
         }
+        Err(error) => error,
+    };
+    match report.ping_failure_key() {
         // The Authenticate row already carries the failure. Report it rather
         // than the ping error it caused, so the user sees "browser login
         // expired" and not a server-selection timeout.
-        (Err(_), Some(failure)) => Err(failure.locale_key().to_string()),
-        (Err(e), None) => {
-            let msg = format!("Database ping failed: {}", e);
+        Some(key) if report.login_failed() => Err(key.to_string()),
+        // The login succeeded and the ping failed anyway: Ping's failure,
+        // explained as such.
+        Some(key) => {
+            emit(PhaseUpdate::fail(TestPhase::Ping, key.to_string()));
+            Err(key.to_string())
+        }
+        None => {
+            let msg = format!("Database ping failed: {}", error);
             emit(PhaseUpdate::fail(TestPhase::Ping, msg.clone()));
             Err(msg)
         }

@@ -39,6 +39,9 @@ start() {
   # mount, so the same steps work from Linux CI and from Git Bash on Windows.
   # Runs as root only long enough to install the CA; the image's own
   # /entrypoint.sh then drops to the mongodb user via gosu before exec'ing mongod.
+  # enableTestCommands lets a test arm mongod's `failCommand` failpoint, so it
+  # can make a ping fail *after* a successful OIDC login (#430). This is a
+  # throwaway test container only.
   MSYS_NO_PATHCONV=1 docker create --name "$NAME" \
     --user root \
     --add-host host.docker.internal:host-gateway \
@@ -51,6 +54,7 @@ start() {
     bash \
     --setParameter authenticationMechanisms=MONGODB-OIDC,SCRAM-SHA-256 \
     --setParameter "oidcIdentityProviders=${PROVIDERS}" \
+    --setParameter enableTestCommands=1 \
     >/dev/null
   # Relative source path: Git Bash would otherwise hand docker a /c/... path.
   (cd "$ROOT" && MSYS_NO_PATHCONV=1 docker cp fixtures/oidc-test-ca.pem "$NAME:/tmp/oidc-test-ca.pem")

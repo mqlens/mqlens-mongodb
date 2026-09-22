@@ -121,6 +121,44 @@ impl<'a> HumanLogin<'a> {
     }
 }
 
+/// What a login has reported during one connect or test call, kept so that a
+/// ping that then fails is explained by the login, as a locale key, rather
+/// than by the driver's English (the Rust side never formats user-facing
+/// text).
+#[derive(Default, Debug)]
+pub struct LoginReport {
+    failure: Option<OidcError>,
+    completed: bool,
+}
+
+impl LoginReport {
+    pub fn record(&mut self, phase: &crate::oidc::OidcPhase) {
+        match phase {
+            crate::oidc::OidcPhase::WaitingForBrowser => {}
+            crate::oidc::OidcPhase::Completed => self.completed = true,
+            crate::oidc::OidcPhase::Failed(error) => self.failure = Some(error.clone()),
+        }
+    }
+
+    /// Whether the login itself failed. The connection test has then already
+    /// reported the failure on its Authenticate row.
+    pub fn login_failed(&self) -> bool {
+        self.failure.is_some()
+    }
+
+    /// The locale key explaining a failed ping, if a login accounts for it:
+    /// the login's own failure, or — when the login succeeded and the ping
+    /// failed anyway — `LoginOkPingFailed`. `None` when no login reported
+    /// anything (every other mechanism, or a failure before the login began).
+    pub fn ping_failure_key(&self) -> Option<&'static str> {
+        match (&self.failure, self.completed) {
+            (Some(error), _) => Some(error.locale_key()),
+            (None, true) => Some(OidcError::LoginOkPingFailed.locale_key()),
+            (None, false) => None,
+        }
+    }
+}
+
 /// Whether parsed options authenticate with `MONGODB-OIDC`.
 pub fn uses_oidc(options: &ClientOptions) -> bool {
     options.credential.as_ref().and_then(|c| c.mechanism.as_ref()) == Some(&AuthMechanism::MongoDbOidc)
@@ -459,6 +497,49 @@ mod tests {
         assert!(result.is_err(), "nothing answers, so the connect must fail");
         assert!(live_ids(&state.oidc_sessions).is_empty(), "a failed connect must leave no login behind");
         assert!(state.connections.lock().unwrap().is_empty());
+    }
+
+    // ---- LoginReport -----------------------------------------------------
+
+    fn report_of(phases: Vec<crate::oidc::OidcPhase>) -> LoginReport {
+        let mut report = LoginReport::default();
+        for phase in &phases {
+            report.record(phase);
+        }
+        report
+    }
+
+    #[test]
+    fn a_ping_failure_with_no_login_is_not_explained_by_one() {
+        assert_eq!(report_of(vec![]).ping_failure_key(), None);
+        assert_eq!(report_of(vec![crate::oidc::OidcPhase::WaitingForBrowser]).ping_failure_key(), None);
+    }
+
+    #[test]
+    fn a_ping_failure_after_a_failed_login_is_the_logins_failure() {
+        let report = report_of(vec![
+            crate::oidc::OidcPhase::WaitingForBrowser,
+            crate::oidc::OidcPhase::Failed(OidcError::Cancelled),
+        ]);
+        assert_eq!(report.ping_failure_key(), Some("auth.oidc.errors.cancelled"));
+        assert!(report.login_failed());
+    }
+
+    #[test]
+    fn a_ping_failure_after_a_completed_login_is_login_ok_ping_failed() {
+        let report = report_of(vec![crate::oidc::OidcPhase::WaitingForBrowser, crate::oidc::OidcPhase::Completed]);
+        assert_eq!(report.ping_failure_key(), Some("auth.oidc.errors.loginOkPingFailed"));
+        assert!(!report.login_failed());
+    }
+
+    /// A failure is the more specific explanation, whatever else was seen.
+    #[test]
+    fn a_login_failure_outranks_an_earlier_completion() {
+        let report = report_of(vec![
+            crate::oidc::OidcPhase::Completed,
+            crate::oidc::OidcPhase::Failed(OidcError::TokenRejected),
+        ]);
+        assert_eq!(report.ping_failure_key(), Some("auth.oidc.errors.tokenRejected"));
     }
 
     // ---- openers ---------------------------------------------------------

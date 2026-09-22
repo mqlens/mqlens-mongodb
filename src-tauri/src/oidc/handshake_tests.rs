@@ -44,6 +44,11 @@ fn idp_client(idp: &MockIdp) -> reqwest::Client {
         .expect("build the IdP HTTP client")
 }
 
+/// A test that arms a failpoint on one of our app names holds this
+/// exclusively. Every other test holds it shared, so an armed failpoint can
+/// only ever hit the test that armed it.
+static FAILPOINT_LOCK: tokio::sync::RwLock<()> = tokio::sync::RwLock::const_new(());
+
 /// The fixture's URI and the one mock IdP every test here shares, or `None`
 /// (skip) when `MQLENS_TEST_OIDC_URI` is unset.
 ///
@@ -71,6 +76,7 @@ fn fixture() -> Option<(String, &'static MockIdp)> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_driver_authenticates_a_real_server_through_our_oidc_callback() {
     let Some((uri, idp)) = fixture() else { return };
+    let _shared = FAILPOINT_LOCK.read().await;
     let http = idp_client(idp);
     let (session, phases) = test_session();
     let (opener, opened) = simulating_opener_with(http.clone());
@@ -154,6 +160,7 @@ async fn cancel_once_the_browser_opens(state: &AppState, opened: &std::sync::Mut
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_connection_test_reports_the_real_login_as_its_authenticate_row() {
     let Some((uri, idp)) = fixture() else { return };
+    let _shared = FAILPOINT_LOCK.read().await;
     let http = idp_client(idp);
     let (opener, opened) = simulating_opener_with(http.clone());
     let state = AppState::new();
@@ -187,6 +194,7 @@ async fn a_connection_test_reports_the_real_login_as_its_authenticate_row() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cancelling_a_connection_test_reports_the_cancelled_login_not_a_ping_error() {
     let Some((uri, idp)) = fixture() else { return };
+    let _shared = FAILPOINT_LOCK.read().await;
     let http = idp_client(idp);
     let (opener, opened) = recording_opener();
     let state = AppState::new();
@@ -210,6 +218,7 @@ async fn cancelling_a_connection_test_reports_the_cancelled_login_not_a_ping_err
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn connecting_runs_the_login_and_keeps_the_authenticated_client() {
     let Some((uri, idp)) = fixture() else { return };
+    let _shared = FAILPOINT_LOCK.read().await;
     let http = idp_client(idp);
     let (opener, opened) = simulating_opener_with(http.clone());
     let state = AppState::new();
@@ -236,6 +245,7 @@ async fn connecting_runs_the_login_and_keeps_the_authenticated_client() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_connect_can_be_cancelled_by_its_login_id() {
     let Some((uri, idp)) = fixture() else { return };
+    let _shared = FAILPOINT_LOCK.read().await;
     let http = idp_client(idp);
     let (opener, opened) = recording_opener();
     let state = AppState::new();
@@ -246,7 +256,9 @@ async fn a_connect_can_be_cancelled_by_its_login_id() {
         cancel_once_the_browser_opens(&state, &opened, "connect-cancel"),
     );
 
-    assert!(result.is_err(), "a cancelled login must not connect");
+    // A locale key, never the driver's English, so the UI can tell a
+    // cancelled login from a real failure.
+    assert_eq!(result, Err(OidcError::Cancelled.locale_key().to_string()), "a cancelled login must not connect");
     assert!(state.connections.lock().unwrap().is_empty());
     assert!(state.oidc_sessions.lock().unwrap().is_empty(), "a cancelled connect leaves no login behind");
 }
@@ -278,6 +290,7 @@ fn slow_opener(http: reqwest::Client) -> BrowserOpener {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_slow_browser_login_outlasts_the_connection_tests_timeouts() {
     let Some((uri, idp)) = fixture() else { return };
+    let _shared = FAILPOINT_LOCK.read().await;
     let http = idp_client(idp);
     let state = AppState::new();
     let (log, emit) = phase_recorder();
@@ -297,6 +310,7 @@ async fn a_slow_browser_login_outlasts_the_connection_tests_timeouts() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_slow_browser_login_outlasts_the_connect_timeouts() {
     let Some((uri, idp)) = fixture() else { return };
+    let _shared = FAILPOINT_LOCK.read().await;
     let http = idp_client(idp);
     let state = AppState::new();
     let login = HumanLogin { config: None, login_id: Some("connect-slow".into()), open: slow_opener(http.clone()), http };
@@ -308,4 +322,73 @@ async fn a_slow_browser_login_outlasts_the_connect_timeouts() {
     let id = result.unwrap_or_else(|e| panic!("a slow login must still connect (took {took:?}): {e}"));
     assert!(took >= SLOW_HUMAN, "the login must really have been slow, took {took:?}");
     assert!(state.connections.lock().unwrap().contains_key(&id));
+}
+
+// ---- the login succeeded, the ping did not -------------------------------
+
+/// Arm mongod's `failCommand` so the next `ping` from `app_name` fails. A
+/// ping is only sent once the connection's handshake, OIDC login included,
+/// has finished, so this fails the ping *after* a successful login. Needs the
+/// fixture's `enableTestCommands`. Returns the admin client, to disarm with.
+async fn fail_next_ping_from(uri: &str, app_name: &str) -> mongodb::Client {
+    let base = uri.split('?').next().expect("the fixture URI has a host part");
+    let admin = mongodb::Client::with_uri_str(format!("{base}?directConnection=true"))
+        .await
+        .expect("an admin client for the fixture");
+    admin
+        .database("admin")
+        .run_command(doc! {
+            "configureFailPoint": "failCommand",
+            "mode": { "times": 1 },
+            "data": { "failCommands": ["ping"], "errorCode": 2, "appName": app_name },
+        })
+        .await
+        .unwrap_or_else(|e| panic!("arm failCommand (does the fixture set enableTestCommands?): {e}"));
+    admin
+}
+
+async fn disarm(admin: &mongodb::Client) {
+    let _ = admin
+        .database("admin")
+        .run_command(doc! { "configureFailPoint": "failCommand", "mode": "off" })
+        .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_connection_test_whose_ping_fails_after_the_login_reports_login_ok_ping_failed() {
+    let Some((uri, idp)) = fixture() else { return };
+    let _exclusive = FAILPOINT_LOCK.write().await;
+    let admin = fail_next_ping_from(&uri, "MQLens-Ping").await;
+    let http = idp_client(idp);
+    let (opener, _opened) = simulating_opener_with(http.clone());
+    let state = AppState::new();
+    let (log, emit) = phase_recorder();
+    let login = HumanLogin { config: None, login_id: Some("test-ping-fails".into()), open: opener, http };
+
+    let result = run_connection_test_with_oidc(&state.oidc_sessions, &uri, None, login, &emit).await;
+    disarm(&admin).await;
+
+    let key = OidcError::LoginOkPingFailed.locale_key().to_string();
+    assert_eq!(result, Err(key.clone()));
+    let log = log.lock().unwrap().clone();
+    assert!(log.contains(&row(TestPhase::Authenticate, "ok")), "the login itself succeeded: {log:?}");
+    assert_eq!(log.last(), Some(&row(TestPhase::Ping, "fail")), "the failure is Ping's: {log:?}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_connect_whose_ping_fails_after_the_login_reports_login_ok_ping_failed() {
+    let Some((uri, idp)) = fixture() else { return };
+    let _exclusive = FAILPOINT_LOCK.write().await;
+    let admin = fail_next_ping_from(&uri, "MQLens-Engine").await;
+    let http = idp_client(idp);
+    let (opener, opened) = simulating_opener_with(http.clone());
+    let state = AppState::new();
+    let login = HumanLogin { config: None, login_id: Some("connect-ping-fails".into()), open: opener, http };
+
+    let result = crate::connect_db_with_login(&state, &uri, None, login).await;
+    disarm(&admin).await;
+
+    assert_eq!(opened.lock().unwrap().len(), 1, "the login ran");
+    assert_eq!(result, Err(OidcError::LoginOkPingFailed.locale_key().to_string()));
+    assert!(state.connections.lock().unwrap().is_empty());
 }
