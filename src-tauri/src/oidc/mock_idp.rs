@@ -98,17 +98,7 @@ impl MockIdp {
     /// Mints an RS256 JWT for `subject`/`audience`, signed with the same
     /// test-only key the JWKS route describes.
     pub fn mint_access_token(&self, subject: &str, audience: &str) -> String {
-        let claims = serde_json::json!({
-            "iss": self.inner.issuer,
-            "sub": subject,
-            "aud": audience,
-            "exp": now_secs() + 3600,
-            "iat": now_secs(),
-        });
-        let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::RS256);
-        header.kid = Some("test-key-1".into());
-        jsonwebtoken::encode(&header, &claims, &self.inner.encoding_key)
-            .expect("sign JWT with test-only RSA key")
+        sign_access_token(&self.inner, subject, audience)
     }
 
     /// The most recent `POST /token` call this provider has seen, if any.
@@ -122,6 +112,22 @@ fn now_secs() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs()
+}
+
+/// Shared by [`MockIdp::mint_access_token`] and the `/token` route so both
+/// mint from the same claims shape, signed with the same test-only key.
+fn sign_access_token(inner: &Inner, subject: &str, audience: &str) -> String {
+    let claims = serde_json::json!({
+        "iss": inner.issuer,
+        "sub": subject,
+        "aud": audience,
+        "exp": now_secs() + 3600,
+        "iat": now_secs(),
+    });
+    let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::RS256);
+    header.kid = Some("test-key-1".into());
+    jsonwebtoken::encode(&header, &claims, &inner.encoding_key)
+        .expect("sign JWT with test-only RSA key")
 }
 
 fn handle_request(mut request: tiny_http::Request, inner: &Inner) {
@@ -191,19 +197,7 @@ fn jwks_document(modulus_b64: &str) -> serde_json::Value {
 /// the token this route hands back, only that the shape is right. Callers
 /// that need specific claims use [`MockIdp::mint_access_token`] directly.
 fn token_document(inner: &Inner, _body: &str) -> serde_json::Value {
-    let access_token = {
-        let claims = serde_json::json!({
-            "iss": inner.issuer,
-            "sub": "mock-user",
-            "aud": "mqlens",
-            "exp": now_secs() + 3600,
-            "iat": now_secs(),
-        });
-        let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::RS256);
-        header.kid = Some("test-key-1".into());
-        jsonwebtoken::encode(&header, &claims, &inner.encoding_key)
-            .expect("sign JWT with test-only RSA key")
-    };
+    let access_token = sign_access_token(inner, "mock-user", "mqlens");
 
     serde_json::json!({
         "access_token": access_token,
