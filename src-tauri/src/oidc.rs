@@ -4,6 +4,9 @@ use base64::Engine as _;
 use rand::RngExt as _;
 use sha2::{Digest, Sha256};
 
+mod sanitised;
+use sanitised::WhitelistedCode;
+
 pub(crate) const B64: base64::engine::general_purpose::GeneralPurpose =
     base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
@@ -46,45 +49,6 @@ pub fn random_token() -> String {
     B64.encode(bytes)
 }
 
-/// Reduce IdP-supplied text to `[A-Za-z0-9_-]`, capped at 40 chars. OAuth error
-/// codes are that shape; anything else is not worth rendering.
-fn sanitise_code(raw: &str) -> String {
-    raw.chars()
-        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
-        .take(40)
-        .collect()
-}
-
-/// A code that has passed `sanitise_code`. The field is private to this module,
-/// so the ONLY way to obtain one is `SanitisedCode::new`, which sanitises.
-/// That makes raw IdP text unrepresentable rather than merely discouraged.
-/// Derived `Debug` and `Serialize` are safe: the value they render is already sanitised.
-#[derive(Clone, PartialEq, Eq)]
-pub struct SanitisedCode(String);
-
-impl SanitisedCode {
-    pub fn new(raw: &str) -> Self {
-        Self(sanitise_code(raw))
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl std::fmt::Debug for SanitisedCode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Safe: the inner value is already sanitised.
-        f.debug_struct("SanitisedCode").field("0", &self.0).finish()
-    }
-}
-
-impl serde::Serialize for SanitisedCode {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        // Safe: the inner value is already sanitised.
-        self.0.serialize(serializer)
-    }
-}
 
 /// Declare simple error variants, their locale keys, and test data in one place.
 /// Adding a variant requires updating exactly one line, and it is impossible
@@ -97,7 +61,7 @@ macro_rules! oidc_errors {
         #[derive(Clone, PartialEq, Eq)]
         pub enum OidcError {
             $($variant,)+
-            IdpOauthError { code: SanitisedCode },
+            IdpOauthError { code: WhitelistedCode },
         }
 
         impl std::fmt::Debug for OidcError {
@@ -138,9 +102,11 @@ macro_rules! oidc_errors {
                 }
             }
 
-            /// Create an IdP OAuth error with the code sanitised at construction time.
+            /// Create an IdP OAuth error with the code validated against the
+            /// whitelist of known RFC 6749/OIDC error identifiers. Unknown codes
+            /// render as "unrecognized" to guarantee no secret material escapes.
             pub fn idp_oauth_error(raw: &str) -> Self {
-                Self::IdpOauthError { code: SanitisedCode::new(raw) }
+                Self::IdpOauthError { code: WhitelistedCode::new(raw) }
             }
 
             #[cfg(test)]
@@ -252,16 +218,15 @@ mod tests {
     }
 
     /// The whole point of the taxonomy: a rendered error is safe to log.
-    /// This test verifies that neither Display nor Debug output contains secrets.
+    /// This test verifies that secrets—including realistic OAuth/OIDC codes
+    /// and full URLs—cannot appear in rendered output.
     #[test]
     fn no_error_ever_renders_secret_material() {
-        // Secrets with special characters that will be stripped by sanitise_code,
-        // ensuring the test actually exercises the redaction guarantee.
         const SECRETS: [&str; 5] = [
-            "access_denied\nBearer test-auth-code",
-            "invalid_scope; token=test-access-token",
-            "server_error\x00test-refresh-token",
-            "unauthorized!super-secret-verifier",
+            "test-auth-code",
+            "test-access-token",
+            "test-refresh-token",
+            "super-secret-verifier",
             "https://idp.example.com/callback?code=test-auth-code",
         ];
 
@@ -270,74 +235,80 @@ mod tests {
             let rendered = format!("{error} | {error:?}");
             for secret in SECRETS {
                 assert!(
-                    !rendered.contains("test-auth-code")
-                        && !rendered.contains("test-access-token")
-                        && !rendered.contains("test-refresh-token")
-                        && !rendered.contains("super-secret-verifier"),
-                    "{error:?} leaked a secret: {rendered}"
+                    !rendered.contains(secret),
+                    "{error:?} leaked {secret}: {rendered}"
                 );
             }
         }
 
-        // Also test IdpOauthError explicitly with secret-bearing codes, verifying
-        // both Display and Debug outputs are redacted. This is the critical test
-        // for the redaction guarantee on the variant that carries attacker-influenced data.
+        // Explicitly test IdpOauthError with realistic secrets. The whitelist
+        // guarantees they render as "unrecognized", not as the secret itself.
         for secret in SECRETS {
             let error = OidcError::idp_oauth_error(secret);
             let display = format!("{error}");
             let debug = format!("{error:?}");
 
             assert!(
-                !display.contains("test-auth-code")
-                    && !display.contains("test-access-token")
-                    && !display.contains("test-refresh-token")
-                    && !display.contains("super-secret-verifier"),
-                "Display leaked a secret in: {display}"
+                !display.contains(secret),
+                "Display leaked {secret} in: {display}"
             );
             assert!(
-                !debug.contains("test-auth-code")
-                    && !debug.contains("test-access-token")
-                    && !debug.contains("test-refresh-token")
-                    && !debug.contains("super-secret-verifier"),
-                "Debug leaked a secret in: {debug}"
+                !debug.contains(secret),
+                "Debug leaked {secret} in: {debug}"
+            );
+            // Verify unknown codes are rendered as "unrecognized"
+            assert!(
+                display.contains("unrecognized"),
+                "Unknown code should render as 'unrecognized' in: {display}"
             );
         }
     }
 
-    /// An IdP-supplied OAuth error code is attacker-influenced text. Keep it to a
-    /// short, boring shape so it cannot smuggle a token or newline into a log.
-    /// This test verifies that sanitisation happens at construction time.
+    /// The whitelist of known OAuth/OIDC error codes ensures that only
+    /// recognized identifiers are rendered. Unknown codes — including
+    /// injection attempts — all render as "unrecognized".
     #[test]
-    fn oauth_error_codes_are_sanitised() {
-        let raw_code = "access_denied\nBearer test-access-token";
-        let error = OidcError::idp_oauth_error(raw_code);
-        let rendered = format!("{error}");
+    fn oauth_error_codes_are_whitelisted() {
+        // Known RFC 6749 error code passes through
+        let known = OidcError::idp_oauth_error("access_denied");
+        let display = format!("{known}");
+        assert!(display.contains("access_denied"));
 
-        assert!(rendered.contains("access_denied"));
-        assert!(!rendered.contains("test-access-token"));
-        assert!(!rendered.contains('\n'));
+        // Unknown code renders as unrecognized (guaranteed safe)
+        let unknown = OidcError::idp_oauth_error("malicious_error_with_Bearer_token");
+        let display = format!("{unknown}");
+        assert!(display.contains("unrecognized"));
+        assert!(!display.contains("Bearer_token"));
+        assert!(!display.contains("malicious"));
 
-        // Verify Debug also doesn't leak the original code
-        let debug = format!("{error:?}");
-        assert!(!debug.contains("test-access-token"));
-        assert!(!debug.contains('\n'));
+        // Injection attempt with newline: still unrecognized and safe
+        let injection = OidcError::idp_oauth_error("access_denied\nBearer secret-token");
+        let display = format!("{injection}");
+        assert!(display.contains("unrecognized"));
+        assert!(!display.contains("Bearer"));
+        assert!(!display.contains("secret-token"));
     }
 
-    /// Prove that raw text is structurally unrepresentable. If this test were
-    /// changed to construct IdpOauthError literally with an unsanitised code,
-    /// it would fail to compile: `SanitisedCode` cannot be constructed directly
-    /// with raw text. The only path is through `SanitisedCode::new()`.
+    /// Prove that raw text cannot be directly constructed into an error.
+    /// `WhitelistedCode` is in a child module with a private field, so the
+    /// ONLY way to construct it is via `WhitelistedCode::new()`, which enforces
+    /// the whitelist. No code anywhere can write `WhitelistedCode(raw)` directly.
     #[test]
-    fn literal_construction_requires_sanitisation() {
-        // This line would NOT compile if uncommented:
-        // let _ = OidcError::IdpOauthError { code: "secret\nBearer token".to_string() };
-        // Error: expected `SanitisedCode`, found `String`
+    fn literal_construction_impossible() {
+        // These would NOT compile:
+        // let _ = WhitelistedCode("secret-code".to_string());
+        // Error: tuple struct constructor `WhitelistedCode` is private
+        //
+        // let _ = OidcError::IdpOauthError {
+        //     code: WhitelistedCode("secret-code".to_string())
+        // };
+        // Error: tuple struct constructor `WhitelistedCode` is private
 
-        // The only way to construct it is via the sanitising constructor:
-        let error = OidcError::idp_oauth_error("secret\nBearer token");
-        // After sanitization, the newline and everything after is stripped.
-        // "secret" remains, "Bearer token" is gone.
+        // The only way to construct it is via the whitelisting constructor:
+        let error = OidcError::idp_oauth_error("secret-code");
+        // Unknown codes are rendered as "unrecognized", not the secret
         let debug = format!("{error:?}");
-        assert!(!debug.contains("Bearer token"), "Debug leaked secret in: {debug}");
+        assert!(!debug.contains("secret-code"), "Debug leaked secret in: {debug}");
+        assert!(debug.contains("unrecognized"), "Unknown code should render as unrecognized: {debug}");
     }
 }
