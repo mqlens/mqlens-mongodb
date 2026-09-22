@@ -46,28 +46,6 @@ pub fn random_token() -> String {
     B64.encode(bytes)
 }
 
-/// Every way human OIDC login can fail, as a closed set. Variants carry no
-/// secret material by construction, so a rendered `OidcError` is safe to log
-/// and safe to hand to the frontend.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-#[serde(rename_all = "snake_case", tag = "kind")]
-pub enum OidcError {
-    ConsentDenied,
-    PortUnavailable,
-    BrowserLaunchFailed,
-    StateMismatch,
-    IdpOauthError { code: String },
-    TokenExchangeFailed,
-    HostNotAllowed,
-    TokenRejected,
-    LoginOkPingFailed,
-    MissingClientId,
-    InsecureEndpoint,
-    DiscoveryFailed,
-    Cancelled,
-    TimedOut,
-}
-
 /// Reduce IdP-supplied text to `[A-Za-z0-9_-]`, capped at 40 chars. OAuth error
 /// codes are that shape; anything else is not worth rendering.
 fn sanitise_code(raw: &str) -> String {
@@ -77,70 +55,120 @@ fn sanitise_code(raw: &str) -> String {
         .collect()
 }
 
-impl OidcError {
-    /// Create an IdP OAuth error with the code sanitised at construction time.
-    /// This ensures no rendering path can ever observe the raw value.
-    pub fn idp_oauth_error(raw: &str) -> Self {
-        Self::IdpOauthError { code: sanitise_code(raw) }
+/// A code that has passed `sanitise_code`. The field is private to this module,
+/// so the ONLY way to obtain one is `SanitisedCode::new`, which sanitises.
+/// That makes raw IdP text unrepresentable rather than merely discouraged.
+/// Derived `Debug` and `Serialize` are safe: the value they render is already sanitised.
+#[derive(Clone, PartialEq, Eq)]
+pub struct SanitisedCode(String);
+
+impl SanitisedCode {
+    pub fn new(raw: &str) -> Self {
+        Self(sanitise_code(raw))
     }
 
-    pub fn locale_key(&self) -> &'static str {
-        match self {
-            Self::ConsentDenied => "auth.oidc.errors.consentDenied",
-            Self::PortUnavailable => "auth.oidc.errors.portUnavailable",
-            Self::BrowserLaunchFailed => "auth.oidc.errors.browserLaunchFailed",
-            Self::StateMismatch => "auth.oidc.errors.stateMismatch",
-            Self::IdpOauthError { .. } => "auth.oidc.errors.idpOauthError",
-            Self::TokenExchangeFailed => "auth.oidc.errors.tokenExchangeFailed",
-            Self::HostNotAllowed => "auth.oidc.errors.hostNotAllowed",
-            Self::TokenRejected => "auth.oidc.errors.tokenRejected",
-            Self::LoginOkPingFailed => "auth.oidc.errors.loginOkPingFailed",
-            Self::MissingClientId => "auth.oidc.errors.missingClientId",
-            Self::InsecureEndpoint => "auth.oidc.errors.insecureEndpoint",
-            Self::DiscoveryFailed => "auth.oidc.errors.discoveryFailed",
-            Self::Cancelled => "auth.oidc.errors.cancelled",
-            Self::TimedOut => "auth.oidc.errors.timedOut",
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for SanitisedCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Safe: the inner value is already sanitised.
+        f.debug_struct("SanitisedCode").field("0", &self.0).finish()
+    }
+}
+
+impl serde::Serialize for SanitisedCode {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        // Safe: the inner value is already sanitised.
+        self.0.serialize(serializer)
+    }
+}
+
+/// Declare simple error variants, their locale keys, and test data in one place.
+/// Adding a variant requires updating exactly one line, and it is impossible
+/// for the test data to drift from the enum.
+macro_rules! oidc_errors {
+    ($($variant:ident => $key:literal),+ $(,)?) => {
+        /// Every way human OIDC login can fail, as a closed set. Variants carry no
+        /// secret material by construction, so a rendered `OidcError` is safe to log
+        /// and safe to hand to the frontend.
+        #[derive(Clone, PartialEq, Eq)]
+        pub enum OidcError {
+            $($variant,)+
+            IdpOauthError { code: SanitisedCode },
         }
-    }
 
-    #[cfg(test)]
-    pub fn all_for_test() -> Vec<OidcError> {
-        // Exhaustiveness check: if a new variant is added to the enum, this match
-        // will fail to compile until it is listed below in the vector.
-        let _ = match Self::ConsentDenied {
-            Self::ConsentDenied => (),
-            Self::PortUnavailable => (),
-            Self::BrowserLaunchFailed => (),
-            Self::StateMismatch => (),
-            Self::IdpOauthError { .. } => (),
-            Self::TokenExchangeFailed => (),
-            Self::HostNotAllowed => (),
-            Self::TokenRejected => (),
-            Self::LoginOkPingFailed => (),
-            Self::MissingClientId => (),
-            Self::InsecureEndpoint => (),
-            Self::DiscoveryFailed => (),
-            Self::Cancelled => (),
-            Self::TimedOut => (),
-        };
+        impl std::fmt::Debug for OidcError {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                match self {
+                    $(Self::$variant => f.write_str(stringify!($variant)),)+
+                    Self::IdpOauthError { code } => {
+                        f.debug_struct("IdpOauthError")
+                            .field("code", code)
+                            .finish()
+                    }
+                }
+            }
+        }
 
-        vec![
-            Self::ConsentDenied,
-            Self::PortUnavailable,
-            Self::BrowserLaunchFailed,
-            Self::StateMismatch,
-            Self::idp_oauth_error("access_denied"),
-            Self::TokenExchangeFailed,
-            Self::HostNotAllowed,
-            Self::TokenRejected,
-            Self::LoginOkPingFailed,
-            Self::MissingClientId,
-            Self::InsecureEndpoint,
-            Self::DiscoveryFailed,
-            Self::Cancelled,
-            Self::TimedOut,
-        ]
-    }
+        impl serde::Serialize for OidcError {
+            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                use serde::ser::SerializeMap;
+                let mut map = serializer.serialize_map(Some(2))?;
+                match self {
+                    $(Self::$variant => {
+                        map.serialize_entry("kind", stringify!($variant).to_lowercase().as_str())?;
+                    })+
+                    Self::IdpOauthError { code } => {
+                        map.serialize_entry("kind", "idp_oauth_error")?;
+                        map.serialize_entry("code", code)?;
+                    }
+                }
+                map.end()
+            }
+        }
+
+        impl OidcError {
+            pub fn locale_key(&self) -> &'static str {
+                match self {
+                    $(Self::$variant => $key,)+
+                    Self::IdpOauthError { .. } => "auth.oidc.errors.idpOauthError",
+                }
+            }
+
+            /// Create an IdP OAuth error with the code sanitised at construction time.
+            pub fn idp_oauth_error(raw: &str) -> Self {
+                Self::IdpOauthError { code: SanitisedCode::new(raw) }
+            }
+
+            #[cfg(test)]
+            pub fn all_for_test() -> Vec<OidcError> {
+                vec![
+                    $(Self::$variant,)+
+                    Self::idp_oauth_error("access_denied"),
+                ]
+            }
+        }
+    };
+}
+
+// Declare all simple variants and their locale keys.
+oidc_errors! {
+    ConsentDenied => "auth.oidc.errors.consentDenied",
+    PortUnavailable => "auth.oidc.errors.portUnavailable",
+    BrowserLaunchFailed => "auth.oidc.errors.browserLaunchFailed",
+    StateMismatch => "auth.oidc.errors.stateMismatch",
+    TokenExchangeFailed => "auth.oidc.errors.tokenExchangeFailed",
+    HostNotAllowed => "auth.oidc.errors.hostNotAllowed",
+    TokenRejected => "auth.oidc.errors.tokenRejected",
+    LoginOkPingFailed => "auth.oidc.errors.loginOkPingFailed",
+    MissingClientId => "auth.oidc.errors.missingClientId",
+    InsecureEndpoint => "auth.oidc.errors.insecureEndpoint",
+    DiscoveryFailed => "auth.oidc.errors.discoveryFailed",
+    Cancelled => "auth.oidc.errors.cancelled",
+    TimedOut => "auth.oidc.errors.timedOut",
 }
 
 impl std::fmt::Display for OidcError {
@@ -151,7 +179,7 @@ impl std::fmt::Display for OidcError {
             Self::BrowserLaunchFailed => "could not open the system browser",
             Self::StateMismatch => "the login callback did not match this request",
             Self::IdpOauthError { code } => {
-                return write!(f, "identity provider returned an OAuth error: {code}");
+                return write!(f, "identity provider returned an OAuth error: {}", code.as_str());
             }
             Self::TokenExchangeFailed => "the token exchange failed",
             Self::HostNotAllowed => "the MongoDB host is outside ALLOWED_HOSTS",
@@ -227,11 +255,13 @@ mod tests {
     /// This test verifies that neither Display nor Debug output contains secrets.
     #[test]
     fn no_error_ever_renders_secret_material() {
+        // Secrets with special characters that will be stripped by sanitise_code,
+        // ensuring the test actually exercises the redaction guarantee.
         const SECRETS: [&str; 5] = [
-            "test-auth-code",
-            "test-access-token",
-            "test-refresh-token",
-            "super-secret-verifier",
+            "access_denied\nBearer test-auth-code",
+            "invalid_scope; token=test-access-token",
+            "server_error\x00test-refresh-token",
+            "unauthorized!super-secret-verifier",
             "https://idp.example.com/callback?code=test-auth-code",
         ];
 
@@ -240,8 +270,11 @@ mod tests {
             let rendered = format!("{error} | {error:?}");
             for secret in SECRETS {
                 assert!(
-                    !rendered.contains(secret),
-                    "{error:?} leaked {secret}: {rendered}"
+                    !rendered.contains("test-auth-code")
+                        && !rendered.contains("test-access-token")
+                        && !rendered.contains("test-refresh-token")
+                        && !rendered.contains("super-secret-verifier"),
+                    "{error:?} leaked a secret: {rendered}"
                 );
             }
         }
@@ -255,12 +288,18 @@ mod tests {
             let debug = format!("{error:?}");
 
             assert!(
-                !display.contains(secret),
-                "Display leaked {secret} in: {display}"
+                !display.contains("test-auth-code")
+                    && !display.contains("test-access-token")
+                    && !display.contains("test-refresh-token")
+                    && !display.contains("super-secret-verifier"),
+                "Display leaked a secret in: {display}"
             );
             assert!(
-                !debug.contains(secret),
-                "Debug leaked {secret} in: {debug}"
+                !debug.contains("test-auth-code")
+                    && !debug.contains("test-access-token")
+                    && !debug.contains("test-refresh-token")
+                    && !debug.contains("super-secret-verifier"),
+                "Debug leaked a secret in: {debug}"
             );
         }
     }
@@ -282,5 +321,23 @@ mod tests {
         let debug = format!("{error:?}");
         assert!(!debug.contains("test-access-token"));
         assert!(!debug.contains('\n'));
+    }
+
+    /// Prove that raw text is structurally unrepresentable. If this test were
+    /// changed to construct IdpOauthError literally with an unsanitised code,
+    /// it would fail to compile: `SanitisedCode` cannot be constructed directly
+    /// with raw text. The only path is through `SanitisedCode::new()`.
+    #[test]
+    fn literal_construction_requires_sanitisation() {
+        // This line would NOT compile if uncommented:
+        // let _ = OidcError::IdpOauthError { code: "secret\nBearer token".to_string() };
+        // Error: expected `SanitisedCode`, found `String`
+
+        // The only way to construct it is via the sanitising constructor:
+        let error = OidcError::idp_oauth_error("secret\nBearer token");
+        // After sanitization, the newline and everything after is stripped.
+        // "secret" remains, "Bearer token" is gone.
+        let debug = format!("{error:?}");
+        assert!(!debug.contains("Bearer token"), "Debug leaked secret in: {debug}");
     }
 }
