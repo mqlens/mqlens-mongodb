@@ -1449,6 +1449,37 @@ mod tests {
         (opener, opened)
     }
 
+    /// Like `simulating_opener`, but completes the IdP redirect *before
+    /// returning* rather than merely kicking it off — so that by the time
+    /// `run_flow_inner` reaches its `tokio::select!`, the loopback
+    /// listener's oneshot has already fired and that arm is genuinely ready
+    /// on the very first poll, not just "ready soon". `open` is a
+    /// synchronous `Fn`, so it can't `.await` the GET itself: the GET runs
+    /// on a plain OS thread with its own standalone tokio runtime, and
+    /// `open` blocks (via `JoinHandle::join`) until that thread is done.
+    /// Requires a multi-threaded test runtime with at least one other
+    /// worker thread free to run the listener's own accept loop while this
+    /// one blocks — see the callers, which use
+    /// `#[tokio::test(flavor = "multi_thread", ...)]`.
+    pub(super) fn completing_opener() -> (BrowserOpener, Arc<StdMutex<Vec<String>>>) {
+        let opened = Arc::new(StdMutex::new(Vec::new()));
+        let recorder = opened.clone();
+        let opener: BrowserOpener = Arc::new(move |url: &str| {
+            recorder.lock().unwrap().push(url.to_string());
+            let url = url.to_string();
+            let handle = std::thread::spawn(move || {
+                let rt = tokio::runtime::Runtime::new()
+                    .expect("build a standalone runtime for the completing opener");
+                rt.block_on(async {
+                    let _ = reqwest::Client::new().get(&url).send().await;
+                });
+            });
+            handle.join().expect("completing opener thread panicked");
+            Ok(())
+        });
+        (opener, opened)
+    }
+
     fn context_for(idp: &MockIdp, refresh: Option<&str>) -> CallbackContext {
         CallbackContext::builder()
             .version(1u32)
@@ -1629,35 +1660,38 @@ mod tests {
         url_params(url).get(key).cloned().unwrap_or_default()
     }
 
-    /// Reproduces, deterministically, the review finding that
-    /// `run_flow_inner`'s `tokio::select!` (listener, then deadline, then
-    /// cancel, in that declared order) could pick the deadline or cancel arm
-    /// over the listener even when the listener is *also* ready in the same
-    /// poll — because a plain `tokio::select!` breaks ties among
-    /// simultaneously-ready branches at random, not by declaration order.
-    ///
-    /// A real timing race (an actual callback landing at the same instant a
-    /// real deadline elapses) is not reliably reproducible on demand. This
-    /// test instead uses the same three-armed shape with trivial,
-    /// already-resolved futures (`async {}` blocks with no internal
-    /// `.await`, which are `Poll::Ready` on their very first poll) — so all
-    /// three branches are *genuinely* simultaneously ready on every
-    /// iteration, exactly the scenario the review described, without
-    /// depending on OS/scheduler timing at all.
-    #[tokio::test]
-    async fn a_ready_listener_arm_always_wins_a_race_against_a_ready_deadline_or_cancel() {
-        for _ in 0..200 {
-            let winner = tokio::select! {
-                biased;
-                _ = async {} => "listener",
-                _ = async {} => "deadline",
-                _ = async {} => "cancel",
-            };
-            assert_eq!(
-                winner, "listener",
-                "a callback already in hand must not be discarded by a deadline or \
-                 cancel that becomes ready in the same wake"
-            );
+    /// Drives the real `run_flow` through the exact race the review
+    /// flagged: by the time `run_flow_inner` reaches its `tokio::select!`,
+    /// all three arms are already ready on the very first poll —
+    /// `completing_opener` has already driven the callback into the
+    /// loopback listener's oneshot before `run_flow_inner` even calls
+    /// `open()`'s continuation, the deadline is already in the past, and
+    /// the session is already cancelled. Without `biased;` (and the
+    /// listener arm listed first) in `run_flow_inner`'s `select!`, the
+    /// random tie-break would discard the held authorization code roughly
+    /// two times out of three; looping 50 times makes a regression catch
+    /// near-certain.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_callback_already_in_hand_beats_an_already_elapsed_deadline_and_a_pre_cancelled_session(
+    ) {
+        let idp = MockIdp::start();
+
+        for _ in 0..50 {
+            let (session, _) = test_session();
+            session.cancel();
+            let (opener, _) = completing_opener();
+
+            let mut context = context_for(&idp, None);
+            context.timeout = Some(std::time::Instant::now() - std::time::Duration::from_secs(1));
+
+            let result = run_flow(context, session, opener, reqwest::Client::new()).await;
+            match result {
+                Ok(response) => assert!(!response.access_token.is_empty()),
+                Err(error) => panic!(
+                    "a callback already in hand must win over an already-elapsed \
+                     deadline and a pre-cancelled session; got {error:?}"
+                ),
+            }
         }
     }
 }
