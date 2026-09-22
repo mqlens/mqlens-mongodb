@@ -756,7 +756,18 @@ async fn run_flow_inner(
     // shuts the socket down, so no explicit shutdown call is needed on the
     // timeout/cancel paths. On the winning `wait()` path, `wait()` itself
     // shuts down before returning (Task 6).
+    //
+    // `biased;` with the listener arm listed first: a plain `tokio::select!`
+    // breaks ties among branches that are ready in the *same* poll at
+    // random, not by declaration order. Without `biased`, a callback that
+    // has already arrived could still lose to a deadline that elapsed or a
+    // cancel that landed in that same wake — reporting `TimedOut` or
+    // `Cancelled` while silently discarding an authorization code already in
+    // hand. `biased` makes the listener win deterministically whenever it
+    // is ready, and the deadline/cancel arms still fire normally whenever it
+    // genuinely is not.
     let code = tokio::select! {
+        biased;
         result = listener.wait(&request.state) => result?,
         _ = wait_for_deadline(ctx.timeout) => return Err(OidcError::TimedOut),
         _ = wait_for_cancel(session) => return Err(OidcError::Cancelled),
@@ -1519,6 +1530,10 @@ mod tests {
 
     #[tokio::test]
     async fn cancelling_returns_promptly_and_does_not_hang() {
+        // `idp` is started but deliberately never contacted: `recording_opener`
+        // never navigates, so nothing ever drives a callback into the
+        // loopback listener, and `run_flow` must fall out via cancellation
+        // instead of hanging on a callback that will never arrive.
         let idp = MockIdp::start();
         let (session, _) = test_session();
         let (opener, _) = recording_opener();
@@ -1543,6 +1558,11 @@ mod tests {
 
     #[tokio::test]
     async fn an_expired_deadline_reports_a_timeout() {
+        // Same as `cancelling_returns_promptly_and_does_not_hang` above:
+        // `idp` is started but deliberately never contacted, since
+        // `recording_opener` never navigates — `run_flow` must fall out via
+        // the deadline instead of hanging on a callback that will never
+        // arrive.
         let idp = MockIdp::start();
         let (session, _) = test_session();
         let (opener, _) = recording_opener();
@@ -1607,5 +1627,37 @@ mod tests {
 
     fn query_value(url: &str, key: &str) -> String {
         url_params(url).get(key).cloned().unwrap_or_default()
+    }
+
+    /// Reproduces, deterministically, the review finding that
+    /// `run_flow_inner`'s `tokio::select!` (listener, then deadline, then
+    /// cancel, in that declared order) could pick the deadline or cancel arm
+    /// over the listener even when the listener is *also* ready in the same
+    /// poll — because a plain `tokio::select!` breaks ties among
+    /// simultaneously-ready branches at random, not by declaration order.
+    ///
+    /// A real timing race (an actual callback landing at the same instant a
+    /// real deadline elapses) is not reliably reproducible on demand. This
+    /// test instead uses the same three-armed shape with trivial,
+    /// already-resolved futures (`async {}` blocks with no internal
+    /// `.await`, which are `Poll::Ready` on their very first poll) — so all
+    /// three branches are *genuinely* simultaneously ready on every
+    /// iteration, exactly the scenario the review described, without
+    /// depending on OS/scheduler timing at all.
+    #[tokio::test]
+    async fn a_ready_listener_arm_always_wins_a_race_against_a_ready_deadline_or_cancel() {
+        for _ in 0..200 {
+            let winner = tokio::select! {
+                biased;
+                _ = async {} => "listener",
+                _ = async {} => "deadline",
+                _ = async {} => "cancel",
+            };
+            assert_eq!(
+                winner, "listener",
+                "a callback already in hand must not be discarded by a deadline or \
+                 cancel that becomes ready in the same wake"
+            );
+        }
     }
 }

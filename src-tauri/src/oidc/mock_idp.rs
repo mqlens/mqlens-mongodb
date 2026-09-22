@@ -475,4 +475,38 @@ mod tests {
         assert_eq!(recorded.code_verifier.as_deref(), Some("verifier-abc"));
         assert_eq!(recorded.refresh_token, None);
     }
+
+    #[tokio::test]
+    async fn reject_refresh_tokens_only_rejects_the_refresh_grant() {
+        let idp = MockIdp::start();
+        idp.reject_refresh_tokens();
+        let client = reqwest::Client::new();
+
+        let refresh_response = client
+            .post(format!("{}/token", idp.issuer()))
+            .header(
+                reqwest::header::CONTENT_TYPE,
+                "application/x-www-form-urlencoded",
+            )
+            .body("grant_type=refresh_token&refresh_token=test-refresh-token")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(refresh_response.status(), 400);
+        let body: serde_json::Value = refresh_response.json().await.unwrap();
+        assert_eq!(body["error"], "invalid_grant");
+
+        // authorization_code keeps working even after reject_refresh_tokens().
+        let code_response = client
+            .post(format!("{}/token", idp.issuer()))
+            .header(
+                reqwest::header::CONTENT_TYPE,
+                "application/x-www-form-urlencoded",
+            )
+            .body("grant_type=authorization_code&code=test-auth-code&code_verifier=verifier-abc")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(code_response.status(), 200);
+    }
 }
