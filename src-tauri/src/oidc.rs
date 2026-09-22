@@ -528,6 +528,90 @@ impl Drop for LoopbackListener {
     }
 }
 
+use mongodb::options::oidc::IdpServerResponse;
+
+#[derive(serde::Deserialize)]
+struct TokenResponse {
+    access_token: String,
+    expires_in: Option<u64>,
+    refresh_token: Option<String>,
+}
+
+fn into_idp_response(token: TokenResponse) -> IdpServerResponse {
+    let expires = token
+        .expires_in
+        .map(|secs| std::time::Instant::now() + std::time::Duration::from_secs(secs));
+    IdpServerResponse::builder()
+        .access_token(token.access_token)
+        .expires(expires)
+        .refresh_token(token.refresh_token)
+        .build()
+}
+
+/// POST the form and map the response. Every failure collapses to
+/// `TokenExchangeFailed`: the underlying reqwest error can carry the request
+/// URL, which carries the code, so it must not reach the error.
+async fn post_token_form(
+    endpoints: &Endpoints,
+    form: &[(&str, &str)],
+    http: &reqwest::Client,
+) -> Result<IdpServerResponse, OidcError> {
+    require_secure(&endpoints.token)?;
+    let response = http
+        .post(&endpoints.token)
+        .form(form)
+        .send()
+        .await
+        .map_err(|_| OidcError::TokenExchangeFailed)?;
+    if !response.status().is_success() {
+        return Err(OidcError::TokenExchangeFailed);
+    }
+    let token: TokenResponse = response.json().await.map_err(|_| OidcError::TokenExchangeFailed)?;
+    Ok(into_idp_response(token))
+}
+
+/// Exchange an authorization code (with its PKCE verifier) for tokens.
+pub async fn exchange_code(
+    endpoints: &Endpoints,
+    client_id: &str,
+    code: &str,
+    verifier: &PkceVerifier,
+    redirect_uri: &str,
+    http: &reqwest::Client,
+) -> Result<IdpServerResponse, OidcError> {
+    post_token_form(
+        endpoints,
+        &[
+            ("grant_type", "authorization_code"),
+            ("code", code),
+            ("client_id", client_id),
+            ("redirect_uri", redirect_uri),
+            ("code_verifier", verifier.as_str()),
+        ],
+        http,
+    )
+    .await
+}
+
+/// Use a refresh token to obtain a new access token.
+pub async fn refresh_token(
+    endpoints: &Endpoints,
+    client_id: &str,
+    refresh: &str,
+    http: &reqwest::Client,
+) -> Result<IdpServerResponse, OidcError> {
+    post_token_form(
+        endpoints,
+        &[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", refresh),
+            ("client_id", client_id),
+        ],
+        http,
+    )
+    .await
+}
+
 #[cfg(test)]
 pub mod mock_idp;
 
@@ -1035,6 +1119,98 @@ mod tests {
             reqwest::Client::new().get(&redirect).send().await.is_err(),
             "the socket must be closed"
         );
+    }
+
+    #[tokio::test]
+    async fn exchanging_a_code_sends_the_verifier_and_returns_a_token() {
+        let idp = MockIdp::start();
+        let http = reqwest::Client::new();
+        let endpoints = discover(&idp.issuer(), &http).await.unwrap();
+        let verifier = PkceVerifier::from_string("verifier-xyz".to_string());
+
+        let response = exchange_code(
+            &endpoints,
+            "client-abc",
+            "test-auth-code",
+            &verifier,
+            "http://127.0.0.1:1/callback",
+            &http,
+        )
+        .await
+        .unwrap();
+
+        assert!(!response.access_token.is_empty());
+        assert_eq!(response.refresh_token.as_deref(), Some("test-refresh-token"));
+        assert!(response.expires.is_some(), "expires_in must become an Instant");
+
+        let sent = idp.last_token_request().unwrap();
+        assert_eq!(sent.grant_type, "authorization_code");
+        assert_eq!(sent.code.as_deref(), Some("test-auth-code"));
+        assert_eq!(sent.code_verifier.as_deref(), Some("verifier-xyz"));
+    }
+
+    #[tokio::test]
+    async fn refreshing_uses_the_refresh_grant() {
+        let idp = MockIdp::start();
+        let http = reqwest::Client::new();
+        let endpoints = discover(&idp.issuer(), &http).await.unwrap();
+
+        let response = refresh_token(&endpoints, "client-abc", "test-refresh-token", &http)
+            .await
+            .unwrap();
+        assert!(!response.access_token.is_empty());
+
+        let sent = idp.last_token_request().unwrap();
+        assert_eq!(sent.grant_type, "refresh_token");
+        assert_eq!(sent.refresh_token.as_deref(), Some("test-refresh-token"));
+        assert_eq!(sent.code, None);
+    }
+
+    #[tokio::test]
+    async fn a_non_https_token_endpoint_is_refused_before_any_request() {
+        let http = reqwest::Client::new();
+        let endpoints = Endpoints {
+            authorization: "https://idp.example.com/authorize".into(),
+            token: "http://10.0.0.5/token".into(),
+        };
+        // `assert_eq!` can't compare the whole `Result` here: `IdpServerResponse`
+        // (mongodb 3.9.0) derives no `PartialEq`. `matches!` checks the same
+        // thing — refused with `InsecureEndpoint` — without needing one.
+        let result = exchange_code(
+            &endpoints,
+            "client-abc",
+            "test-auth-code",
+            &PkceVerifier::from_string("v".into()),
+            "http://127.0.0.1:1/callback",
+            &http,
+        )
+        .await;
+        assert!(
+            matches!(result, Err(OidcError::InsecureEndpoint)),
+            "expected Err(InsecureEndpoint) before any request, got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_exchange_does_not_leak_the_code() {
+        let http = reqwest::Client::new();
+        let endpoints = Endpoints {
+            authorization: "https://127.0.0.1:1/authorize".into(),
+            token: "https://127.0.0.1:1/token".into(),
+        };
+        let error = exchange_code(
+            &endpoints,
+            "client-abc",
+            "test-auth-code",
+            &PkceVerifier::from_string("super-secret-verifier".into()),
+            "http://127.0.0.1:1/callback",
+            &http,
+        )
+        .await
+        .unwrap_err();
+        let rendered = format!("{error} | {error:?}");
+        assert!(!rendered.contains("test-auth-code"), "got {rendered}");
+        assert!(!rendered.contains("super-secret-verifier"), "got {rendered}");
     }
 
     fn percent_decode(value: &str) -> String {
