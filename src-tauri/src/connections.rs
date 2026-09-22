@@ -20,6 +20,16 @@ pub enum ConnectionMode {
     ConfirmDestructive,
 }
 
+/// OIDC settings that cannot live in the URI. `ALLOWED_HOSTS` is the only one
+/// in phase 1: `ClientOptions::parse` rejects it as a URI option, so it is
+/// applied to the credential after parsing. A struct rather than a bare
+/// `Vec<String>` so workload settings can be added without a migration.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct OidcProfileConfig {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed_hosts: Vec<String>,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct ConnectionProfile {
     pub id: String,
@@ -41,6 +51,10 @@ pub struct ConnectionProfile {
     /// same additive pattern as `mcp_enabled`.
     #[serde(default)]
     pub connection_mode: ConnectionMode,
+    /// Human OIDC settings (#430). Old profiles without the field read as
+    /// `None` — the same additive pattern as `mcp_enabled`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oidc: Option<OidcProfileConfig>,
 }
 
 fn default_anthropic_model() -> String {
@@ -1344,5 +1358,54 @@ mod rotation_tests {
         assert!(!skipped.exists());
         assert!(!empty.exists());
         assert!(meta_path.exists());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Old vaults have no `oidc` key. They must still read — the same additive
+    /// contract `mcp_enabled` and `connection_mode` rely on.
+    #[test]
+    fn a_profile_saved_before_oidc_still_deserialises() {
+        let json = r#"{"id":"1","name":"Local","uri":"mongodb://localhost:27017"}"#;
+        let profile: ConnectionProfile = serde_json::from_str(json).unwrap();
+        assert_eq!(profile.oidc, None);
+    }
+
+    #[test]
+    fn allowed_hosts_round_trip_through_the_profile() {
+        let profile = ConnectionProfile {
+            id: "1".into(),
+            name: "Corp".into(),
+            uri: "mongodb://mongo.corp.example.com:27017/?authMechanism=MONGODB-OIDC".into(),
+            color_tag: None,
+            ssh: None,
+            mcp_enabled: false,
+            connection_mode: ConnectionMode::Normal,
+            oidc: Some(OidcProfileConfig {
+                allowed_hosts: vec!["mongo.corp.example.com".into()],
+            }),
+        };
+        let round_tripped: ConnectionProfile =
+            serde_json::from_str(&serde_json::to_string(&profile).unwrap()).unwrap();
+        assert_eq!(round_tripped, profile);
+    }
+
+    /// A profile with no OIDC config must not grow an empty `oidc` key.
+    #[test]
+    fn a_non_oidc_profile_serialises_without_the_field() {
+        let profile = ConnectionProfile {
+            id: "1".into(),
+            name: "Local".into(),
+            uri: "mongodb://localhost:27017".into(),
+            color_tag: None,
+            ssh: None,
+            mcp_enabled: false,
+            connection_mode: ConnectionMode::Normal,
+            oidc: None,
+        };
+        assert!(!serde_json::to_string(&profile).unwrap().contains("oidc"));
     }
 }

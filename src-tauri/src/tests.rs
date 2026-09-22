@@ -3951,6 +3951,7 @@ mod tests {
             ssh: None,
             mcp_enabled: false,
             connection_mode: Default::default(),
+            oidc: None,
         };
 
         // Save profile
@@ -3982,6 +3983,7 @@ mod tests {
             }),
             mcp_enabled: true,
             connection_mode: crate::connections::ConnectionMode::ReadOnly,
+            oidc: None,
         };
         profiles.push(profile2.clone());
         crate::connections::save_profiles_to_file(&test_file_path, &profiles)
@@ -4025,6 +4027,7 @@ mod tests {
             ssh: None,
             mcp_enabled: true,
             connection_mode: Default::default(),
+            oidc: None,
         };
         let json = serde_json::to_string(&profile).expect("serialize");
         let round_tripped: ConnectionProfile = serde_json::from_str(&json).expect("deserialize");
@@ -4060,6 +4063,7 @@ mod tests {
                 ssh: None,
                 mcp_enabled: false,
                 connection_mode: mode,
+                oidc: None,
             };
             let json = serde_json::to_string(&profile).expect("serialize");
             let round_tripped: ConnectionProfile = serde_json::from_str(&json).expect("deserialize");
@@ -4541,6 +4545,7 @@ mod tests {
             ssh: None,
             mcp_enabled: false,
             connection_mode: Default::default(),
+            oidc: None,
         }];
         save_profiles_encrypted(&prof_path, &key, &profiles).unwrap();
         // On-disk bytes must not contain the plaintext password.
@@ -4590,6 +4595,7 @@ mod tests {
             ssh: None,
             mcp_enabled: false,
             connection_mode: Default::default(),
+            oidc: None,
         }];
         save_profiles_to_file(&pt_profiles, &profiles).unwrap();
         assert!(pt_profiles.exists());
@@ -4821,6 +4827,7 @@ mod tests {
             ssh: None,
             mcp_enabled: false,
             connection_mode: Default::default(),
+            oidc: None,
         }];
         save_profiles_encrypted(&enc_profiles, &old_key, &profiles).unwrap();
 
@@ -7265,6 +7272,7 @@ mod change_stream_tests {
                 ssh: None,
                 mcp_enabled: false,
                 connection_mode: ConnectionMode::default(),
+                oidc: None,
             }
         }
 

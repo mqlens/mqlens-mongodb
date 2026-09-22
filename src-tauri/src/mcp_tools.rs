@@ -848,6 +848,7 @@ mod tests {
             ssh: None,
             mcp_enabled,
             connection_mode: Default::default(),
+            oidc: None,
         }
     }
 
@@ -865,6 +866,7 @@ mod tests {
             ssh: None,
             mcp_enabled: true,
             connection_mode: mode,
+            oidc: None,
         }
     }
 
@@ -1021,6 +1023,7 @@ mod tests {
                 ssh: None,
                 mcp_enabled: true,
                 connection_mode: crate::connections::ConnectionMode::ReadOnly,
+                oidc: None,
             }],
         );
 
