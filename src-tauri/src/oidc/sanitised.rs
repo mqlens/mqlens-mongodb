@@ -46,6 +46,17 @@ impl WhitelistedCode {
     }
 }
 
+impl From<&str> for WhitelistedCode {
+    /// Forwards to `new()`, so a raw string still only ever produces a
+    /// whitelisted identifier or `"unrecognized"` — this is a convenience
+    /// (`.into()`) for test expectations that already have a `&str`, not a
+    /// second way to bypass the whitelist. Production code still goes
+    /// through `OidcError::idp_oauth_error`.
+    fn from(raw: &str) -> Self {
+        Self::new(raw)
+    }
+}
+
 impl serde::Serialize for WhitelistedCode {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         // Safe: the value is always a whitelisted identifier or "unrecognized".

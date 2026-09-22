@@ -295,6 +295,201 @@ pub fn build_authorization_request(
     Ok(AuthorizationRequest { url, state, nonce, verifier })
 }
 
+/// The query parameters an IdP redirect to `/callback` carries. `state` is
+/// always present in practice (an IdP that omits it fails the constant-time
+/// comparison against our expected state, same as any other mismatch), so
+/// it is not optional here.
+#[derive(Debug, Default)]
+struct CallbackParams {
+    code: Option<String>,
+    state: String,
+    error: Option<String>,
+}
+
+/// Minimal `application/x-www-form-urlencoded` decoding for the callback's
+/// query string: `+` is a space, `%XX` is a byte. Kept local rather than
+/// pulled in as a dependency (`axum`'s own decoder lives behind a `query`
+/// feature we do not otherwise need) — the values here are IdP-controlled
+/// tokens and error codes, not free text, so a minimal decoder is enough.
+fn decode_query_value(value: &str) -> String {
+    let bytes = value.replace('+', " ").into_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(byte) =
+                u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or("zz"), 16)
+            {
+                out.push(byte);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn parse_callback_params(query: &str) -> CallbackParams {
+    let mut params = CallbackParams::default();
+    for pair in query.split('&').filter(|p| !p.is_empty()) {
+        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+        let value = decode_query_value(value);
+        match key {
+            "code" => params.code = Some(value),
+            "state" => params.state = value,
+            "error" => params.error = Some(value),
+            _ => {}
+        }
+    }
+    params
+}
+
+/// Interpret one callback request against the state we sent. Order matters:
+/// a wrong `state` is refused before an `error` or a missing `code` is even
+/// considered, because a request whose state does not match ours is not
+/// authenticated as a response to *our* login attempt at all.
+fn interpret_callback(params: CallbackParams, expected_state: &str) -> Result<String, OidcError> {
+    if !crate::mcp::constant_time_eq(params.state.as_bytes(), expected_state.as_bytes()) {
+        return Err(OidcError::StateMismatch);
+    }
+    if let Some(error) = params.error {
+        return Err(if error == "access_denied" {
+            OidcError::ConsentDenied
+        } else {
+            OidcError::idp_oauth_error(&error)
+        });
+    }
+    params.code.ok_or(OidcError::TokenExchangeFailed)
+}
+
+/// The success page shown in the user's browser after a callback resolves
+/// the login. Deliberately inert: no code, token or state appears here —
+/// this page is rendered in a real, un-sandboxed browser tab, so anything
+/// it echoed would sit in that tab's history and any extension reading the
+/// page.
+const CALLBACK_SUCCESS_PAGE: &str =
+    "<!DOCTYPE html><html><head><title>MQLens</title></head><body>\
+     <p>Login complete. You can close this window and return to MQLens.</p>\
+     </body></html>";
+
+/// Shown to a second request against an already-completed callback (a
+/// reload, a replay, a second tab) — the first request already took the
+/// one-shot sender, so this one never touches it.
+const CALLBACK_REPLAY_PAGE: &str =
+    "<!DOCTYPE html><html><head><title>MQLens</title></head><body>\
+     <p>This login has already completed. You can close this window.</p>\
+     </body></html>";
+
+fn handle_callback(
+    uri: axum::http::Uri,
+    result_tx: std::sync::Arc<StdMutex<Option<oneshot::Sender<CallbackParams>>>>,
+) -> axum::response::Html<&'static str> {
+    let params = parse_callback_params(uri.query().unwrap_or(""));
+    let sent = result_tx
+        .lock()
+        .expect("callback result mutex poisoned")
+        .take()
+        .map(|tx| tx.send(params));
+    match sent {
+        Some(_) => axum::response::Html(CALLBACK_SUCCESS_PAGE),
+        None => axum::response::Html(CALLBACK_REPLAY_PAGE),
+    }
+}
+
+use std::sync::Mutex as StdMutex;
+use tokio::sync::oneshot;
+
+/// A one-shot HTTP server on a loopback port, waiting for exactly one
+/// `GET /callback` from the system browser. Modeled on the MCP server's own
+/// `TcpListener::bind` + `axum::serve(..).with_graceful_shutdown(..)`
+/// idiom (`mcp.rs`).
+pub struct LoopbackListener {
+    pub redirect_uri: String,
+    result_rx: StdMutex<Option<oneshot::Receiver<CallbackParams>>>,
+    shutdown_tx: StdMutex<Option<oneshot::Sender<()>>>,
+}
+
+impl LoopbackListener {
+    /// Bind an ephemeral port on loopback only (`127.0.0.1:0` — never a LAN
+    /// interface) and start serving `GET /callback` in the background. The
+    /// server accepts exactly one request that finds the one-shot sender
+    /// still present; every later request (replay, reload) gets
+    /// [`CALLBACK_REPLAY_PAGE`] instead and does not touch the waiter.
+    pub async fn bind() -> Result<Self, OidcError> {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .map_err(|_| OidcError::PortUnavailable)?;
+        let port = listener
+            .local_addr()
+            .map_err(|_| OidcError::PortUnavailable)?
+            .port();
+        let redirect_uri = format!("http://127.0.0.1:{port}/callback");
+
+        let (result_tx, result_rx) = oneshot::channel::<CallbackParams>();
+        let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+        let result_tx = std::sync::Arc::new(StdMutex::new(Some(result_tx)));
+
+        let router = axum::Router::new().route(
+            "/callback",
+            axum::routing::get(move |uri: axum::http::Uri| {
+                let result_tx = std::sync::Arc::clone(&result_tx);
+                async move { handle_callback(uri, result_tx) }
+            }),
+        );
+
+        tokio::spawn(async move {
+            if let Err(e) = axum::serve(listener, router.into_make_service())
+                .with_graceful_shutdown(async move {
+                    let _ = shutdown_rx.await;
+                })
+                .await
+            {
+                eprintln!("oidc::LoopbackListener: axum::serve exited with an error: {e}");
+            }
+        });
+
+        Ok(Self {
+            redirect_uri,
+            result_rx: StdMutex::new(Some(result_rx)),
+            shutdown_tx: StdMutex::new(Some(shutdown_tx)),
+        })
+    }
+
+    /// Wait for the one callback request, interpret it against
+    /// `expected_state`, and return the authorization code. Every exit path
+    /// — success, any refusal, or the receiver closing because `shutdown()`
+    /// was called first — shuts the listener down before returning, so no
+    /// path leaks the bound socket.
+    pub async fn wait(self, expected_state: &str) -> Result<String, OidcError> {
+        let rx = self.result_rx.lock().expect("result mutex poisoned").take();
+        let outcome = match rx {
+            Some(rx) => match rx.await {
+                Ok(params) => interpret_callback(params, expected_state),
+                // The sender was dropped without sending: the server shut
+                // down (via `shutdown()`, called before or during this
+                // wait) before a callback ever arrived.
+                Err(_) => Err(OidcError::Cancelled),
+            },
+            // Already taken by a previous `wait()` call.
+            None => Err(OidcError::Cancelled),
+        };
+        self.shutdown();
+        outcome
+    }
+
+    /// Drop the socket immediately. Safe to call more than once (a second
+    /// call finds the sender already taken and is a no-op) and safe to call
+    /// before `wait()` — `wait()` then sees the closed channel and returns
+    /// `Err(OidcError::Cancelled)` promptly rather than hanging.
+    pub fn shutdown(&self) {
+        if let Some(tx) = self.shutdown_tx.lock().expect("shutdown mutex poisoned").take() {
+            let _ = tx.send(());
+        }
+    }
+}
+
 #[cfg(test)]
 pub mod mock_idp;
 
@@ -632,6 +827,113 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    async fn get(url: &str) -> reqwest::Response {
+        reqwest::Client::new().get(url).send().await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_matching_callback_yields_the_authorization_code() {
+        let listener = LoopbackListener::bind().await.unwrap();
+        let redirect = listener.redirect_uri.clone();
+        assert!(redirect.starts_with("http://127.0.0.1:"), "got {redirect}");
+
+        let waiter = tokio::spawn(async move { listener.wait("state-abc").await });
+        let response = get(&format!("{redirect}?code=test-auth-code&state=state-abc")).await;
+
+        assert!(response.status().is_success());
+        let page = response.text().await.unwrap();
+        assert!(!page.contains("test-auth-code"), "the success page must not echo the code");
+
+        assert_eq!(waiter.await.unwrap(), Ok("test-auth-code".to_string()));
+    }
+
+    #[tokio::test]
+    async fn a_mismatched_state_is_refused() {
+        let listener = LoopbackListener::bind().await.unwrap();
+        let redirect = listener.redirect_uri.clone();
+        let waiter = tokio::spawn(async move { listener.wait("state-abc").await });
+        get(&format!("{redirect}?code=test-auth-code&state=state-WRONG")).await;
+        assert_eq!(waiter.await.unwrap(), Err(OidcError::StateMismatch));
+    }
+
+    #[tokio::test]
+    async fn an_oauth_error_is_reported_as_denied_consent() {
+        let listener = LoopbackListener::bind().await.unwrap();
+        let redirect = listener.redirect_uri.clone();
+        let waiter = tokio::spawn(async move { listener.wait("state-abc").await });
+        get(&format!("{redirect}?error=access_denied&state=state-abc")).await;
+        assert_eq!(waiter.await.unwrap(), Err(OidcError::ConsentDenied));
+    }
+
+    #[tokio::test]
+    async fn other_oauth_errors_keep_their_code() {
+        let listener = LoopbackListener::bind().await.unwrap();
+        let redirect = listener.redirect_uri.clone();
+        let waiter = tokio::spawn(async move { listener.wait("state-abc").await });
+        get(&format!("{redirect}?error=invalid_scope&state=state-abc")).await;
+        assert_eq!(
+            waiter.await.unwrap(),
+            Err(OidcError::IdpOauthError { code: "invalid_scope".into() })
+        );
+    }
+
+    #[tokio::test]
+    async fn the_wrong_path_is_not_the_callback() {
+        let listener = LoopbackListener::bind().await.unwrap();
+        let base = listener.redirect_uri.replace("/callback", "");
+        let waiter = tokio::spawn(async move { listener.wait("state-abc").await });
+
+        let response = get(&format!("{base}/?code=test-auth-code&state=state-abc")).await;
+        assert_eq!(response.status(), 404);
+        // The real callback still works afterwards.
+        get(&format!("{base}/callback?code=test-auth-code&state=state-abc")).await;
+        assert_eq!(waiter.await.unwrap(), Ok("test-auth-code".to_string()));
+    }
+
+    #[tokio::test]
+    async fn a_post_is_not_the_callback() {
+        let listener = LoopbackListener::bind().await.unwrap();
+        let redirect = listener.redirect_uri.clone();
+        let waiter = tokio::spawn(async move { listener.wait("state-abc").await });
+
+        let response = reqwest::Client::new()
+            .post(format!("{redirect}?code=test-auth-code&state=state-abc"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 405);
+
+        get(&format!("{redirect}?code=test-auth-code&state=state-abc")).await;
+        assert_eq!(waiter.await.unwrap(), Ok("test-auth-code".to_string()));
+    }
+
+    #[tokio::test]
+    async fn a_callback_without_a_code_is_refused() {
+        let listener = LoopbackListener::bind().await.unwrap();
+        let redirect = listener.redirect_uri.clone();
+        let waiter = tokio::spawn(async move { listener.wait("state-abc").await });
+        get(&format!("{redirect}?state=state-abc")).await;
+        assert_eq!(waiter.await.unwrap(), Err(OidcError::TokenExchangeFailed));
+    }
+
+    #[tokio::test]
+    async fn shutdown_releases_the_port_and_resolves_the_waiter() {
+        let listener = LoopbackListener::bind().await.unwrap();
+        let redirect = listener.redirect_uri.clone();
+        listener.shutdown();
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            listener.wait("state-abc"),
+        )
+        .await
+        .expect("wait must return promptly after shutdown, not hang");
+        assert_eq!(result, Err(OidcError::Cancelled));
+        assert!(
+            reqwest::Client::new().get(&redirect).send().await.is_err(),
+            "the socket must be closed"
+        );
     }
 
     fn percent_decode(value: &str) -> String {

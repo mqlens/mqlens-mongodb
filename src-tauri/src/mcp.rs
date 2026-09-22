@@ -1006,7 +1006,10 @@ impl ServerHandler for McpServer {
 /// return as soon as it finds a differing byte). Used to compare SHA-256
 /// digests of the presented vs. expected bearer token so a network timing
 /// side-channel can't help an attacker recover the token byte-by-byte.
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+/// Also reused by the OIDC loopback callback listener (`oidc.rs`) to
+/// compare the returned `state` against the one we sent, for the same
+/// reason (#430).
+pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
     }
