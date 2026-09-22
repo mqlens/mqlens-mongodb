@@ -612,6 +612,159 @@ pub async fn refresh_token(
     .await
 }
 
+use mongodb::options::oidc::CallbackContext;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
+/// What the UI is told as a login attempt progresses. Carries no secret
+/// material: `Failed` wraps an `OidcError`, which is itself constructed to
+/// never contain a token, code or verifier.
+#[derive(Debug)]
+pub enum OidcPhase {
+    WaitingForBrowser,
+    Completed,
+    Failed(OidcError),
+}
+
+/// How the flow reports phase changes back to whatever is driving it (the
+/// Tauri command layer in production, a recording closure in tests).
+pub type PhaseSink = Arc<dyn Fn(OidcPhase) + Send + Sync>;
+
+/// How the flow asks something outside itself to open a URL in the user's
+/// browser. Synchronous because a real browser launcher (`open::that` and
+/// similar) is synchronous; it only has to hand the OS a URL to open, not
+/// wait for the login to finish.
+pub type BrowserOpener = Arc<dyn Fn(&str) -> Result<(), OidcError> + Send + Sync>;
+
+/// One login attempt's shared state. The driver calls our callback from its
+/// own task, so this is how the UI learns a browser is waiting and how a
+/// cancel gets back down into the flow.
+pub struct OidcSession {
+    cancelled: AtomicBool,
+    authorization_url: StdMutex<Option<String>>,
+    sink: PhaseSink,
+}
+
+impl OidcSession {
+    pub fn new(sink: PhaseSink) -> Arc<Self> {
+        Arc::new(Self {
+            cancelled: AtomicBool::new(false),
+            authorization_url: StdMutex::new(None),
+            sink,
+        })
+    }
+
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::SeqCst);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::SeqCst)
+    }
+
+    /// The URL the browser was sent to, so the UI can offer "Open browser
+    /// again" without rebuilding the request (which would rotate `state`).
+    pub fn authorization_url(&self) -> Option<String> {
+        self.authorization_url.lock().ok()?.clone()
+    }
+
+    fn set_authorization_url(&self, url: String) {
+        *self.authorization_url.lock().expect("authorization_url mutex poisoned") = Some(url);
+    }
+
+    fn emit(&self, phase: OidcPhase) {
+        (self.sink)(phase);
+    }
+}
+
+/// Poll `session.is_cancelled()` until it flips, for racing inside
+/// `tokio::select!`. 100ms is frequent enough that a cancel is noticed
+/// promptly without spinning.
+async fn wait_for_cancel(session: &OidcSession) {
+    loop {
+        if session.is_cancelled() {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+}
+
+/// Resolve at `deadline`, or never if there is none — letting `tokio::select!`
+/// treat "no deadline" as simply disabling that race arm.
+async fn wait_for_deadline(deadline: Option<std::time::Instant>) {
+    match deadline {
+        Some(deadline) => tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)).await,
+        None => std::future::pending().await,
+    }
+}
+
+/// The orchestrated MONGODB-OIDC human flow: the single function the
+/// MongoDB driver's callback calls. Tries a cached refresh token first (no
+/// browser); falls back to a full interactive Authorization Code + PKCE
+/// login raced against the deadline the driver gave us and against the
+/// session being cancelled.
+///
+/// Every exit path reports to `session`'s `PhaseSink` exactly once: `Failed`
+/// on any error, `Completed` on success. A successful refresh reports
+/// `Completed` alone, with no `WaitingForBrowser` — the whole point of the
+/// refresh grant is that no browser is ever involved.
+pub async fn run_flow(
+    ctx: CallbackContext,
+    session: Arc<OidcSession>,
+    open: BrowserOpener,
+    http: reqwest::Client,
+) -> Result<IdpServerResponse, OidcError> {
+    let result = run_flow_inner(ctx, &session, open, http).await;
+    match &result {
+        Ok(_) => session.emit(OidcPhase::Completed),
+        Err(error) => session.emit(OidcPhase::Failed(error.clone())),
+    }
+    result
+}
+
+async fn run_flow_inner(
+    ctx: CallbackContext,
+    session: &OidcSession,
+    open: BrowserOpener,
+    http: reqwest::Client,
+) -> Result<IdpServerResponse, OidcError> {
+    let idp = ctx.idp_info.ok_or(OidcError::DiscoveryFailed)?;
+    let endpoints = discover(&idp.issuer, &http).await?;
+    let client_id = idp.client_id.clone().ok_or(OidcError::MissingClientId)?;
+
+    // A cached refresh token is tried first and never opens a browser. A
+    // rejected refresh (expired, revoked) is not returned as an error here —
+    // it falls through to the interactive flow below.
+    if let Some(refresh) = ctx.refresh_token.as_deref() {
+        if let Ok(response) = refresh_token(&endpoints, &client_id, refresh, &http).await {
+            return Ok(response);
+        }
+    }
+
+    let listener = LoopbackListener::bind().await?;
+    let request = build_authorization_request(&endpoints, &idp, &listener.redirect_uri)?;
+    // Captured before `listener` is moved into `wait()` below.
+    let redirect_uri = listener.redirect_uri.clone();
+
+    session.set_authorization_url(request.url.clone());
+    session.emit(OidcPhase::WaitingForBrowser);
+    open(&request.url)?;
+
+    // `listener.wait(..)` consumes the listener. If a different arm wins,
+    // tokio::select! drops this future (and the listener with it) before
+    // running that arm's body — `LoopbackListener`'s `Drop` impl already
+    // shuts the socket down, so no explicit shutdown call is needed on the
+    // timeout/cancel paths. On the winning `wait()` path, `wait()` itself
+    // shuts down before returning (Task 6).
+    let code = tokio::select! {
+        result = listener.wait(&request.state) => result?,
+        _ = wait_for_deadline(ctx.timeout) => return Err(OidcError::TimedOut),
+        _ = wait_for_cancel(session) => return Err(OidcError::Cancelled),
+    };
+
+    exchange_code(&endpoints, &client_id, &code, &request.verifier, &redirect_uri, &http).await
+}
+
 #[cfg(test)]
 pub mod mock_idp;
 
@@ -1232,5 +1385,227 @@ mod tests {
             i += 1;
         }
         String::from_utf8_lossy(&out).into_owned()
+    }
+
+    // --- Task 8: session, cancellation and the orchestrated flow ---
+    //
+    // The brief's `recording_opener` only records the authorization URL; it
+    // never navigates to it, so nothing ever drives the IdP's redirect into
+    // our loopback listener and a success-path test using it alone would
+    // hang until the deadline. Two openers are used instead:
+    // `simulating_opener` additionally fires a GET at the recorded URL
+    // (reqwest follows the mock IdP's 302 to our /callback), standing in
+    // for a human completing the browser flow; `recording_opener` stays as
+    // the brief describes it, for the "user never completes" tests.
+
+    pub(super) fn test_session() -> (Arc<OidcSession>, Arc<StdMutex<Vec<String>>>) {
+        let seen = Arc::new(StdMutex::new(Vec::new()));
+        let recorder = seen.clone();
+        let sink: PhaseSink = Arc::new(move |phase| {
+            recorder.lock().unwrap().push(format!("{phase:?}"));
+        });
+        (OidcSession::new(sink), seen)
+    }
+
+    /// Records the URL instead of opening a browser, and never navigates to
+    /// it. Stands in for a browser the user never completes.
+    pub(super) fn recording_opener() -> (BrowserOpener, Arc<StdMutex<Vec<String>>>) {
+        let opened = Arc::new(StdMutex::new(Vec::new()));
+        let recorder = opened.clone();
+        let opener: BrowserOpener = Arc::new(move |url: &str| {
+            recorder.lock().unwrap().push(url.to_string());
+            Ok(())
+        });
+        (opener, opened)
+    }
+
+    /// Records the URL *and* fetches it, so the mock IdP's redirect lands on
+    /// our loopback `/callback`. Stands in for a human clicking through the
+    /// browser. Fires the GET on a spawned task rather than blocking: `open`
+    /// is a synchronous callback (real browser launchers are synchronous),
+    /// so it cannot itself await a response.
+    pub(super) fn simulating_opener() -> (BrowserOpener, Arc<StdMutex<Vec<String>>>) {
+        let opened = Arc::new(StdMutex::new(Vec::new()));
+        let recorder = opened.clone();
+        let opener: BrowserOpener = Arc::new(move |url: &str| {
+            recorder.lock().unwrap().push(url.to_string());
+            let url = url.to_string();
+            tokio::spawn(async move {
+                let _ = reqwest::Client::new().get(&url).send().await;
+            });
+            Ok(())
+        });
+        (opener, opened)
+    }
+
+    fn context_for(idp: &MockIdp, refresh: Option<&str>) -> CallbackContext {
+        CallbackContext::builder()
+            .version(1u32)
+            .timeout(Some(std::time::Instant::now() + std::time::Duration::from_secs(30)))
+            .refresh_token(refresh.map(str::to_string))
+            .idp_info(Some(
+                IdpServerInfo::builder()
+                    .issuer(idp.issuer())
+                    .client_id(Some("mqlens-test".to_string()))
+                    .request_scopes(None)
+                    .build(),
+            ))
+            .build()
+    }
+
+    #[tokio::test]
+    async fn a_full_interactive_login_returns_a_token_and_reports_its_phases() {
+        let idp = MockIdp::start();
+        let (session, phases) = test_session();
+        let (opener, opened) = simulating_opener();
+
+        let response = run_flow(
+            context_for(&idp, None),
+            session,
+            opener,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert!(!response.access_token.is_empty());
+        assert_eq!(opened.lock().unwrap().len(), 1, "the browser opens exactly once");
+        let phases = phases.lock().unwrap().clone();
+        assert_eq!(phases, vec!["WaitingForBrowser".to_string(), "Completed".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn a_valid_refresh_token_skips_the_browser_entirely() {
+        let idp = MockIdp::start();
+        let (session, phases) = test_session();
+        let (opener, opened) = recording_opener();
+
+        let response = run_flow(
+            context_for(&idp, Some("test-refresh-token")),
+            session,
+            opener,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert!(!response.access_token.is_empty());
+        assert!(opened.lock().unwrap().is_empty(), "refresh must not open a browser");
+        assert!(
+            !phases.lock().unwrap().iter().any(|p| p == "WaitingForBrowser"),
+            "refresh must not announce a browser wait"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_rejected_refresh_token_falls_back_to_the_browser() {
+        let idp = MockIdp::start();
+        idp.reject_refresh_tokens();
+        let (session, _) = test_session();
+        let (opener, opened) = simulating_opener();
+
+        let response = run_flow(
+            context_for(&idp, Some("stale-refresh-token")),
+            session,
+            opener,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert!(!response.access_token.is_empty());
+        assert_eq!(opened.lock().unwrap().len(), 1, "it must recover interactively");
+    }
+
+    #[tokio::test]
+    async fn cancelling_returns_promptly_and_does_not_hang() {
+        let idp = MockIdp::start();
+        let (session, _) = test_session();
+        let (opener, _) = recording_opener();
+
+        let cancelling = session.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            cancelling.cancel();
+        });
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            run_flow(context_for(&idp, None), session, opener, reqwest::Client::new()),
+        )
+        .await
+        .expect("cancel must not leave the flow hanging");
+        // `IdpServerResponse` (mongodb 3.9.0) derives no `PartialEq`, so the
+        // `Ok` arm can't be compared with `assert_eq!`; `matches!` checks
+        // the same thing without needing one (see `a_non_https_token_endpoint_is_refused_before_any_request` above).
+        assert!(matches!(result, Err(OidcError::Cancelled)), "got {result:?}");
+    }
+
+    #[tokio::test]
+    async fn an_expired_deadline_reports_a_timeout() {
+        let idp = MockIdp::start();
+        let (session, _) = test_session();
+        let (opener, _) = recording_opener();
+
+        let context = CallbackContext::builder()
+            .version(1u32)
+            .timeout(Some(std::time::Instant::now() + std::time::Duration::from_millis(200)))
+            .refresh_token(None)
+            .idp_info(Some(
+                IdpServerInfo::builder()
+                    .issuer(idp.issuer())
+                    .client_id(Some("mqlens-test".to_string()))
+                    .request_scopes(None)
+                    .build(),
+            ))
+            .build();
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            run_flow(context, session, opener, reqwest::Client::new()),
+        )
+        .await
+        .expect("the deadline must be honoured");
+        assert!(matches!(result, Err(OidcError::TimedOut)), "got {result:?}");
+    }
+
+    #[tokio::test]
+    async fn a_missing_idp_info_is_a_clear_error_not_a_panic() {
+        let (session, _) = test_session();
+        let (opener, _) = recording_opener();
+        let context = CallbackContext::builder()
+            .version(1u32)
+            .timeout(None)
+            .refresh_token(None)
+            .idp_info(None)
+            .build();
+        let result = run_flow(context, session, opener, reqwest::Client::new()).await;
+        assert!(matches!(result, Err(OidcError::DiscoveryFailed)), "got {result:?}");
+    }
+
+    #[tokio::test]
+    async fn two_concurrent_logins_keep_their_state_and_tokens_apart() {
+        let idp_a = MockIdp::start();
+        let idp_b = MockIdp::start();
+        let (session_a, _) = test_session();
+        let (session_b, _) = test_session();
+        let (opener_a, opened_a) = simulating_opener();
+        let (opener_b, opened_b) = simulating_opener();
+
+        let (a, b) = tokio::join!(
+            run_flow(context_for(&idp_a, None), session_a, opener_a, reqwest::Client::new()),
+            run_flow(context_for(&idp_b, None), session_b, opener_b, reqwest::Client::new()),
+        );
+
+        let (a, b) = (a.unwrap(), b.unwrap());
+        assert_ne!(a.access_token, b.access_token, "tokens must not cross sessions");
+
+        let state_a = query_value(&opened_a.lock().unwrap()[0], "state");
+        let state_b = query_value(&opened_b.lock().unwrap()[0], "state");
+        assert_ne!(state_a, state_b, "state must not cross sessions");
+    }
+
+    fn query_value(url: &str, key: &str) -> String {
+        url_params(url).get(key).cloned().unwrap_or_default()
     }
 }

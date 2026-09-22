@@ -5,6 +5,7 @@
 
 use base64::Engine as _;
 use rsa::traits::PublicKeyParts;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use super::B64;
@@ -32,6 +33,11 @@ struct Inner {
     /// address. Lets tests exercise the defence against an IdP that claims
     /// to be someone else.
     lying_issuer: Mutex<Option<String>>,
+    /// When set, `/token` refuses `grant_type=refresh_token` with a
+    /// `400 {"error":"invalid_grant"}` while `authorization_code` keeps
+    /// working — lets tests exercise the fallback from a stale refresh
+    /// token to the interactive flow.
+    reject_refresh_tokens: AtomicBool,
 }
 
 /// A single-key, single-issuer OIDC provider double bound to a random
@@ -77,6 +83,7 @@ impl MockIdp {
             modulus_b64,
             requests: Mutex::new(Vec::new()),
             lying_issuer: Mutex::new(None),
+            reject_refresh_tokens: AtomicBool::new(false),
         });
         let server = Arc::new(server);
 
@@ -116,6 +123,13 @@ impl MockIdp {
     pub fn lie_about_issuer(&self) {
         let fake = format!("{}-imposter", self.inner.issuer);
         *self.inner.lying_issuer.lock().unwrap() = Some(fake);
+    }
+
+    /// From now on, `/token` rejects `grant_type=refresh_token` with
+    /// `400 {"error":"invalid_grant"}`. `authorization_code` requests are
+    /// unaffected.
+    pub fn reject_refresh_tokens(&self) {
+        self.inner.reject_refresh_tokens.store(true, Ordering::SeqCst);
     }
 }
 
@@ -164,8 +178,14 @@ fn handle_request(mut request: tiny_http::Request, inner: &Inner) {
                 .read_to_string(&mut body)
                 .expect("read /token request body");
             let record = parse_token_request(&body);
+            let reject_this = record.grant_type == "refresh_token"
+                && inner.reject_refresh_tokens.load(Ordering::SeqCst);
             inner.requests.lock().unwrap().push(record);
-            json_response(token_document(inner, &body))
+            if reject_this {
+                json_response_with_status(400, serde_json::json!({"error": "invalid_grant"}))
+            } else {
+                json_response(token_document(inner, &body))
+            }
         }
         _ => tiny_http::Response::empty(404).boxed(),
     };
@@ -174,8 +194,13 @@ fn handle_request(mut request: tiny_http::Request, inner: &Inner) {
 }
 
 fn json_response(body: serde_json::Value) -> tiny_http::ResponseBox {
+    json_response_with_status(200, body)
+}
+
+fn json_response_with_status(status: u16, body: serde_json::Value) -> tiny_http::ResponseBox {
     let bytes = serde_json::to_vec(&body).expect("serialize mock IdP response");
     tiny_http::Response::from_data(bytes)
+        .with_status_code(status)
         .with_header(
             tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
                 .expect("Content-Type header is valid ASCII"),
