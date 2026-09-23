@@ -815,13 +815,12 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   // Run the pipeline truncated after `index` (enabled stages only) — a quick
   // preview of what the data looks like at that point.
   const runToStage = (index: number) => {
-    if (!onExecuteAggregate) return;
     setError(null);
     try {
       const pipeline = stages.slice(0, index + 1)
         .filter(s => !s.disabled && s.content.trim())
         .map(s => ({ [s.operator]: parseShellJson(s.content) }));
-      onExecuteAggregate(pipeline);
+      onExecuteAggregate?.(pipeline);
     } catch (e: any) {
       setError(
         // Our own parse failures carry a code and get a translated message;
@@ -878,7 +877,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
         query.pipeline && query.pipeline.length > 0
           ? (query.pipeline as Record<string, unknown>[])
           : [{ $match: {} }];
-      if (onExecuteAggregate) onExecuteAggregate(pipeline);
+      onExecuteAggregate?.(pipeline);
     } else {
       onExecute({
         filter: JSON.stringify(query.filter ?? {}),
@@ -1367,39 +1366,10 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
           limit: Number(limit) || 50,
           skip: Number(skip) || 0
         });
-      } else if (onExecuteAggregate) {
-        // Run the real pipeline so every stage ($group, $count, $unwind, …) executes,
-        // rather than collapsing it down to a find().
-        onExecuteAggregate(buildAggregatePipeline());
       } else {
-        // Fallback (no aggregate executor wired): approximate with a find() using the
-        // find-compatible stages only. Other stages are not applied.
-        let compiledFilter = {};
-        let compiledSort = {};
-        let compiledLimit = 50;
-        let compiledSkip = 0;
-
-        stages.forEach(stage => {
-          if (stage.disabled || !stage.content.trim()) return;
-          const body = parseShellJson(stage.content);
-          if (stage.operator === '$match') {
-            compiledFilter = { ...compiledFilter, ...body };
-          } else if (stage.operator === '$sort') {
-            compiledSort = { ...compiledSort, ...body };
-          } else if (stage.operator === '$limit') {
-            compiledLimit = Number(body) || compiledLimit;
-          } else if (stage.operator === '$skip') {
-            compiledSkip = Number(body) || compiledSkip;
-          }
-        });
-
-        onExecute({
-          filter: JSON.stringify(compiledFilter),
-          sort: JSON.stringify(compiledSort),
-          projection: '{}',
-          limit: compiledLimit,
-          skip: compiledSkip
-        });
+        // The real pipeline, so every stage ($group, $count, $unwind, …) executes
+        // rather than being collapsed into a find().
+        onExecuteAggregate?.(buildAggregatePipeline());
       }
     } catch (e: any) {
       setError(
@@ -1454,23 +1424,9 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
       if (queryMode === 'find') {
         const parsedFilter = filterQuery.trim() ? parseQueryObject(filterQuery) : {};
         await onExplain(JSON.stringify(parsedFilter));
-      } else if (onExplainAggregate) {
-        // Explain the FULL pipeline (M1), not just a collapsed $match.
-        await onExplainAggregate(JSON.stringify(buildAggregatePipeline()));
       } else {
-        // Fallback (no aggregate explainer wired): approximate with the $match stages.
-        let compiledFilter = {};
-        stages.forEach(stage => {
-          if (!stage.disabled && stage.operator === '$match' && stage.content.trim()) {
-            try {
-              const body = parseShellJson(stage.content);
-              compiledFilter = { ...compiledFilter, ...body };
-            } catch {
-              // Ignore invalid JSON inside match stage during explain preview
-            }
-          }
-        });
-        await onExplain(JSON.stringify(compiledFilter));
+        // The FULL pipeline (M1), not just a collapsed $match.
+        await onExplainAggregate?.(JSON.stringify(buildAggregatePipeline()));
       }
     } catch (e: any) {
       // Explain is reachable with an invalid filter — the dropdown item has no
@@ -1789,13 +1745,8 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
               <DropdownMenuItem
                 onClick={() => {
                   const shellCommand = buildShellCommand();
-                  if (onOpenShell) {
-                    onOpenShell(shellCommand);
-                    notify('toast.openedInMongosh', 'info');
-                  } else {
-                    navigator.clipboard?.writeText(shellCommand);
-                    notify('toast.copiedMongoshCommand', 'success');
-                  }
+                  onOpenShell?.(shellCommand);
+                  notify('toast.openedInMongosh', 'info');
                 }}
               >
                 <ExternalLink size={11} />

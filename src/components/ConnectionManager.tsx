@@ -131,6 +131,7 @@ const generateUUID = () => {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) {
     return crypto.randomUUID();
   }
+  /* v8 ignore start -- no browser the app runs in is missing randomUUID */
   if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
     return Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) =>
       b.toString(16).padStart(2, '0'),
@@ -138,6 +139,7 @@ const generateUUID = () => {
   }
   idSequence += 1;
   return `${Date.now().toString(36)}-${idSequence.toString(36)}`;
+  /* v8 ignore stop */
 };
 
 const BLANK_CONN = {

@@ -58,6 +58,7 @@ export function clampQueryBarHeight(px: number): number {
 
 /** Auto UI scale from display DPI / resolution (clamped for readability). */
 export function computeAutoDpiScale(): number {
+  /* v8 ignore next -- there is no window only outside a browser */
   if (typeof window === "undefined") return 1;
 
   const dpr = window.devicePixelRatio || 1;
@@ -119,6 +120,7 @@ export function scaleEditorFontSize(
 
 /** Read effective root font size in px (user setting × DPI scale). */
 export function getEffectiveFontSizePx(): number {
+  /* v8 ignore next -- there is no window only outside a browser */
   if (typeof window === "undefined") return 13;
   const root = getComputedStyle(document.documentElement);
   const base = parseFloat(root.getPropertyValue("--font-size-base")) || 13;
@@ -131,6 +133,7 @@ export function getScaledRowHeight(
   baseAt13px: number,
   _density: "compact" | "cozy" | "roomy" = "cozy"
 ): number {
+  /* v8 ignore next -- there is no window only outside a browser */
   if (typeof window === "undefined") return baseAt13px;
   const root = getComputedStyle(document.documentElement);
   const basePx = parseFloat(root.getPropertyValue("--font-size-base")) || 13;

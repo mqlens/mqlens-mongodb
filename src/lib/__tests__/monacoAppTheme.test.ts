@@ -1,8 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import {
   hslComponentsToHex,
-  refreshMqlensMonacoTheme,
-  registerMqlensMonacoThemes,
   tokenResolverFor,
   attachMonaco,
   setMonacoAppTheme,
@@ -39,18 +37,21 @@ describe('monaco theme colours come from the config, not the DOM (#282)', () => 
         defined.set(id, theme),
       setTheme: () => {},
     },
-  } as unknown as Parameters<typeof refreshMqlensMonacoTheme>[0];
+  } as unknown as Parameters<typeof attachMonaco>[0];
+
+  /** Define the themes from `tokens`, the way ThemeProvider does. */
+  const applyTokens = (tokens: Record<string, string>, themeId: 'mqlens-dark' | 'mqlens-light') => {
+    resetMonacoAppThemeForTests();
+    attachMonaco(monaco);
+    setMonacoAppTheme(tokenResolverFor(tokens), themeId);
+  };
 
   beforeEach(() => defined.clear());
 
   it('uses the token map it is given, ignoring the document entirely', () => {
     // A light preset's own input token, while the DOM still says otherwise.
     document.documentElement.style.setProperty('--input', '222 20% 8%');
-    refreshMqlensMonacoTheme(
-      monaco,
-      tokenResolverFor({ input: '220 20% 93%', foreground: '222 20% 8%' }),
-      'mqlens-light'
-    );
+    applyTokens({ input: '220 20% 93%', foreground: '222 20% 8%' }, 'mqlens-light');
     expect(defined.get('mqlens-light')!.colors['editor.background']).toBe(
       hslComponentsToHex('220 20% 93%')
     );
@@ -59,33 +60,26 @@ describe('monaco theme colours come from the config, not the DOM (#282)', () => 
   it('does not fall back to the built-in palette when a preset defines the token', () => {
     // The old failure mode: an empty DOM read left every colour on Monaco's
     // hardcoded default, so a preset's palette never arrived.
-    refreshMqlensMonacoTheme(
-      monaco,
-      tokenResolverFor({ input: '193 100% 12%' }),
-      'mqlens-dark'
-    );
+    applyTokens({ input: '193 100% 12%' }, 'mqlens-dark');
     const background = defined.get('mqlens-dark')!.colors['editor.background'];
     expect(background).toBe(hslComponentsToHex('193 100% 12%'));
     expect(background).not.toBe('#1e1e1e');
   });
 
   it('still falls back for a token the preset does not define', () => {
-    refreshMqlensMonacoTheme(monaco, tokenResolverFor({}), 'mqlens-dark');
+    applyTokens({}, 'mqlens-dark');
     expect(defined.get('mqlens-dark')!.colors['editor.background']).toBe('#1e1e1e');
   });
 
-  it('registers and refreshes with identical colours', () => {
-    // They used to be two hand-written copies, which is how one gets corrected
-    // and the other left stale.
-    const resolve = tokenResolverFor({ input: '193 100% 12%', foreground: '0 0% 90%' });
-    refreshMqlensMonacoTheme(monaco, resolve, 'mqlens-dark');
-    const fromRefresh = { ...defined.get('mqlens-dark')!.colors };
+  it('defines the same colours every time it is applied', () => {
+    // The definition path used to exist twice, hand-written, which is how one
+    // copy gets corrected and the other left stale.
+    const tokens = { input: '193 100% 12%', foreground: '0 0% 90%' };
+    applyTokens(tokens, 'mqlens-dark');
+    const first = { ...defined.get('mqlens-dark')!.colors };
     defined.clear();
-    registerMqlensMonacoThemes(monaco, resolve, 'mqlens-dark');
-    // registerMqlensMonacoThemes is once-per-app; call refresh to observe the
-    // same definition path a second editor would get.
-    refreshMqlensMonacoTheme(monaco, resolve, 'mqlens-dark');
-    expect(defined.get('mqlens-dark')!.colors).toEqual(fromRefresh);
+    applyTokens(tokens, 'mqlens-dark');
+    expect(defined.get('mqlens-dark')!.colors).toEqual(first);
   });
 });
 
