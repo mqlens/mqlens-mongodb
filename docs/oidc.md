@@ -41,8 +41,10 @@ MQLens stays valid for `mongosh` and other tools.
 
 - Register a **public client** (native, desktop or SPA type): no client
   secret, PKCE enabled.
-- **Redirect URI: `http://127.0.0.1/callback` on any port.** MQLens picks a
-  free port each time it logs in, so there's no fixed port to configure.
+- **Redirect URI: `http://localhost:27097/redirect`.** It is the one mongosh
+  and Compass use, so an app registration made for them works for MQLens
+  unchanged. Identity providers that match redirect URIs exactly (Entra ID,
+  and OAuth 2.1 in general) need exactly this value, port included.
 - **Response mode.** MQLens sends no `response_mode`, so the default
   applies: a redirect with the code in the query string. If your identity
   provider is set to post the response instead (`response_mode=form_post`),
@@ -117,9 +119,10 @@ for you makes its own connections, with its own certificate settings.)
 
 ## What happens when you connect or test
 
-- The system browser opens. The redirect lands on a local listener bound to
-  `127.0.0.1` only, on a temporary port. The browser page shown afterwards
-  displays no token.
+- The system browser opens. The redirect lands on a local listener on port
+  27097, bound to the loopback addresses only (`127.0.0.1`, and `::1` where
+  the computer has IPv6), for as long as the login waits. The browser page
+  shown afterwards displays no token.
 - In **Test Connection**, an OIDC profile shows an extra row:
   **Authenticate — waiting for browser login**.
 - While a login is pending in the connection editor (from **Test** or
@@ -306,9 +309,12 @@ register a login against. This is a deployment-side configuration gap — ask
 your administrator to configure `clientId` for this deployment's identity
 provider.
 
-**"MQLens could not open a local port to receive the login. Close other applications using loopback ports and try again."**
-MQLens couldn't bind a local listener for the OAuth redirect. Close other
-applications that might be holding loopback ports and try again.
+**"MQLens could not open port 27097 to receive the login. Another login may be using it, in MQLens, mongosh or Compass. Finish or cancel that login, then try again."**
+Every login waits for the browser on port 27097, the redirect registered with
+your identity provider, so only one can wait at a time, across MQLens,
+mongosh and Compass. MQLens never falls back to another port, which the
+identity provider would refuse. Finish or cancel the other login, or close
+whatever else holds the port, then try again.
 
 **"The login response did not match this request and was rejected. Start the login again."**
 The OAuth state returned by the identity provider didn't match what MQLens

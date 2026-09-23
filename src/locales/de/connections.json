@@ -51,7 +51,7 @@
         "insecureEndpoint": "Der Endpunkt des Identitätsanbieters läuft nicht über HTTPS. MQLens sendet keine Anmeldung über eine unverschlüsselte Verbindung.",
         "loginOkPingFailed": "Die Anmeldung war erfolgreich, aber die Datenbank hat nicht geantwortet. Prüfe Host, TLS und Netzwerkeinstellungen.",
         "missingClientId": "Diese Bereitstellung hat keine OIDC-Client-ID angegeben, daher kann keine Browser-Anmeldung gestartet werden. Bitte deinen Administrator, eine zu konfigurieren.",
-        "portUnavailable": "MQLens konnte keinen lokalen Port zum Empfang der Anmeldung öffnen. Schließe andere Anwendungen, die Loopback-Ports verwenden, und versuche es erneut.",
+        "portUnavailable": "MQLens konnte Port 27097 zum Empfang der Anmeldung nicht öffnen. Möglicherweise nutzt ihn eine andere Anmeldung, in MQLens, mongosh oder Compass. Schließe diese Anmeldung ab oder brich sie ab und versuche es dann erneut.",
         "stateMismatch": "Die Anmeldeantwort passte nicht zu dieser Anfrage und wurde abgelehnt. Starte die Anmeldung erneut.",
         "timedOut": "Die Browser-Anmeldung ist abgelaufen. Starte die Anmeldung erneut.",
         "tokenExchangeFailed": "MQLens konnte die Anmeldung nicht gegen ein Token eintauschen. Falls dein Netzwerk einen Proxy verwendet: Der Identitätsanbieter wird direkt erreicht, nicht über den SOCKS5-Proxy der Verbindung.",

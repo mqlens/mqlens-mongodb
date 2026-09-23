@@ -51,7 +51,7 @@
         "insecureEndpoint": "The identity provider endpoint is not HTTPS. MQLens will not send a login over an unencrypted connection.",
         "loginOkPingFailed": "Login succeeded, but the database did not respond. Check the host, TLS and network settings.",
         "missingClientId": "This deployment did not supply an OIDC client id, so a browser login cannot start. Ask your administrator to configure one.",
-        "portUnavailable": "MQLens could not open a local port to receive the login. Close other applications using loopback ports and try again.",
+        "portUnavailable": "MQLens could not open port 27097 to receive the login. Another login may be using it, in MQLens, mongosh or Compass. Finish or cancel that login, then try again.",
         "stateMismatch": "The login response did not match this request and was rejected. Start the login again.",
         "timedOut": "The browser login expired. Start the login again.",
         "tokenExchangeFailed": "MQLens could not exchange the login for a token. If your network uses a proxy, note that the identity provider is reached directly, not through the connection's SOCKS5 proxy.",

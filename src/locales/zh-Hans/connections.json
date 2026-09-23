@@ -51,7 +51,7 @@
         "insecureEndpoint": "身份提供商的端点不是 HTTPS。MQLens 不会通过未加密的连接发送登录信息。",
         "loginOkPingFailed": "登录成功，但数据库没有响应。请检查主机、TLS 和网络设置。",
         "missingClientId": "此部署未提供 OIDC 客户端 ID，因此无法开始浏览器登录。请让管理员配置一个。",
-        "portUnavailable": "MQLens 无法打开本地端口以接收登录信息。请关闭其他占用回环端口的应用后重试。",
+        "portUnavailable": "MQLens 无法打开端口 27097 以接收登录信息。可能有另一个登录正在使用它（在 MQLens、mongosh 或 Compass 中）。请完成或取消该登录，然后重试。",
         "stateMismatch": "登录响应与此请求不匹配，已被拒绝。请重新开始登录。",
         "timedOut": "浏览器登录已过期。请重新开始登录。",
         "tokenExchangeFailed": "MQLens 无法用登录信息换取令牌。如果你的网络使用了代理，请注意：身份提供商是直接访问的，不经过该连接的 SOCKS5 代理。",

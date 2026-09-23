@@ -334,7 +334,7 @@ pub fn build_authorization_request(
     Ok(AuthorizationRequest { url, state, nonce, verifier })
 }
 
-/// The query parameters an IdP redirect to `/callback` carries. `state` is
+/// The query parameters an IdP redirect to `/redirect` carries. `state` is
 /// always present in practice (an IdP that omits it fails the constant-time
 /// comparison against our expected state, same as any other mismatch), so
 /// it is not optional here.
@@ -471,38 +471,85 @@ fn handle_callback(
 use std::sync::Mutex as StdMutex;
 use tokio::sync::oneshot;
 
-/// A one-shot HTTP server on a loopback port, waiting for exactly one
-/// `/callback` from the system browser (a GET redirect, or a POST for
-/// `response_mode=form_post`). Modeled on the MCP server's own
+/// The loopback port of the redirect MongoDB's own tools register
+/// (@mongodb-js/oidc-plugin, behind mongosh and Compass). Identity providers
+/// such as Entra ID, and OAuth 2.1, match a redirect URI exactly, port
+/// included, so an ephemeral port would be refused; this one lets an existing
+/// registration for those tools serve MQLens unchanged.
+pub const REDIRECT_PORT: u16 = 27097;
+
+/// The path of that redirect.
+const REDIRECT_PATH: &str = "/redirect";
+
+/// The port a login's listener binds. Tests bind ephemeral ports instead, so
+/// tests running in parallel don't contend for the one registered port. A
+/// compile-time switch, like `loopback_exception`, never a runtime one.
+#[cfg(not(test))]
+const LISTEN_PORT: u16 = REDIRECT_PORT;
+#[cfg(test)]
+const LISTEN_PORT: u16 = 0;
+
+/// The redirect URI for a listener on `port`, sent in the authorization
+/// request and again, identically, in the token exchange.
+fn redirect_uri_for(port: u16) -> String {
+    format!("http://localhost:{port}{REDIRECT_PATH}")
+}
+
+/// A one-shot HTTP server on the loopback redirect, waiting for exactly one
+/// request to [`REDIRECT_PATH`] from the system browser (a GET redirect, or a
+/// POST for `response_mode=form_post`). Modeled on the MCP server's own
 /// `TcpListener::bind` + `axum::serve(..).with_graceful_shutdown(..)`
 /// idiom (`mcp.rs`).
 pub struct LoopbackListener {
     pub redirect_uri: String,
     result_rx: StdMutex<Option<oneshot::Receiver<CallbackParams>>>,
-    shutdown_tx: StdMutex<Option<oneshot::Sender<()>>>,
+    /// Stops every address's server: sending, or dropping the sender,
+    /// resolves each one's graceful shutdown.
+    shutdown_tx: StdMutex<Option<tokio::sync::watch::Sender<()>>>,
     /// The `state` this login sent, shared with the callback handler so the
     /// page it answers with can check it (see `callback_outcome_page`).
     expected_state: std::sync::Arc<std::sync::OnceLock<String>>,
 }
 
-impl LoopbackListener {
-    /// Bind an ephemeral port on loopback only (`127.0.0.1:0` — never a LAN
-    /// interface) and start serving `/callback` (GET and POST) in the
-    /// background. The server accepts exactly one request that finds the
-    /// one-shot sender still present; every later request (replay, reload)
-    /// gets [`CALLBACK_REPLAY_PAGE`] instead and does not touch the waiter.
-    pub async fn bind() -> Result<Self, OidcError> {
-        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+/// Bind `port` (0: any free one) on the loopback addresses `localhost` can
+/// resolve to. `127.0.0.1` is required. `::1` is bound too wherever the
+/// machine has IPv6 loopback, since a browser may try it first; if another
+/// process already holds the port there, the browser could hand that process
+/// this login's code, so that is refused like a taken `127.0.0.1`.
+async fn bind_loopback(port: u16) -> Result<Vec<tokio::net::TcpListener>, OidcError> {
+    // An ephemeral port is picked on 127.0.0.1 and may happen to be taken on
+    // ::1; pick again then. A requested port gets one try, and no substitute.
+    let attempts = if port == 0 { 5 } else { 1 };
+    for _ in 0..attempts {
+        let v4 = tokio::net::TcpListener::bind(("127.0.0.1", port))
             .await
             .map_err(|_| OidcError::PortUnavailable)?;
-        let port = listener
-            .local_addr()
-            .map_err(|_| OidcError::PortUnavailable)?
-            .port();
-        let redirect_uri = format!("http://127.0.0.1:{port}/callback");
+        let bound = v4.local_addr().map_err(|_| OidcError::PortUnavailable)?.port();
+        match tokio::net::TcpListener::bind(("::1", bound)).await {
+            Ok(v6) => return Ok(vec![v4, v6]),
+            Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => continue,
+            // No IPv6 loopback here, so `localhost` cannot resolve to it.
+            Err(_) => return Ok(vec![v4]),
+        }
+    }
+    Err(OidcError::PortUnavailable)
+}
+
+impl LoopbackListener {
+    /// Bind `port` on loopback only (see `bind_loopback`; never a LAN
+    /// interface) and start serving [`REDIRECT_PATH`] (GET and POST) in the
+    /// background. Logins use [`REDIRECT_PORT`]; a port another process holds
+    /// is `PortUnavailable`, never swapped for another. The server accepts
+    /// exactly one request that finds the one-shot sender still present;
+    /// every later request (replay, reload) gets [`CALLBACK_REPLAY_PAGE`]
+    /// instead and does not touch the waiter.
+    pub async fn bind(port: u16) -> Result<Self, OidcError> {
+        let listeners = bind_loopback(port).await?;
+        let port = listeners[0].local_addr().map_err(|_| OidcError::PortUnavailable)?.port();
+        let redirect_uri = redirect_uri_for(port);
 
         let (result_tx, result_rx) = oneshot::channel::<CallbackParams>();
-        let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(());
         let result_tx = std::sync::Arc::new(StdMutex::new(Some(result_tx)));
         let expected_state = std::sync::Arc::new(std::sync::OnceLock::new());
         let handler_state = std::sync::Arc::clone(&expected_state);
@@ -512,7 +559,7 @@ impl LoopbackListener {
         // parameters are in the body. A POST's query string is not read.
         let (get_tx, get_state) = (std::sync::Arc::clone(&result_tx), std::sync::Arc::clone(&handler_state));
         let router = axum::Router::new().route(
-            "/callback",
+            REDIRECT_PATH,
             axum::routing::get(move |uri: axum::http::Uri| {
                 let result_tx = std::sync::Arc::clone(&get_tx);
                 let expected_state = std::sync::Arc::clone(&get_state);
@@ -525,16 +572,20 @@ impl LoopbackListener {
             }),
         );
 
-        tokio::spawn(async move {
-            if let Err(e) = axum::serve(listener, router.into_make_service())
-                .with_graceful_shutdown(async move {
-                    let _ = shutdown_rx.await;
-                })
-                .await
-            {
-                eprintln!("oidc::LoopbackListener: axum::serve exited with an error: {e}");
-            }
-        });
+        for listener in listeners {
+            let router = router.clone();
+            let mut shutdown_rx = shutdown_rx.clone();
+            tokio::spawn(async move {
+                if let Err(e) = axum::serve(listener, router.into_make_service())
+                    .with_graceful_shutdown(async move {
+                        let _ = shutdown_rx.changed().await;
+                    })
+                    .await
+                {
+                    eprintln!("oidc::LoopbackListener: axum::serve exited with an error: {e}");
+                }
+            });
+        }
 
         Ok(Self {
             redirect_uri,
@@ -1008,7 +1059,7 @@ async fn run_flow_inner(
         }
     }
 
-    let listener = LoopbackListener::bind().await?;
+    let listener = LoopbackListener::bind(LISTEN_PORT).await?;
     let request = build_authorization_request(&endpoints, &idp, &listener.redirect_uri)?;
     // Before the browser opens, so even a callback that beats `wait()` gets
     // the page its state earns.
@@ -1590,9 +1641,9 @@ mod tests {
 
     #[tokio::test]
     async fn a_matching_callback_yields_the_authorization_code() {
-        let listener = LoopbackListener::bind().await.unwrap();
+        let listener = LoopbackListener::bind(0).await.unwrap();
         let redirect = listener.redirect_uri.clone();
-        assert!(redirect.starts_with("http://127.0.0.1:"), "got {redirect}");
+        assert!(redirect.starts_with("http://localhost:") && redirect.ends_with("/redirect"), "got {redirect}");
 
         let waiter = tokio::spawn(async move { listener.wait("state-abc").await });
         let response = get(&format!("{redirect}?code=test-auth-code&state=state-abc")).await;
@@ -1606,7 +1657,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_mismatched_state_is_refused() {
-        let listener = LoopbackListener::bind().await.unwrap();
+        let listener = LoopbackListener::bind(0).await.unwrap();
         let redirect = listener.redirect_uri.clone();
         let waiter = tokio::spawn(async move { listener.wait("state-abc").await });
         get(&format!("{redirect}?code=test-auth-code&state=state-WRONG")).await;
@@ -1615,7 +1666,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_oauth_error_is_reported_as_denied_consent() {
-        let listener = LoopbackListener::bind().await.unwrap();
+        let listener = LoopbackListener::bind(0).await.unwrap();
         let redirect = listener.redirect_uri.clone();
         let waiter = tokio::spawn(async move { listener.wait("state-abc").await });
         get(&format!("{redirect}?error=access_denied&state=state-abc")).await;
@@ -1624,7 +1675,7 @@ mod tests {
 
     #[tokio::test]
     async fn other_oauth_errors_keep_their_code() {
-        let listener = LoopbackListener::bind().await.unwrap();
+        let listener = LoopbackListener::bind(0).await.unwrap();
         let redirect = listener.redirect_uri.clone();
         let waiter = tokio::spawn(async move { listener.wait("state-abc").await });
         get(&format!("{redirect}?error=invalid_scope&state=state-abc")).await;
@@ -1636,15 +1687,85 @@ mod tests {
 
     #[tokio::test]
     async fn the_wrong_path_is_not_the_callback() {
-        let listener = LoopbackListener::bind().await.unwrap();
-        let base = listener.redirect_uri.replace("/callback", "");
+        let listener = LoopbackListener::bind(0).await.unwrap();
+        let base = listener.redirect_uri.replace("/redirect", "");
         let waiter = tokio::spawn(async move { listener.wait("state-abc").await });
 
         let response = get(&format!("{base}/?code=test-auth-code&state=state-abc")).await;
         assert_eq!(response.status(), 404);
+        // Nor is the old `/callback` path.
+        let response = get(&format!("{base}/callback?code=test-auth-code&state=state-abc")).await;
+        assert_eq!(response.status(), 404);
         // The real callback still works afterwards.
-        get(&format!("{base}/callback?code=test-auth-code&state=state-abc")).await;
+        get(&format!("{base}/redirect?code=test-auth-code&state=state-abc")).await;
         assert_eq!(waiter.await.unwrap(), Ok("test-auth-code".to_string()));
+    }
+
+    // ---- the registered redirect (PR #433 review) ------------------------
+
+    /// Identity providers such as Entra ID match the redirect URI exactly,
+    /// port included. MQLens uses the one MongoDB's own tools register
+    /// (@mongodb-js/oidc-plugin, behind mongosh and Compass), so their
+    /// existing app registration works unchanged.
+    #[test]
+    fn the_redirect_is_the_one_mongodbs_own_tools_register() {
+        assert_eq!(REDIRECT_PORT, 27097);
+        assert_eq!(redirect_uri_for(REDIRECT_PORT), "http://localhost:27097/redirect");
+    }
+
+    /// A free port, released again, for a test to bind by number.
+    fn free_port() -> u16 {
+        std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap().local_addr().unwrap().port()
+    }
+
+    #[tokio::test]
+    async fn a_listener_on_a_given_port_serves_the_redirect_there_as_localhost() {
+        let port = free_port();
+        let listener = LoopbackListener::bind(port).await.unwrap();
+        assert_eq!(listener.redirect_uri, format!("http://localhost:{port}/redirect"));
+        listener.expect_state("state-abc");
+        let waiter = tokio::spawn(async move { listener.wait("state-abc").await });
+
+        let page = get(&format!("http://localhost:{port}/redirect?code=test-auth-code&state=state-abc"))
+            .await
+            .text()
+            .await
+            .unwrap();
+
+        assert_eq!(page, CALLBACK_SUCCESS_PAGE);
+        assert_eq!(waiter.await.unwrap(), Ok("test-auth-code".to_string()));
+    }
+
+    /// The registered port taken by another process must be reported, never
+    /// swapped for a random one the provider would refuse.
+    #[tokio::test]
+    async fn a_port_already_in_use_is_reported_rather_than_swapped_for_another() {
+        let taken = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = taken.local_addr().unwrap().port();
+
+        let result = LoopbackListener::bind(port).await;
+
+        assert_eq!(result.err(), Some(OidcError::PortUnavailable));
+    }
+
+    /// `localhost` may resolve to `::1` first. If another process holds the
+    /// port there, the browser could hand it this login's code, so that is
+    /// refused too even though `127.0.0.1` is free.
+    #[tokio::test]
+    async fn a_port_already_in_use_on_ipv6_loopback_is_reported_too() {
+        let Ok(taken) = std::net::TcpListener::bind(("::1", 0)) else {
+            eprintln!("skipping: no IPv6 loopback on this machine");
+            return;
+        };
+        let port = taken.local_addr().unwrap().port();
+        if std::net::TcpListener::bind(("127.0.0.1", port)).is_err() {
+            eprintln!("skipping: the same port is taken on 127.0.0.1 too");
+            return;
+        }
+
+        let result = LoopbackListener::bind(port).await;
+
+        assert_eq!(result.err(), Some(OidcError::PortUnavailable));
     }
 
     /// A provider answering with `response_mode=form_post` sends the same
@@ -1661,7 +1782,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_form_post_callback_yields_the_authorization_code() {
-        let listener = LoopbackListener::bind().await.unwrap();
+        let listener = LoopbackListener::bind(0).await.unwrap();
         listener.expect_state("state-abc");
         let redirect = listener.redirect_uri.clone();
         let waiter = tokio::spawn(async move { listener.wait("state-abc").await });
@@ -1675,7 +1796,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_form_post_callback_with_the_wrong_state_is_refused() {
-        let listener = LoopbackListener::bind().await.unwrap();
+        let listener = LoopbackListener::bind(0).await.unwrap();
         listener.expect_state("state-abc");
         let redirect = listener.redirect_uri.clone();
         let waiter = tokio::spawn(async move { listener.wait("state-abc").await });
@@ -1688,7 +1809,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_form_post_callback_carrying_a_provider_error_is_refused() {
-        let listener = LoopbackListener::bind().await.unwrap();
+        let listener = LoopbackListener::bind(0).await.unwrap();
         listener.expect_state("state-abc");
         let redirect = listener.redirect_uri.clone();
         let waiter = tokio::spawn(async move { listener.wait("state-abc").await });
@@ -1703,7 +1824,7 @@ mod tests {
     /// is not read, so a state or code there cannot complete the login.
     #[tokio::test]
     async fn a_form_post_reads_its_body_not_its_query_string() {
-        let listener = LoopbackListener::bind().await.unwrap();
+        let listener = LoopbackListener::bind(0).await.unwrap();
         listener.expect_state("state-abc");
         let redirect = listener.redirect_uri.clone();
         let waiter = tokio::spawn(async move { listener.wait("state-abc").await });
@@ -1717,7 +1838,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_callback_without_a_code_is_refused() {
-        let listener = LoopbackListener::bind().await.unwrap();
+        let listener = LoopbackListener::bind(0).await.unwrap();
         let redirect = listener.redirect_uri.clone();
         let waiter = tokio::spawn(async move { listener.wait("state-abc").await });
         get(&format!("{redirect}?state=state-abc")).await;
@@ -1726,13 +1847,19 @@ mod tests {
 
     #[tokio::test]
     async fn a_dropped_listener_releases_its_port_without_waiting() {
-        let listener = LoopbackListener::bind().await.unwrap();
-        let redirect = listener.redirect_uri.clone();
+        let listener = LoopbackListener::bind(0).await.unwrap();
+        let port = listener.redirect_uri.rsplit(':').next().unwrap().trim_end_matches(REDIRECT_PATH).parse::<u16>().unwrap();
+        let ipv6 = std::net::TcpListener::bind(("::1", 0)).is_ok();
         drop(listener);
 
+        // Released means bindable again, on every loopback address it held.
+        // (Probing with requests instead is slow on Windows, where a refused
+        // loopback connection takes about two seconds per address.)
         let released = tokio::time::timeout(std::time::Duration::from_secs(2), async {
             loop {
-                if reqwest::Client::new().get(&redirect).send().await.is_err() {
+                let v4 = std::net::TcpListener::bind(("127.0.0.1", port)).is_ok();
+                let v6 = !ipv6 || std::net::TcpListener::bind(("::1", port)).is_ok();
+                if v4 && v6 {
                     return;
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(20)).await;
@@ -1747,7 +1874,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_denied_login_does_not_claim_success_in_the_browser() {
-        let listener = LoopbackListener::bind().await.unwrap();
+        let listener = LoopbackListener::bind(0).await.unwrap();
         let redirect = listener.redirect_uri.clone();
         let waiter = tokio::spawn(async move { listener.wait("state-abc").await });
         let response = get(&format!("{redirect}?error=access_denied&state=state-abc")).await;
@@ -1758,7 +1885,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_malformed_callback_does_not_claim_success_in_the_browser() {
-        let listener = LoopbackListener::bind().await.unwrap();
+        let listener = LoopbackListener::bind(0).await.unwrap();
         let redirect = listener.redirect_uri.clone();
         let waiter = tokio::spawn(async move { listener.wait("state-abc").await });
         let response = get(&format!("{redirect}?state=state-abc")).await;
@@ -1772,7 +1899,7 @@ mod tests {
     // the tab, which would already say "Login complete" (PR #433 review).
     #[tokio::test]
     async fn a_callback_with_the_wrong_state_does_not_claim_success_in_the_browser() {
-        let listener = LoopbackListener::bind().await.unwrap();
+        let listener = LoopbackListener::bind(0).await.unwrap();
         listener.expect_state("state-abc");
         let redirect = listener.redirect_uri.clone();
         let waiter = tokio::spawn(async move { listener.wait("state-abc").await });
@@ -1783,7 +1910,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_callback_with_no_state_does_not_claim_success_in_the_browser() {
-        let listener = LoopbackListener::bind().await.unwrap();
+        let listener = LoopbackListener::bind(0).await.unwrap();
         listener.expect_state("state-abc");
         let redirect = listener.redirect_uri.clone();
         let waiter = tokio::spawn(async move { listener.wait("state-abc").await });
@@ -1794,7 +1921,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_callback_with_the_expected_state_shows_the_success_page() {
-        let listener = LoopbackListener::bind().await.unwrap();
+        let listener = LoopbackListener::bind(0).await.unwrap();
         listener.expect_state("state-abc");
         let redirect = listener.redirect_uri.clone();
         let waiter = tokio::spawn(async move { listener.wait("state-abc").await });
@@ -1807,7 +1934,7 @@ mod tests {
     /// for any callback, so it never says "Login complete".
     #[tokio::test]
     async fn a_listener_never_told_the_state_shows_no_success_page() {
-        let listener = LoopbackListener::bind().await.unwrap();
+        let listener = LoopbackListener::bind(0).await.unwrap();
         let redirect = listener.redirect_uri.clone();
         let page = get(&format!("{redirect}?code=test-auth-code&state=state-abc")).await.text().await.unwrap();
         assert_eq!(page, CALLBACK_NOT_COMPLETED_PAGE);
@@ -1816,15 +1943,18 @@ mod tests {
 
     #[tokio::test]
     async fn concurrent_requests_deliver_exactly_one_result() {
-        let listener = LoopbackListener::bind().await.unwrap();
+        let listener = LoopbackListener::bind(0).await.unwrap();
         listener.expect_state("state-abc");
         let redirect = listener.redirect_uri.clone();
-        let waiter = tokio::spawn(async move { listener.wait("state-abc").await });
 
         let url_a = format!("{redirect}?code=code-a&state=state-abc");
         let url_b = format!("{redirect}?code=code-b&state=state-abc");
         let (response_a, response_b) = tokio::join!(get(&url_a), get(&url_b));
         let (page_a, page_b) = (response_a.text().await.unwrap(), response_b.text().await.unwrap());
+        // Waited on only now: `wait()` shuts the server down as soon as it
+        // has a result, which could cut off the other request before it is
+        // read. The one-shot keeps the first result until then.
+        let waiter = tokio::spawn(async move { listener.wait("state-abc").await });
 
         let successes = [&page_a, &page_b].into_iter().filter(|p| p.as_str() == CALLBACK_SUCCESS_PAGE).count();
         let replays = [&page_a, &page_b].into_iter().filter(|p| p.as_str() == CALLBACK_REPLAY_PAGE).count();
@@ -1837,7 +1967,7 @@ mod tests {
 
     #[tokio::test]
     async fn shutdown_releases_the_port_and_resolves_the_waiter() {
-        let listener = LoopbackListener::bind().await.unwrap();
+        let listener = LoopbackListener::bind(0).await.unwrap();
         let redirect = listener.redirect_uri.clone();
         listener.shutdown();
         let result = tokio::time::timeout(
@@ -2293,7 +2423,7 @@ mod tests {
     // our loopback listener and a success-path test using it alone would
     // hang until the deadline. Two openers are used instead:
     // `simulating_opener` additionally fires a GET at the recorded URL
-    // (reqwest follows the mock IdP's 302 to our /callback), standing in
+    // (reqwest follows the mock IdP's 302 to our /redirect), standing in
     // for a human completing the browser flow; `recording_opener` stays as
     // the brief describes it, for the "user never completes" tests.
 
@@ -2319,7 +2449,7 @@ mod tests {
     }
 
     /// Records the URL *and* fetches it, so the mock IdP's redirect lands on
-    /// our loopback `/callback`. Stands in for a human clicking through the
+    /// our loopback `/redirect`. Stands in for a human clicking through the
     /// browser. Fires the GET on a spawned task rather than blocking: `open`
     /// is a synchronous callback (real browser launchers are synchronous),
     /// so it cannot itself await a response.
