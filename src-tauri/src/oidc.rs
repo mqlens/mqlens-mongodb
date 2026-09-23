@@ -537,10 +537,13 @@ struct TokenResponse {
     refresh_token: Option<String>,
 }
 
+/// `expires_in` is IdP-controlled, so the addition is checked: a value too
+/// large to represent as an `Instant` is treated as no expiry at all rather
+/// than panicking inside the driver's authentication path.
 fn into_idp_response(token: TokenResponse) -> IdpServerResponse {
-    let expires = token
-        .expires_in
-        .map(|secs| std::time::Instant::now() + std::time::Duration::from_secs(secs));
+    let expires = token.expires_in.and_then(|secs| {
+        std::time::Instant::now().checked_add(std::time::Duration::from_secs(secs))
+    });
     IdpServerResponse::builder()
         .access_token(token.access_token)
         .expires(expires)
@@ -1379,6 +1382,19 @@ mod tests {
         assert_eq!(sent.grant_type, "authorization_code");
         assert_eq!(sent.code.as_deref(), Some("test-auth-code"));
         assert_eq!(sent.code_verifier.as_deref(), Some("verifier-xyz"));
+    }
+
+    /// `expires_in` is IdP-controlled. An absurd value must not panic in the
+    /// auth path (`Instant + Duration` overflow does); it means "no usable
+    /// expiry", which the driver treats as a token that never expires early.
+    #[test]
+    fn an_absurd_expires_in_is_no_expiry_rather_than_a_panic() {
+        let response = into_idp_response(TokenResponse {
+            access_token: "test-access-token".into(),
+            expires_in: Some(u64::MAX),
+            refresh_token: None,
+        });
+        assert_eq!(response.expires, None);
     }
 
     #[tokio::test]
