@@ -199,6 +199,11 @@ MQLens's session — so expect a second login prompt when you open the shell
 on an OIDC connection. Any shell login error appears in the shell's own
 output.
 
+With **Use ID token instead of access token** on, MQLens starts the shell
+with mongosh's `--oidcIdTokenAsAccessToken`, so its login sends the ID
+token too. The profile's **Allowed hosts** don't reach the shell; mongosh
+applies its own rules for which hosts it will log in to.
+
 ## Export and import (mongodump / mongorestore)
 
 The bundled MongoDB Database Tools support OIDC only for automated

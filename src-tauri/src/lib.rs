@@ -850,6 +850,10 @@ pub(crate) async fn connect_db_with_login(
     client_options.app_name = Some("MQLens-Engine".to_string());
     apply_main_timeouts(&mut client_options);
 
+    // Read before `login` is handed to the driver's callback, for the
+    // embedded shell's own login (see `mongosh_uri_args`).
+    let sends_id_token = login.config.is_some_and(|config| config.use_id_token);
+
     // `uri_requests_oidc` reads the URI the way the driver does, so the two
     // agree; should they ever not, the driver's reading still wins and the
     // login is registered here instead.
@@ -884,6 +888,11 @@ pub(crate) async fn connect_db_with_login(
     {
         let mut conn_uris = state.conn_uris.lock_safe()?;
         conn_uris.insert(connection_id.clone(), normalized_uri.clone());
+    }
+    // Only a connection that actually logs in with MONGODB-OIDC (it holds a
+    // registration) and whose profile sends the ID token.
+    if _login.is_some() && sends_id_token {
+        state.conn_oidc_id_token.lock_safe()?.insert(connection_id.clone());
     }
     if let Some(t) = tunnel {
         let mut tunnels = state.ssh_tunnels.lock_safe()?;
@@ -923,6 +932,7 @@ pub async fn disconnect_db_impl(state: &AppState, id: &str) -> Result<(), String
         let mut conn_uris = state.conn_uris.lock_safe()?;
         conn_uris.remove(id);
     }
+    state.conn_oidc_id_token.lock_safe()?.remove(id);
     // Tear down the SSH tunnel (if any) — dropping SshTunnel aborts its accept loop.
     {
         let mut tunnels = state.ssh_tunnels.lock_safe()?;
@@ -988,6 +998,21 @@ pub fn connection_list_impl(state: &AppState) -> Result<Vec<ConnectionEntry>, St
     Ok(list)
 }
 
+/// The arguments every mongosh launch for `connection_id` starts with: quiet
+/// output, then the connection's URI. mongosh runs its own MONGODB-OIDC login
+/// from that URI, which cannot carry the profile's OIDC settings; when this
+/// connection's login sends MongoDB the ID token, mongosh is told to do the
+/// same (`--oidcIdTokenAsAccessToken`), or MongoDB refuses the shell's login
+/// exactly as it refused the access token (#430).
+pub fn mongosh_uri_args(state: &AppState, connection_id: &str, uri: &str) -> Result<Vec<String>, String> {
+    let mut args = vec!["--quiet".to_string()];
+    if state.conn_oidc_id_token.lock_safe()?.contains(connection_id) {
+        args.push("--oidcIdTokenAsAccessToken".to_string());
+    }
+    args.push(connections::normalize_mongodb_uri_options(uri));
+    Ok(args)
+}
+
 /// #188 security review Fix 2 (CRITICAL): mongosh pipes arbitrary free-form
 /// commands (`db.dropDatabase()`, `db.coll.deleteMany({})`, …) straight to
 /// the driver — there is no per-command `WriteOp` to gate like every other
@@ -1032,8 +1057,7 @@ pub async fn start_mongosh_session_impl(
     };
 
     let mut child = TokioCommand::new(executable)
-        .arg("--quiet")
-        .arg(connections::normalize_mongodb_uri_options(uri))
+        .args(mongosh_uri_args(state, connection_id, uri)?)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1170,6 +1194,7 @@ pub async fn run_mongosh_script_impl(
     } else {
         mongosh_path.trim().to_string()
     };
+    let uri_args = mongosh_uri_args(state, connection_id, uri)?;
 
     // The script goes in a temp file, not an `--eval` argument: it can be large,
     // and a file sidesteps every argument-length and shell-quoting limit.
@@ -1181,9 +1206,7 @@ pub async fn run_mongosh_script_impl(
 
     let started = std::time::Instant::now();
     let mut command = TokioCommand::new(&executable);
-    command
-        .arg("--quiet")
-        .arg(connections::normalize_mongodb_uri_options(uri));
+    command.args(uri_args);
     // `use <db>` only when the name is a plain one — a control character could
     // not appear in a real database name and must never reach the argument.
     let db = database.trim();

@@ -163,6 +163,11 @@ pub struct AppState {
     /// connection id, for tools that need to hand a URI to an external
     /// process (mongodump/mongorestore). Never populated for mock connections.
     pub conn_uris: Mutex<HashMap<String, String>>,
+    /// Real connections whose MONGODB-OIDC login sends MongoDB the ID token
+    /// (the profile's "Use ID token instead of access token", #430). The
+    /// embedded shell runs its own login from the URI alone, which cannot
+    /// carry that setting, so it is recorded here for mongosh's launch.
+    pub conn_oidc_id_token: Mutex<HashSet<String>>,
     /// In-memory cache of the workspace.json document. `None` until the
     /// first `workspace_get`/`workspace_apply` call populates it (see
     /// `workspace::get_impl`/`workspace::apply_impl`).
@@ -242,6 +247,7 @@ impl AppState {
             resource_tree_at: Mutex::new(Instant::now()),
             vault_key: Mutex::new(None),
             conn_uris: Mutex::new(HashMap::new()),
+            conn_oidc_id_token: Mutex::new(HashSet::new()),
             workspace: Mutex::new(None),
             workspace_write_gen: Arc::new(AtomicU64::new(0)),
             namespaces: Mutex::new(Default::default()),

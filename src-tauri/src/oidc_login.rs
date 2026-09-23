@@ -857,6 +857,45 @@ mod tests {
         assert!(cancelled, "the cancel must reach the session the callback will use");
     }
 
+    // ---- the embedded shell and "Use ID token" (PR #433 review) ---------
+
+    const SHELL_OIDC_URI: &str = "mongodb://db.internal:27017/?authMechanism=MONGODB-OIDC&authSource=$external";
+
+    /// mongosh runs its own login from the URI alone, which cannot carry the
+    /// profile's OIDC settings. On a connection whose login sends the ID
+    /// token, mongosh must be told to send its own ID token too, or MongoDB
+    /// refuses the shell's login exactly as it refused the access token.
+    #[test]
+    fn mongosh_on_a_connection_that_sends_the_id_token_is_told_to_do_the_same() {
+        let state = AppState::new();
+        state.conn_oidc_id_token.lock().unwrap().insert("conn-1".to_string());
+
+        let args = crate::mongosh_uri_args(&state, "conn-1", SHELL_OIDC_URI).unwrap();
+
+        let uri = crate::connections::normalize_mongodb_uri_options(SHELL_OIDC_URI);
+        assert_eq!(args, vec!["--quiet".to_string(), "--oidcIdTokenAsAccessToken".to_string(), uri]);
+    }
+
+    #[test]
+    fn mongosh_on_any_other_connection_gets_only_the_uri() {
+        let state = AppState::new();
+
+        let args = crate::mongosh_uri_args(&state, "conn-1", SHELL_OIDC_URI).unwrap();
+
+        let uri = crate::connections::normalize_mongodb_uri_options(SHELL_OIDC_URI);
+        assert_eq!(args, vec!["--quiet".to_string(), uri]);
+    }
+
+    #[tokio::test]
+    async fn disconnecting_forgets_that_a_connection_sends_the_id_token() {
+        let state = AppState::new();
+        state.conn_oidc_id_token.lock().unwrap().insert("conn-1".to_string());
+
+        crate::disconnect_db_impl(&state, "conn-1").await.unwrap();
+
+        assert!(!state.conn_oidc_id_token.lock().unwrap().contains("conn-1"));
+    }
+
     // ---- allowed hosts through an SSH tunnel -----------------------------
 
     use super::test_support::{closed_port, ssh_to};

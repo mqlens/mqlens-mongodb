@@ -238,6 +238,10 @@ async fn connecting_runs_the_login_and_keeps_the_authenticated_client() {
         .unwrap_or_else(|e| panic!("the kept client must stay authenticated: {e}"));
     let users = status.get_document("authInfo").unwrap().get_array("authenticatedUsers").unwrap().clone();
     assert!(users.contains(&Bson::Document(doc! { "user": EXPECTED_USER, "db": "$external" })), "{users:?}");
+    assert!(
+        !state.conn_oidc_id_token.lock().unwrap().contains(&id),
+        "a login that sends the access token must not start mongosh with the ID-token flag"
+    );
 }
 
 /// Ruling 1's whole point: Connect has no channel, yet its login can be
@@ -630,6 +634,10 @@ async fn with_the_id_token_option_an_idp_whose_access_tokens_mongodb_refuses_sti
         .unwrap_or_else(|e| panic!("the kept client must stay authenticated: {e}"));
     let users = status.get_document("authInfo").unwrap().get_array("authenticatedUsers").unwrap().clone();
     assert!(users.contains(&Bson::Document(doc! { "user": EXPECTED_USER, "db": "$external" })), "{users:?}");
+    assert!(
+        state.conn_oidc_id_token.lock().unwrap().contains(&id),
+        "the embedded shell on this connection must be told to send the ID token too"
+    );
 }
 
 /// (c) An ID token minted for another login (wrong nonce) is refused before
