@@ -1949,6 +1949,46 @@ mod tests {
         let _ = std::fs::remove_file(&tool);
     }
 
+    /// End-to-end proof that `run_tool_process`'s failure branch — the single
+    /// production call site at `Err(tool_failure_message(&msg.join("\n")))` —
+    /// actually maps the real captured OIDC failure to the locale key rather
+    /// than redacted raw stderr. `tool_failure_message` and
+    /// `explain_database_tools_oidc_failure` are unit-tested directly above,
+    /// but nothing exercised the wiring itself: a revert of that one line back
+    /// to `redact_uris_in_text(...)` would leave users seeing raw stderr again
+    /// with no test anywhere failing. This drives the real task path — a fake
+    /// tool exiting non-zero with the verbatim captured line on stderr — the
+    /// same way `test_dump_task_failure_captures_stderr_tail` does for the
+    /// unrelated-failure case.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_dump_task_oidc_failure_becomes_the_locale_key_not_raw_stderr() {
+        use crate::db::mongotools::*;
+        let state = AppState::new();
+        state.conn_uris.lock().unwrap().insert("c1".into(), "mongodb://u:pw@localhost:27017".into());
+        // Double-quoted (not single-quoted, like the sibling tests above): the
+        // captured line contains an apostrophe ("can't") that would otherwise
+        // break out of a single-quoted `echo`. No `$`, backtick, `"`, or `\`
+        // appears in the captured text, so double-quoting it is safe as-is.
+        let tool = crate::db::mongotools::test_support::write_fake_tool(&format!(
+            "echo \"{}\" 1>&2\nexit 3\n",
+            CAPTURED_DATABASE_TOOLS_OIDC_STDERR
+        ));
+        let task = start_dump_task_retrying(&state, &tool, "/tmp/mqlens-dump-test-oidc").await;
+        wait_for_task(&state, &task.id).await;
+        let t = state.tasks.lock().unwrap().get(&task.id).cloned().unwrap();
+        assert_eq!(t.status, "failed");
+        assert_eq!(
+            t.error.as_deref(),
+            Some("tools.errors.oidcUnsupportedByDatabaseTools"),
+            "run_tool_process's failure branch must map the real captured OIDC \
+             stderr to the locale key, not echo it redacted-but-raw: {:?}",
+            t.error
+        );
+        assert!(state.cancels.lock().unwrap().get(&task.id).is_none(), "flag cleaned up");
+        let _ = std::fs::remove_file(&tool);
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn test_cancel_kills_the_tool() {

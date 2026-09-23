@@ -436,7 +436,7 @@
   },
   "tools": {
     "errors": {
-      "oidcUnsupportedByDatabaseTools": "内置的 MongoDB Database Tools 仅支持自动化（工作负载）环境下的 OIDC，不支持浏览器登录，因此此次导出/还原无法使用 OIDC 连接进行身份验证。请改用 SCRAM 用户进行导出和还原。"
+      "oidcUnsupportedByDatabaseTools": "内置的 MongoDB Database Tools 仅支持自动化（工作负载）环境下的 OIDC，不支持浏览器登录，因此你这次的导出/还原无法使用 OIDC 连接进行身份验证。请改用 SCRAM 用户来导出和还原。"
     }
   },
   "toolSetupDialog": {
