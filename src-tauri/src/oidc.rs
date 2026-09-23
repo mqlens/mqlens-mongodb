@@ -624,20 +624,26 @@ struct TokenResponse {
 ///
 /// `expires_in` is IdP-controlled, so the addition is checked: a value too
 /// large to represent as an `Instant` is treated as no expiry at all rather
-/// than panicking inside the driver's authentication path.
+/// than panicking inside the driver's authentication path. With the ID token
+/// as the credential, the expiry is the earlier of `expires_in` and the ID
+/// token's own `exp` (see `instant_of_exp`), so the driver never holds on to
+/// an ID token MongoDB will already refuse.
 fn into_idp_response(
     token: TokenResponse,
     choice: TokenChoice,
     expected_nonce: Option<&str>,
 ) -> Result<(IdpServerResponse, Presented), OidcError> {
-    let (credential, presented) = match choice {
+    let expires_in = token.expires_in.and_then(|secs| {
+        std::time::Instant::now().checked_add(std::time::Duration::from_secs(secs))
+    });
+    let (credential, presented, expires) = match choice {
         TokenChoice::AccessToken => {
             let presented = if mongodb_refuses_jwt_type(&token.access_token) {
                 Presented::AccessTokenOfRefusedType
             } else {
                 Presented::AccessToken
             };
-            (token.access_token, presented)
+            (token.access_token, presented, expires_in)
         }
         TokenChoice::IdToken => {
             let id_token = token.id_token.ok_or(OidcError::TokenExchangeFailed)?;
@@ -648,18 +654,41 @@ fn into_idp_response(
                     return Err(OidcError::StateMismatch);
                 }
             }
-            (id_token, Presented::IdToken)
+            // `expires_in` describes the access token. MongoDB checks the ID
+            // token, so the driver must drop it by the ID token's own `exp`
+            // when that comes first.
+            let expires = match (expires_in, instant_of_exp(claims.get("exp"))) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (a, b) => a.or(b),
+            };
+            (id_token, Presented::IdToken, expires)
         }
     };
-    let expires = token.expires_in.and_then(|secs| {
-        std::time::Instant::now().checked_add(std::time::Duration::from_secs(secs))
-    });
     let response = IdpServerResponse::builder()
         .access_token(credential)
         .expires(expires)
         .refresh_token(token.refresh_token)
         .build();
     Ok((response, presented))
+}
+
+/// A JWT `exp` claim (NumericDate: seconds since the Unix epoch, possibly
+/// fractional) as an `Instant`. IdP-controlled, so every step is checked:
+/// a missing or non-numeric `exp` is `None`; one already past is now, the
+/// earliest instant there is; one too far out to represent is `None`, no
+/// bound at all, like an absurd `expires_in`.
+fn instant_of_exp(exp: Option<&serde_json::Value>) -> Option<std::time::Instant> {
+    let exp = exp?.as_f64().filter(|secs| secs.is_finite())?;
+    let now_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs_f64();
+    let now = std::time::Instant::now();
+    let remaining = exp - now_unix;
+    if remaining <= 0.0 {
+        return Some(now);
+    }
+    now.checked_add(std::time::Duration::try_from_secs_f64(remaining).ok()?)
 }
 
 /// Segment `index` of a compact JWS (0: the JOSE header, 1: the claims),
@@ -683,6 +712,18 @@ fn jwt_segment(token: &str, index: usize) -> Option<serde_json::Map<String, serd
 /// (`"at+jwt"`, as cidaas issues) included. MongoDB tells the client only
 /// "Authentication failed.", so this is how a rejection is explained. A
 /// token that is not a JWT is refused for other reasons: `false`.
+///
+/// Limits of the hint this drives (`AccessTokenTypeRejected`):
+/// - It is accurate only while MongoDB keeps that check (error 7095401,
+///   `jws_validated_token.cpp:98`). Should a MongoDB release accept `at+jwt`,
+///   the hint could name a cause that no longer applies. Re-check it on
+///   upgrades.
+/// - MongoDB reads the token's body (`iss`/`aud`, to pick the identity
+///   provider) before it checks `typ`. An `at+jwt` token that also has a
+///   wrong issuer or audience fails that body check first, yet still gets
+///   the hint, because MQLens cannot see which check failed.
+/// - So the advice ("use the ID token") is always a necessary fix for such a
+///   token, but not always a sufficient one.
 fn mongodb_refuses_jwt_type(token: &str) -> bool {
     jwt_segment(token, 0).is_some_and(|header| match header.get("typ") {
         None => false,
@@ -2342,6 +2383,87 @@ mod tests {
 
     fn id_token_with(claims: serde_json::Value) -> Option<String> {
         Some(unsigned_jwt(serde_json::json!({"alg": "RS256", "typ": "JWT"}), claims))
+    }
+
+    // --- the ID token's own expiry (T21 polish) ---
+
+    fn unix_now() -> i64 {
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64
+    }
+
+    /// The expiry the driver is given for an ID token with `exp` (a JSON
+    /// value, or none) and a response whose `expires_in` is `expires_in`,
+    /// as seconds from now (`None`: no expiry).
+    fn id_token_expiry(exp: Option<serde_json::Value>, expires_in: Option<u64>) -> Option<u64> {
+        let mut claims = serde_json::json!({"sub": "u", "nonce": "nonce-1"});
+        if let Some(exp) = exp {
+            claims["exp"] = exp;
+        }
+        let token = TokenResponse { expires_in, ..tokens(id_token_with(claims)) };
+        let before = std::time::Instant::now();
+        let (response, _) = into_idp_response(token, TokenChoice::IdToken, Some("nonce-1")).unwrap();
+        response.expires.map(|at| at.saturating_duration_since(before).as_secs())
+    }
+
+    /// Within a few seconds of `expected`, allowing for the clock ticking
+    /// between the test building the token and the flow reading the time.
+    fn assert_about(actual: Option<u64>, expected: u64) {
+        let actual = actual.expect("an expiry");
+        assert!(actual.abs_diff(expected) <= 5, "expected about {expected}s from now, got {actual}s");
+    }
+
+    /// With the ID token as the credential, the driver must drop it when
+    /// the ID token expires, even if the access token lives on: MongoDB
+    /// checks the token it was given.
+    #[test]
+    fn an_id_token_expiring_before_the_access_token_sets_the_expiry() {
+        assert_about(id_token_expiry(Some(serde_json::json!(unix_now() + 600)), Some(3600)), 600);
+    }
+
+    #[test]
+    fn an_id_token_expiring_after_the_access_token_keeps_expires_in() {
+        assert_about(id_token_expiry(Some(serde_json::json!(unix_now() + 7200)), Some(3600)), 3600);
+    }
+
+    #[test]
+    fn an_id_token_without_a_numeric_exp_keeps_expires_in() {
+        assert_about(id_token_expiry(None, Some(3600)), 3600);
+        assert_about(id_token_expiry(Some(serde_json::json!("soon")), Some(3600)), 3600);
+        assert_about(id_token_expiry(Some(serde_json::Value::Null), Some(3600)), 3600);
+    }
+
+    /// Already expired: the earliest instant there is — now — not a panic
+    /// and not the access token's lifetime.
+    #[test]
+    fn an_id_token_already_expired_expires_now() {
+        assert_about(id_token_expiry(Some(serde_json::json!(unix_now() - 600)), Some(3600)), 0);
+        assert_about(id_token_expiry(Some(serde_json::json!(-1)), Some(3600)), 0);
+    }
+
+    /// With no `expires_in` the ID token's `exp` is the only bound.
+    #[test]
+    fn an_id_token_exp_bounds_a_response_without_expires_in() {
+        assert_about(id_token_expiry(Some(serde_json::json!(unix_now() + 600)), None), 600);
+        assert_eq!(id_token_expiry(None, None), None);
+    }
+
+    /// An `exp` too far out to represent is no bound at all: checked, not
+    /// a panic.
+    #[test]
+    fn an_absurd_id_token_exp_is_no_bound_rather_than_a_panic() {
+        assert_about(id_token_expiry(Some(serde_json::json!(u64::MAX)), Some(3600)), 3600);
+        assert_about(id_token_expiry(Some(serde_json::json!(1e300)), Some(3600)), 3600);
+        assert_eq!(id_token_expiry(Some(serde_json::json!(u64::MAX)), None), None);
+    }
+
+    /// Access-token mode never looks at the ID token's expiry.
+    #[test]
+    fn with_the_option_off_the_id_tokens_exp_is_ignored() {
+        let id_token = id_token_with(serde_json::json!({"nonce": "nonce-1", "exp": unix_now() + 600}));
+        let before = std::time::Instant::now();
+        let (response, _) =
+            into_idp_response(tokens(id_token), TokenChoice::AccessToken, Some("nonce-1")).unwrap();
+        assert_about(response.expires.map(|at| at.saturating_duration_since(before).as_secs()), 3600);
     }
 
     #[test]
