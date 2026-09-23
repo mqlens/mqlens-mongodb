@@ -132,6 +132,7 @@ oidc_errors! {
     TokenExchangeFailed => "auth.oidc.errors.tokenExchangeFailed",
     HostNotAllowed => "auth.oidc.errors.hostNotAllowed",
     TokenRejected => "auth.oidc.errors.tokenRejected",
+    AccessTokenTypeRejected => "auth.oidc.errors.accessTokenTypeRejected",
     LoginOkPingFailed => "auth.oidc.errors.loginOkPingFailed",
     MissingClientId => "auth.oidc.errors.missingClientId",
     InsecureEndpoint => "auth.oidc.errors.insecureEndpoint",
@@ -153,6 +154,7 @@ impl std::fmt::Display for OidcError {
             Self::TokenExchangeFailed => "the token exchange failed",
             Self::HostNotAllowed => "the MongoDB host is outside ALLOWED_HOSTS",
             Self::TokenRejected => "the token was rejected",
+            Self::AccessTokenTypeRejected => "MongoDB refused the access token's type",
             Self::LoginOkPingFailed => "login succeeded but the database ping failed",
             Self::MissingClientId => "the deployment supplied no OIDC client id",
             Self::InsecureEndpoint => "the identity provider endpoint is not HTTPS",
@@ -567,25 +569,125 @@ impl Drop for LoopbackListener {
 
 use mongodb::options::oidc::IdpServerResponse;
 
+/// Which of the IdP's tokens the driver hands MongoDB as its credential.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TokenChoice {
+    /// The access token — the OAuth credential, and MongoDB's default.
+    #[default]
+    AccessToken,
+    /// The ID token: the profile's "Use ID token instead of access token",
+    /// for an IdP whose access tokens MongoDB refuses (mongosh's
+    /// `--oidcIdTokenAsAccessToken`).
+    IdToken,
+}
+
+impl TokenChoice {
+    pub fn for_profile(use_id_token: bool) -> Self {
+        if use_id_token { Self::IdToken } else { Self::AccessToken }
+    }
+}
+
+/// Which token a completed login handed the driver — all a later rejection
+/// needs to be explained. Carries nothing secret.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Presented {
+    /// The access token, with a JWT `typ` MongoDB accepts (or not a JWT at
+    /// all, which MongoDB refuses for its own reasons).
+    AccessToken,
+    /// The access token, with a JWT `typ` MongoDB refuses.
+    AccessTokenOfRefusedType,
+    /// The ID token.
+    IdToken,
+}
+
 #[derive(serde::Deserialize)]
 struct TokenResponse {
     access_token: String,
     expires_in: Option<u64>,
     refresh_token: Option<String>,
+    #[serde(default)]
+    id_token: Option<String>,
 }
 
+/// Pick the token the driver hands MongoDB, and map the rest of the
+/// response onto the driver's type.
+///
+/// With [`TokenChoice::IdToken`] the ID token becomes the credential, so it
+/// must be this login's: its `nonce` claim must equal the one the
+/// authorization request sent (`expected_nonce`), compared in constant time.
+/// A missing or different nonce is `StateMismatch` — the same meaning for
+/// the user as a callback that does not match its request. A refresh sends
+/// no nonce, so its ID token is not checked for one (`expected_nonce` is
+/// `None`). The signature, issuer and audience are not checked here:
+/// MongoDB verifies them against the IdP's keys. The token and its claims
+/// are never logged or put in an error.
+///
 /// `expires_in` is IdP-controlled, so the addition is checked: a value too
 /// large to represent as an `Instant` is treated as no expiry at all rather
 /// than panicking inside the driver's authentication path.
-fn into_idp_response(token: TokenResponse) -> IdpServerResponse {
+fn into_idp_response(
+    token: TokenResponse,
+    choice: TokenChoice,
+    expected_nonce: Option<&str>,
+) -> Result<(IdpServerResponse, Presented), OidcError> {
+    let (credential, presented) = match choice {
+        TokenChoice::AccessToken => {
+            let presented = if mongodb_refuses_jwt_type(&token.access_token) {
+                Presented::AccessTokenOfRefusedType
+            } else {
+                Presented::AccessToken
+            };
+            (token.access_token, presented)
+        }
+        TokenChoice::IdToken => {
+            let id_token = token.id_token.ok_or(OidcError::TokenExchangeFailed)?;
+            let claims = jwt_segment(&id_token, 1).ok_or(OidcError::TokenExchangeFailed)?;
+            if let Some(expected) = expected_nonce {
+                let nonce = claims.get("nonce").and_then(|n| n.as_str()).unwrap_or_default();
+                if nonce.is_empty() || !crate::mcp::constant_time_eq(nonce.as_bytes(), expected.as_bytes()) {
+                    return Err(OidcError::StateMismatch);
+                }
+            }
+            (id_token, Presented::IdToken)
+        }
+    };
     let expires = token.expires_in.and_then(|secs| {
         std::time::Instant::now().checked_add(std::time::Duration::from_secs(secs))
     });
-    IdpServerResponse::builder()
-        .access_token(token.access_token)
+    let response = IdpServerResponse::builder()
+        .access_token(credential)
         .expires(expires)
         .refresh_token(token.refresh_token)
-        .build()
+        .build();
+    Ok((response, presented))
+}
+
+/// Segment `index` of a compact JWS (0: the JOSE header, 1: the claims),
+/// base64url-decoded and parsed as a JSON object. `None` for anything that
+/// is not a three-segment JWS with a JSON object there. Nothing is verified.
+fn jwt_segment(token: &str, index: usize) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let segments: Vec<&str> = token.split('.').collect();
+    if segments.len() != 3 {
+        return None;
+    }
+    let bytes = B64.decode(segments[index]).ok()?;
+    match serde_json::from_slice(&bytes).ok()? {
+        serde_json::Value::Object(map) => Some(map),
+        _ => None,
+    }
+}
+
+/// Whether MongoDB's JWT parser will refuse `token` for its header's `typ`.
+/// MongoDB (`src/mongo/crypto/jws_validated_token.cpp`) accepts a `typ` that
+/// is absent or exactly `"JWT"`, and nothing else — RFC 9068 access tokens
+/// (`"at+jwt"`, as cidaas issues) included. MongoDB tells the client only
+/// "Authentication failed.", so this is how a rejection is explained. A
+/// token that is not a JWT is refused for other reasons: `false`.
+fn mongodb_refuses_jwt_type(token: &str) -> bool {
+    jwt_segment(token, 0).is_some_and(|header| match header.get("typ") {
+        None => false,
+        Some(typ) => typ.as_str() != Some("JWT"),
+    })
 }
 
 /// POST the form and map the response. Every failure collapses to
@@ -595,7 +697,9 @@ async fn post_token_form(
     endpoints: &Endpoints,
     form: &[(&str, &str)],
     http: &reqwest::Client,
-) -> Result<IdpServerResponse, OidcError> {
+    choice: TokenChoice,
+    expected_nonce: Option<&str>,
+) -> Result<(IdpServerResponse, Presented), OidcError> {
     require_secure(&endpoints.token)?;
     let response = http
         .post(&endpoints.token)
@@ -607,10 +711,13 @@ async fn post_token_form(
         return Err(OidcError::TokenExchangeFailed);
     }
     let token: TokenResponse = response.json().await.map_err(|_| OidcError::TokenExchangeFailed)?;
-    Ok(into_idp_response(token))
+    into_idp_response(token, choice, expected_nonce)
 }
 
-/// Exchange an authorization code (with its PKCE verifier) for tokens.
+/// Exchange an authorization code (with its PKCE verifier) for tokens, and
+/// pick the one the driver gets. `nonce` is the one this login's
+/// authorization request sent; an ID token must carry it.
+#[allow(clippy::too_many_arguments)]
 pub async fn exchange_code(
     endpoints: &Endpoints,
     client_id: &str,
@@ -618,7 +725,9 @@ pub async fn exchange_code(
     verifier: &PkceVerifier,
     redirect_uri: &str,
     http: &reqwest::Client,
-) -> Result<IdpServerResponse, OidcError> {
+    choice: TokenChoice,
+    nonce: &str,
+) -> Result<(IdpServerResponse, Presented), OidcError> {
     post_token_form(
         endpoints,
         &[
@@ -629,17 +738,20 @@ pub async fn exchange_code(
             ("code_verifier", verifier.as_str()),
         ],
         http,
+        choice,
+        Some(nonce),
     )
     .await
 }
 
-/// Use a refresh token to obtain a new access token.
+/// Use a refresh token to obtain a new token of `choice`'s kind.
 pub async fn refresh_token(
     endpoints: &Endpoints,
     client_id: &str,
     refresh: &str,
     http: &reqwest::Client,
-) -> Result<IdpServerResponse, OidcError> {
+    choice: TokenChoice,
+) -> Result<(IdpServerResponse, Presented), OidcError> {
     post_token_form(
         endpoints,
         &[
@@ -648,6 +760,8 @@ pub async fn refresh_token(
             ("client_id", client_id),
         ],
         http,
+        choice,
+        None,
     )
     .await
 }
@@ -662,7 +776,9 @@ use std::sync::Arc;
 #[derive(Debug)]
 pub enum OidcPhase {
     WaitingForBrowser,
-    Completed,
+    /// The IdP handed over a token and the flow gave it to the driver —
+    /// before MongoDB has seen it.
+    Completed(Presented),
     Failed(OidcError),
 }
 
@@ -760,6 +876,7 @@ pub async fn run_flow(
     session: Arc<OidcSession>,
     open: BrowserOpener,
     http: reqwest::Client,
+    choice: TokenChoice,
 ) -> Result<IdpServerResponse, OidcError> {
     // The whole body — discovery, refresh, the browser wait and the code
     // exchange — runs under the driver's deadline and the session's cancel
@@ -777,15 +894,20 @@ pub async fn run_flow(
     let deadline = ctx.timeout;
     let result = tokio::select! {
         biased;
-        result = run_flow_inner(ctx, &session, open, http) => result,
+        result = run_flow_inner(ctx, &session, open, http, choice) => result,
         _ = wait_for_deadline(deadline) => Err(OidcError::TimedOut),
         _ = wait_for_cancel(&session) => Err(OidcError::Cancelled),
     };
-    match &result {
-        Ok(_) => session.emit(OidcPhase::Completed),
-        Err(error) => session.emit(OidcPhase::Failed(error.clone())),
+    match result {
+        Ok((response, presented)) => {
+            session.emit(OidcPhase::Completed(presented));
+            Ok(response)
+        }
+        Err(error) => {
+            session.emit(OidcPhase::Failed(error.clone()));
+            Err(error)
+        }
     }
-    result
 }
 
 async fn run_flow_inner(
@@ -793,7 +915,8 @@ async fn run_flow_inner(
     session: &OidcSession,
     open: BrowserOpener,
     http: reqwest::Client,
-) -> Result<IdpServerResponse, OidcError> {
+    choice: TokenChoice,
+) -> Result<(IdpServerResponse, Presented), OidcError> {
     let idp = ctx.idp_info.ok_or(OidcError::DiscoveryFailed)?;
     let endpoints = discover(&idp.issuer, &http).await?;
     let client_id = idp.client_id.clone().ok_or(OidcError::MissingClientId)?;
@@ -802,7 +925,7 @@ async fn run_flow_inner(
     // rejected refresh (expired, revoked) is not returned as an error here —
     // it falls through to the interactive flow below.
     if let Some(refresh) = ctx.refresh_token.as_deref() {
-        if let Ok(response) = refresh_token(&endpoints, &client_id, refresh, &http).await {
+        if let Ok(response) = refresh_token(&endpoints, &client_id, refresh, &http, choice).await {
             return Ok(response);
         }
     }
@@ -851,7 +974,7 @@ async fn run_flow_inner(
         _ = wait_for_cancel(session) => return Err(OidcError::Cancelled),
     };
 
-    exchange_code(&endpoints, &client_id, &code, &request.verifier, &redirect_uri, &http).await
+    exchange_code(&endpoints, &client_id, &code, &request.verifier, &redirect_uri, &http, choice, &request.nonce).await
 }
 
 use futures::future::FutureExt as _;
@@ -861,9 +984,12 @@ use mongodb::options::{AuthMechanism, ClientOptions};
 /// Attach the human OIDC callback — and only for `MONGODB-OIDC`. Every other
 /// mechanism is left exactly as parsed.
 ///
-/// `allowed_hosts` is applied here rather than in the URI because
-/// `ClientOptions::parse` rejects `ALLOWED_HOSTS` outright. An empty list
-/// leaves the driver's own secure defaults in place; we never broaden them.
+/// `config` is the profile's OIDC settings, whole, so a new setting reaches
+/// the flow without another parameter here. Its `allowed_hosts` is applied
+/// here rather than in the URI because `ClientOptions::parse` rejects
+/// `ALLOWED_HOSTS` outright. An empty list leaves the driver's own secure
+/// defaults in place; we never broaden them. Its `use_id_token` picks the
+/// token the flow hands the driver.
 ///
 /// `http` is injected rather than built here so callers can supply a client
 /// with different TLS trust (e.g. a test's self-signed CA) without this
@@ -878,7 +1004,7 @@ use mongodb::options::{AuthMechanism, ClientOptions};
 pub fn attach_human_callback(
     options: &mut ClientOptions,
     session: Arc<OidcSession>,
-    allowed_hosts: &[String],
+    config: &crate::connections::OidcProfileConfig,
     open: BrowserOpener,
     http: reqwest::Client,
 ) {
@@ -889,8 +1015,9 @@ pub fn attach_human_callback(
         return;
     }
 
-    if !allowed_hosts.is_empty() {
-        let hosts: mongodb::bson::Array = allowed_hosts
+    if !config.allowed_hosts.is_empty() {
+        let hosts: mongodb::bson::Array = config
+            .allowed_hosts
             .iter()
             .map(|host| mongodb::bson::Bson::String(host.clone()))
             .collect();
@@ -900,12 +1027,13 @@ pub fn attach_human_callback(
         properties.insert("ALLOWED_HOSTS", hosts);
     }
 
+    let choice = TokenChoice::for_profile(config.use_id_token);
     credential.oidc_callback = Callback::human(move |context: CallbackContext| {
         let session = session.clone();
         let open = open.clone();
         let http = http.clone();
         async move {
-            run_flow(context, session, open, http)
+            run_flow(context, session, open, http, choice)
                 .await
                 .map_err(to_driver_error)
         }
@@ -1552,13 +1680,15 @@ mod tests {
         let endpoints = discover(&idp.issuer(), &http).await.unwrap();
         let verifier = PkceVerifier::from_string("verifier-xyz".to_string());
 
-        let response = exchange_code(
+        let (response, _) = exchange_code(
             &endpoints,
             "client-abc",
             "test-auth-code",
             &verifier,
             "http://127.0.0.1:1/callback",
             &http,
+            TokenChoice::AccessToken,
+            "test-nonce",
         )
         .await
         .unwrap();
@@ -1582,7 +1712,10 @@ mod tests {
             access_token: "test-access-token".into(),
             expires_in: Some(u64::MAX),
             refresh_token: None,
-        });
+            id_token: None,
+        }, TokenChoice::AccessToken, None)
+        .unwrap()
+        .0;
         assert_eq!(response.expires, None);
     }
 
@@ -1592,7 +1725,7 @@ mod tests {
         let http = reqwest::Client::new();
         let endpoints = discover(&idp.issuer(), &http).await.unwrap();
 
-        let response = refresh_token(&endpoints, "client-abc", "test-refresh-token", &http)
+        let (response, _) = refresh_token(&endpoints, "client-abc", "test-refresh-token", &http, TokenChoice::AccessToken)
             .await
             .unwrap();
         assert!(!response.access_token.is_empty());
@@ -1620,6 +1753,8 @@ mod tests {
             &PkceVerifier::from_string("v".into()),
             "http://127.0.0.1:1/callback",
             &http,
+            TokenChoice::AccessToken,
+            "test-nonce",
         )
         .await;
         assert!(
@@ -1642,6 +1777,8 @@ mod tests {
             &PkceVerifier::from_string("super-secret-verifier".into()),
             "http://127.0.0.1:1/callback",
             &http,
+            TokenChoice::AccessToken,
+            "test-nonce",
         )
         .await
         .unwrap_err();
@@ -1687,10 +1824,12 @@ mod tests {
             &PkceVerifier::from_string("super-secret-verifier".into()),
             "http://127.0.0.1:1/callback",
             &http,
+            TokenChoice::AccessToken,
+            "test-nonce",
         )
         .await;
 
-        assert!(matches!(result, Err(OidcError::TokenExchangeFailed)), "got {result:?}");
+        assert!(matches!(result, Err(OidcError::TokenExchangeFailed)), "got {:?}", result.as_ref().map(|_| ()));
         assert_eq!(
             reached.load(Ordering::SeqCst),
             0,
@@ -2020,6 +2159,7 @@ mod tests {
             session,
             opener,
             reqwest::Client::new(),
+            TokenChoice::AccessToken,
         )
         .await
         .unwrap();
@@ -2027,7 +2167,7 @@ mod tests {
         assert!(!response.access_token.is_empty());
         assert_eq!(opened.lock().unwrap().len(), 1, "the browser opens exactly once");
         let phases = phases.lock().unwrap().clone();
-        assert_eq!(phases, vec!["WaitingForBrowser".to_string(), "Completed".to_string()]);
+        assert_eq!(phases, vec!["WaitingForBrowser".to_string(), "Completed(AccessToken)".to_string()]);
     }
 
     #[tokio::test]
@@ -2041,6 +2181,7 @@ mod tests {
             session,
             opener,
             reqwest::Client::new(),
+            TokenChoice::AccessToken,
         )
         .await
         .unwrap();
@@ -2065,6 +2206,7 @@ mod tests {
             session,
             opener,
             reqwest::Client::new(),
+            TokenChoice::AccessToken,
         )
         .await
         .unwrap();
@@ -2092,7 +2234,7 @@ mod tests {
 
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(5),
-            run_flow(context_for(&idp, None), session, opener, reqwest::Client::new()),
+            run_flow(context_for(&idp, None), session, opener, reqwest::Client::new(), TokenChoice::AccessToken),
         )
         .await
         .expect("cancel must not leave the flow hanging");
@@ -2128,7 +2270,7 @@ mod tests {
 
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(5),
-            run_flow(context, session, opener, reqwest::Client::new()),
+            run_flow(context, session, opener, reqwest::Client::new(), TokenChoice::AccessToken),
         )
         .await
         .expect("the deadline must be honoured");
@@ -2145,7 +2287,7 @@ mod tests {
             .refresh_token(None)
             .idp_info(None)
             .build();
-        let result = run_flow(context, session, opener, reqwest::Client::new()).await;
+        let result = run_flow(context, session, opener, reqwest::Client::new(), TokenChoice::AccessToken).await;
         assert!(matches!(result, Err(OidcError::DiscoveryFailed)), "got {result:?}");
     }
 
@@ -2159,8 +2301,8 @@ mod tests {
         let (opener_b, opened_b) = simulating_opener();
 
         let (a, b) = tokio::join!(
-            run_flow(context_for(&idp_a, None), session_a, opener_a, reqwest::Client::new()),
-            run_flow(context_for(&idp_b, None), session_b, opener_b, reqwest::Client::new()),
+            run_flow(context_for(&idp_a, None), session_a, opener_a, reqwest::Client::new(), TokenChoice::AccessToken),
+            run_flow(context_for(&idp_b, None), session_b, opener_b, reqwest::Client::new(), TokenChoice::AccessToken),
         );
 
         let (a, b) = (a.unwrap(), b.unwrap());
@@ -2173,6 +2315,255 @@ mod tests {
 
     fn query_value(url: &str, key: &str) -> String {
         url_params(url).get(key).cloned().unwrap_or_default()
+    }
+
+    // --- T21: "Use ID token instead of access token" ---
+
+    /// A compact JWS with `header` and `claims` and a dummy signature: MQLens
+    /// never verifies one (MongoDB does), so these need not be signed.
+    fn unsigned_jwt(header: serde_json::Value, claims: serde_json::Value) -> String {
+        format!("{}.{}.c2ln", B64.encode(header.to_string()), B64.encode(claims.to_string()))
+    }
+
+    /// A test's own view of a token the flow handed the driver.
+    fn claims_of(token: &str) -> serde_json::Value {
+        let payload = token.split('.').nth(1).expect("a JWT has a payload");
+        serde_json::from_slice(&B64.decode(payload).expect("base64url payload")).expect("JSON claims")
+    }
+
+    fn tokens(id_token: Option<String>) -> TokenResponse {
+        TokenResponse {
+            access_token: "the-access-token".into(),
+            expires_in: Some(3600),
+            refresh_token: Some("the-refresh-token".into()),
+            id_token,
+        }
+    }
+
+    fn id_token_with(claims: serde_json::Value) -> Option<String> {
+        Some(unsigned_jwt(serde_json::json!({"alg": "RS256", "typ": "JWT"}), claims))
+    }
+
+    #[test]
+    fn an_id_token_carrying_the_logins_nonce_is_what_the_driver_gets() {
+        let id_token = id_token_with(serde_json::json!({"sub": "u", "nonce": "nonce-1"}));
+
+        let (response, presented) =
+            into_idp_response(tokens(id_token.clone()), TokenChoice::IdToken, Some("nonce-1")).unwrap();
+
+        assert_eq!(Some(response.access_token), id_token, "the ID token is the credential");
+        assert_eq!(presented, Presented::IdToken);
+        assert_eq!(response.refresh_token.as_deref(), Some("the-refresh-token"), "the refresh token is kept");
+        assert!(response.expires.is_some(), "the response's expiry is kept");
+    }
+
+    /// The ID token becomes the credential, so one minted for another login
+    /// (a replay, or a mix-up between two logins) must never be sent.
+    #[test]
+    fn an_id_token_with_another_nonce_is_refused_as_a_state_mismatch() {
+        let id_token = id_token_with(serde_json::json!({"sub": "u", "nonce": "nonce-2"}));
+
+        let result = into_idp_response(tokens(id_token), TokenChoice::IdToken, Some("nonce-1"));
+
+        assert!(matches!(result, Err(OidcError::StateMismatch)), "got {:?}", result.map(|(_, p)| p));
+    }
+
+    #[test]
+    fn an_id_token_without_a_nonce_is_refused_as_a_state_mismatch() {
+        for claims in [
+            serde_json::json!({"sub": "u"}),
+            serde_json::json!({"sub": "u", "nonce": null}),
+            serde_json::json!({"sub": "u", "nonce": 7}),
+            serde_json::json!({"sub": "u", "nonce": ""}),
+        ] {
+            let result = into_idp_response(tokens(id_token_with(claims.clone())), TokenChoice::IdToken, Some("nonce-1"));
+            assert!(matches!(result, Err(OidcError::StateMismatch)), "{claims}: got {:?}", result.map(|(_, p)| p));
+        }
+        // A missing nonce is never a match, not even for an empty expected
+        // one (the flow never sends one, but nothing here relies on that).
+        let result = into_idp_response(tokens(id_token_with(serde_json::json!({"sub": "u"}))), TokenChoice::IdToken, Some(""));
+        assert!(matches!(result, Err(OidcError::StateMismatch)), "got {:?}", result.map(|(_, p)| p));
+    }
+
+    #[test]
+    fn no_id_token_with_the_option_on_is_a_failed_exchange() {
+        let result = into_idp_response(tokens(None), TokenChoice::IdToken, Some("nonce-1"));
+
+        assert!(matches!(result, Err(OidcError::TokenExchangeFailed)), "got {:?}", result.map(|(_, p)| p));
+    }
+
+    #[test]
+    fn a_malformed_id_token_is_a_failed_exchange() {
+        let not_json = format!("e30.{}.c2ln", B64.encode("not json"));
+        let not_an_object = format!("e30.{}.c2ln", B64.encode("[\"nonce-1\"]"));
+        for malformed in ["", "opaque-token", "e30.e30", "e30.!!!.c2ln", "e30.e30.c2ln.extra", &not_json, &not_an_object] {
+            let result = into_idp_response(tokens(Some(malformed.to_string())), TokenChoice::IdToken, Some("nonce-1"));
+            assert!(
+                matches!(result, Err(OidcError::TokenExchangeFailed)),
+                "{malformed:?}: got {:?}",
+                result.map(|(_, p)| p)
+            );
+        }
+    }
+
+    /// A refresh exchange sends no nonce, so its ID token is not checked for
+    /// one — but it must still be an ID token.
+    #[test]
+    fn a_refreshed_id_token_is_used_without_a_nonce_check() {
+        let id_token = id_token_with(serde_json::json!({"sub": "u"}));
+
+        let (response, presented) = into_idp_response(tokens(id_token.clone()), TokenChoice::IdToken, None).unwrap();
+
+        assert_eq!(Some(response.access_token), id_token);
+        assert_eq!(presented, Presented::IdToken);
+        let malformed = into_idp_response(tokens(Some("opaque".into())), TokenChoice::IdToken, None);
+        assert!(matches!(malformed, Err(OidcError::TokenExchangeFailed)), "got {:?}", malformed.map(|(_, p)| p));
+    }
+
+    /// With the option off nothing about the ID token matters — not even
+    /// one that would fail every check above.
+    #[test]
+    fn with_the_option_off_the_access_token_is_handed_over_whatever_the_id_token_says() {
+        for id_token in [None, Some("opaque".to_string()), id_token_with(serde_json::json!({"nonce": "nonce-2"}))] {
+            let (response, presented) =
+                into_idp_response(tokens(id_token), TokenChoice::AccessToken, Some("nonce-1")).unwrap();
+            assert_eq!(response.access_token, "the-access-token");
+            assert_eq!(presented, Presented::AccessToken);
+        }
+    }
+
+    /// MongoDB's JWT parser (`jws_validated_token.cpp`) accepts a `typ` that
+    /// is absent or exactly `"JWT"`, and refuses any other — RFC 9068's
+    /// `"at+jwt"` among them. A token that is not a JWT at all is refused
+    /// for other reasons, so it is not called a type problem.
+    #[test]
+    fn an_access_token_is_classified_by_the_typ_mongodb_accepts() {
+        let claims = serde_json::json!({"sub": "u"});
+        for (access_token, expected) in [
+            (unsigned_jwt(serde_json::json!({"alg": "RS256"}), claims.clone()), Presented::AccessToken),
+            (unsigned_jwt(serde_json::json!({"alg": "RS256", "typ": "JWT"}), claims.clone()), Presented::AccessToken),
+            (
+                unsigned_jwt(serde_json::json!({"alg": "RS256", "typ": "at+jwt"}), claims.clone()),
+                Presented::AccessTokenOfRefusedType,
+            ),
+            (
+                unsigned_jwt(serde_json::json!({"alg": "RS256", "typ": "jwt"}), claims.clone()),
+                Presented::AccessTokenOfRefusedType,
+            ),
+            ("opaque-access-token".to_string(), Presented::AccessToken),
+            ("e30.e30".to_string(), Presented::AccessToken),
+        ] {
+            let token = TokenResponse { access_token: access_token.clone(), ..tokens(None) };
+            let (response, presented) = into_idp_response(token, TokenChoice::AccessToken, Some("nonce-1")).unwrap();
+            assert_eq!(presented, expected, "{access_token}");
+            assert_eq!(response.access_token, access_token, "the access token is handed over unchanged");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_login_with_the_id_token_option_hands_the_driver_this_logins_id_token() {
+        let idp = MockIdp::start();
+        let (session, phases) = test_session();
+        let (opener, opened) = simulating_opener();
+
+        let response = run_flow(context_for(&idp, None), session, opener, reqwest::Client::new(), TokenChoice::IdToken)
+            .await
+            .unwrap();
+
+        let claims = claims_of(&response.access_token);
+        assert_eq!(claims["aud"], "mqlens-test", "an ID token, whose audience is the client id");
+        assert_eq!(claims["nonce"], query_value(&opened.lock().unwrap()[0], "nonce"));
+        assert_eq!(*phases.lock().unwrap(), vec!["WaitingForBrowser".to_string(), "Completed(IdToken)".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn a_login_whose_id_token_carries_another_nonce_is_refused() {
+        let idp = MockIdp::start();
+        idp.mint_wrong_nonce(true);
+        let (session, phases) = test_session();
+        let (opener, _) = simulating_opener();
+
+        let result =
+            run_flow(context_for(&idp, None), session, opener, reqwest::Client::new(), TokenChoice::IdToken).await;
+
+        assert!(matches!(result, Err(OidcError::StateMismatch)), "got {:?}", result.as_ref().map(|_| ()));
+        assert_eq!(phases.lock().unwrap().last().map(String::as_str), Some("Failed(StateMismatch)"));
+    }
+
+    #[tokio::test]
+    async fn a_login_whose_idp_sends_no_id_token_fails_the_exchange() {
+        let idp = MockIdp::start();
+        idp.omit_id_tokens(true);
+        let (session, _) = test_session();
+        let (opener, _) = simulating_opener();
+
+        let result =
+            run_flow(context_for(&idp, None), session, opener, reqwest::Client::new(), TokenChoice::IdToken).await;
+
+        assert!(matches!(result, Err(OidcError::TokenExchangeFailed)), "got {:?}", result.as_ref().map(|_| ()));
+    }
+
+    #[tokio::test]
+    async fn a_refresh_with_the_id_token_option_hands_over_the_refreshed_id_token() {
+        let idp = MockIdp::start();
+        let (session, _) = test_session();
+        let (opener, opened) = recording_opener();
+
+        let response = run_flow(
+            context_for(&idp, Some("test-refresh-token")),
+            session,
+            opener,
+            reqwest::Client::new(),
+            TokenChoice::IdToken,
+        )
+        .await
+        .unwrap();
+
+        assert!(opened.lock().unwrap().is_empty(), "a refresh opens no browser");
+        assert_eq!(claims_of(&response.access_token)["aud"], "mqlens-test");
+    }
+
+    /// A refresh that brings no new ID token must not leave the driver with
+    /// a stale one: the login starts over in the browser.
+    #[tokio::test]
+    async fn a_refresh_without_an_id_token_falls_back_to_the_browser() {
+        let idp = MockIdp::start();
+        idp.omit_id_token_on_refresh(true);
+        let (session, _) = test_session();
+        let (opener, opened) = simulating_opener();
+
+        let response = run_flow(
+            context_for(&idp, Some("test-refresh-token")),
+            session,
+            opener,
+            reqwest::Client::new(),
+            TokenChoice::IdToken,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(opened.lock().unwrap().len(), 1, "it must log in again interactively");
+        let claims = claims_of(&response.access_token);
+        assert_eq!(claims["nonce"], query_value(&opened.lock().unwrap()[0], "nonce"), "the interactive login's ID token");
+    }
+
+    #[tokio::test]
+    async fn with_the_option_off_an_at_jwt_access_token_is_handed_over_and_reported_as_a_refused_type() {
+        let idp = MockIdp::start();
+        idp.mint_at_jwt_access_tokens(true);
+        let (session, phases) = test_session();
+        let (opener, _) = simulating_opener();
+
+        let response =
+            run_flow(context_for(&idp, None), session, opener, reqwest::Client::new(), TokenChoice::AccessToken)
+                .await
+                .unwrap();
+
+        assert_eq!(claims_of(&response.access_token)["aud"], "mqlens", "still the access token");
+        assert_eq!(
+            *phases.lock().unwrap(),
+            vec!["WaitingForBrowser".to_string(), "Completed(AccessTokenOfRefusedType)".to_string()]
+        );
     }
 
     /// A browser answer that has already landed when the deadline passes and
@@ -2207,7 +2598,7 @@ mod tests {
             let mut context = context_for(&idp, None);
             context.timeout = Some(deadline);
 
-            let flow = run_flow(context, session.clone(), opener, reqwest::Client::new());
+            let flow = run_flow(context, session.clone(), opener, reqwest::Client::new(), TokenChoice::AccessToken);
             tokio::pin!(flow);
 
             // To the browser step, one poll at a time.
@@ -2279,6 +2670,7 @@ mod tests {
                 session,
                 opener,
                 reqwest::Client::new(),
+                TokenChoice::AccessToken,
             ),
         )
         .await
@@ -2305,6 +2697,7 @@ mod tests {
                 session,
                 opener,
                 reqwest::Client::new(),
+                TokenChoice::AccessToken,
             ),
         )
         .await
@@ -2329,7 +2722,7 @@ mod tests {
 
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(5),
-            run_flow(context_for(&idp, None), session, opener, reqwest::Client::new()),
+            run_flow(context_for(&idp, None), session, opener, reqwest::Client::new(), TokenChoice::AccessToken),
         )
         .await
         .expect("the flow must not hang");
@@ -2345,6 +2738,7 @@ mod tests {
 
     mod attach_human_callback_tests {
         use super::*;
+        use crate::connections::OidcProfileConfig;
 
         fn noop_session() -> Arc<OidcSession> {
             OidcSession::new(Arc::new(|_| {}))
@@ -2378,7 +2772,7 @@ mod tests {
             attach_human_callback(
                 &mut scram,
                 noop_session(),
-                &["mongo.corp.example.com".to_string()],
+                &OidcProfileConfig { allowed_hosts: vec!["mongo.corp.example.com".to_string()], ..Default::default() },
                 noop_opener(),
                 reqwest::Client::new(),
             );
@@ -2395,7 +2789,7 @@ mod tests {
             attach_human_callback(
                 &mut options,
                 noop_session(),
-                &["mongo.corp.example.com".to_string()],
+                &OidcProfileConfig { allowed_hosts: vec!["mongo.corp.example.com".to_string()], ..Default::default() },
                 noop_opener(),
                 reqwest::Client::new(),
             );
@@ -2434,7 +2828,7 @@ mod tests {
             attach_human_callback(
                 &mut options,
                 noop_session(),
-                &[],
+                &OidcProfileConfig::default(),
                 noop_opener(),
                 reqwest::Client::new(),
             );
@@ -2461,7 +2855,7 @@ mod tests {
             attach_human_callback(
                 &mut options,
                 noop_session(),
-                &["mongo.corp.example.com".to_string()],
+                &OidcProfileConfig { allowed_hosts: vec!["mongo.corp.example.com".to_string()], ..Default::default() },
                 noop_opener(),
                 reqwest::Client::new(),
             );

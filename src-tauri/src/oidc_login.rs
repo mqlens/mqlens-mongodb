@@ -3,7 +3,7 @@
 //! browser openers the connect and test paths hand the flow.
 
 use crate::connections::OidcProfileConfig;
-use crate::oidc::{attach_human_callback, BrowserOpener, OidcError, OidcSession};
+use crate::oidc::{attach_human_callback, BrowserOpener, OidcError, OidcSession, Presented};
 use mongodb::options::{AuthMechanism, ClientOptions};
 use crate::state::{AppState, LockExt};
 use std::collections::HashMap;
@@ -145,14 +145,15 @@ impl<'a> HumanLogin<'a> {
 #[derive(Default, Debug)]
 pub struct LoginReport {
     failure: Option<OidcError>,
-    completed: bool,
+    /// What the login handed the driver, once it completed.
+    completed: Option<Presented>,
 }
 
 impl LoginReport {
     pub fn record(&mut self, phase: &crate::oidc::OidcPhase) {
         match phase {
             crate::oidc::OidcPhase::WaitingForBrowser => {}
-            crate::oidc::OidcPhase::Completed => self.completed = true,
+            crate::oidc::OidcPhase::Completed(presented) => self.completed = Some(*presented),
             crate::oidc::OidcPhase::Failed(error) => self.failure = Some(error.clone()),
         }
     }
@@ -180,11 +181,21 @@ impl LoginReport {
             // The flow reports `Completed` as soon as the IdP hands over a
             // token, before MongoDB has seen it; an authentication failure
             // after that is MongoDB rejecting the token.
-            (None, true) if driver == DriverFailure::AuthenticationFailed => {
+            //
+            // MongoDB tells the client only "Authentication failed." — why
+            // ("Unknown type of token") stays in its log. So when the login
+            // handed over an access token whose `typ` MongoDB's parser
+            // refuses, that is the explanation, with its fix: the profile's
+            // "Use ID token" option. Only with the option off: with it on,
+            // an ID token was sent and the rejection is the plain one.
+            (None, Some(Presented::AccessTokenOfRefusedType)) if driver == DriverFailure::AuthenticationFailed => {
+                Some(PingFailure::AuthenticateFailed(OidcError::AccessTokenTypeRejected.locale_key()))
+            }
+            (None, Some(_)) if driver == DriverFailure::AuthenticationFailed => {
                 Some(PingFailure::AuthenticateFailed(OidcError::TokenRejected.locale_key()))
             }
-            (None, true) => Some(PingFailure::PingFailed(OidcError::LoginOkPingFailed.locale_key())),
-            (None, false) => None,
+            (None, Some(_)) => Some(PingFailure::PingFailed(OidcError::LoginOkPingFailed.locale_key())),
+            (None, None) => None,
         }
     }
 }
@@ -294,9 +305,10 @@ pub fn attach_human_login(
     if !uses_oidc(options) {
         return Ok(());
     }
-    let allowed_hosts = login.config.map(|c| c.allowed_hosts.as_slice()).unwrap_or(&[]);
+    let defaults = OidcProfileConfig::default();
+    let config = login.config.unwrap_or(&defaults);
     let http = idp_client(login.http)?;
-    attach_human_callback(options, session, allowed_hosts, login.open, http);
+    attach_human_callback(options, session, config, login.open, http);
     Ok(())
 }
 
@@ -695,7 +707,7 @@ mod tests {
     async fn the_profiles_allowed_hosts_reach_the_driver_credential() {
         let sessions = OidcSessions::default();
         let mut options = parsed("mongodb://127.0.0.1:1/?authMechanism=MONGODB-OIDC&authSource=$external").await;
-        let config = crate::connections::OidcProfileConfig { allowed_hosts: vec!["*.corp.example".into()] };
+        let config = crate::connections::OidcProfileConfig { allowed_hosts: vec!["*.corp.example".into()], ..Default::default() };
         let login = HumanLogin { config: Some(&config), ..HumanLogin::unattended() };
 
         let _registration = prepare_human_login(&mut options, &sessions, login, quiet_session()).unwrap();
@@ -770,7 +782,7 @@ mod tests {
         };
         let uri = "mongodb://db.internal:27017/?authMechanism=MONGODB-OIDC&authSource=$external";
         // The real host is allowed, so the tunnel is actually attempted.
-        let config = OidcProfileConfig { allowed_hosts: vec!["db.internal".into()] };
+        let config = OidcProfileConfig { allowed_hosts: vec!["db.internal".into()], ..Default::default() };
         let login = HumanLogin {
             config: Some(&config),
             login_id: Some("tunnel-login".into()),
@@ -812,7 +824,7 @@ mod tests {
     async fn an_oidc_connect_over_ssh_refuses_a_real_host_outside_the_allowed_list_before_tunnelling() {
         let state = AppState::new();
         let ssh = ssh_to(closed_port());
-        let config = OidcProfileConfig { allowed_hosts: vec!["*.corp.example".into()] };
+        let config = OidcProfileConfig { allowed_hosts: vec!["*.corp.example".into()], ..Default::default() };
         let (open, opened) = recording_opener();
         let login = HumanLogin { config: Some(&config), open, ..HumanLogin::unattended() };
         let uri = "mongodb://db.internal:27017/?authMechanism=MONGODB-OIDC&authSource=$external";
@@ -844,7 +856,7 @@ mod tests {
         let state = AppState::new();
         let ssh_port = closed_port();
         let ssh = ssh_to(ssh_port);
-        let config = OidcProfileConfig { allowed_hosts: vec!["*.internal".into()] };
+        let config = OidcProfileConfig { allowed_hosts: vec!["*.internal".into()], ..Default::default() };
         let login = HumanLogin { config: Some(&config), ..HumanLogin::unattended() };
         let uri = "mongodb://db.internal:27017/?authMechanism=MONGODB-OIDC&authSource=$external";
 
@@ -862,7 +874,7 @@ mod tests {
     /// remote host, never reaches the driver.
     #[tokio::test]
     async fn once_the_real_host_passes_the_driver_gets_no_custom_list() {
-        let config = OidcProfileConfig { allowed_hosts: vec!["db.internal".into()] };
+        let config = OidcProfileConfig { allowed_hosts: vec!["db.internal".into()], ..Default::default() };
         let uri = "mongodb://db.internal:27017/?authMechanism=MONGODB-OIDC&authSource=$external";
 
         let tunnelled = check_real_host_before_tunnel(uri, Some(&config)).expect("db.internal is allowed");
@@ -881,7 +893,7 @@ mod tests {
 
     #[test]
     fn a_real_host_outside_the_list_is_refused_with_the_host_not_allowed_key() {
-        let config = OidcProfileConfig { allowed_hosts: vec!["*.corp.example".into()] };
+        let config = OidcProfileConfig { allowed_hosts: vec!["*.corp.example".into()], ..Default::default() };
         let uri = "mongodb://user@db.internal:27017,db2.corp.example/?authMechanism=MONGODB-OIDC";
 
         let result = check_real_host_before_tunnel(uri, Some(&config)).map(|_| ());
@@ -934,7 +946,7 @@ mod tests {
     /// ping then failed for a reason that is not authentication.
     #[test]
     fn a_non_authentication_failure_after_a_completed_login_is_login_ok_ping_failed() {
-        let report = report_of(vec![OidcPhase::WaitingForBrowser, OidcPhase::Completed]);
+        let report = report_of(vec![OidcPhase::WaitingForBrowser, OidcPhase::Completed(crate::oidc::Presented::AccessToken)]);
         assert_eq!(
             report.explain(DriverFailure::Other),
             Some(PingFailure::PingFailed("auth.oidc.errors.loginOkPingFailed"))
@@ -947,11 +959,63 @@ mod tests {
     /// succeeded, check the network".
     #[test]
     fn an_authentication_failure_after_a_completed_login_is_token_rejected() {
-        let report = report_of(vec![OidcPhase::WaitingForBrowser, OidcPhase::Completed]);
+        let report = report_of(vec![OidcPhase::WaitingForBrowser, OidcPhase::Completed(crate::oidc::Presented::AccessToken)]);
         assert_eq!(
             report.explain(DriverFailure::AuthenticationFailed),
             Some(PingFailure::AuthenticateFailed("auth.oidc.errors.tokenRejected"))
         );
+    }
+
+    /// MongoDB tells the client only "Authentication failed." — the reason
+    /// ("Unknown type of token") stays in the server's log. The login knows
+    /// it handed over an access token whose `typ` MongoDB refuses, so a
+    /// rejection after that is explained by it, with the fix: the option.
+    #[test]
+    fn a_rejection_after_an_access_token_of_a_refused_type_points_at_the_id_token_option() {
+        let report = report_of(vec![
+            OidcPhase::WaitingForBrowser,
+            OidcPhase::Completed(Presented::AccessTokenOfRefusedType),
+        ]);
+        assert_eq!(
+            report.explain(DriverFailure::AuthenticationFailed),
+            Some(PingFailure::AuthenticateFailed("auth.oidc.errors.accessTokenTypeRejected"))
+        );
+    }
+
+    /// With the option on the ID token was sent, so the hint would be wrong:
+    /// the rejection is the plain one.
+    #[test]
+    fn a_rejection_of_an_id_token_stays_token_rejected() {
+        let report = report_of(vec![OidcPhase::WaitingForBrowser, OidcPhase::Completed(Presented::IdToken)]);
+        assert_eq!(
+            report.explain(DriverFailure::AuthenticationFailed),
+            Some(PingFailure::AuthenticateFailed("auth.oidc.errors.tokenRejected"))
+        );
+    }
+
+    /// The token's type explains a rejection, not a ping that failed for
+    /// another reason after authentication succeeded.
+    #[test]
+    fn a_refused_type_explains_only_an_authentication_failure() {
+        let report = report_of(vec![
+            OidcPhase::WaitingForBrowser,
+            OidcPhase::Completed(Presented::AccessTokenOfRefusedType),
+        ]);
+        assert_eq!(
+            report.explain(DriverFailure::Other),
+            Some(PingFailure::PingFailed("auth.oidc.errors.loginOkPingFailed"))
+        );
+    }
+
+    /// The tunnel path clears only the custom host list.
+    #[test]
+    fn a_tunnelled_login_keeps_the_id_token_option() {
+        let config = OidcProfileConfig { allowed_hosts: vec!["db.internal".into()], use_id_token: true };
+        let uri = "mongodb://db.internal:27017/?authMechanism=MONGODB-OIDC&authSource=$external";
+
+        let tunnelled = check_real_host_before_tunnel(uri, Some(&config)).expect("db.internal is allowed");
+
+        assert_eq!(tunnelled, OidcProfileConfig { allowed_hosts: vec![], use_id_token: true });
     }
 
     /// The driver checks allowed hosts before it ever calls back, so no
@@ -959,7 +1023,7 @@ mod tests {
     /// same.
     #[test]
     fn a_host_outside_the_allowed_hosts_is_host_not_allowed_whether_or_not_a_login_ran() {
-        for phases in [vec![], vec![OidcPhase::WaitingForBrowser, OidcPhase::Completed]] {
+        for phases in [vec![], vec![OidcPhase::WaitingForBrowser, OidcPhase::Completed(crate::oidc::Presented::AccessToken)]] {
             assert_eq!(
                 report_of(phases).explain(DriverFailure::HostNotAllowed),
                 Some(PingFailure::AuthenticateFailed("auth.oidc.errors.hostNotAllowed"))
@@ -970,7 +1034,7 @@ mod tests {
     /// A failure is the more specific explanation, whatever else was seen.
     #[test]
     fn a_login_failure_outranks_an_earlier_completion() {
-        let report = report_of(vec![OidcPhase::Completed, OidcPhase::Failed(OidcError::TimedOut)]);
+        let report = report_of(vec![OidcPhase::Completed(crate::oidc::Presented::AccessToken), OidcPhase::Failed(OidcError::TimedOut)]);
         assert_eq!(
             report.explain(DriverFailure::AuthenticationFailed),
             Some(PingFailure::LoginFailed("auth.oidc.errors.timedOut"))
@@ -1032,7 +1096,7 @@ mod tests {
 
         let http = idp_client(None).unwrap();
         let endpoints = crate::oidc::discover(&idp.issuer(), &http).await.unwrap();
-        let _ = crate::oidc::refresh_token(&endpoints, "client-abc", "test-refresh-token", &http).await;
+        let _ = crate::oidc::refresh_token(&endpoints, "client-abc", "test-refresh-token", &http, crate::oidc::TokenChoice::AccessToken).await;
 
         assert_eq!(reached.load(std::sync::atomic::Ordering::SeqCst), 0, "a redirect must not be followed");
     }

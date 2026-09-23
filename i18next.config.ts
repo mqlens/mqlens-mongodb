@@ -148,6 +148,7 @@ export default defineConfig({
       'connections:auth.oidc.errors.tokenExchangeFailed',
       'connections:auth.oidc.errors.hostNotAllowed',
       'connections:auth.oidc.errors.tokenRejected',
+      'connections:auth.oidc.errors.accessTokenTypeRejected',
       'connections:auth.oidc.errors.loginOkPingFailed',
       'connections:auth.oidc.errors.missingClientId',
       'connections:auth.oidc.errors.insecureEndpoint',

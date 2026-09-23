@@ -20,14 +20,21 @@ pub enum ConnectionMode {
     ConfirmDestructive,
 }
 
-/// OIDC settings that cannot live in the URI. `ALLOWED_HOSTS` is the only one
-/// in phase 1: `ClientOptions::parse` rejects it as a URI option, so it is
-/// applied to the credential after parsing. A struct rather than a bare
-/// `Vec<String>` so workload settings can be added without a migration.
+/// OIDC settings that cannot live in the URI. `ALLOWED_HOSTS` is one:
+/// `ClientOptions::parse` rejects it as a URI option, so it is applied to the
+/// credential after parsing. A struct rather than a bare `Vec<String>` so
+/// settings can be added without a migration.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 pub struct OidcProfileConfig {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allowed_hosts: Vec<String>,
+    /// Hand MongoDB the IdP's ID token instead of its access token (T21) —
+    /// for an IdP whose access tokens MongoDB refuses, such as cidaas's RFC
+    /// 9068 `typ: "at+jwt"` ones. mongosh's `--oidcIdTokenAsAccessToken`.
+    /// Old profiles without the key read as off, and off is never written,
+    /// the same additive pattern as `allowed_hosts`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub use_id_token: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -1025,7 +1032,7 @@ pub(crate) fn authenticate_update(phase: crate::oidc::OidcPhase) -> PhaseUpdate 
     use crate::oidc::OidcPhase;
     match phase {
         OidcPhase::WaitingForBrowser => PhaseUpdate::start(TestPhase::Authenticate),
-        OidcPhase::Completed => PhaseUpdate::ok(TestPhase::Authenticate),
+        OidcPhase::Completed(_) => PhaseUpdate::ok(TestPhase::Authenticate),
         OidcPhase::Failed(error) => PhaseUpdate::fail(TestPhase::Authenticate, error.locale_key().to_string()),
     }
 }
@@ -1525,11 +1532,32 @@ mod tests {
             connection_mode: ConnectionMode::Normal,
             oidc: Some(OidcProfileConfig {
                 allowed_hosts: vec!["mongo.corp.example.com".into()],
+                ..Default::default()
             }),
         };
         let round_tripped: ConnectionProfile =
             serde_json::from_str(&serde_json::to_string(&profile).unwrap()).unwrap();
         assert_eq!(round_tripped, profile);
+    }
+
+    /// An OIDC config saved before T21 has no `use_id_token`: it reads as off.
+    #[test]
+    fn an_oidc_config_saved_before_the_id_token_option_reads_as_off() {
+        let config: OidcProfileConfig = serde_json::from_str(r#"{"allowed_hosts":["mongo.corp.example.com"]}"#).unwrap();
+        assert!(!config.use_id_token);
+    }
+
+    /// Like `allowed_hosts`, the key is written only when it says something,
+    /// so a profile that never turned the option on gains no key.
+    #[test]
+    fn use_id_token_is_written_only_when_on() {
+        let off = OidcProfileConfig { allowed_hosts: vec!["mongo.corp.example.com".into()], use_id_token: false };
+        assert_eq!(serde_json::to_value(&off).unwrap(), serde_json::json!({"allowed_hosts": ["mongo.corp.example.com"]}));
+
+        let on = OidcProfileConfig { allowed_hosts: vec![], use_id_token: true };
+        assert_eq!(serde_json::to_value(&on).unwrap(), serde_json::json!({"use_id_token": true}));
+        let round_tripped: OidcProfileConfig = serde_json::from_value(serde_json::to_value(&on).unwrap()).unwrap();
+        assert_eq!(round_tripped, on);
     }
 
     // ---- the Authenticate test phase (#430) ------------------------------
@@ -1546,7 +1574,7 @@ mod tests {
     fn login_progress_maps_onto_the_authenticate_row() {
         let seen: Vec<(TestPhase, String, Option<String>)> = [
             crate::oidc::OidcPhase::WaitingForBrowser,
-            crate::oidc::OidcPhase::Completed,
+            crate::oidc::OidcPhase::Completed(crate::oidc::Presented::AccessToken),
             crate::oidc::OidcPhase::Failed(crate::oidc::OidcError::TimedOut),
         ]
         .into_iter()
@@ -1609,7 +1637,7 @@ mod tests {
     fn completed_login() -> crate::oidc_login::LoginReport {
         let mut report = crate::oidc_login::LoginReport::default();
         report.record(&crate::oidc::OidcPhase::WaitingForBrowser);
-        report.record(&crate::oidc::OidcPhase::Completed);
+        report.record(&crate::oidc::OidcPhase::Completed(crate::oidc::Presented::AccessToken));
         report
     }
 
@@ -1633,6 +1661,21 @@ mod tests {
         let error = report_failed_ping(&completed_login(), &command_error(18, "AuthenticationFailed"), &emit);
 
         assert_eq!(error, "auth.oidc.errors.tokenRejected");
+        assert_eq!(*log.lock().unwrap(), vec![(TestPhase::Authenticate, "fail".to_string())]);
+    }
+
+    /// An access token of a type MongoDB refuses, then rejected: the
+    /// Authenticate row turns red with the hint to use the ID token.
+    #[test]
+    fn mongodb_rejecting_an_access_token_of_a_refused_type_fails_the_authenticate_row_with_the_hint() {
+        let (log, emit) = phase_recorder();
+        let mut report = crate::oidc_login::LoginReport::default();
+        report.record(&crate::oidc::OidcPhase::WaitingForBrowser);
+        report.record(&crate::oidc::OidcPhase::Completed(crate::oidc::Presented::AccessTokenOfRefusedType));
+
+        let error = report_failed_ping(&report, &command_error(18, "AuthenticationFailed"), &emit);
+
+        assert_eq!(error, "auth.oidc.errors.accessTokenTypeRejected");
         assert_eq!(*log.lock().unwrap(), vec![(TestPhase::Authenticate, "fail".to_string())]);
     }
 
@@ -1692,7 +1735,7 @@ mod tests {
     async fn an_oidc_test_over_ssh_refuses_a_real_host_outside_the_allowed_list_before_tunnelling() {
         use crate::oidc_login::test_support::{closed_port, ssh_to};
         let ssh = ssh_to(closed_port());
-        let config = OidcProfileConfig { allowed_hosts: vec!["*.corp.example".into()] };
+        let config = OidcProfileConfig { allowed_hosts: vec!["*.corp.example".into()], ..Default::default() };
         let login = crate::oidc_login::HumanLogin { config: Some(&config), ..crate::oidc_login::HumanLogin::unattended() };
         let sessions = crate::oidc_login::OidcSessions::default();
         let (log, emit) = phase_recorder();
@@ -1716,7 +1759,7 @@ mod tests {
         use crate::oidc_login::test_support::{closed_port, ssh_to};
         let ssh_port = closed_port();
         let ssh = ssh_to(ssh_port);
-        let config = OidcProfileConfig { allowed_hosts: vec!["db.internal".into()] };
+        let config = OidcProfileConfig { allowed_hosts: vec!["db.internal".into()], ..Default::default() };
         let login = crate::oidc_login::HumanLogin { config: Some(&config), ..crate::oidc_login::HumanLogin::unattended() };
         let sessions = crate::oidc_login::OidcSessions::default();
         let (log, emit) = phase_recorder();

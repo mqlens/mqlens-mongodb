@@ -41,6 +41,7 @@
     "methodX509": "x.509 Client Certificate",
     "oidc": {
       "errors": {
+        "accessTokenTypeRejected": "MongoDB rejected your identity provider's access token type. Turn on “Use ID token instead of access token” for this connection.",
         "browserLaunchFailed": "MQLens could not open your system browser. Open the login link manually, or set a default browser.",
         "cancelled": "The login was cancelled.",
         "consentDenied": "The login was denied. Approve the request in your browser to continue.",

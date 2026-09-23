@@ -41,6 +41,7 @@
     "methodX509": "x.509 客户端证书",
     "oidc": {
       "errors": {
+        "accessTokenTypeRejected": "MongoDB 拒绝了你的身份提供商的访问令牌类型。请为此连接开启“使用 ID 令牌代替访问令牌”。",
         "browserLaunchFailed": "MQLens 无法打开你的系统浏览器。请手动打开登录链接，或设置一个默认浏览器。",
         "cancelled": "登录已取消。",
         "consentDenied": "登录被拒绝。请在浏览器中同意该请求以继续。",

@@ -83,7 +83,7 @@ async fn the_driver_authenticates_a_real_server_through_our_oidc_callback() {
 
     let mut options = ClientOptions::parse(&uri).await.expect("parse MQLENS_TEST_OIDC_URI");
     options.server_selection_timeout = Some(std::time::Duration::from_secs(15));
-    attach_human_callback(&mut options, session, &[], opener, http);
+    attach_human_callback(&mut options, session, &crate::connections::OidcProfileConfig::default(), opener, http);
     let client = mongodb::Client::with_options(options).expect("build the driver client");
 
     // `connectionStatus` runs without authentication, so success alone proves
@@ -111,7 +111,7 @@ async fn the_driver_authenticates_a_real_server_through_our_oidc_callback() {
     assert_eq!(opened.lock().unwrap().len(), 1, "the flow opens the browser exactly once");
     assert_eq!(
         *phases.lock().unwrap(),
-        vec!["WaitingForBrowser".to_string(), "Completed".to_string()],
+        vec!["WaitingForBrowser".to_string(), "Completed(AccessToken)".to_string()],
         "the session saw one interactive login, start to finish"
     );
     let exchange = idp.last_token_request().expect("our flow must have called /token");
@@ -407,7 +407,7 @@ async fn a_connect_whose_ping_fails_after_the_login_reports_login_ok_ping_failed
 async fn a_host_outside_the_allowed_hosts_is_reported_as_host_not_allowed() {
     let Some((uri, idp)) = fixture() else { return };
     let _shared = FAILPOINT_LOCK.read().await;
-    let config = crate::connections::OidcProfileConfig { allowed_hosts: vec!["nothing.example".into()] };
+    let config = crate::connections::OidcProfileConfig { allowed_hosts: vec!["nothing.example".into()], ..Default::default() };
     let key = OidcError::HostNotAllowed.locale_key().to_string();
 
     let http = idp_client(idp);
@@ -485,4 +485,182 @@ async fn a_token_mongodb_rejects_is_reported_as_token_rejected() {
     assert_eq!(result, Err(key));
     assert_eq!(opened.lock().unwrap().len(), 1, "the browser login ran");
     assert!(state.connections.lock().unwrap().is_empty());
+}
+
+// ---- "Use ID token instead of access token" (T21) ---------------------------
+//
+// cidaas mints access tokens with the RFC 9068 header `typ: "at+jwt"`, and
+// MongoDB's JWT parser refuses every `typ` but an absent one or `"JWT"`. Its
+// ID tokens are plain `"JWT"`, so the escape hatch (mongosh's
+// `--oidcIdTokenAsAccessToken`) is to send the ID token instead. An ID
+// token's `aud` is the client id, so those tests use the fixture's second
+// server, whose `audience` is the client id (`MQLENS_TEST_OIDC_ID_TOKEN_URI`).
+//
+// Every test here switches the shared IdP, so each holds the lock exclusively.
+
+/// The ID-token server's URI and the shared IdP, or `None` (skip).
+fn id_token_fixture() -> Option<(String, &'static MockIdp)> {
+    let (_, idp) = fixture()?;
+    let Ok(uri) = std::env::var("MQLENS_TEST_OIDC_ID_TOKEN_URI") else {
+        eprintln!("skipping: MQLENS_TEST_OIDC_ID_TOKEN_URI is not set");
+        return None;
+    };
+    Some((uri, idp))
+}
+
+/// Turns one of the shared IdP's switches on, and off again when dropped —
+/// on a panic too, so no later test inherits it.
+struct Switch<'a> {
+    idp: &'a MockIdp,
+    set: fn(&MockIdp, bool),
+}
+
+impl<'a> Switch<'a> {
+    fn on(idp: &'a MockIdp, set: fn(&MockIdp, bool)) -> Self {
+        set(idp, true);
+        Self { idp, set }
+    }
+}
+
+impl Drop for Switch<'_> {
+    fn drop(&mut self) {
+        (self.set)(self.idp, false);
+    }
+}
+
+fn id_token_config() -> crate::connections::OidcProfileConfig {
+    crate::connections::OidcProfileConfig { use_id_token: true, ..Default::default() }
+}
+
+/// How many MONGODB-OIDC authentications the server behind `uri` has let
+/// through, from its own `serverStatus` — so a test can show a login never
+/// authenticated, not merely that our call returned an error.
+async fn successful_oidc_authentications(uri: &str) -> i64 {
+    let base = uri.split('?').next().expect("the fixture URI has a host part");
+    let admin = mongodb::Client::with_uri_str(format!("{base}?directConnection=true"))
+        .await
+        .expect("an admin client for the fixture");
+    let status = admin
+        .database("admin")
+        .run_command(doc! { "serverStatus": 1 })
+        .await
+        .unwrap_or_else(|e| panic!("serverStatus: {e}"));
+    let counter = status
+        .get_document("security")
+        .and_then(|s| s.get_document("authentication"))
+        .and_then(|a| a.get_document("mechanisms"))
+        .and_then(|m| m.get_document("MONGODB-OIDC"))
+        .and_then(|o| o.get_document("authenticate"))
+        .map(|a| a.get("successful").cloned())
+        .unwrap_or_else(|e| panic!("serverStatus has no MONGODB-OIDC counters: {e}"));
+    match counter {
+        Some(Bson::Int64(n)) => n,
+        Some(Bson::Int32(n)) => n.into(),
+        other => panic!("unexpected successful-authentications counter: {other:?}"),
+    }
+}
+
+/// (a) The access token's type is one MongoDB refuses and the option is off:
+/// both paths name the fix, as a locale key, on the Authenticate row.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_at_jwt_access_token_mongodb_refuses_is_reported_with_the_id_token_hint() {
+    let Some((uri, idp)) = fixture() else { return };
+    let _exclusive = FAILPOINT_LOCK.write().await;
+    let _at_jwt = Switch::on(idp, MockIdp::mint_at_jwt_access_tokens);
+    let key = OidcError::AccessTokenTypeRejected.locale_key().to_string();
+
+    let http = idp_client(idp);
+    let (opener, opened) = simulating_opener_with(http.clone());
+    let state = AppState::new();
+    let (log, emit) = phase_recorder();
+    let login = HumanLogin { config: None, login_id: Some("test-at-jwt".into()), open: opener, http: Some(http) };
+    let result = run_connection_test_with_oidc(&state.oidc_sessions, &uri, None, login, &emit).await;
+
+    assert_eq!(result, Err(key.clone()), "{:?}", log.lock().unwrap());
+    assert_eq!(opened.lock().unwrap().len(), 1, "the browser login ran");
+    let log = log.lock().unwrap().clone();
+    let authenticate: Vec<&str> =
+        log.iter().filter(|(phase, _)| *phase == TestPhase::Authenticate).map(|(_, status)| status.as_str()).collect();
+    assert_eq!(authenticate.last(), Some(&"fail"), "the Authenticate row must end red: {log:?}");
+    assert!(!log.contains(&row(TestPhase::Ping, "fail")), "the rejection belongs to Authenticate: {log:?}");
+
+    let http = idp_client(idp);
+    let (opener, opened) = simulating_opener_with(http.clone());
+    let login = HumanLogin { config: None, login_id: Some("connect-at-jwt".into()), open: opener, http: Some(http) };
+    let result = crate::connect_db_with_login(&state, &uri, None, login).await;
+
+    assert_eq!(result, Err(key));
+    assert_eq!(opened.lock().unwrap().len(), 1, "the browser login ran");
+    assert!(state.connections.lock().unwrap().is_empty());
+}
+
+/// (b) The same IdP, with the option on: the ID token authenticates, on
+/// both paths, as the expected principal.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn with_the_id_token_option_an_idp_whose_access_tokens_mongodb_refuses_still_logs_in() {
+    let Some((uri, idp)) = id_token_fixture() else { return };
+    let _exclusive = FAILPOINT_LOCK.write().await;
+    let _at_jwt = Switch::on(idp, MockIdp::mint_at_jwt_access_tokens);
+    let config = id_token_config();
+
+    let http = idp_client(idp);
+    let (opener, opened) = simulating_opener_with(http.clone());
+    let state = AppState::new();
+    let (log, emit) = phase_recorder();
+    let login = HumanLogin { config: Some(&config), login_id: Some("test-id-token".into()), open: opener, http: Some(http) };
+    let result = run_connection_test_with_oidc(&state.oidc_sessions, &uri, None, login, &emit).await;
+
+    assert_eq!(result, Ok(()), "{:?}", log.lock().unwrap());
+    assert_eq!(opened.lock().unwrap().len(), 1, "one browser login");
+    assert_eq!(log.lock().unwrap().last(), Some(&row(TestPhase::Ping, "ok")));
+
+    let http = idp_client(idp);
+    let (opener, opened) = simulating_opener_with(http.clone());
+    let login = HumanLogin { config: Some(&config), login_id: Some("connect-id-token".into()), open: opener, http: Some(http) };
+    let id = crate::connect_db_with_login(&state, &uri, None, login)
+        .await
+        .unwrap_or_else(|e| panic!("connect must succeed with the ID token: {e}"));
+
+    assert_eq!(opened.lock().unwrap().len(), 1);
+    let client = state.connections.lock().unwrap().get(&id).cloned().expect("the client is kept");
+    let status = client
+        .database("admin")
+        .run_command(doc! { "connectionStatus": 1 })
+        .await
+        .unwrap_or_else(|e| panic!("the kept client must stay authenticated: {e}"));
+    let users = status.get_document("authInfo").unwrap().get_array("authenticatedUsers").unwrap().clone();
+    assert!(users.contains(&Bson::Document(doc! { "user": EXPECTED_USER, "db": "$external" })), "{users:?}");
+}
+
+/// (c) An ID token minted for another login (wrong nonce) is refused before
+/// it reaches the driver — on both paths — and the server authenticates
+/// nobody, although the token is otherwise one it would accept.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_id_token_with_another_nonce_is_refused_and_never_authenticates() {
+    let Some((uri, idp)) = id_token_fixture() else { return };
+    let _exclusive = FAILPOINT_LOCK.write().await;
+    let _wrong_nonce = Switch::on(idp, MockIdp::mint_wrong_nonce);
+    let config = id_token_config();
+    let key = OidcError::StateMismatch.locale_key().to_string();
+    let before = successful_oidc_authentications(&uri).await;
+
+    let http = idp_client(idp);
+    let (opener, opened) = simulating_opener_with(http.clone());
+    let state = AppState::new();
+    let (log, emit) = phase_recorder();
+    let login = HumanLogin { config: Some(&config), login_id: Some("test-nonce".into()), open: opener, http: Some(http) };
+    let result = run_connection_test_with_oidc(&state.oidc_sessions, &uri, None, login, &emit).await;
+
+    assert_eq!(result, Err(key.clone()), "{:?}", log.lock().unwrap());
+    assert_eq!(opened.lock().unwrap().len(), 1, "the browser login ran");
+    assert!(log.lock().unwrap().contains(&row(TestPhase::Authenticate, "fail")), "{:?}", log.lock().unwrap());
+
+    let http = idp_client(idp);
+    let (opener, _) = simulating_opener_with(http.clone());
+    let login = HumanLogin { config: Some(&config), login_id: Some("connect-nonce".into()), open: opener, http: Some(http) };
+    let result = crate::connect_db_with_login(&state, &uri, None, login).await;
+
+    assert_eq!(result, Err(key));
+    assert!(state.connections.lock().unwrap().is_empty());
+    assert_eq!(successful_oidc_authentications(&uri).await, before, "the server must have authenticated nobody");
 }
