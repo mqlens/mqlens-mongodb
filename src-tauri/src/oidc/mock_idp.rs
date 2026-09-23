@@ -5,7 +5,8 @@
 
 use base64::Engine as _;
 use rsa::traits::PublicKeyParts;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use super::B64;
@@ -50,12 +51,28 @@ struct Inner {
     /// the `mqlens` the Percona fixture checks: a well-formed, correctly
     /// signed token MongoDB must nonetheless reject.
     wrong_audience: AtomicBool,
+    /// The `nonce` each `/authorize` call carried, by the code it issued, so
+    /// `/token` can put it in that login's ID token as a real IdP does.
+    nonces: Mutex<HashMap<String, String>>,
+    /// Numbers the codes `/authorize` issues, so each login has its own.
+    next_code: AtomicUsize,
+    /// When set, access tokens carry the RFC 9068 header `typ: "at+jwt"`
+    /// (cidaas does this), which MongoDB refuses: it accepts only an absent
+    /// `typ` or `"JWT"`.
+    at_jwt_access_tokens: AtomicBool,
+    /// When set, the ID token's `nonce` is not the one `/authorize` received.
+    wrong_nonce: AtomicBool,
+    /// When set, `grant_type=refresh_token` answers without an `id_token`.
+    omit_id_token_on_refresh: AtomicBool,
+    /// When set, no grant answers with an `id_token`.
+    omit_id_tokens: AtomicBool,
 }
 
 /// A single-key, single-issuer OIDC provider double bound to a random
-/// loopback port. Every route it serves is deterministic: the same
-/// authorization code, the same refresh token, and a JWKS that always
-/// describes the signing key used by [`MockIdp::mint_access_token`].
+/// loopback port. Every route it serves is deterministic: numbered
+/// authorization codes (each remembering its login's nonce), the same
+/// refresh token, and a JWKS that always describes the signing key used by
+/// [`MockIdp::mint_access_token`].
 pub struct MockIdp {
     inner: Arc<Inner>,
     // Keeps the listener alive for as long as the MockIdp is; dropping the
@@ -147,6 +164,12 @@ impl MockIdp {
             discovery_hook: Mutex::new(None),
             token_redirect: Mutex::new(None),
             wrong_audience: AtomicBool::new(false),
+            nonces: Mutex::new(HashMap::new()),
+            next_code: AtomicUsize::new(0),
+            at_jwt_access_tokens: AtomicBool::new(false),
+            wrong_nonce: AtomicBool::new(false),
+            omit_id_token_on_refresh: AtomicBool::new(false),
+            omit_id_tokens: AtomicBool::new(false),
         });
         let server = Arc::new(server);
 
@@ -214,6 +237,27 @@ impl MockIdp {
     /// `mqlens` a MongoDB deployment configured for this IdP expects.
     pub fn mint_wrong_audience(&self, on: bool) {
         self.inner.wrong_audience.store(on, Ordering::SeqCst);
+    }
+
+    /// While `on`, `/token` mints access tokens with the RFC 9068 header
+    /// `typ: "at+jwt"`, as cidaas does — which MongoDB refuses.
+    pub fn mint_at_jwt_access_tokens(&self, on: bool) {
+        self.inner.at_jwt_access_tokens.store(on, Ordering::SeqCst);
+    }
+
+    /// While `on`, the ID token's `nonce` is not the one the login sent.
+    pub fn mint_wrong_nonce(&self, on: bool) {
+        self.inner.wrong_nonce.store(on, Ordering::SeqCst);
+    }
+
+    /// While `on`, the refresh grant answers without an `id_token`.
+    pub fn omit_id_token_on_refresh(&self, on: bool) {
+        self.inner.omit_id_token_on_refresh.store(on, Ordering::SeqCst);
+    }
+
+    /// While `on`, no grant answers with an `id_token`.
+    pub fn omit_id_tokens(&self, on: bool) {
+        self.inner.omit_id_tokens.store(on, Ordering::SeqCst);
     }
 }
 
@@ -312,9 +356,31 @@ fn sign_access_token(inner: &Inner, subject: &str, audience: &str) -> String {
         "exp": now_secs() + 3600,
         "iat": now_secs(),
     });
+    let typ = if inner.at_jwt_access_tokens.load(Ordering::SeqCst) { "at+jwt" } else { "JWT" };
+    sign(inner, typ, &claims)
+}
+
+/// An OIDC ID token: `typ: "JWT"`, `aud` the client id, and the login's
+/// `nonce` when it has one (a refresh has none).
+fn sign_id_token(inner: &Inner, client_id: &str, nonce: Option<&str>) -> String {
+    let mut claims = serde_json::json!({
+        "iss": inner.issuer,
+        "sub": "mock-user",
+        "aud": client_id,
+        "exp": now_secs() + 3600,
+        "iat": now_secs(),
+    });
+    if let Some(nonce) = nonce {
+        claims["nonce"] = serde_json::Value::String(nonce.to_string());
+    }
+    sign(inner, "JWT", &claims)
+}
+
+fn sign(inner: &Inner, typ: &str, claims: &serde_json::Value) -> String {
     let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::RS256);
     header.kid = Some("test-key-1".into());
-    jsonwebtoken::encode(&header, &claims, &inner.encoding_key)
+    header.typ = Some(typ.to_string());
+    jsonwebtoken::encode(&header, claims, &inner.encoding_key)
         .expect("sign JWT with test-only RSA key")
 }
 
@@ -335,7 +401,7 @@ fn handle_request(mut request: tiny_http::Request, inner: &Inner) {
             json_response(discovery_document(&inner.issuer, advertised_issuer))
         }
         (tiny_http::Method::Get, "/jwks") => json_response(jwks_document(&inner.modulus_b64)),
-        (tiny_http::Method::Get, "/authorize") => authorize_response(&query),
+        (tiny_http::Method::Get, "/authorize") => authorize_response(inner, &query),
         (tiny_http::Method::Post, "/token") => {
             let mut body = String::new();
             request
@@ -408,22 +474,43 @@ fn jwks_document(modulus_b64: &str) -> serde_json::Value {
     })
 }
 
-/// A fixed test subject/audience: nothing in Task 1 inspects the claims of
-/// the token this route hands back, only that the shape is right. Callers
-/// that need specific claims use [`MockIdp::mint_access_token`] directly.
-fn token_document(inner: &Inner, _body: &str) -> serde_json::Value {
+/// A fixed test subject/audience for the access token. Callers that need
+/// specific claims use [`MockIdp::mint_access_token`] directly.
+///
+/// An `id_token` comes too, as from a real OIDC provider: `aud` is the
+/// request's `client_id`, and a code grant's carries the nonce its
+/// `/authorize` received.
+fn token_document(inner: &Inner, body: &str) -> serde_json::Value {
     let audience = if inner.wrong_audience.load(Ordering::SeqCst) { "not-mqlens" } else { "mqlens" };
     let access_token = sign_access_token(inner, "mock-user", audience);
 
-    serde_json::json!({
+    let mut document = serde_json::json!({
         "access_token": access_token,
         "token_type": "Bearer",
         "expires_in": 3600,
         "refresh_token": "test-refresh-token",
-    })
+    });
+
+    let params = parse_form_pairs(body);
+    let get = |key: &str| params.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone());
+    let refreshing = get("grant_type").as_deref() == Some("refresh_token");
+    let omit = inner.omit_id_tokens.load(Ordering::SeqCst)
+        || (refreshing && inner.omit_id_token_on_refresh.load(Ordering::SeqCst));
+    if !omit {
+        let client_id = get("client_id").unwrap_or_default();
+        let nonce = if refreshing {
+            None
+        } else if inner.wrong_nonce.load(Ordering::SeqCst) {
+            Some("not-the-nonce-this-login-sent".to_string())
+        } else {
+            get("code").and_then(|code| inner.nonces.lock().unwrap().get(&code).cloned())
+        };
+        document["id_token"] = serde_json::Value::String(sign_id_token(inner, &client_id, nonce.as_deref()));
+    }
+    document
 }
 
-fn authorize_response(query: &str) -> tiny_http::ResponseBox {
+fn authorize_response(inner: &Inner, query: &str) -> tiny_http::ResponseBox {
     let params = parse_form_pairs(query);
     let redirect_uri = params
         .iter()
@@ -432,8 +519,13 @@ fn authorize_response(query: &str) -> tiny_http::ResponseBox {
         .unwrap_or_default();
     let state = params.iter().find(|(k, _)| k == "state").map(|(_, v)| v.clone());
 
+    let code = format!("test-auth-code-{}", inner.next_code.fetch_add(1, Ordering::SeqCst));
+    if let Some(nonce) = params.iter().find(|(k, _)| k == "nonce").map(|(_, v)| v.clone()) {
+        inner.nonces.lock().unwrap().insert(code.clone(), nonce);
+    }
+
     let separator = if redirect_uri.contains('?') { '&' } else { '?' };
-    let mut location = format!("{redirect_uri}{separator}code=test-auth-code");
+    let mut location = format!("{redirect_uri}{separator}code={code}");
     if let Some(state) = state {
         location.push_str(&format!("&state={state}"));
     }
@@ -682,5 +774,142 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(code_response.status(), 200);
+    }
+
+    // ---- ID tokens (#430 T21) ---------------------------------------------
+
+    /// Runs `/authorize` with `nonce` and returns the code it redirected with.
+    async fn authorize_with_nonce(idp: &MockIdp, nonce: &str) -> String {
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+        let response = client
+            .get(format!(
+                "{}/authorize?redirect_uri=http://127.0.0.1:9/callback&state=s&nonce={nonce}&response_type=code",
+                idp.issuer()
+            ))
+            .send()
+            .await
+            .unwrap();
+        let location = response.headers().get(reqwest::header::LOCATION).unwrap().to_str().unwrap().to_string();
+        let query = location.split_once('?').unwrap().1;
+        parse_form_pairs(query).into_iter().find(|(k, _)| k == "code").unwrap().1
+    }
+
+    async fn post_token(idp: &MockIdp, body: &str) -> serde_json::Value {
+        reqwest::Client::new()
+            .post(format!("{}/token", idp.issuer()))
+            .header(reqwest::header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(body.to_string())
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap()
+    }
+
+    /// Verifies `token` against the served JWKS for `audience`, returning
+    /// its header and claims.
+    async fn verified(idp: &MockIdp, token: &str, audience: &str) -> (jsonwebtoken::Header, serde_json::Value) {
+        let jwks: serde_json::Value =
+            reqwest::get(format!("{}/jwks", idp.issuer())).await.unwrap().json().await.unwrap();
+        let key = jsonwebtoken::DecodingKey::from_rsa_components(
+            jwks["keys"][0]["n"].as_str().unwrap(),
+            jwks["keys"][0]["e"].as_str().unwrap(),
+        )
+        .unwrap();
+        let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::RS256);
+        validation.set_audience(&[audience]);
+        validation.set_issuer(&[idp.issuer()]);
+        let data = jsonwebtoken::decode::<serde_json::Value>(token, &key, &validation).unwrap();
+        (data.header, data.claims)
+    }
+
+    fn code_grant(code: &str) -> String {
+        format!("grant_type=authorization_code&code={code}&code_verifier=v&client_id=mqlens-test")
+    }
+
+    #[tokio::test]
+    async fn the_code_grant_returns_an_id_token_for_the_client_carrying_the_authorize_nonce() {
+        let idp = MockIdp::start();
+        let code = authorize_with_nonce(&idp, "nonce-one").await;
+
+        let response = post_token(&idp, &code_grant(&code)).await;
+
+        let (header, claims) = verified(&idp, response["id_token"].as_str().unwrap(), "mqlens-test").await;
+        assert_eq!(header.typ.as_deref(), Some("JWT"));
+        assert_eq!(claims["nonce"], "nonce-one");
+        assert_eq!(claims["sub"], "mock-user");
+    }
+
+    /// Each authorization gets its own code, so two logins in flight keep
+    /// their nonces apart.
+    #[tokio::test]
+    async fn each_code_remembers_its_own_nonce() {
+        let idp = MockIdp::start();
+        let first = authorize_with_nonce(&idp, "nonce-one").await;
+        let second = authorize_with_nonce(&idp, "nonce-two").await;
+
+        let second_response = post_token(&idp, &code_grant(&second)).await;
+        let first_response = post_token(&idp, &code_grant(&first)).await;
+
+        let (_, first_claims) = verified(&idp, first_response["id_token"].as_str().unwrap(), "mqlens-test").await;
+        let (_, second_claims) = verified(&idp, second_response["id_token"].as_str().unwrap(), "mqlens-test").await;
+        assert_eq!(first_claims["nonce"], "nonce-one");
+        assert_eq!(second_claims["nonce"], "nonce-two");
+    }
+
+    #[tokio::test]
+    async fn access_tokens_are_plain_jwts_until_the_rfc_9068_switch_is_on() {
+        let idp = MockIdp::start();
+        let before = post_token(&idp, &code_grant("test-auth-code")).await;
+        idp.mint_at_jwt_access_tokens(true);
+        let during = post_token(&idp, &code_grant("test-auth-code")).await;
+
+        let (plain, _) = verified(&idp, before["access_token"].as_str().unwrap(), "mqlens").await;
+        let (typed, _) = verified(&idp, during["access_token"].as_str().unwrap(), "mqlens").await;
+        assert_eq!(plain.typ.as_deref(), Some("JWT"));
+        assert_eq!(typed.typ.as_deref(), Some("at+jwt"));
+    }
+
+    #[tokio::test]
+    async fn the_wrong_nonce_switch_puts_another_nonce_in_the_id_token() {
+        let idp = MockIdp::start();
+        idp.mint_wrong_nonce(true);
+        let code = authorize_with_nonce(&idp, "nonce-one").await;
+
+        let response = post_token(&idp, &code_grant(&code)).await;
+
+        let (_, claims) = verified(&idp, response["id_token"].as_str().unwrap(), "mqlens-test").await;
+        assert!(claims["nonce"].as_str().is_some_and(|n| n != "nonce-one"), "{claims}");
+    }
+
+    #[tokio::test]
+    async fn the_refresh_grant_returns_an_id_token_without_a_nonce_unless_switched_off() {
+        let idp = MockIdp::start();
+        let refresh = "grant_type=refresh_token&refresh_token=test-refresh-token&client_id=mqlens-test";
+
+        let with = post_token(&idp, refresh).await;
+        idp.omit_id_token_on_refresh(true);
+        let without = post_token(&idp, refresh).await;
+
+        let (_, claims) = verified(&idp, with["id_token"].as_str().unwrap(), "mqlens-test").await;
+        assert!(claims.get("nonce").is_none(), "a refresh carries no nonce: {claims}");
+        assert!(without.get("id_token").is_none(), "{without}");
+        assert!(without["access_token"].as_str().is_some());
+    }
+
+    #[tokio::test]
+    async fn the_no_id_token_switch_leaves_the_code_grant_without_one() {
+        let idp = MockIdp::start();
+        idp.omit_id_tokens(true);
+        let code = authorize_with_nonce(&idp, "nonce-one").await;
+
+        let response = post_token(&idp, &code_grant(&code)).await;
+
+        assert!(response.get("id_token").is_none(), "{response}");
+        assert!(response["access_token"].as_str().is_some());
     }
 }
