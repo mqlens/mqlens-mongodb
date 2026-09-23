@@ -74,8 +74,15 @@ fn live_session(state: &AppState, login_id: &str) -> Result<Option<Arc<OidcSessi
 
 /// Cancel a login in flight. An unknown id is not an error: the dialog can
 /// close after the flow already finished and its entry is gone.
+///
+/// The flag is set with the registry lock held. `LoginRegistration`'s drop
+/// removes the entry and clears the flag under that lock, so a cancel lands
+/// either before it (and is cleared) or after it (and finds no entry). Set
+/// after releasing the lock, it could land after the drop and stay set,
+/// failing every later re-login of the kept client as `Cancelled`.
 pub fn cancel_oidc_login_impl(state: &AppState, login_id: &str) -> Result<(), String> {
-    if let Some(session) = live_session(state, login_id)? {
+    let sessions = state.oidc_sessions.lock_safe()?;
+    if let Some(session) = sessions.get(login_id) {
         session.cancel();
     }
     Ok(())
@@ -576,6 +583,58 @@ mod tests {
 
         let held = sessions.lock().unwrap().get("login-1").cloned().unwrap();
         assert!(Arc::ptr_eq(&held, &first));
+    }
+
+    /// A cancel that races the login's end must leave no flag behind. Either
+    /// order is fine alone: a cancel first is cleared by the entry's drop,
+    /// and a cancel after finds no entry. A cancel that looked the session
+    /// up before the drop but set the flag after it would leave it set,
+    /// failing every later re-login of the kept client as `Cancelled`.
+    ///
+    /// No seam can force that interleaving, so this races the two many times.
+    /// Both sides spin on a shared round counter, so each round they start
+    /// within a few instructions of each other. A regression is caught with
+    /// high probability, not certainty. A pass never depends on timing,
+    /// since with the lock held across the cancel no interleaving leaves the
+    /// flag set.
+    #[test]
+    fn a_cancel_racing_the_end_of_its_login_never_leaves_the_flag_set() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        const ROUNDS: usize = 1_000_000;
+        let state = AppState::new();
+        let started = AtomicUsize::new(0);
+        let finished = AtomicUsize::new(0);
+        let mut stale = 0;
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                for round in 1..=ROUNDS {
+                    while started.load(Ordering::Acquire) != round {
+                        std::hint::spin_loop();
+                    }
+                    cancel_oidc_login_impl(&state, "racing").unwrap();
+                    finished.store(round, Ordering::Release);
+                }
+            });
+            for round in 1..=ROUNDS {
+                let session = quiet_session();
+                let registration =
+                    register_login(&state.oidc_sessions, Some("racing".into()), session.clone()).unwrap();
+                started.store(round, Ordering::Release);
+                // A delay that sweeps across rounds, so some drops land
+                // between the cancel's lookup and its store.
+                for _ in 0..round % 256 {
+                    std::hint::spin_loop();
+                }
+                drop(registration);
+                while finished.load(Ordering::Acquire) != round {
+                    std::hint::spin_loop();
+                }
+                if session.is_cancelled() {
+                    stale += 1;
+                }
+            }
+        });
+        assert_eq!(stale, 0, "a cancel landed after its login's entry was dropped, in {stale} of {ROUNDS} rounds");
     }
 
     // ---- prepare_human_login ---------------------------------------------
