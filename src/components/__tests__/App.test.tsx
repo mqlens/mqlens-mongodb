@@ -3164,6 +3164,33 @@ describe('App Component', () => {
       // the other window has been updating, not this stale snapshot.
       expect(readShellSession('new-conn-1.sales_db.customers')).toBeUndefined();
     });
+
+    it('translates a bare OIDC error key on the reconnect banner instead of showing it raw (#430)', async () => {
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'workspace_get') return Promise.resolve(workspaceSnapshot);
+        if (cmd === 'load_connection_profiles') {
+          return Promise.resolve([{
+            id: 'p1',
+            name: 'Prod Cluster',
+            uri: 'mongodb://prod/?authMechanism=MONGODB-OIDC&authSource=$external',
+            ssh: null,
+          }]);
+        }
+        if (cmd === 'connect_db') return Promise.reject('auth.oidc.errors.cancelled');
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+
+      const [firstBtn] = await screen.findAllByRole('button', { name: /Reconnect Prod Cluster/ });
+      fireEvent.click(firstBtn);
+
+      await waitFor(() => {
+        expect(screen.getAllByTestId('reconnect-error')[0]).toHaveTextContent(/login was cancelled/i);
+      });
+      expect(screen.queryByText(/auth\.oidc\.errors\.cancelled/)).not.toBeInTheDocument();
+    });
   });
 
   describe('dispatchWorkspace no-op mirror gate (#97 phase 2 final review Fix 3)', () => {
@@ -5136,5 +5163,34 @@ describe('pipelineYieldsWholeDocuments (#275)', () => {
     const { pipelineYieldsWholeDocuments } = await import('../../App');
     expect(pipelineYieldsWholeDocuments([{} as Record<string, unknown>])).toBe(false);
     expect(pipelineYieldsWholeDocuments([{ $match: {}, $sort: {} }])).toBe(false);
+  });
+});
+
+describe('quick-connect toast translates OIDC error keys (#430)', () => {
+  it('shows the localized reason for a failed sidebar quick-connect, not a raw locale key', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'workspace_get') return Promise.resolve(null);
+      if (cmd === 'load_connection_profiles') {
+        return Promise.resolve([{
+          id: 'p1',
+          name: 'Prod Cluster',
+          uri: 'mongodb://prod/?authMechanism=MONGODB-OIDC&authSource=$external',
+          ssh: null,
+        }]);
+      }
+      if (cmd === 'connect_db') return Promise.reject('auth.oidc.errors.cancelled');
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+
+    const connectCard = await screen.findByTestId('conn-card-p1');
+    fireEvent.click(connectCard);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Could not connect to Prod Cluster: The login was cancelled\./)).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/auth\.oidc\.errors\.cancelled/)).not.toBeInTheDocument();
   });
 });

@@ -39,9 +39,27 @@
     "methodScram1": "SCRAM-SHA-1",
     "methodScram256": "SCRAM-SHA-256（默认）",
     "methodX509": "x.509 客户端证书",
+    "oidc": {
+      "errors": {
+        "browserLaunchFailed": "MQLens 无法打开你的系统浏览器。请手动打开登录链接，或设置一个默认浏览器。",
+        "cancelled": "登录已取消。",
+        "consentDenied": "登录被拒绝。请在浏览器中同意该请求以继续。",
+        "discoveryFailed": "MQLens 无法读取你的身份提供商配置。请检查到该提供商的网络访问。",
+        "hostNotAllowed": "此 MongoDB 主机不在 OIDC 允许的主机列表中。如果你信任此部署，请在“允许的主机”中添加它。",
+        "idpOauthError": "你的身份提供商拒绝了此次登录请求。请检查该部署的应用注册信息。",
+        "insecureEndpoint": "身份提供商的端点不是 HTTPS。MQLens 不会通过未加密的连接发送登录信息。",
+        "loginOkPingFailed": "登录成功，但数据库没有响应。请检查主机、TLS 和网络设置。",
+        "missingClientId": "此部署未提供 OIDC 客户端 ID，因此无法开始浏览器登录。请让管理员配置一个。",
+        "portUnavailable": "MQLens 无法打开本地端口以接收登录信息。请关闭其他占用回环端口的应用后重试。",
+        "stateMismatch": "登录响应与此请求不匹配，已被拒绝。请重新开始登录。",
+        "timedOut": "浏览器登录已过期。请重新开始登录。",
+        "tokenExchangeFailed": "MQLens 无法用登录信息换取令牌。如果你的网络使用了代理，请注意：身份提供商是直接访问的，不经过该连接的 SOCKS5 代理。",
+        "tokenRejected": "MongoDB 拒绝了该登录令牌。请确认你的账户有权访问此部署。"
+      }
+    },
     "oidcAllowedHosts": "允许的主机（可选）",
     "oidcAllowedHostsHelp": "仅自托管部署需要。MongoDB Atlas 主机已默认允许。以逗号分隔，例如 mongo.corp.example.com",
-    "oidcNote": "登录将在系统浏览器中打开。您的凭据仅在身份提供商处输入 —— MQLens 不会看到它们，也不会保存任何令牌。",
+    "oidcNote": "登录将在系统浏览器中打开。你的凭据仅在身份提供商处输入 —— MQLens 不会看到它们，也不会保存任何令牌。",
     "passLabelAws": "Secret Access Key",
     "passLabelDefault": "密码",
     "serviceName": "服务名称（可选，默认：mongodb）",
@@ -236,11 +254,14 @@
     "tls": "TLS / SSL"
   },
   "test": {
+    "cancelLogin": "取消登录",
     "dismissAria": "关闭测试结果",
     "dismissTitle": "关闭",
     "hideDetails": "隐藏详情",
+    "openBrowserAgain": "重新打开浏览器",
     "progressLabel": "连接测试进度",
     "showDetails": "显示详情",
+    "stageAuthenticate": "身份验证 —— 等待浏览器登录",
     "stageConnect": "初始化驱动客户端",
     "stageParse": "解析连接 URI",
     "stagePing": "验证连接（Ping）",

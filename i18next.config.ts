@@ -134,7 +134,26 @@ export default defineConfig({
       'connections:test.stageParse',
       'connections:test.stageResolve',
       'connections:test.stageConnect',
+      'connections:test.stageAuthenticate',
       'connections:test.stagePing',
+      // `connections:auth.oidc.errors.*` (#430) are read through
+      // describeConnectError.ts's `t(`connections:${raw}`)`, where `raw` is
+      // the backend's bare locale key — a template literal keyed off runtime
+      // data, not a string literal the extractor's static analysis can see.
+      'connections:auth.oidc.errors.consentDenied',
+      'connections:auth.oidc.errors.portUnavailable',
+      'connections:auth.oidc.errors.browserLaunchFailed',
+      'connections:auth.oidc.errors.stateMismatch',
+      'connections:auth.oidc.errors.idpOauthError',
+      'connections:auth.oidc.errors.tokenExchangeFailed',
+      'connections:auth.oidc.errors.hostNotAllowed',
+      'connections:auth.oidc.errors.tokenRejected',
+      'connections:auth.oidc.errors.loginOkPingFailed',
+      'connections:auth.oidc.errors.missingClientId',
+      'connections:auth.oidc.errors.insecureEndpoint',
+      'connections:auth.oidc.errors.discoveryFailed',
+      'connections:auth.oidc.errors.cancelled',
+      'connections:auth.oidc.errors.timedOut',
       'errors:conn.tlsNotTrusted',
       'errors:conn.tlsNotTrustedHint',
       'errors:conn.authFailed',

@@ -39,6 +39,24 @@
     "methodScram1": "SCRAM-SHA-1",
     "methodScram256": "SCRAM-SHA-256 (Standard)",
     "methodX509": "x.509-Clientzertifikat",
+    "oidc": {
+      "errors": {
+        "browserLaunchFailed": "MQLens konnte deinen System-Browser nicht öffnen. Öffne den Anmeldelink manuell oder lege einen Standardbrowser fest.",
+        "cancelled": "Die Anmeldung wurde abgebrochen.",
+        "consentDenied": "Die Anmeldung wurde abgelehnt. Bestätige die Anfrage in deinem Browser, um fortzufahren.",
+        "discoveryFailed": "MQLens konnte die Konfiguration deines Identitätsanbieters nicht lesen. Prüfe den Netzwerkzugriff auf den Anbieter.",
+        "hostNotAllowed": "Dieser MongoDB-Host steht nicht in den erlaubten Hosts für OIDC. Füge ihn unter Erlaubte Hosts hinzu, wenn du dieser Bereitstellung vertraust.",
+        "idpOauthError": "Dein Identitätsanbieter hat die Anmeldeanfrage abgelehnt. Prüfe die Anwendungsregistrierung für diese Bereitstellung.",
+        "insecureEndpoint": "Der Endpunkt des Identitätsanbieters läuft nicht über HTTPS. MQLens sendet keine Anmeldung über eine unverschlüsselte Verbindung.",
+        "loginOkPingFailed": "Die Anmeldung war erfolgreich, aber die Datenbank hat nicht geantwortet. Prüfe Host, TLS und Netzwerkeinstellungen.",
+        "missingClientId": "Diese Bereitstellung hat keine OIDC-Client-ID angegeben, daher kann keine Browser-Anmeldung gestartet werden. Bitte deinen Administrator, eine zu konfigurieren.",
+        "portUnavailable": "MQLens konnte keinen lokalen Port zum Empfang der Anmeldung öffnen. Schließe andere Anwendungen, die Loopback-Ports verwenden, und versuche es erneut.",
+        "stateMismatch": "Die Anmeldeantwort passte nicht zu dieser Anfrage und wurde abgelehnt. Starte die Anmeldung erneut.",
+        "timedOut": "Die Browser-Anmeldung ist abgelaufen. Starte die Anmeldung erneut.",
+        "tokenExchangeFailed": "MQLens konnte die Anmeldung nicht gegen ein Token eintauschen. Falls dein Netzwerk einen Proxy verwendet: Der Identitätsanbieter wird direkt erreicht, nicht über den SOCKS5-Proxy der Verbindung.",
+        "tokenRejected": "MongoDB hat das Anmelde-Token abgelehnt. Prüfe, ob dein Konto Zugriff auf diese Bereitstellung hat."
+      }
+    },
     "oidcAllowedHosts": "Erlaubte Hosts (optional)",
     "oidcAllowedHostsHelp": "Nur für selbstverwaltete Bereitstellungen erforderlich. MongoDB-Atlas-Hosts sind bereits zugelassen. Kommagetrennt, z. B. mongo.corp.example.com",
     "oidcNote": "Die Anmeldung öffnet sich in deinem System-Browser. Deine Anmeldedaten werden ausschließlich bei deinem Identitätsanbieter eingegeben — MQLens bekommt sie nie zu sehen, und es wird kein Token gespeichert.",
@@ -238,11 +256,14 @@
     "tls": "TLS / SSL"
   },
   "test": {
+    "cancelLogin": "Anmeldung abbrechen",
     "dismissAria": "Testergebnis verwerfen",
     "dismissTitle": "Verwerfen",
     "hideDetails": "Details ausblenden",
+    "openBrowserAgain": "Browser erneut öffnen",
     "progressLabel": "Fortschritt des Verbindungstests",
     "showDetails": "Details anzeigen",
+    "stageAuthenticate": "Anmelden — warte auf Browser-Anmeldung",
     "stageConnect": "Treiber-Client initialisieren",
     "stageParse": "Verbindungs-URI parsen",
     "stagePing": "Verbindung prüfen (Ping)",

@@ -14,6 +14,7 @@ import {
 import { useDialogs } from './dialogs/DialogProvider';
 import { PasswordInput } from './PasswordInput';
 import { useEscapeClose } from '../lib/useEscapeClose';
+import { describeConnectError } from '../lib/describeConnectError';
 import { EPHEMERAL_PROFILE_PREFIX } from '../workspace/persistence';
 import { formatShortcut, shortcutById } from '@/lib/shortcuts';
 import {
@@ -94,9 +95,18 @@ interface ConnectionManagerProps {
   activeConnections?: { id: string; profileId: string; name: string; uri: string }[];
 }
 
+/**
+ * `key` names the backend `TestPhase` this row tracks ('authenticate' is
+ * OIDC-only and #430's only dynamic one — it exists only once a real
+ * `authenticate` phase update has arrived, spliced in right before `ping`).
+ * `message` is the raw (possibly locale-key) text from a `fail` update,
+ * translated at render time — see `describeConnectError`.
+ */
 interface TestStep {
+  key: 'parse' | 'resolve' | 'connect' | 'authenticate' | 'ping';
   nameKey: string;
   status: 'pending' | 'running' | 'success' | 'failed';
+  message?: string;
 }
 
 /** Last resort only: enough to stay unique within a session, see below. */
@@ -540,6 +550,17 @@ export const buildOidcConfig = (s: typeof BLANK_CONN): { allowed_hosts: string[]
   return hosts.length ? { allowed_hosts: hosts } : null;
 };
 
+/**
+ * Whether a connect targets MONGODB-OIDC, read off the URI itself rather than
+ * `buildOidcConfig`'s result (#430): that returns `null` for an OIDC
+ * connection with no allowed-hosts restriction (Atlas needs none) exactly as
+ * it does for a non-OIDC one, so it can't tell the two apart. This is what a
+ * `loginId` is minted from, for both the editor's own Connect and the saved
+ * profile list's, since `connect_db` streams no phases for either to key a
+ * pending-login UI on otherwise.
+ */
+export const isOidcUri = (uri: string): boolean => /authMechanism=MONGODB-OIDC/i.test(uri);
+
 // Build the structured SSH tunnel config the backend expects, or null when disabled.
 /**
  * A name worth offering for a connection the user has just proved works (#364).
@@ -623,11 +644,17 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   const [testing, setTesting] = useState(false);
   const [testProgress, setTestProgress] = useState(0);
   const [testSteps, setTestSteps] = useState<TestStep[]>([
-    { nameKey: 'test.stageParse', status: 'running' },
-    { nameKey: 'test.stageResolve', status: 'pending' },
-    { nameKey: 'test.stageConnect', status: 'pending' },
-    { nameKey: 'test.stagePing', status: 'pending' },
+    { key: 'parse', nameKey: 'test.stageParse', status: 'running' },
+    { key: 'resolve', nameKey: 'test.stageResolve', status: 'pending' },
+    { key: 'connect', nameKey: 'test.stageConnect', status: 'pending' },
+    { key: 'ping', nameKey: 'test.stagePing', status: 'pending' },
   ]);
+  // A UUID minted before `test_connection_uri`/`connect_db` when the target
+  // is OIDC, so Cancel/Reopen can act on the login while that call is still
+  // in flight (#430). Cleared once the call settles, or the login is
+  // cancelled/the dialog closes.
+  const [testLoginId, setTestLoginId] = useState<string | null>(null);
+  const [connectLoginId, setConnectLoginId] = useState<string | null>(null);
   // `message` carries raw (English) driver text for the failure path only; the
   // success path has no driver text to preserve, so its label is rendered from
   // `success` at display time (see t('test.successMessage') below) rather than
@@ -1007,13 +1034,18 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     // replaced with a fresh object, never mutated in place.
     const tested = editorState;
     const attempt = connectAttemptRef.current;
+    // Minted only for an OIDC target: `connect_db` streams no phases, so this
+    // is what lets Cancel/Reopen act on the login while the call is in flight
+    // (#430) — a non-OIDC connect has no login to cancel.
+    const loginId = isOidcUri(uri) ? generateUUID() : null;
     setConnecting(true);
     setConnectError(null);
     setShowConnectErrDetail(false);
     setTestResult(null);
     setError(null);
+    setConnectLoginId(loginId);
     try {
-      const connId = await invoke<string>('connect_db', { uri, ssh, oidc });
+      const connId = await invoke<string>('connect_db', { uri, ssh, oidc, loginId });
       handedOverRef.current = null;
       // The editor was dismissed while this was in flight. There is no longer a
       // surface to offer the connection on, and `pendingSave` set now would be
@@ -1089,7 +1121,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
         };
       });
     } catch (err: any) {
-      if (attempt === connectAttemptRef.current) setConnectError(String(err));
+      if (attempt === connectAttemptRef.current) setConnectError(describeConnectError(err, t));
     } finally {
       // Only the attempt that is still current may release the button. An
       // abandoned one clearing it would re-enable Connect while the NEW attempt
@@ -1097,7 +1129,10 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       // under one generation — both would pass the guard above, and the second
       // to land would overwrite the first pendingSave and strand its connection
       // (#369 review).
-      if (attempt === connectAttemptRef.current) setConnecting(false);
+      if (attempt === connectAttemptRef.current) {
+        setConnecting(false);
+        setConnectLoginId(null);
+      }
     }
   };
 
@@ -1144,6 +1179,17 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   };
 
   /**
+   * Best-effort: ask the backend to cancel a pending OIDC login (#430). Never
+   * awaited and never surfaces its own failure — the login is being abandoned
+   * either way (the dialog is closing, or the user asked to stop), and an
+   * unknown `loginId` already answers `Ok` on the backend.
+   */
+  const cancelOidcLogin = (loginId: string | null) => {
+    if (!loginId) return;
+    void invoke('cancel_oidc_login', { loginId }).catch(() => {});
+  };
+
+  /**
    * Leave the editor. A connection opened but not yet saved goes to the app
    * rather than being abandoned: it is already live in the backend, and
    * declining the save offer is a decision about the profile, not the session.
@@ -1155,6 +1201,13 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     // profile's id — two identities for one session, with the backend's
     // metadata left describing whichever landed last (#369 review).
     if (loading) return;
+
+    // A login still waiting on the browser (test checklist's Authenticate
+    // row, or an OIDC editor Connect with no phase stream to watch) has
+    // nowhere left to report to once this dialog is gone — cancel it rather
+    // than leave it running unobserved (#430).
+    if (testLoginId) { cancelOidcLogin(testLoginId); setTestLoginId(null); }
+    if (connectLoginId) { cancelOidcLogin(connectLoginId); setConnectLoginId(null); }
 
     // Advanced here, synchronously, and not left to the effect that watches
     // `showEditDialog`. That effect is passive: it runs after the commit, while
@@ -1263,15 +1316,20 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       return;
     }
 
+    // See `handleEditorConnect`'s `loginId` comment: minted only for OIDC,
+    // since `connect_db` streams no phases Cancel/Reopen could otherwise key on.
+    const loginId = isOidcUri(profile.uri) ? generateUUID() : null;
     setLoading(true);
     setError(null);
+    setConnectLoginId(loginId);
     try {
-      const connId = await invoke<string>('connect_db', { uri: profile.uri, ssh: profile.ssh ?? null, oidc: profile.oidc ?? null });
+      const connId = await invoke<string>('connect_db', { uri: profile.uri, ssh: profile.ssh ?? null, oidc: profile.oidc ?? null, loginId });
       onConnect(connId, profile.name, profile.uri, profile.id, profile.color_tag ?? undefined, profile.connection_mode ?? 'normal');
     } catch (err: any) {
-      setError(String(err));
+      setError(describeConnectError(err, t));
     } finally {
       setLoading(false);
+      setConnectLoginId(null);
     }
   };
 
@@ -1578,30 +1636,40 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     setTestProgress(0);
 
     const steps: TestStep[] = [
-      { nameKey: 'test.stageParse', status: 'pending' },
-      { nameKey: 'test.stageResolve', status: 'pending' },
-      { nameKey: 'test.stageConnect', status: 'pending' },
-      { nameKey: 'test.stagePing', status: 'pending' },
+      { key: 'parse', nameKey: 'test.stageParse', status: 'pending' },
+      { key: 'resolve', nameKey: 'test.stageResolve', status: 'pending' },
+      { key: 'connect', nameKey: 'test.stageConnect', status: 'pending' },
+      { key: 'ping', nameKey: 'test.stagePing', status: 'pending' },
     ];
     setTestSteps([...steps]);
 
     const targetUri = buildUri(editorState);
+    const loginId = generateUUID();
+    setTestLoginId(loginId);
 
-    // Each real backend phase maps 1:1 to a checklist row.
-    const phaseIndex: Record<string, number> = { parse: 0, resolve: 1, connect: 2, ping: 3 };
-
-    // Live phase updates stream from the backend; paint each row from real results.
+    // Live phase updates stream from the backend; paint each row from real
+    // results. `authenticate` (#430) is the one phase with no row at start —
+    // the backend emits it only for an OIDC login, so it is spliced in, right
+    // before Ping, the first time (and only the first time) it is seen. The
+    // index is always recomputed from the current row list rather than a
+    // fixed map, so that insertion can never misalign the rows after it.
     const channel = new Channel<{ phase: string; status: string; message?: string }>();
     channel.onmessage = (update) => {
-      const idx = phaseIndex[update.phase];
-      if (idx === undefined) return;
+      let idx = steps.findIndex((s) => s.key === update.phase);
+      if (idx === -1) {
+        if (update.phase !== 'authenticate') return;
+        const pingIdx = steps.findIndex((s) => s.key === 'ping');
+        idx = pingIdx === -1 ? steps.length : pingIdx;
+        steps.splice(idx, 0, { key: 'authenticate', nameKey: 'test.stageAuthenticate', status: 'pending' });
+      }
       if (update.status === 'start') {
         steps[idx].status = 'running';
       } else if (update.status === 'ok') {
         steps[idx].status = 'success';
-        setTestProgress((idx + 1) * 25);
+        setTestProgress(Math.round(((idx + 1) / steps.length) * 100));
       } else if (update.status === 'fail') {
         steps[idx].status = 'failed';
+        steps[idx].message = update.message;
       }
       setTestSteps([...steps]);
     };
@@ -1611,6 +1679,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
         uri: targetUri,
         ssh: buildSshConfig(editorState),
         oidc: buildOidcConfig(editorState),
+        loginId,
         onPhase: channel,
       });
       setTestProgress(100);
@@ -1621,12 +1690,31 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       if (!steps.some((s) => s.status === 'failed')) {
         const idx = steps.findIndex((s) => s.status === 'running' || s.status === 'pending');
         steps[idx === -1 ? 0 : idx].status = 'failed';
-        setTestSteps([...steps]);
       }
-      setTestResult({ success: false, message: String(err) });
+      // Any row still 'running' never reached a conclusion of its own — most
+      // often Ping, already running when an OIDC login inside it fails
+      // (#430): the driver authenticates lazily on the first operation, so
+      // Ping's own 'ok'/'fail' never arrives. There's nothing wrong with Ping
+      // itself, so it returns to a neutral, not-reached state rather than
+      // being shown as failed too, and it must not keep spinning forever.
+      steps.forEach((s) => { if (s.status === 'running') s.status = 'pending'; });
+      setTestSteps([...steps]);
+      setTestResult({ success: false, message: describeConnectError(err, t) });
     } finally {
       setTesting(false);
+      setTestLoginId(null);
     }
+  };
+
+  const handleCancelTestLogin = () => { cancelOidcLogin(testLoginId); };
+  const handleReopenTestLogin = () => {
+    if (!testLoginId) return;
+    void invoke('reopen_oidc_login', { loginId: testLoginId }).catch(() => {});
+  };
+  const handleCancelConnectLogin = () => { cancelOidcLogin(connectLoginId); };
+  const handleReopenConnectLogin = () => {
+    if (!connectLoginId) return;
+    void invoke('reopen_oidc_login', { loginId: connectLoginId }).catch(() => {});
   };
 
   // Filter profiles based on search and folder selection
@@ -1650,7 +1738,14 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   return (
     <>
     {/* No click-outside close: dismiss only via the X button or Escape. */}
-    <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
+    <Dialog open={isOpen} onOpenChange={(open) => {
+      if (!open) {
+        // The list view's own OIDC connect (handleConnectClick) has no nested
+        // dialog to close through `closeEditor` — cancel it here instead (#430).
+        if (connectLoginId) { cancelOidcLogin(connectLoginId); setConnectLoginId(null); }
+        onClose();
+      }
+    }}>
       <DraggableDialogContent
         resetKey={isOpen}
         defaultWidth={900}
@@ -1907,6 +2002,21 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                 )}
 
                 <footer className="mt-auto flex justify-end gap-2 border-t border-border pt-3">
+                  {/* Not `showEditDialog`: the edit dialog is a separate top-layer
+                      Dialog that stays mounted alongside this one, and renders
+                      its own copy of these buttons below — showing both here
+                      too would duplicate the `connect-cancel-login` testid
+                      while a profile is selected behind an open editor (#430). */}
+                  {connectLoginId && !showEditDialog && (
+                    <>
+                      <Button type="button" variant="outline" size="sm" data-testid="connect-cancel-login" onClick={handleCancelConnectLogin}>
+                        {t('test.cancelLogin')}
+                      </Button>
+                      <Button type="button" variant="outline" size="sm" data-testid="connect-reopen-login" onClick={handleReopenConnectLogin}>
+                        {t('test.openBrowserAgain')}
+                      </Button>
+                    </>
+                  )}
                   <Button
                     onClick={handleConnectClick}
                     disabled={loading || activeConnections.some(c => c.profileId === selectedProfile.id)}
@@ -2755,22 +2865,38 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                 </div>
 
                 <div className="flex flex-col gap-1">
-                  {testSteps.map((step, idx) => (
-                    <div key={idx} className="flex items-center justify-between text-[11px]">
-                      <span className={cn(
-                        step.status === 'pending' && 'text-muted-foreground',
-                        step.status === 'running' && 'text-primary',
-                        (step.status === 'success' || step.status === 'failed') && 'text-foreground'
-                      )}>{t(step.nameKey)}</span>
-                      <span>
-                        {step.status === 'pending' && <span className="inline-block h-2 w-2 rounded-full border border-border" />}
-                        {step.status === 'running' && <RefreshCw size={10} className="animate-spin text-primary" />}
-                        {step.status === 'success' && <Check size={11} className="text-success" />}
-                        {step.status === 'failed' && <X size={11} className="text-destructive" />}
-                      </span>
+                  {testSteps.map((step) => (
+                    <div key={step.key} data-testid={`test-step-${step.key}`} data-status={step.status} className="flex flex-col gap-0.5">
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className={cn(
+                          step.status === 'pending' && 'text-muted-foreground',
+                          step.status === 'running' && 'text-primary',
+                          (step.status === 'success' || step.status === 'failed') && 'text-foreground'
+                        )}>{t(step.nameKey)}</span>
+                        <span>
+                          {step.status === 'pending' && <span className="inline-block h-2 w-2 rounded-full border border-border" />}
+                          {step.status === 'running' && <RefreshCw size={10} className="animate-spin text-primary" />}
+                          {step.status === 'success' && <Check size={11} className="text-success" />}
+                          {step.status === 'failed' && <X size={11} className="text-destructive" />}
+                        </span>
+                      </div>
+                      {step.status === 'failed' && step.message && (
+                        <div className="pl-0.5 text-[10px] text-destructive">{describeConnectError(step.message, t)}</div>
+                      )}
                     </div>
                   ))}
                 </div>
+
+                {testing && testSteps.find((s) => s.key === 'authenticate')?.status === 'running' && (
+                  <div className="flex gap-2">
+                    <Button type="button" variant="outline" size="sm" data-testid="test-cancel-login" onClick={handleCancelTestLogin}>
+                      {t('test.cancelLogin')}
+                    </Button>
+                    <Button type="button" variant="outline" size="sm" data-testid="test-reopen-login" onClick={handleReopenTestLogin}>
+                      {t('test.openBrowserAgain')}
+                    </Button>
+                  </div>
+                )}
 
                 {testResult && (() => {
                   let summary: string;
@@ -2918,6 +3044,16 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                   </>
                 ) : (
                   <>
+                    {connectLoginId && (
+                      <>
+                        <Button type="button" variant="outline" size="sm" data-testid="connect-cancel-login" onClick={handleCancelConnectLogin}>
+                          {t('test.cancelLogin')}
+                        </Button>
+                        <Button type="button" variant="outline" size="sm" data-testid="connect-reopen-login" onClick={handleReopenConnectLogin}>
+                          {t('test.openBrowserAgain')}
+                        </Button>
+                      </>
+                    )}
                     <Button variant="outline" size="sm" onClick={closeEditor}>{t('common:cancel')}</Button>
                     <Button variant="outline" size="sm" onClick={handleSave} disabled={loading || testing || connecting}>
                       <Check size={11} />

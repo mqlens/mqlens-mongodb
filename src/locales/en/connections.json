@@ -39,6 +39,24 @@
     "methodScram1": "SCRAM-SHA-1",
     "methodScram256": "SCRAM-SHA-256 (Default)",
     "methodX509": "x.509 Client Certificate",
+    "oidc": {
+      "errors": {
+        "browserLaunchFailed": "MQLens could not open your system browser. Open the login link manually, or set a default browser.",
+        "cancelled": "The login was cancelled.",
+        "consentDenied": "The login was denied. Approve the request in your browser to continue.",
+        "discoveryFailed": "MQLens could not read your identity provider's configuration. Check network access to the provider.",
+        "hostNotAllowed": "This MongoDB host is not in the allowed hosts for OIDC. Add it under Allowed hosts if you trust this deployment.",
+        "idpOauthError": "Your identity provider rejected the login request. Check the application registration for this deployment.",
+        "insecureEndpoint": "The identity provider endpoint is not HTTPS. MQLens will not send a login over an unencrypted connection.",
+        "loginOkPingFailed": "Login succeeded, but the database did not respond. Check the host, TLS and network settings.",
+        "missingClientId": "This deployment did not supply an OIDC client id, so a browser login cannot start. Ask your administrator to configure one.",
+        "portUnavailable": "MQLens could not open a local port to receive the login. Close other applications using loopback ports and try again.",
+        "stateMismatch": "The login response did not match this request and was rejected. Start the login again.",
+        "timedOut": "The browser login expired. Start the login again.",
+        "tokenExchangeFailed": "MQLens could not exchange the login for a token. If your network uses a proxy, note that the identity provider is reached directly, not through the connection's SOCKS5 proxy.",
+        "tokenRejected": "MongoDB rejected the login token. Confirm your account has access to this deployment."
+      }
+    },
     "oidcAllowedHosts": "Allowed hosts (optional)",
     "oidcAllowedHostsHelp": "Only needed for self-managed deployments. MongoDB Atlas hosts are already allowed. Comma-separated, e.g. mongo.corp.example.com",
     "oidcNote": "Login opens in your system browser. Your credentials are entered only at your identity provider — MQLens never sees them, and no token is saved.",
@@ -238,11 +256,14 @@
     "tls": "TLS / SSL"
   },
   "test": {
+    "cancelLogin": "Cancel login",
     "dismissAria": "Dismiss test result",
     "dismissTitle": "Dismiss",
     "hideDetails": "Hide details",
+    "openBrowserAgain": "Open browser again",
     "progressLabel": "Connection Test Progress",
     "showDetails": "Show details",
+    "stageAuthenticate": "Authenticate — waiting for browser login",
     "stageConnect": "Initialize Driver Client",
     "stageParse": "Parse Connection URI",
     "stagePing": "Verify Connection (Ping)",

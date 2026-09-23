@@ -176,6 +176,12 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
       mode: conn.mode,
     }));
 
+  // A human OIDC login (#430) that `test_connection_uri` is waiting on, keyed
+  // by `loginId`. This fake can't observe a real browser or socket, so it
+  // never completes a login on its own — it only ever answers Cancel, which
+  // is all the e2e suite here exercises (Rust tests cover the real listener).
+  const pendingOidcLogins = new Map<string, () => void>();
+
   /**
    * Write an aggregation's results the way its final `$out` or `$merge` stage
    * does. `$out` replaces the target's documents and keeps its indexes.
@@ -322,7 +328,7 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
       await backend.emit('connections-changed', { connections: connectionList() });
       return null;
     },
-    test_connection_uri: ({ uri, onPhase }) => {
+    test_connection_uri: ({ uri, onPhase, loginId }) => {
       const send = (message: Record<string, unknown>) =>
         (onPhase as { onmessage?: (m: unknown) => void } | undefined)?.onmessage?.(message);
       for (const phase of ['parse', 'resolve', 'connect']) {
@@ -330,6 +336,20 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
         send({ phase, status: 'ok' });
       }
       send({ phase: 'ping', status: 'start' });
+      // A human OIDC login (#430): the driver authenticates lazily on the
+      // first operation, so `authenticate` starts only once Ping already
+      // has — matching the real backend's own phase order. The call then
+      // hangs, exactly as the real one does while a browser login is in
+      // flight, until `cancel_oidc_login` resolves it.
+      if (/authMechanism=MONGODB-OIDC/i.test(String(uri))) {
+        send({ phase: 'authenticate', status: 'start' });
+        return new Promise((_resolve, reject) => {
+          pendingOidcLogins.set(String(loginId), () => {
+            send({ phase: 'authenticate', status: 'fail', message: 'auth.oidc.errors.cancelled' });
+            reject('auth.oidc.errors.cancelled');
+          });
+        });
+      }
       if (!serverKeyFor(state, String(uri))) {
         const message = `no server answers at ${String(uri)}`;
         send({ phase: 'ping', status: 'fail', message });
@@ -338,6 +358,16 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
       send({ phase: 'ping', status: 'ok' });
       return null;
     },
+    cancel_oidc_login: ({ loginId }) => {
+      const cancel = pendingOidcLogins.get(String(loginId));
+      pendingOidcLogins.delete(String(loginId));
+      cancel?.();
+      return null;
+    },
+    // The real backend reopens the stored authorization URL and never
+    // rebuilds the request; this fake has no browser to open, so recording
+    // the call (via `backend.calls`) is the whole of what a test can assert.
+    reopen_oidc_login: () => null,
     get_mongodb_version: ({ id }) => server(id).version,
 
     // Databases and collections

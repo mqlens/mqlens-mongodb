@@ -17,6 +17,7 @@ import {
   takeSettledChatRequest,
 } from './lib/aiChatRequest';
 import { stopChangeStream } from './lib/changeStream';
+import { describeConnectError } from './lib/describeConnectError';
 import { startWriteRequests } from './lib/mcpWriteRequests';
 import { McpWriteConfirm } from './components/McpWriteConfirm';
 import {
@@ -1158,7 +1159,7 @@ function Workspace() {
       rebindProfileTabs(profile.id, id);
       return id;
     } catch (e) {
-      toast(t('toast.couldNotConnectToProfile', { name: profile.name, detail: (e as any)?.message || String(e) }), 'error');
+      toast(t('toast.couldNotConnectToProfile', { name: profile.name, detail: describeConnectError(e, t) }), 'error');
       return null;
     }
   };
@@ -3889,7 +3890,7 @@ function Workspace() {
         await refreshTabResults(tab);
       }
     } catch (err: any) {
-      patchReconnectState(profileId, { busy: false, error: err?.message || String(err) });
+      patchReconnectState(profileId, { busy: false, error: describeConnectError(err, t) });
     } finally {
       reconnectBusyRef.current.delete(profileId);
     }
