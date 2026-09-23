@@ -46,6 +46,10 @@ struct Inner {
     /// instead of a token — an IdP (or something in front of it) trying to
     /// bounce the code and verifier somewhere else, e.g. to plain `http://`.
     token_redirect: Mutex<Option<String>>,
+    /// When set, `/token` mints its access tokens for an audience other than
+    /// the `mqlens` the Percona fixture checks: a well-formed, correctly
+    /// signed token MongoDB must nonetheless reject.
+    wrong_audience: AtomicBool,
 }
 
 /// A single-key, single-issuer OIDC provider double bound to a random
@@ -142,6 +146,7 @@ impl MockIdp {
             reject_refresh_tokens: AtomicBool::new(false),
             discovery_hook: Mutex::new(None),
             token_redirect: Mutex::new(None),
+            wrong_audience: AtomicBool::new(false),
         });
         let server = Arc::new(server);
 
@@ -203,6 +208,12 @@ impl MockIdp {
     /// all, to the new location.
     pub fn redirect_token_requests_to(&self, url: &str) {
         *self.inner.token_redirect.lock().unwrap() = Some(url.to_string());
+    }
+
+    /// While `on`, `/token` mints access tokens whose `aud` is not the
+    /// `mqlens` a MongoDB deployment configured for this IdP expects.
+    pub fn mint_wrong_audience(&self, on: bool) {
+        self.inner.wrong_audience.store(on, Ordering::SeqCst);
     }
 }
 
@@ -401,7 +412,8 @@ fn jwks_document(modulus_b64: &str) -> serde_json::Value {
 /// the token this route hands back, only that the shape is right. Callers
 /// that need specific claims use [`MockIdp::mint_access_token`] directly.
 fn token_document(inner: &Inner, _body: &str) -> serde_json::Value {
-    let access_token = sign_access_token(inner, "mock-user", "mqlens");
+    let audience = if inner.wrong_audience.load(Ordering::SeqCst) { "not-mqlens" } else { "mqlens" };
+    let access_token = sign_access_token(inner, "mock-user", audience);
 
     serde_json::json!({
         "access_token": access_token,

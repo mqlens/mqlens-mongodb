@@ -392,3 +392,97 @@ async fn a_connect_whose_ping_fails_after_the_login_reports_login_ok_ping_failed
     assert_eq!(result, Err(OidcError::LoginOkPingFailed.locale_key().to_string()));
     assert!(state.connections.lock().unwrap().is_empty());
 }
+
+// ---- authentication refused outside the flow -------------------------------
+//
+// Two refusals the flow itself never sees: the driver checking allowed hosts
+// before it calls back at all, and MongoDB rejecting the token a completed
+// login produced. Both are Authenticate's failure, with their own key.
+
+/// The driver refuses a host outside `ALLOWED_HOSTS` before our callback
+/// runs, so no login reports anything. Both paths must still name the cause
+/// as a locale key rather than echo the driver's English, and the test must
+/// fail its Authenticate row — not Ping.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_host_outside_the_allowed_hosts_is_reported_as_host_not_allowed() {
+    let Some((uri, idp)) = fixture() else { return };
+    let _shared = FAILPOINT_LOCK.read().await;
+    let config = crate::connections::OidcProfileConfig { allowed_hosts: vec!["nothing.example".into()] };
+    let key = OidcError::HostNotAllowed.locale_key().to_string();
+
+    let http = idp_client(idp);
+    let (opener, opened) = recording_opener();
+    let state = AppState::new();
+    let (log, emit) = phase_recorder();
+    let login = HumanLogin { config: Some(&config), login_id: Some("test-host".into()), open: opener, http: Some(http) };
+    let result = run_connection_test_with_oidc(&state.oidc_sessions, &uri, None, login, &emit).await;
+
+    assert_eq!(result, Err(key.clone()));
+    let log = log.lock().unwrap().clone();
+    assert!(log.contains(&row(TestPhase::Authenticate, "fail")), "{log:?}");
+    assert!(!log.contains(&row(TestPhase::Ping, "fail")), "the refusal belongs to Authenticate: {log:?}");
+    assert!(opened.lock().unwrap().is_empty(), "the driver refuses before any browser login");
+
+    let http = idp_client(idp);
+    let (opener, opened) = recording_opener();
+    let login = HumanLogin { config: Some(&config), login_id: Some("connect-host".into()), open: opener, http: Some(http) };
+    let result = crate::connect_db_with_login(&state, &uri, None, login).await;
+
+    assert_eq!(result, Err(key));
+    assert!(opened.lock().unwrap().is_empty());
+    assert!(state.connections.lock().unwrap().is_empty());
+}
+
+/// Switches the shared IdP to wrong-audience tokens, and back when dropped —
+/// on a panic too, so no later test inherits it.
+struct WrongAudience<'a>(&'a MockIdp);
+
+impl<'a> WrongAudience<'a> {
+    fn on(idp: &'a MockIdp) -> Self {
+        idp.mint_wrong_audience(true);
+        Self(idp)
+    }
+}
+
+impl Drop for WrongAudience<'_> {
+    fn drop(&mut self) {
+        self.0.mint_wrong_audience(false);
+    }
+}
+
+/// The browser login completes and the flow reports it — before MongoDB has
+/// seen the token. MongoDB then rejects it (wrong `aud`). That is
+/// `tokenRejected` on both paths, and the test's Authenticate row, already
+/// painted ok, must turn red rather than leave a green row and blame Ping.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_token_mongodb_rejects_is_reported_as_token_rejected() {
+    let Some((uri, idp)) = fixture() else { return };
+    // Exclusive: every other test shares this IdP and needs good tokens.
+    let _exclusive = FAILPOINT_LOCK.write().await;
+    let _wrong = WrongAudience::on(idp);
+    let key = OidcError::TokenRejected.locale_key().to_string();
+
+    let http = idp_client(idp);
+    let (opener, opened) = simulating_opener_with(http.clone());
+    let state = AppState::new();
+    let (log, emit) = phase_recorder();
+    let login = HumanLogin { config: None, login_id: Some("test-rejected".into()), open: opener, http: Some(http) };
+    let result = run_connection_test_with_oidc(&state.oidc_sessions, &uri, None, login, &emit).await;
+
+    assert_eq!(result, Err(key.clone()), "{:?}", log.lock().unwrap());
+    assert_eq!(opened.lock().unwrap().len(), 1, "the browser login ran");
+    let log = log.lock().unwrap().clone();
+    let authenticate: Vec<&str> =
+        log.iter().filter(|(phase, _)| *phase == TestPhase::Authenticate).map(|(_, status)| status.as_str()).collect();
+    assert_eq!(authenticate.last(), Some(&"fail"), "the Authenticate row must end red: {log:?}");
+    assert!(!log.contains(&row(TestPhase::Ping, "fail")), "the rejection belongs to Authenticate: {log:?}");
+
+    let http = idp_client(idp);
+    let (opener, opened) = simulating_opener_with(http.clone());
+    let login = HumanLogin { config: None, login_id: Some("connect-rejected".into()), open: opener, http: Some(http) };
+    let result = crate::connect_db_with_login(&state, &uri, None, login).await;
+
+    assert_eq!(result, Err(key));
+    assert_eq!(opened.lock().unwrap().len(), 1, "the browser login ran");
+    assert!(state.connections.lock().unwrap().is_empty());
+}

@@ -150,24 +150,104 @@ impl LoginReport {
         }
     }
 
-    /// Whether the login itself failed. The connection test has then already
-    /// reported the failure on its Authenticate row.
-    pub fn login_failed(&self) -> bool {
-        self.failure.is_some()
+    /// How a failed ping is explained by the login, given the driver's error,
+    /// or `None` when no login accounts for it (every other mechanism, or an
+    /// OIDC failure before anything to do with the login).
+    pub fn ping_failure(&self, error: &mongodb::error::Error) -> Option<PingFailure> {
+        self.explain(DriverFailure::of(error))
     }
 
-    /// The locale key explaining a failed ping, if a login accounts for it:
-    /// the login's own failure, or — when the login succeeded and the ping
-    /// failed anyway — `LoginOkPingFailed`. `None` when no login reported
-    /// anything (every other mechanism, or a failure before the login began).
-    pub fn ping_failure_key(&self) -> Option<&'static str> {
+    /// `ping_failure`'s locale key, for the connect path, which has no rows.
+    pub fn ping_failure_key(&self, error: &mongodb::error::Error) -> Option<&'static str> {
+        self.ping_failure(error).map(PingFailure::key)
+    }
+
+    fn explain(&self, driver: DriverFailure) -> Option<PingFailure> {
+        // Checked by the driver before it calls back, so whether or not a
+        // login ran says nothing about it.
+        if driver == DriverFailure::HostNotAllowed {
+            return Some(PingFailure::AuthenticateFailed(OidcError::HostNotAllowed.locale_key()));
+        }
         match (&self.failure, self.completed) {
-            (Some(error), _) => Some(error.locale_key()),
-            (None, true) => Some(OidcError::LoginOkPingFailed.locale_key()),
+            (Some(error), _) => Some(PingFailure::LoginFailed(error.locale_key())),
+            // The flow reports `Completed` as soon as the IdP hands over a
+            // token, before MongoDB has seen it; an authentication failure
+            // after that is MongoDB rejecting the token.
+            (None, true) if driver == DriverFailure::AuthenticationFailed => {
+                Some(PingFailure::AuthenticateFailed(OidcError::TokenRejected.locale_key()))
+            }
+            (None, true) => Some(PingFailure::PingFailed(OidcError::LoginOkPingFailed.locale_key())),
             (None, false) => None,
         }
     }
 }
+
+/// A failed ping, as the login explains it — and so which row of the
+/// connection test it belongs to. Each carries its locale key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PingFailure {
+    /// The login itself failed, and has already said so (the test's
+    /// Authenticate row is already red).
+    LoginFailed(&'static str),
+    /// Authentication failed outside the flow: the driver refused the host
+    /// before calling back, or MongoDB rejected the token the login
+    /// produced. Authenticate's failure, not yet reported — and on the test
+    /// path, possibly over a row the login already marked ok.
+    AuthenticateFailed(&'static str),
+    /// The login succeeded and the ping failed for another reason.
+    PingFailed(&'static str),
+}
+
+impl PingFailure {
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::LoginFailed(key) | Self::AuthenticateFailed(key) | Self::PingFailed(key) => key,
+        }
+    }
+}
+
+/// What a driver error says about authentication.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DriverFailure {
+    /// The driver's own allowed-hosts check refused the server.
+    HostNotAllowed,
+    /// Authentication failed: the driver's authentication error, or the
+    /// server's `AuthenticationFailed` (code 18).
+    AuthenticationFailed,
+    Other,
+}
+
+impl DriverFailure {
+    /// Reads the error and every driver error it wraps. Our own callback's
+    /// failures reach the driver as `Error::custom`, never as an
+    /// authentication error, so a login failure is not mistaken for one.
+    pub(crate) fn of(error: &mongodb::error::Error) -> Self {
+        use mongodb::error::ErrorKind;
+        let chain = std::iter::successors(Some(error), |e| {
+            std::error::Error::source(*e).and_then(|s| s.downcast_ref::<mongodb::error::Error>())
+        });
+        let mut found = Self::Other;
+        for error in chain {
+            match error.kind.as_ref() {
+                // Driver 3.9.0's wording (`client/auth/oidc.rs`,
+                // `validate_address_with_allowed_hosts`), pinned by the
+                // real-server test that provokes it.
+                ErrorKind::Authentication { message, .. } if message.contains("allowed list of hosts") => {
+                    return Self::HostNotAllowed;
+                }
+                ErrorKind::Authentication { .. } => found = Self::AuthenticationFailed,
+                ErrorKind::Command(command) if command.code == AUTHENTICATION_FAILED => {
+                    found = Self::AuthenticationFailed;
+                }
+                _ => {}
+            }
+        }
+        found
+    }
+}
+
+/// MongoDB's `AuthenticationFailed` server error code.
+const AUTHENTICATION_FAILED: i32 = 18;
 
 /// Whether parsed options authenticate with `MONGODB-OIDC`.
 pub fn uses_oidc(options: &ClientOptions) -> bool {
@@ -608,37 +688,94 @@ mod tests {
         report
     }
 
+    use crate::oidc::OidcPhase;
+
     #[test]
     fn a_ping_failure_with_no_login_is_not_explained_by_one() {
-        assert_eq!(report_of(vec![]).ping_failure_key(), None);
-        assert_eq!(report_of(vec![crate::oidc::OidcPhase::WaitingForBrowser]).ping_failure_key(), None);
+        assert_eq!(report_of(vec![]).explain(DriverFailure::Other), None);
+        assert_eq!(report_of(vec![OidcPhase::WaitingForBrowser]).explain(DriverFailure::Other), None);
+        // An authentication failure no login preceded is some other
+        // mechanism's (a SCRAM password, say): the driver explains it.
+        assert_eq!(report_of(vec![]).explain(DriverFailure::AuthenticationFailed), None);
     }
 
     #[test]
     fn a_ping_failure_after_a_failed_login_is_the_logins_failure() {
-        let report = report_of(vec![
-            crate::oidc::OidcPhase::WaitingForBrowser,
-            crate::oidc::OidcPhase::Failed(OidcError::Cancelled),
-        ]);
-        assert_eq!(report.ping_failure_key(), Some("auth.oidc.errors.cancelled"));
-        assert!(report.login_failed());
+        let report = report_of(vec![OidcPhase::WaitingForBrowser, OidcPhase::Failed(OidcError::Cancelled)]);
+        assert_eq!(report.explain(DriverFailure::Other), Some(PingFailure::LoginFailed("auth.oidc.errors.cancelled")));
     }
 
+    /// `loginOkPingFailed` stays for what it says: the login worked and the
+    /// ping then failed for a reason that is not authentication.
     #[test]
-    fn a_ping_failure_after_a_completed_login_is_login_ok_ping_failed() {
-        let report = report_of(vec![crate::oidc::OidcPhase::WaitingForBrowser, crate::oidc::OidcPhase::Completed]);
-        assert_eq!(report.ping_failure_key(), Some("auth.oidc.errors.loginOkPingFailed"));
-        assert!(!report.login_failed());
+    fn a_non_authentication_failure_after_a_completed_login_is_login_ok_ping_failed() {
+        let report = report_of(vec![OidcPhase::WaitingForBrowser, OidcPhase::Completed]);
+        assert_eq!(
+            report.explain(DriverFailure::Other),
+            Some(PingFailure::PingFailed("auth.oidc.errors.loginOkPingFailed"))
+        );
+    }
+
+    /// The flow reports `Completed` as soon as the IdP hands over a token,
+    /// before MongoDB has looked at it. An authentication failure after that
+    /// is MongoDB rejecting the token — Authenticate's failure, not "login
+    /// succeeded, check the network".
+    #[test]
+    fn an_authentication_failure_after_a_completed_login_is_token_rejected() {
+        let report = report_of(vec![OidcPhase::WaitingForBrowser, OidcPhase::Completed]);
+        assert_eq!(
+            report.explain(DriverFailure::AuthenticationFailed),
+            Some(PingFailure::AuthenticateFailed("auth.oidc.errors.tokenRejected"))
+        );
+    }
+
+    /// The driver checks allowed hosts before it ever calls back, so no
+    /// login has reported anything; the refusal is Authenticate's all the
+    /// same.
+    #[test]
+    fn a_host_outside_the_allowed_hosts_is_host_not_allowed_whether_or_not_a_login_ran() {
+        for phases in [vec![], vec![OidcPhase::WaitingForBrowser, OidcPhase::Completed]] {
+            assert_eq!(
+                report_of(phases).explain(DriverFailure::HostNotAllowed),
+                Some(PingFailure::AuthenticateFailed("auth.oidc.errors.hostNotAllowed"))
+            );
+        }
     }
 
     /// A failure is the more specific explanation, whatever else was seen.
     #[test]
     fn a_login_failure_outranks_an_earlier_completion() {
-        let report = report_of(vec![
-            crate::oidc::OidcPhase::Completed,
-            crate::oidc::OidcPhase::Failed(OidcError::TokenRejected),
-        ]);
-        assert_eq!(report.ping_failure_key(), Some("auth.oidc.errors.tokenRejected"));
+        let report = report_of(vec![OidcPhase::Completed, OidcPhase::Failed(OidcError::TimedOut)]);
+        assert_eq!(
+            report.explain(DriverFailure::AuthenticationFailed),
+            Some(PingFailure::LoginFailed("auth.oidc.errors.timedOut"))
+        );
+    }
+
+    /// A server-side authentication failure (code 18, `AuthenticationFailed`)
+    /// is one; anything else — our own callback's error included — is not.
+    #[test]
+    fn server_authentication_failures_are_told_apart_from_other_errors() {
+        let rejected: mongodb::error::CommandError = serde_json::from_value(serde_json::json!({
+            "code": 18,
+            "codeName": "AuthenticationFailed",
+            "errmsg": "Authentication failed.",
+        }))
+        .unwrap();
+        let rejected = mongodb::error::Error::from(mongodb::error::ErrorKind::Command(rejected));
+        assert_eq!(DriverFailure::of(&rejected), DriverFailure::AuthenticationFailed);
+
+        let unrelated: mongodb::error::CommandError = serde_json::from_value(serde_json::json!({
+            "code": 2,
+            "codeName": "BadValue",
+            "errmsg": "failCommand",
+        }))
+        .unwrap();
+        let unrelated = mongodb::error::Error::from(mongodb::error::ErrorKind::Command(unrelated));
+        assert_eq!(DriverFailure::of(&unrelated), DriverFailure::Other);
+
+        let ours = mongodb::error::Error::custom(format!("{}", OidcError::Cancelled));
+        assert_eq!(DriverFailure::of(&ours), DriverFailure::Other);
     }
 
     /// Every connect and test describes a login, SCRAM included, so building

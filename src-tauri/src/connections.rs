@@ -1207,25 +1207,45 @@ pub async fn run_connection_test_with_oidc(
         }
         Err(error) => error,
     };
-    match report.ping_failure_key() {
+    Err(report_failed_ping(&report, &error, emit))
+    // `_tunnel` and `_login` drop here: the temporary tunnel is torn down and
+    // the login's entry removed.
+}
+
+/// Paint the row a failed ping belongs to and return the test's error: a
+/// locale key when the login explains the failure, the driver's text when
+/// nothing does.
+fn report_failed_ping(
+    report: &crate::oidc_login::LoginReport,
+    error: &mongodb::error::Error,
+    emit: &(dyn Fn(PhaseUpdate) + Send + Sync),
+) -> String {
+    use crate::oidc_login::PingFailure;
+    match report.ping_failure(error) {
         // The Authenticate row already carries the failure. Report it rather
         // than the ping error it caused, so the user sees "browser login
         // expired" and not a server-selection timeout.
-        Some(key) if report.login_failed() => Err(key.to_string()),
+        Some(PingFailure::LoginFailed(key)) => key.to_string(),
+        // Authentication failed outside the flow: the driver refused the
+        // host before calling back, or MongoDB rejected the token the login
+        // produced. Authenticate's failure — repainting a row the login may
+        // already have marked ok.
+        Some(PingFailure::AuthenticateFailed(key)) => {
+            emit(PhaseUpdate::fail(TestPhase::Authenticate, key.to_string()));
+            key.to_string()
+        }
         // The login succeeded and the ping failed anyway: Ping's failure,
         // explained as such.
-        Some(key) => {
+        Some(PingFailure::PingFailed(key)) => {
             emit(PhaseUpdate::fail(TestPhase::Ping, key.to_string()));
-            Err(key.to_string())
+            key.to_string()
         }
         None => {
             let msg = format!("Database ping failed: {}", error);
             emit(PhaseUpdate::fail(TestPhase::Ping, msg.clone()));
-            Err(msg)
+            msg
         }
     }
-    // `_tunnel` and `_login` drop here: the temporary tunnel is torn down and
-    // the login's entry removed.
 }
 
 /// `oidc` and `login_id` are optional so an older frontend that omits them
@@ -1564,6 +1584,48 @@ mod tests {
             log.iter().all(|(phase, _)| *phase != TestPhase::Authenticate),
             "SCRAM must not grow an Authenticate row: {log:?}"
         );
+    }
+
+    fn completed_login() -> crate::oidc_login::LoginReport {
+        let mut report = crate::oidc_login::LoginReport::default();
+        report.record(&crate::oidc::OidcPhase::WaitingForBrowser);
+        report.record(&crate::oidc::OidcPhase::Completed);
+        report
+    }
+
+    fn command_error(code: i32, code_name: &str) -> mongodb::error::Error {
+        let error: mongodb::error::CommandError = serde_json::from_value(serde_json::json!({
+            "code": code,
+            "codeName": code_name,
+            "errmsg": "from the server",
+        }))
+        .unwrap();
+        mongodb::error::Error::from(mongodb::error::ErrorKind::Command(error))
+    }
+
+    /// The login marked Authenticate ok the moment the IdP returned a token;
+    /// MongoDB then refused it. The row must turn red with `tokenRejected`,
+    /// and Ping — which never got to run — must not be blamed.
+    #[test]
+    fn mongodb_rejecting_the_logins_token_fails_the_authenticate_row() {
+        let (log, emit) = phase_recorder();
+
+        let error = report_failed_ping(&completed_login(), &command_error(18, "AuthenticationFailed"), &emit);
+
+        assert_eq!(error, "auth.oidc.errors.tokenRejected");
+        assert_eq!(*log.lock().unwrap(), vec![(TestPhase::Authenticate, "fail".to_string())]);
+    }
+
+    /// A ping that fails after a good login for any other reason is still
+    /// Ping's failure.
+    #[test]
+    fn a_non_authentication_failure_after_the_login_fails_the_ping_row() {
+        let (log, emit) = phase_recorder();
+
+        let error = report_failed_ping(&completed_login(), &command_error(2, "BadValue"), &emit);
+
+        assert_eq!(error, "auth.oidc.errors.loginOkPingFailed");
+        assert_eq!(*log.lock().unwrap(), vec![(TestPhase::Ping, "fail".to_string())]);
     }
 
     /// The login entry exists only while the test call is in flight, and a

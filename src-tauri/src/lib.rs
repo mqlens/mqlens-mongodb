@@ -856,7 +856,7 @@ pub(crate) async fn connect_db_with_login(
     // Verify connection by running a ping command
     let db = client.database("admin");
     db.run_command(mongodb::bson::doc! { "ping": 1 }).await.map_err(|e| {
-        match report.lock_safe().ok().and_then(|report| report.ping_failure_key()) {
+        match report.lock_safe().ok().and_then(|report| report.ping_failure_key(&e)) {
             Some(key) => key.to_string(),
             None => format!("Database ping failed: {}", e),
         }
