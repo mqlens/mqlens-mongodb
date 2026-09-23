@@ -50,13 +50,23 @@ MQLens stays valid for `mongosh` and other tools.
   provider.
 - **Its TLS certificate must chain to a certificate authority MQLens
   trusts.** MQLens trusts both the standard public root set and your
-  operating system's certificate store, the same as your browser. An
-  identity provider behind an internal or enterprise certificate authority
-  works once that authority's root is in the OS certificate store, and so
-  does a network that inspects TLS traffic (Zscaler, Netskope and similar)
-  and re-signs it with a corporate root.
+  operating system's certificate store — broadly what most browsers trust,
+  though not identical: Firefox keeps its own store by default, and if
+  `SSL_CERT_FILE` or `SSL_CERT_DIR` is set in MQLens's environment, the
+  certificates they name replace the OS store. An identity provider behind
+  an internal or enterprise certificate authority works once that
+  authority's root is in the OS certificate store, and so does a network
+  that inspects TLS traffic (Zscaler, Netskope and similar) and re-signs it
+  with a corporate root.
 - MQLens never relaxes identity-provider certificate checks, even if the
   MongoDB connection itself allows invalid certificates.
+
+The requests MQLens's AI features send to an AI provider trust the same
+certificates. That lets them work behind TLS inspection and internal-CA
+gateways, and it also means a company proxy that inspects TLS can read those
+requests, your AI provider's API key and your prompts included, just as it
+can read your browser's traffic. (An AI command-line tool that MQLens runs
+for you makes its own connections, with its own certificate settings.)
 
 ## What happens when you connect or test
 
@@ -124,8 +134,12 @@ the tunnel**: your custom **Allowed hosts** list, or the built-in defaults
 without one. If the host isn't allowed, the connection fails with the
 allowed-hosts error, and no tunnel or browser opens.
 
-List your deployment's own host name, as it appears in the connection URI.
-You don't need to add `127.0.0.1`.
+So a self-managed deployment's host must be in your **Allowed hosts** list
+whether or not you tunnel. The built-in defaults cover MongoDB Atlas and
+localhost only, so with no custom list a tunnelled self-managed deployment
+is refused, exactly as a direct connection to it would be. List your
+deployment's own host name, as it appears in the connection URI. You don't
+need to add `127.0.0.1`.
 
 ## The embedded shell (mongosh)
 
@@ -205,10 +219,10 @@ hosts** list, or, without one, the built-in defaults (which cover MongoDB
 Atlas and localhost, not a self-managed deployment's own host name). The
 host is checked before any browser opens. Add the host under **Allowed
 hosts** in the Authentication tab if you trust this deployment — remember a
-custom list replaces the built-in defaults rather than extending them. Over
-an SSH tunnel the host to allow is still the deployment's own host from the
-connection URI, not `127.0.0.1`, and MQLens checks it before opening the
-tunnel (see **SSH tunnels** above).
+custom list replaces the built-in defaults rather than extending them. The
+same applies over an SSH tunnel: the host to allow is still the
+deployment's own host from the connection URI, not `127.0.0.1`, and MQLens
+checks it before opening the tunnel (see **SSH tunnels** above).
 
 **"Your identity provider rejected the login request. Check the application registration for this deployment."**
 The identity provider itself rejected the request — commonly a
