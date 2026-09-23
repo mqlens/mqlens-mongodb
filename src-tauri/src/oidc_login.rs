@@ -26,6 +26,12 @@ pub type OidcSessions = Mutex<HashMap<String, Arc<OidcSession>>>;
 /// middle of a session (reached only when the IdP rejects the refresh token)
 /// has no entry here and so cannot be cancelled from the UI. The driver's
 /// five-minute callback deadline still bounds it.
+///
+/// Dropping it also clears the session's cancel flag. A cancel that lands
+/// after the login completed but before the call returned would otherwise
+/// stay set on the session the kept client's callback reuses, failing every
+/// later re-login instantly; once the entry is gone nothing can deliver a
+/// cancel, so there is nothing left for the flag to mean.
 pub struct LoginRegistration<'a> {
     sessions: &'a OidcSessions,
     login_id: String,
@@ -34,7 +40,9 @@ pub struct LoginRegistration<'a> {
 impl Drop for LoginRegistration<'_> {
     fn drop(&mut self) {
         if let Ok(mut sessions) = self.sessions.lock_safe() {
-            sessions.remove(&self.login_id);
+            if let Some(session) = sessions.remove(&self.login_id) {
+                session.clear_cancel();
+            }
         }
     }
 }
@@ -370,6 +378,25 @@ mod tests {
 
         drop(registration);
         assert!(live_ids(&sessions).is_empty(), "the entry must go when the call it belongs to ends");
+    }
+
+    /// A cancel can land after the login completed but before its call
+    /// returned (the dialog closing at that moment). The kept client's
+    /// driver callback holds this same session for every later re-login, so
+    /// a flag left set would fail each of them instantly as `Cancelled`.
+    /// Once the entry is gone nothing can deliver a cancel, so deregistering
+    /// clears it.
+    #[test]
+    fn deregistering_a_login_clears_a_cancel_that_landed_after_it_finished() {
+        let sessions = OidcSessions::default();
+        let session = quiet_session();
+        let registration = register_login(&sessions, Some("login-1".into()), session.clone()).unwrap();
+        session.cancel();
+        assert!(session.is_cancelled(), "premise: the late cancel reached the session");
+
+        drop(registration);
+
+        assert!(!session.is_cancelled(), "a later re-login on the kept client must not start cancelled");
     }
 
     /// Without a caller id the login is still tracked (and still cleaned up);

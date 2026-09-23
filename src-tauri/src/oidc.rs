@@ -664,6 +664,13 @@ impl OidcSession {
         self.cancelled.store(true, Ordering::SeqCst);
     }
 
+    /// Forget a cancel. Only for `LoginRegistration`'s drop: once a login's
+    /// entry is gone nothing can cancel it, and a stale flag would fail the
+    /// kept client's next re-login before it starts.
+    pub(crate) fn clear_cancel(&self) {
+        self.cancelled.store(false, Ordering::SeqCst);
+    }
+
     pub fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::SeqCst)
     }
