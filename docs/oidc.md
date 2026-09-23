@@ -227,9 +227,11 @@ to MCP access, or disconnect them when you step away.
 Each entry below matches a message you may see in MQLens, followed by what
 it means and what to do.
 
-**"MQLens could not open your system browser. Open the login link manually, or set a default browser."**
-MQLens couldn't hand off to a browser. Open the login link it shows
-manually, or set a default browser on your system and try again.
+**"MQLens could not open your system browser. Set a default browser, then try again."**
+MQLens couldn't hand off to a browser, so the login never started. Set a
+default browser on your system, then test or connect again. MQLens does
+not show the login link itself, because it carries this login's one-time
+values.
 
 **"The login was cancelled."**
 The login was cancelled before it finished — with **Cancel login**, or by

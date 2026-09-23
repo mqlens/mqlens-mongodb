@@ -42,7 +42,7 @@
     "oidc": {
       "errors": {
         "accessTokenTypeRejected": "MongoDB 拒绝了你的身份提供商的访问令牌类型。请为此连接开启“使用 ID 令牌代替访问令牌”。",
-        "browserLaunchFailed": "MQLens 无法打开你的系统浏览器。请手动打开登录链接，或设置一个默认浏览器。",
+        "browserLaunchFailed": "MQLens 无法打开你的系统浏览器。请设置一个默认浏览器，然后重试。",
         "cancelled": "登录已取消。",
         "consentDenied": "登录被拒绝。请在浏览器中同意该请求以继续。",
         "discoveryFailed": "MQLens 无法读取你的身份提供商配置。请检查到该提供商的网络访问。",

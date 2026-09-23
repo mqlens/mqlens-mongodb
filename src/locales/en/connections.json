@@ -42,7 +42,7 @@
     "oidc": {
       "errors": {
         "accessTokenTypeRejected": "MongoDB rejected your identity provider's access token type. Turn on “Use ID token instead of access token” for this connection.",
-        "browserLaunchFailed": "MQLens could not open your system browser. Open the login link manually, or set a default browser.",
+        "browserLaunchFailed": "MQLens could not open your system browser. Set a default browser, then try again.",
         "cancelled": "The login was cancelled.",
         "consentDenied": "The login was denied. Approve the request in your browser to continue.",
         "discoveryFailed": "MQLens could not read your identity provider's configuration. Check network access to the provider.",
