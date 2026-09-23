@@ -785,7 +785,7 @@ pub(crate) async fn connect_db_with_login(
     state: &AppState,
     uri: &str,
     ssh: Option<&ssh_tunnel::SshConfig>,
-    mut login: oidc_login::HumanLogin<'_>,
+    login: oidc_login::HumanLogin<'_>,
 ) -> Result<String, String> {
     let connection_id = Uuid::new_v4().to_string();
     if uri.starts_with("mongodb://mock") {
@@ -818,17 +818,23 @@ pub(crate) async fn connect_db_with_login(
         None
     };
 
+    // Through an SSH tunnel the driver sees only 127.0.0.1, so an OIDC
+    // login's real host is checked now, before anything opens. The login
+    // then goes on with the profile's config minus its custom list.
+    let tunnelled_config: connections::OidcProfileConfig;
+    let login = if ssh.is_some_and(|cfg| cfg.enabled) && early_login.is_some() {
+        tunnelled_config = oidc_login::check_real_host_before_tunnel(uri, login.config)?;
+        oidc_login::HumanLogin { config: Some(&tunnelled_config), ..login }
+    } else {
+        login
+    };
+
     // If an SSH tunnel is configured, open it and rewrite the URI to the local
     // forwarded port before the driver connects.
     let mut effective_uri = uri.to_string();
     let mut tunnel: Option<ssh_tunnel::SshTunnel> = None;
     if let Some(cfg) = ssh {
         if cfg.enabled {
-            // Through the tunnel the driver sees only 127.0.0.1, so an OIDC
-            // login's real host is checked now, before anything opens.
-            if early_login.is_some() {
-                login = oidc_login::check_real_host_before_tunnel(uri, login)?;
-            }
             let (target_host, target_port) = ssh_tunnel::extract_target_host_port(uri);
             let t = ssh_tunnel::open_tunnel(cfg, target_host, target_port).await?;
             effective_uri = ssh_tunnel::rewrite_uri_hosts(uri, "127.0.0.1", t.local_port);

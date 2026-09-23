@@ -310,16 +310,22 @@ pub fn attach_human_login(
 /// the profile's custom list, or else the driver's defaults. A refusal comes
 /// before any tunnel or browser opens.
 ///
-/// On success the login goes on with no custom list, so the driver keeps its
-/// defaults and admits the tunnel's `127.0.0.1`. The remote host is never
-/// added to the driver's list.
-pub fn check_real_host_before_tunnel<'a>(uri: &str, login: HumanLogin<'a>) -> Result<HumanLogin<'a>, String> {
+/// On success it returns the config the login goes on with: the profile's,
+/// with only its custom list cleared, so the driver keeps its defaults and
+/// admits the tunnel's `127.0.0.1`. The remote host is never added to the
+/// driver's list, and any other profile setting is kept.
+pub fn check_real_host_before_tunnel(
+    uri: &str,
+    config: Option<&OidcProfileConfig>,
+) -> Result<OidcProfileConfig, String> {
     let (host, _) = crate::ssh_tunnel::extract_target_host_port(uri);
-    let allowed_hosts = login.config.map(|c| c.allowed_hosts.as_slice()).unwrap_or(&[]);
+    let allowed_hosts = config.map(|c| c.allowed_hosts.as_slice()).unwrap_or(&[]);
     if !crate::oidc::host_is_allowed(&host, allowed_hosts) {
         return Err(OidcError::HostNotAllowed.locale_key().to_string());
     }
-    Ok(HumanLogin { config: None, ..login })
+    let mut tunnelled = config.cloned().unwrap_or_default();
+    tunnelled.allowed_hosts.clear();
+    Ok(tunnelled)
 }
 
 /// The IdP client a login uses: the one a test injected, or else
@@ -847,10 +853,10 @@ mod tests {
     #[tokio::test]
     async fn once_the_real_host_passes_the_driver_gets_no_custom_list() {
         let config = OidcProfileConfig { allowed_hosts: vec!["db.internal".into()] };
-        let login = HumanLogin { config: Some(&config), ..HumanLogin::unattended() };
         let uri = "mongodb://db.internal:27017/?authMechanism=MONGODB-OIDC&authSource=$external";
 
-        let login = check_real_host_before_tunnel(uri, login).expect("db.internal is allowed");
+        let tunnelled = check_real_host_before_tunnel(uri, Some(&config)).expect("db.internal is allowed");
+        let login = HumanLogin { config: Some(&tunnelled), ..HumanLogin::unattended() };
 
         let sessions = OidcSessions::default();
         let mut options =
@@ -866,10 +872,9 @@ mod tests {
     #[test]
     fn a_real_host_outside_the_list_is_refused_with_the_host_not_allowed_key() {
         let config = OidcProfileConfig { allowed_hosts: vec!["*.corp.example".into()] };
-        let login = HumanLogin { config: Some(&config), ..HumanLogin::unattended() };
         let uri = "mongodb://user@db.internal:27017,db2.corp.example/?authMechanism=MONGODB-OIDC";
 
-        let result = check_real_host_before_tunnel(uri, login).map(|_| ());
+        let result = check_real_host_before_tunnel(uri, Some(&config)).map(|_| ());
 
         assert_eq!(result, Err(HOST_NOT_ALLOWED.to_string()));
     }

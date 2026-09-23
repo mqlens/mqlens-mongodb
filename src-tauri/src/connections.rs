@@ -1107,10 +1107,15 @@ pub async fn run_connection_test_with_oidc(
 
     // Through an SSH tunnel the driver sees only 127.0.0.1, so an OIDC
     // login's real host is checked now, before the tunnel opens. A refusal is
-    // Authenticate's, as when the driver refuses a host itself.
+    // Authenticate's, as when the driver refuses a host itself. The login then
+    // goes on with the profile's config minus its custom list.
+    let tunnelled_config: OidcProfileConfig;
     let login = if ssh_enabled && crate::oidc_login::uri_requests_oidc(uri) {
-        match crate::oidc_login::check_real_host_before_tunnel(uri, login) {
-            Ok(login) => login,
+        match crate::oidc_login::check_real_host_before_tunnel(uri, login.config) {
+            Ok(config) => {
+                tunnelled_config = config;
+                crate::oidc_login::HumanLogin { config: Some(&tunnelled_config), ..login }
+            }
             Err(key) => {
                 emit(PhaseUpdate::fail(TestPhase::Authenticate, key.clone()));
                 return Err(key);
