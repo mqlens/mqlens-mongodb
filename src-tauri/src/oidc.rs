@@ -828,13 +828,18 @@ async fn run_flow_inner(
     //
     // `biased;` with the listener arm listed first: a plain `tokio::select!`
     // breaks ties among branches that are ready in the *same* poll at
-    // random, not by declaration order. Without `biased`, a callback that
-    // has already arrived could still lose to a deadline that elapsed or a
-    // cancel that landed in that same wake — reporting `TimedOut` or
-    // `Cancelled` while silently discarding an authorization code already in
-    // hand. `biased` makes the listener win deterministically whenever it
-    // is ready, and the deadline/cancel arms still fire normally whenever it
-    // genuinely is not.
+    // random, not by declaration order. With `biased`, a callback that has
+    // already arrived beats a deadline that elapsed or a cancel that landed
+    // in that same wake, and the deadline/cancel arms still fire normally
+    // whenever the callback genuinely has not arrived.
+    //
+    // That settles the login only when the callback needs no further I/O:
+    // a denial, or a state mismatch, is reported as itself rather than as
+    // `TimedOut` or `Cancelled`. An authorization code is not protected this
+    // way. Its exchange below is more I/O inside `run_flow`'s whole-body
+    // race, so a deadline or cancel that is ready when the exchange first
+    // waits still wins there, and the code is discarded. The spec accepts
+    // that: the whole callback body runs under the deadline and the cancel.
     let code = tokio::select! {
         biased;
         result = listener.wait(&request.state) => result?,
