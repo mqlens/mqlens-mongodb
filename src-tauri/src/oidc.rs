@@ -432,15 +432,16 @@ const CALLBACK_REPLAY_PAGE: &str =
      <p>This login has already completed. You can close this window.</p>\
      </body></html>";
 
-/// Which page a callback's own query parameters call for, decided before
-/// the request is answered — `handle_callback` must not respond "success"
-/// for a request that the params themselves show was a denial or was
-/// malformed, even though the real state/error/code interpretation
-/// (`interpret_callback`) only happens later, inside `wait()`.
-fn callback_outcome_page(params: &CallbackParams) -> &'static str {
-    if params.error.is_some() {
-        CALLBACK_NOT_COMPLETED_PAGE
-    } else if params.code.is_some() {
+/// Which page a callback calls for, decided before the request is answered.
+/// The result itself is decided later, in `wait()` (`interpret_callback`), but
+/// the tab only ever sees this page, so it must not say "Login complete" for a
+/// request `wait()` will refuse: a denial, a callback with no code, or one whose
+/// state is missing or not the state this login sent. Until the listener is
+/// told that state (`expect_state`), no callback can be vouched for.
+fn callback_outcome_page(params: &CallbackParams, expected_state: Option<&str>) -> &'static str {
+    let state_matches = expected_state
+        .is_some_and(|expected| crate::mcp::constant_time_eq(params.state.as_bytes(), expected.as_bytes()));
+    if state_matches && params.error.is_none() && params.code.is_some() {
         CALLBACK_SUCCESS_PAGE
     } else {
         CALLBACK_NOT_COMPLETED_PAGE
@@ -450,9 +451,10 @@ fn callback_outcome_page(params: &CallbackParams) -> &'static str {
 fn handle_callback(
     uri: axum::http::Uri,
     result_tx: std::sync::Arc<StdMutex<Option<oneshot::Sender<CallbackParams>>>>,
+    expected_state: &std::sync::OnceLock<String>,
 ) -> axum::response::Html<&'static str> {
     let params = parse_callback_params(uri.query().unwrap_or(""));
-    let outcome_page = callback_outcome_page(&params);
+    let outcome_page = callback_outcome_page(&params, expected_state.get().map(String::as_str));
     let sender = result_tx.lock().expect("callback result mutex poisoned").take();
     match sender {
         Some(tx) => {
@@ -474,6 +476,9 @@ pub struct LoopbackListener {
     pub redirect_uri: String,
     result_rx: StdMutex<Option<oneshot::Receiver<CallbackParams>>>,
     shutdown_tx: StdMutex<Option<oneshot::Sender<()>>>,
+    /// The `state` this login sent, shared with the callback handler so the
+    /// page it answers with can check it (see `callback_outcome_page`).
+    expected_state: std::sync::Arc<std::sync::OnceLock<String>>,
 }
 
 impl LoopbackListener {
@@ -495,12 +500,15 @@ impl LoopbackListener {
         let (result_tx, result_rx) = oneshot::channel::<CallbackParams>();
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
         let result_tx = std::sync::Arc::new(StdMutex::new(Some(result_tx)));
+        let expected_state = std::sync::Arc::new(std::sync::OnceLock::new());
+        let handler_state = std::sync::Arc::clone(&expected_state);
 
         let router = axum::Router::new().route(
             "/callback",
             axum::routing::get(move |uri: axum::http::Uri| {
                 let result_tx = std::sync::Arc::clone(&result_tx);
-                async move { handle_callback(uri, result_tx) }
+                let expected_state = std::sync::Arc::clone(&handler_state);
+                async move { handle_callback(uri, result_tx, &expected_state) }
             }),
         );
 
@@ -519,7 +527,15 @@ impl LoopbackListener {
             redirect_uri,
             result_rx: StdMutex::new(Some(result_rx)),
             shutdown_tx: StdMutex::new(Some(shutdown_tx)),
+            expected_state,
         })
+    }
+
+    /// Tell the listener the `state` this login sent, before the browser is
+    /// opened, so the page a callback gets can say "Login complete" only for
+    /// a callback `wait()` will accept. Set once; a later call is ignored.
+    pub fn expect_state(&self, state: &str) {
+        let _ = self.expected_state.set(state.to_string());
     }
 
     /// Wait for the one callback request, interpret it against
@@ -973,6 +989,9 @@ async fn run_flow_inner(
 
     let listener = LoopbackListener::bind().await?;
     let request = build_authorization_request(&endpoints, &idp, &listener.redirect_uri)?;
+    // Before the browser opens, so even a callback that beats `wait()` gets
+    // the page its state earns.
+    listener.expect_state(&request.state);
     // Captured before `listener` is moved into `wait()` below.
     let redirect_uri = listener.redirect_uri.clone();
 
@@ -1676,9 +1695,57 @@ mod tests {
         assert!(waiter.await.unwrap().is_err());
     }
 
+    // The page is chosen when the request is answered, so it must check the
+    // state itself: `wait()` refusing a mismatch afterwards is too late for
+    // the tab, which would already say "Login complete" (PR #433 review).
+    #[tokio::test]
+    async fn a_callback_with_the_wrong_state_does_not_claim_success_in_the_browser() {
+        let listener = LoopbackListener::bind().await.unwrap();
+        listener.expect_state("state-abc");
+        let redirect = listener.redirect_uri.clone();
+        let waiter = tokio::spawn(async move { listener.wait("state-abc").await });
+        let page = get(&format!("{redirect}?code=test-auth-code&state=someone-elses")).await.text().await.unwrap();
+        assert_eq!(page, CALLBACK_NOT_COMPLETED_PAGE);
+        assert_eq!(waiter.await.unwrap(), Err(OidcError::StateMismatch));
+    }
+
+    #[tokio::test]
+    async fn a_callback_with_no_state_does_not_claim_success_in_the_browser() {
+        let listener = LoopbackListener::bind().await.unwrap();
+        listener.expect_state("state-abc");
+        let redirect = listener.redirect_uri.clone();
+        let waiter = tokio::spawn(async move { listener.wait("state-abc").await });
+        let page = get(&format!("{redirect}?code=test-auth-code")).await.text().await.unwrap();
+        assert_eq!(page, CALLBACK_NOT_COMPLETED_PAGE);
+        assert_eq!(waiter.await.unwrap(), Err(OidcError::StateMismatch));
+    }
+
+    #[tokio::test]
+    async fn a_callback_with_the_expected_state_shows_the_success_page() {
+        let listener = LoopbackListener::bind().await.unwrap();
+        listener.expect_state("state-abc");
+        let redirect = listener.redirect_uri.clone();
+        let waiter = tokio::spawn(async move { listener.wait("state-abc").await });
+        let page = get(&format!("{redirect}?code=test-auth-code&state=state-abc")).await.text().await.unwrap();
+        assert_eq!(page, CALLBACK_SUCCESS_PAGE);
+        assert_eq!(waiter.await.unwrap(), Ok("test-auth-code".to_string()));
+    }
+
+    /// Fails closed: a listener that was never told the state cannot vouch
+    /// for any callback, so it never says "Login complete".
+    #[tokio::test]
+    async fn a_listener_never_told_the_state_shows_no_success_page() {
+        let listener = LoopbackListener::bind().await.unwrap();
+        let redirect = listener.redirect_uri.clone();
+        let page = get(&format!("{redirect}?code=test-auth-code&state=state-abc")).await.text().await.unwrap();
+        assert_eq!(page, CALLBACK_NOT_COMPLETED_PAGE);
+        listener.shutdown();
+    }
+
     #[tokio::test]
     async fn concurrent_requests_deliver_exactly_one_result() {
         let listener = LoopbackListener::bind().await.unwrap();
+        listener.expect_state("state-abc");
         let redirect = listener.redirect_uri.clone();
         let waiter = tokio::spawn(async move { listener.wait("state-abc").await });
 
@@ -2209,6 +2276,43 @@ mod tests {
         assert_eq!(opened.lock().unwrap().len(), 1, "the browser opens exactly once");
         let phases = phases.lock().unwrap().clone();
         assert_eq!(phases, vec!["WaitingForBrowser".to_string(), "Completed(AccessToken)".to_string()]);
+    }
+
+    /// The listener says "Login complete" only for the state it was told to
+    /// expect, so the real flow must tell it before the browser opens, or
+    /// every successful login would end on "Login was not completed".
+    #[tokio::test]
+    async fn a_completed_login_leaves_the_browser_on_the_success_page() {
+        let idp = MockIdp::start();
+        let (session, _) = test_session();
+        let page = Arc::new(StdMutex::new(None::<String>));
+        let sink = page.clone();
+        let opener: BrowserOpener = Arc::new(move |url: &str| {
+            let (url, sink) = (url.to_string(), sink.clone());
+            tokio::spawn(async move {
+                let text = reqwest::Client::new().get(&url).send().await.unwrap().text().await.unwrap();
+                *sink.lock().unwrap() = Some(text);
+            });
+            Ok(())
+        });
+
+        run_flow(context_for(&idp, None), session, opener, reqwest::Client::new(), TokenChoice::AccessToken)
+            .await
+            .unwrap();
+
+        // The browser's fetch reads the page body after the flow has its code,
+        // so it can finish a moment after run_flow returns.
+        let page = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                if let Some(text) = page.lock().unwrap().clone() {
+                    return text;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the browser must receive a page");
+        assert_eq!(page, CALLBACK_SUCCESS_PAGE);
     }
 
     #[tokio::test]
