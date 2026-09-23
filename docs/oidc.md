@@ -67,20 +67,32 @@ MQLens stays valid for `mongosh` and other tools.
   **Connect**), you get **Cancel login** and **Open browser again**.
   **Open browser again** reopens the same pending login — it doesn't start
   a new one.
-- A login started from the **sidebar** or a **reconnect** has **no cancel
-  button**. MQLens abandons it on its own after the driver's **5-minute**
-  limit.
+- A login started from the **sidebar**, from a **recent connection on the
+  start page**, or from a **reconnect** has **no cancel button**. MQLens
+  abandons it on its own after the driver's **5-minute** limit.
+- Closing the connection dialog cancels any login it started that is still
+  waiting.
 - A slow sign-in is fine: it isn't cut off by the connection's own timeouts.
   Logins lasting up to about 45 seconds have been tested. The hard limit is
-  the driver's 5 minutes, after which MQLens abandons the login.
+  the driver's 5 minutes, and it covers the whole login — including every
+  request MQLens makes to your identity provider — so an identity provider
+  that stops responding can't hold a login open past it.
+- **Test Connection** and **Connect** each run their own login. Testing a
+  profile and then connecting it means two browser logins.
+- The **Authenticate** row also turns red when the login is refused outside
+  the browser: when MongoDB rejects the token (even though the browser part
+  succeeded), or when the host isn't in the allowed hosts (before any
+  browser opens).
 
 ## Staying signed in
 
 Tokens are kept **in memory only**. Reauthenticating normally uses a refresh
 token, without reopening the browser. If the identity provider rejects the
-refresh token, MQLens opens a new browser login mid-session. That login
-can't be cancelled from the app, and MQLens abandons it after 5 minutes if
-you don't complete it.
+refresh token, or never issued one, MQLens opens a new browser login
+mid-session. Whatever needed the new token starts it, and that can be an
+MCP agent's query (see **AI agents** below). That login can't be cancelled
+from the app, and MQLens abandons it after 5 minutes if you don't complete
+it.
 
 ## Privacy
 
@@ -96,7 +108,9 @@ you don't complete it.
 A SOCKS5 proxy set in the connection URI applies to **MongoDB traffic
 only**. MQLens reaches your identity provider directly over your system's
 network, not through that proxy. If a corporate proxy blocks direct access
-to the identity provider, you'll see a token-exchange error.
+to the identity provider, the login fails at its first request, reading the
+identity provider's configuration: you'll see "MQLens could not read your
+identity provider's configuration", before any browser opens.
 
 ## SSH tunnels
 
@@ -121,9 +135,23 @@ an explanatory message. Use a SCRAM user for exports and imports instead.
 
 ## AI agents (MCP)
 
-An agent can't start an OIDC login on its own — it gets an "interactive
-login required in MQLens" error. It **can** use an OIDC connection you've
-already opened yourself, if that profile is opted in to MCP access.
+An agent **can't open** an OIDC connection: connecting an OIDC profile over
+MCP fails with an "interactive login required in MQLens" error, without
+opening a browser.
+
+It **can** use an OIDC connection you've already opened yourself, if that
+profile is opted in to MCP access — and that has one consequence to know
+about. When the connection's access token expires, MQLens renews it with the
+refresh token, without a browser. If your identity provider rejects the
+refresh token, or never issued one, the connection signs in again with a
+**browser login**, started by whichever operation needed the new token. If
+that operation is an agent's query, the agent's query opens a browser login
+on your desktop. Like any mid-session login, it can't be cancelled from
+MQLens, and MQLens abandons it after the driver's 5-minute limit if you
+don't complete it.
+
+If you don't want an agent to be able to do that, don't opt OIDC profiles in
+to MCP access, or disconnect them when you step away.
 
 ## Troubleshooting
 
@@ -135,23 +163,32 @@ MQLens couldn't hand off to a browser. Open the login link it shows
 manually, or set a default browser on your system and try again.
 
 **"The login was cancelled."**
-You (or MQLens, on timeout) cancelled the login before it finished. Start
-the login again when you're ready.
+The login was cancelled before it finished — with **Cancel login**, or by
+closing the connection dialog while it was still waiting. (A login that runs
+out of time reports that it expired instead; see below.) Start the login
+again when you're ready.
 
 **"The login was denied. Approve the request in your browser to continue."**
 You declined the consent screen in the browser, or your identity provider
 denied the request. Start the login again and approve it.
 
 **"MQLens could not read your identity provider's configuration. Check network access to the provider."**
-MQLens couldn't fetch the identity provider's OIDC discovery document.
-Check that your network can reach the identity provider (and that it's
+MQLens couldn't fetch the identity provider's OIDC discovery document — the
+first thing a login asks the identity provider for, so a network or proxy
+that blocks the identity provider (see **Proxies** above), or one that
+doesn't answer in time, fails here, before any browser opens. Check that
+your network can reach the identity provider directly (and that it's
 actually reachable, not just MongoDB).
 
 **"This MongoDB host is not in the allowed hosts for OIDC. Add it under Allowed hosts if you trust this deployment."**
-Your custom **Allowed hosts** list doesn't include this deployment's host.
-Add it under **Allowed hosts** in the Authentication tab if you trust this
-deployment — remember a custom list replaces the built-in defaults rather
-than extending them.
+This deployment's host isn't in the allowed hosts — your custom **Allowed
+hosts** list, or, without one, the built-in defaults (which cover MongoDB
+Atlas and localhost, not a self-managed deployment's own host name). The
+MongoDB driver checks this before any browser opens. Add the host under
+**Allowed hosts** in the Authentication tab if you trust this deployment —
+remember a custom list replaces the built-in defaults rather than extending
+them. Over an SSH tunnel the host to allow is `127.0.0.1` (see **SSH
+tunnels** above).
 
 **"Your identity provider rejected the login request. Check the application registration for this deployment."**
 The identity provider itself rejected the request — commonly a
@@ -163,9 +200,11 @@ MQLens refuses to talk to a plain-HTTP identity provider. This isn't
 configurable; the identity provider needs an HTTPS endpoint.
 
 **"Login succeeded, but the database did not respond. Check the host, TLS and network settings."**
-The browser login itself worked, but MongoDB didn't respond to the
-resulting connection. Check the host, TLS configuration, and network
-settings on the connection itself.
+The browser login itself worked and MongoDB accepted the login, but the
+database then failed to answer the connection check for some other reason.
+Check the host, TLS configuration, and network settings on the connection
+itself. (If MongoDB had refused the login, you'd see "MongoDB rejected the
+login token" instead.)
 
 **"This deployment did not supply an OIDC client id, so a browser login cannot start. Ask your administrator to configure one."**
 MongoDB's OIDC handshake didn't return a client ID, so MQLens has nothing to
@@ -182,19 +221,25 @@ The OAuth state returned by the identity provider didn't match what MQLens
 sent — MQLens rejects it as a safety measure. Start the login again.
 
 **"The browser login expired. Start the login again."**
-You didn't finish the browser login within the time limit. Start the login
-again.
+The login didn't finish within the driver's 5-minute limit — almost always
+because the browser login wasn't completed in time. Start the login again.
 
 **"MQLens could not exchange the login for a token. If your network uses a proxy, note that the identity provider is reached directly, not through the connection's SOCKS5 proxy."**
-The final token exchange with the identity provider failed. If your network
-requires a proxy to reach external hosts, remember MQLens reaches the
-identity provider directly — a SOCKS5 proxy configured on the connection
-only applies to MongoDB traffic (see **Proxies** above).
+The final token exchange with the identity provider failed, after the
+browser part of the login. The identity provider refused or didn't answer
+the exchange, or the browser came back without an authorization code.
+MQLens also refuses a token endpoint that redirects it elsewhere, rather
+than resend the login there. If your network requires a proxy to reach
+external hosts, remember MQLens reaches the identity provider directly — a
+SOCKS5 proxy configured on the connection only applies to MongoDB traffic
+(see **Proxies** above).
 
 **"MongoDB rejected the login token. Confirm your account has access to this deployment."**
 The browser login succeeded and MQLens got a token, but MongoDB rejected it
 — commonly a token whose audience doesn't match what MongoDB expects, or an
-account without access to this deployment. Confirm your account has access,
+account without access to this deployment. In **Test Connection** the
+**Authenticate** row turns red, even though the browser part had already
+completed. Confirm your account has access,
 and check the client registration's audience (see **Registering MQLens with
 your identity provider** above).
 
@@ -208,7 +253,11 @@ your identity provider** above).
   profiles.
 - The identity provider must use a publicly trusted certificate authority;
   MQLens doesn't yet consult your OS certificate store.
-- No cancel button for a login started from the sidebar or from a
-  reconnect — MQLens abandons it on its own after 5 minutes.
+- No cancel button for a login started from the sidebar, from a recent
+  connection on the start page, or from a reconnect — MQLens abandons it on
+  its own after 5 minutes.
+- An MCP agent using an OIDC connection you opened can trigger a browser
+  login mid-session if your refresh token is rejected (see **AI agents**
+  above).
 - SSH tunnels need `127.0.0.1` in a custom allowed-hosts list (see **SSH
   tunnels** above).
