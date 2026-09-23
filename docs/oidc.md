@@ -188,7 +188,16 @@ first thing a login asks the identity provider for, so a network or proxy
 that blocks the identity provider (see **Proxies** above), or one that
 doesn't answer in time, fails here, before any browser opens. Check that
 your network can reach the identity provider directly (and that it's
-actually reachable, not just MongoDB).
+actually reachable, not just MongoDB). A certificate MQLens doesn't trust
+fails here too (see **Requirements on the identity provider** above).
+
+MQLens also follows **no redirects** when talking to the identity provider,
+and that includes this first request. If your identity provider answers its
+`/.well-known/openid-configuration` address with a redirect, even to a valid
+document, the login fails here. MQLens deliberately never follows an
+identity provider's redirect, so this can't be configured. The discovery
+address (the issuer MongoDB reports, plus `/.well-known/openid-configuration`)
+must return the document directly.
 
 **"This MongoDB host is not in the allowed hosts for OIDC. Add it under Allowed hosts if you trust this deployment."**
 This deployment's host isn't in the allowed hosts — your custom **Allowed

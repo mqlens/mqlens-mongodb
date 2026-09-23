@@ -1692,6 +1692,38 @@ mod tests {
         );
     }
 
+    /// No-redirects covers discovery too: an IdP whose `.well-known` document
+    /// redirects, even to a valid document on the same host, fails discovery.
+    /// docs/oidc.md says so under `discoveryFailed`.
+    #[tokio::test]
+    async fn discovery_follows_no_redirect_either() {
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let issuer = format!("http://{}", server.server_addr());
+        let document = serde_json::json!({
+            "issuer": issuer,
+            "authorization_endpoint": format!("{issuer}/authorize"),
+            "token_endpoint": format!("{issuer}/token"),
+        })
+        .to_string();
+        std::thread::spawn(move || {
+            for request in server.incoming_requests() {
+                let response = if request.url() == "/.well-known/openid-configuration" {
+                    tiny_http::Response::from_string("")
+                        .with_status_code(302)
+                        .with_header(tiny_http::Header::from_bytes("Location", "/moved/openid-configuration").unwrap())
+                } else {
+                    tiny_http::Response::from_string(document.clone())
+                        .with_header(tiny_http::Header::from_bytes("Content-Type", "application/json").unwrap())
+                };
+                let _ = request.respond(response);
+            }
+        });
+
+        let result = discover(&issuer, &idp_http_client().unwrap()).await;
+
+        assert!(matches!(result, Err(OidcError::DiscoveryFailed)), "got {result:?}");
+    }
+
     /// Each IdP request is bounded on its own, below the driver's deadline:
     /// a server that accepts and never answers ends in an error, not a hang.
     #[tokio::test]
