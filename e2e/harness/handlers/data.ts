@@ -176,7 +176,7 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
       mode: conn.mode,
     }));
 
-  // A human OIDC login (#430) that `test_connection_uri` is waiting on, keyed
+  // A human OIDC login (#430) that `test_connection_uri` or `connect_db` is waiting on, keyed
   // by `loginId`. This fake can't observe a real browser or socket, so it
   // never completes a login on its own — it only ever answers Cancel, which
   // is all the e2e suite here exercises (Rust tests cover the real listener).
@@ -304,7 +304,14 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
       state.profiles = state.profiles.filter((profile) => profile.id !== id);
       return null;
     },
-    connect_db: ({ uri }) => {
+    connect_db: ({ uri, loginId }) => {
+      // An OIDC connect (#430) waits on the browser login the same way the
+      // connection test does, until `cancel_oidc_login` ends it.
+      if (/authMechanism=MONGODB-OIDC/i.test(String(uri))) {
+        return new Promise((_resolve, reject) => {
+          pendingOidcLogins.set(String(loginId), () => reject('auth.oidc.errors.cancelled'));
+        });
+      }
       const key = serverKeyFor(state, String(uri));
       if (!key) throw `Database ping failed: no server answers at ${String(uri)}`;
       const id = `conn-${state.nextConnectionId++}`;
