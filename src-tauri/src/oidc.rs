@@ -238,7 +238,10 @@ pub async fn discover(issuer: &str, http: &reqwest::Client) -> Result<Endpoints,
 /// The HTTP client production logins use to talk to the identity provider.
 ///
 /// - Normal TLS trust, never relaxed — whatever the MongoDB connection's own
-///   TLS settings allow.
+///   TLS settings allow. It trusts the bundled public roots and the OS
+///   certificate store (reqwest's `rustls-tls` and `rustls-tls-native-roots`),
+///   as the browser does, so an IdP behind an internal CA or a TLS-inspecting
+///   proxy works.
 /// - No redirects followed: a `307` from the token endpoint would resend the
 ///   POST, authorization code and PKCE verifier included, wherever it
 ///   points — plain `http://` among them.
@@ -1682,6 +1685,75 @@ mod tests {
             .await;
 
         assert!(result.is_err(), "a certificate from an untrusted CA must be refused, got {result:?}");
+    }
+
+    /// Set only in the child process `the_idp_client_also_trusts_the_os_certificate_store`
+    /// starts, which is the only place `SSL_CERT_FILE` names the TEST-ONLY CA.
+    const OS_STORE_CHILD: &str = "MQLENS_TEST_OS_STORE_CHILD";
+
+    /// An identity provider behind an internal CA, or any IdP reached through
+    /// a TLS-inspecting proxy (Zscaler, Netskope), presents a chain that ends
+    /// in a root only the operating system's certificate store holds. The
+    /// browser trusts that store, so the production client must too.
+    ///
+    /// `rustls-native-certs` (0.8.4, `src/lib.rs` `load_native_certs`) reads
+    /// `SSL_CERT_FILE` in place of the platform store on every OS, so pointing
+    /// it at the TEST-ONLY CA stands in for an OS store holding a corporate
+    /// root, with nothing installed on this machine. The variable is
+    /// process-global and tests run in parallel, so it is set only in a child
+    /// run of this same test binary, filtered to the one test below.
+    #[test]
+    fn the_idp_client_also_trusts_the_os_certificate_store() {
+        let ca = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/oidc-test-ca.pem");
+        let (_, module) = module_path!().split_once("::").expect("a crate-qualified module path");
+        let child_test = format!("{module}::the_idp_client_requests_trusting_only_its_built_in_roots");
+
+        let output = std::process::Command::new(std::env::current_exe().expect("this test binary's path"))
+            .args([child_test.as_str(), "--exact", "--include-ignored", "--nocapture", "--test-threads=1"])
+            .env(OS_STORE_CHILD, "1")
+            .env("SSL_CERT_FILE", &ca)
+            .env_remove("SSL_CERT_DIR")
+            .env_remove("MQLENS_TEST_OIDC_IDP_BIND")
+            .output()
+            .expect("run this test binary again as a child");
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success() && stdout.contains("test result: ok. 1 passed"),
+            "with SSL_CERT_FILE naming the TEST-ONLY CA, the production IdP client must \
+             complete a TLS request to a server that chains only to it\n\
+             --- child stdout ---\n{stdout}\n--- child stderr ---\n{stderr}"
+        );
+    }
+
+    /// The child half of `the_idp_client_also_trusts_the_os_certificate_store`;
+    /// a no-op anywhere else. The client is production's own builder with its
+    /// production bounds. The only addition is a DNS pin, because the TEST-ONLY
+    /// leaf names `host.docker.internal`. No `add_root_certificate`: the
+    /// TEST-ONLY CA can only be trusted through the OS-store roots.
+    #[tokio::test]
+    #[ignore = "run only as a child of the_idp_client_also_trusts_the_os_certificate_store"]
+    async fn the_idp_client_requests_trusting_only_its_built_in_roots() {
+        if std::env::var_os(OS_STORE_CHILD).is_none() {
+            return;
+        }
+        let idp = MockIdp::start_tls("host.docker.internal", 0);
+        let addr = idp.tls_addr().expect("a TLS mock IdP");
+        let http = idp_http_client_builder(IDP_CONNECT_TIMEOUT, IDP_REQUEST_TIMEOUT)
+            .resolve("host.docker.internal", addr)
+            .build()
+            .expect("build the production IdP client");
+
+        let result = http
+            .get(format!("https://host.docker.internal:{}/.well-known/openid-configuration", addr.port()))
+            .send()
+            .await;
+
+        match result {
+            Ok(response) => assert!(response.status().is_success(), "got {}", response.status()),
+            Err(error) => panic!("the request must succeed over verified TLS, got {error:?}"),
+        }
     }
 
     /// The production bounds: every request well inside the driver's

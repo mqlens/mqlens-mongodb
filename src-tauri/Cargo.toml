@@ -38,7 +38,13 @@ futures = "0.3"
 uuid = { version = "1", features = ["v4", "serde"] }
 russh = "0.63.1"
 sysinfo = "0.38.4"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# TLS roots: `rustls-tls` is Mozilla's bundled set (webpki-roots), and
+# `rustls-tls-native-roots` adds the OS certificate store, so an identity
+# provider behind an internal CA, or reached through a TLS-inspecting proxy,
+# is trusted exactly when the browser trusts it (#430). reqwest 0.12.28 loads
+# both sets into one root store when a client is built; verification is never
+# relaxed. Both features apply to every reqwest client in this crate.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "rustls-tls-native-roots"] }
 # Decodes URI option values the way the MongoDB driver does, so the MCP guard
 # sees `authMechanism` exactly as the driver would (#430). Already locked
 # transitively (via mongodb and url), so this adds no crate.

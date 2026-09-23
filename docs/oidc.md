@@ -48,11 +48,13 @@ MQLens stays valid for `mongosh` and other tools.
 
 - Its endpoints must be **HTTPS**. MQLens refuses a plain-HTTP identity
   provider.
-- **Its TLS certificate must chain to a publicly trusted certificate
-  authority.** MQLens currently trusts the standard public root set, not
-  your operating system's certificate store. An identity provider behind an
-  internal or enterprise certificate authority won't connect yet — this is a
-  current limitation, not something you can configure around.
+- **Its TLS certificate must chain to a certificate authority MQLens
+  trusts.** MQLens trusts both the standard public root set and your
+  operating system's certificate store, the same as your browser. An
+  identity provider behind an internal or enterprise certificate authority
+  works once that authority's root is in the OS certificate store, and so
+  does a network that inspects TLS traffic (Zscaler, Netskope and similar)
+  and re-signs it with a corporate root.
 - MQLens never relaxes identity-provider certificate checks, even if the
   MongoDB connection itself allows invalid certificates.
 
@@ -251,8 +253,6 @@ your identity provider** above).
 - No device-code flow.
 - Export and import (mongodump / mongorestore) aren't supported on OIDC
   profiles.
-- The identity provider must use a publicly trusted certificate authority;
-  MQLens doesn't yet consult your OS certificate store.
 - No cancel button for a login started from the sidebar, from a recent
   connection on the start page, or from a reconnect — MQLens abandons it on
   its own after 5 minutes.
