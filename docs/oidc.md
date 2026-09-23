@@ -116,10 +116,16 @@ identity provider's configuration", before any browser opens.
 
 ## SSH tunnels
 
-OIDC works over an SSH tunnel with the default allowed hosts, because
-through a tunnel the driver sees the connection as coming from `127.0.0.1`.
-If you set a custom **Allowed hosts** list, **include `127.0.0.1`**, or the
-tunnelled connection will be rejected. This is a current limitation.
+OIDC works over an SSH tunnel, and allowed hosts protect a tunnelled
+connection the same as a direct one. Through a tunnel the MongoDB driver
+only ever sees `127.0.0.1`, so MQLens checks your deployment's **real** host,
+the one the tunnel forwards to, against the allowed hosts **before it opens
+the tunnel**: your custom **Allowed hosts** list, or the built-in defaults
+without one. If the host isn't allowed, the connection fails with the
+allowed-hosts error, and no tunnel or browser opens.
+
+List your deployment's own host name, as it appears in the connection URI.
+You don't need to add `127.0.0.1`.
 
 ## The embedded shell (mongosh)
 
@@ -186,11 +192,12 @@ actually reachable, not just MongoDB).
 This deployment's host isn't in the allowed hosts — your custom **Allowed
 hosts** list, or, without one, the built-in defaults (which cover MongoDB
 Atlas and localhost, not a self-managed deployment's own host name). The
-MongoDB driver checks this before any browser opens. Add the host under
-**Allowed hosts** in the Authentication tab if you trust this deployment —
-remember a custom list replaces the built-in defaults rather than extending
-them. Over an SSH tunnel the host to allow is `127.0.0.1` (see **SSH
-tunnels** above).
+host is checked before any browser opens. Add the host under **Allowed
+hosts** in the Authentication tab if you trust this deployment — remember a
+custom list replaces the built-in defaults rather than extending them. Over
+an SSH tunnel the host to allow is still the deployment's own host from the
+connection URI, not `127.0.0.1`, and MQLens checks it before opening the
+tunnel (see **SSH tunnels** above).
 
 **"Your identity provider rejected the login request. Check the application registration for this deployment."**
 The identity provider itself rejected the request — commonly a
@@ -259,5 +266,3 @@ your identity provider** above).
 - An MCP agent using an OIDC connection you opened can trigger a browser
   login mid-session if your refresh token is rejected (see **AI agents**
   above).
-- SSH tunnels need `127.0.0.1` in a custom allowed-hosts list (see **SSH
-  tunnels** above).

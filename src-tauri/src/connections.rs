@@ -1105,6 +1105,21 @@ pub async fn run_connection_test_with_oidc(
         }
     }
 
+    // Through an SSH tunnel the driver sees only 127.0.0.1, so an OIDC
+    // login's real host is checked now, before the tunnel opens. A refusal is
+    // Authenticate's, as when the driver refuses a host itself.
+    let login = if ssh_enabled && crate::oidc_login::uri_requests_oidc(uri) {
+        match crate::oidc_login::check_real_host_before_tunnel(uri, login) {
+            Ok(login) => login,
+            Err(key) => {
+                emit(PhaseUpdate::fail(TestPhase::Authenticate, key.clone()));
+                return Err(key);
+            }
+        }
+    } else {
+        login
+    };
+
     // Phase 3: Connect — open the SSH tunnel if configured, else TCP-connect.
     emit(PhaseUpdate::start(TestPhase::Connect));
     let mut effective_uri = uri.to_string();
@@ -1662,6 +1677,53 @@ mod tests {
             log.iter().all(|(phase, _)| *phase != TestPhase::Authenticate),
             "no login was observed, so no Authenticate row may be claimed: {log:?}"
         );
+    }
+
+    /// Through a tunnel the driver only ever sees `127.0.0.1`, so the real
+    /// host is checked before the tunnel opens, and the refusal is
+    /// Authenticate's. The SSH port is closed: had the tunnel been tried,
+    /// Connect would have failed with an SSH error instead.
+    #[tokio::test]
+    async fn an_oidc_test_over_ssh_refuses_a_real_host_outside_the_allowed_list_before_tunnelling() {
+        use crate::oidc_login::test_support::{closed_port, ssh_to};
+        let ssh = ssh_to(closed_port());
+        let config = OidcProfileConfig { allowed_hosts: vec!["*.corp.example".into()] };
+        let login = crate::oidc_login::HumanLogin { config: Some(&config), ..crate::oidc_login::HumanLogin::unattended() };
+        let sessions = crate::oidc_login::OidcSessions::default();
+        let (log, emit) = phase_recorder();
+        let uri = "mongodb://db.internal:27017/?authMechanism=MONGODB-OIDC&authSource=$external";
+
+        let result = run_connection_test_with_oidc(&sessions, uri, Some(&ssh), login, &emit).await;
+
+        assert_eq!(result, Err("auth.oidc.errors.hostNotAllowed".to_string()));
+        let log = log.lock().unwrap().clone();
+        assert!(log.contains(&(TestPhase::Authenticate, "fail".to_string())), "{log:?}");
+        assert!(
+            !log.iter().any(|(phase, _)| *phase == TestPhase::Connect),
+            "the tunnel must never be started: {log:?}"
+        );
+    }
+
+    /// An allowed real host gets past the check and on to the tunnel, which
+    /// is what fails here. A custom list without `127.0.0.1` is fine.
+    #[tokio::test]
+    async fn an_oidc_test_over_ssh_whose_real_host_is_allowed_goes_on_to_the_tunnel() {
+        use crate::oidc_login::test_support::{closed_port, ssh_to};
+        let ssh_port = closed_port();
+        let ssh = ssh_to(ssh_port);
+        let config = OidcProfileConfig { allowed_hosts: vec!["db.internal".into()] };
+        let login = crate::oidc_login::HumanLogin { config: Some(&config), ..crate::oidc_login::HumanLogin::unattended() };
+        let sessions = crate::oidc_login::OidcSessions::default();
+        let (log, emit) = phase_recorder();
+        let uri = "mongodb://db.internal:27017/?authMechanism=MONGODB-OIDC&authSource=$external";
+
+        let result = run_connection_test_with_oidc(&sessions, uri, Some(&ssh), login, &emit).await;
+
+        let error = result.expect_err("nothing listens on the SSH port");
+        assert!(error.starts_with(&format!("SSH connection to 127.0.0.1:{ssh_port} failed")), "got {error}");
+        let log = log.lock().unwrap().clone();
+        assert!(log.contains(&(TestPhase::Connect, "fail".to_string())), "{log:?}");
+        assert!(!log.iter().any(|(phase, _)| *phase == TestPhase::Authenticate), "{log:?}");
     }
 
     /// A profile with no OIDC config must not grow an empty `oidc` key.

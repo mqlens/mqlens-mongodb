@@ -904,6 +904,45 @@ pub fn attach_human_callback(
     });
 }
 
+/// The MongoDB driver's `ALLOWED_HOSTS` when a profile sets none. A copy of
+/// mongodb 3.9.0's private `DEFAULT_ALLOWED_HOSTS`
+/// (`src/client/auth/oidc.rs:52-61`); re-check it on a driver upgrade.
+const DRIVER_DEFAULT_ALLOWED_HOSTS: &[&str] = &[
+    "*.mongodb.net",
+    "*.mongodb-qa.net",
+    "*.mongodb-dev.net",
+    "*.mongodbgov.net",
+    "localhost",
+    "127.0.0.1",
+    "::1",
+    "*.mongo.com",
+];
+
+/// Whether the driver would let a human OIDC login go ahead against `host`,
+/// given a profile's custom `allowed_hosts` (empty: the driver's defaults).
+///
+/// For a connection through an SSH tunnel, whose real host the driver never
+/// sees. It must decide exactly as the driver would, so it replicates mongodb
+/// 3.9.0's private `validate_address_with_allowed_hosts`
+/// (`src/client/auth/oidc.rs:773-794`, with `get_allowed_hosts` at `:752-771`):
+/// a pattern equal to the host, or a `*.`-prefixed pattern the host ends with
+/// minus its `*`. The host is normalised first by the driver's own
+/// `ServerAddress::parse` (`src/client/options.rs:233-332`), as every
+/// connection address is: an IP in canonical form without brackets, a host
+/// name lowercased. Patterns are compared verbatim, as the driver compares
+/// them. A host the driver could not parse is never allowed.
+pub fn host_is_allowed(host: &str, allowed_hosts: &[String]) -> bool {
+    let Ok(mongodb::options::ServerAddress::Tcp { host, .. }) = mongodb::options::ServerAddress::parse(host) else {
+        return false;
+    };
+    let matches = |pattern: &str| pattern == host || (pattern.starts_with("*.") && host.ends_with(&pattern[1..]));
+    if allowed_hosts.is_empty() {
+        DRIVER_DEFAULT_ALLOWED_HOSTS.iter().any(|pattern| matches(pattern))
+    } else {
+        allowed_hosts.iter().any(|pattern| matches(pattern))
+    }
+}
+
 /// Map our taxonomy onto a driver error. The message is the category only —
 /// `OidcError::Display` is already safe to surface.
 fn to_driver_error(error: OidcError) -> mongodb::error::Error {
@@ -1685,6 +1724,72 @@ mod tests {
             .await;
 
         assert!(result.is_err(), "a certificate from an untrusted CA must be refused, got {result:?}");
+    }
+
+    // ---- allowed hosts, matched as driver 3.9.0 matches them ------------
+
+    fn list(hosts: &[&str]) -> Vec<String> {
+        hosts.iter().map(|h| h.to_string()).collect()
+    }
+
+    #[test]
+    fn with_no_custom_list_the_driver_defaults_decide() {
+        for host in [
+            "cluster0.abcd.mongodb.net",
+            "x.mongodb-qa.net",
+            "x.mongodb-dev.net",
+            "x.mongodbgov.net",
+            "localhost",
+            "127.0.0.1",
+            "[::1]",
+            "x.mongo.com",
+        ] {
+            assert!(host_is_allowed(host, &[]), "{host} is in the driver's defaults");
+        }
+        for host in ["db.internal", "10.0.0.5", "[::2]", "mongodb.net", "evilmongodb.net", "mongodb.net.evil.example"] {
+            assert!(!host_is_allowed(host, &[]), "{host} is outside the driver's defaults");
+        }
+    }
+
+    #[test]
+    fn a_custom_list_replaces_the_driver_defaults() {
+        let custom = list(&["*.corp.example"]);
+        assert!(host_is_allowed("db.corp.example", &custom));
+        for host in ["localhost", "127.0.0.1", "[::1]", "cluster0.abcd.mongodb.net"] {
+            assert!(!host_is_allowed(host, &custom), "{host} is only in the defaults");
+        }
+    }
+
+    /// `*.domain` matches by suffix `.domain`: any depth of subdomain, never
+    /// the bare domain. Any other pattern, `*` included, is exact.
+    #[test]
+    fn a_wildcard_is_a_dot_suffix_and_everything_else_is_exact() {
+        let custom = list(&["*.corp.example", "*db.example", "*"]);
+        assert!(host_is_allowed("a.b.corp.example", &custom));
+        assert!(!host_is_allowed("corp.example", &custom));
+        assert!(!host_is_allowed("evilcorp.example", &custom));
+        assert!(!host_is_allowed("mydb.example", &custom));
+        assert!(!host_is_allowed("anything.example", &custom));
+    }
+
+    /// The driver lowercases a host name and prints an IP address in its
+    /// canonical form, without brackets, then compares each pattern
+    /// verbatim.
+    #[test]
+    fn hosts_are_normalised_as_the_driver_does_and_patterns_are_not() {
+        assert!(host_is_allowed("DB.Corp.Example", &list(&["db.corp.example"])));
+        assert!(!host_is_allowed("db.corp.example", &list(&["DB.corp.example"])));
+        assert!(host_is_allowed("[0:0:0:0:0:0:0:1]", &[]));
+        assert!(host_is_allowed("[::1]", &list(&["::1"])));
+        assert!(!host_is_allowed("[::1]", &list(&["[::1]"])));
+        assert!(host_is_allowed("[FE80::1]", &list(&["fe80::1"])));
+    }
+
+    /// Fail closed: a host the driver could not parse is never allowed.
+    #[test]
+    fn an_unparseable_host_is_never_allowed() {
+        assert!(!host_is_allowed("", &list(&[""])));
+        assert!(!host_is_allowed("[not-an-ip]", &list(&["[not-an-ip]", "not-an-ip"])));
     }
 
     /// Set only in the child process `the_idp_client_also_trusts_the_os_certificate_store`

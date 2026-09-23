@@ -293,6 +293,28 @@ pub fn attach_human_login(
     Ok(())
 }
 
+/// For an OIDC connection through an SSH tunnel, before the tunnel opens.
+///
+/// The driver checks allowed hosts against the address it connects to, and
+/// through a tunnel that is always `127.0.0.1`. Its defaults allow that, so
+/// its check would pass every tunnelled connection, and a custom list
+/// without `127.0.0.1` would refuse every one. So the real target host, the
+/// one the tunnel forwards to, is checked here against the effective list:
+/// the profile's custom list, or else the driver's defaults. A refusal comes
+/// before any tunnel or browser opens.
+///
+/// On success the login goes on with no custom list, so the driver keeps its
+/// defaults and admits the tunnel's `127.0.0.1`. The remote host is never
+/// added to the driver's list.
+pub fn check_real_host_before_tunnel<'a>(uri: &str, login: HumanLogin<'a>) -> Result<HumanLogin<'a>, String> {
+    let (host, _) = crate::ssh_tunnel::extract_target_host_port(uri);
+    let allowed_hosts = login.config.map(|c| c.allowed_hosts.as_slice()).unwrap_or(&[]);
+    if !crate::oidc::host_is_allowed(&host, allowed_hosts) {
+        return Err(OidcError::HostNotAllowed.locale_key().to_string());
+    }
+    Ok(HumanLogin { config: None, ..login })
+}
+
 /// The IdP client a login uses: the one a test injected, or else
 /// production's (`oidc::idp_http_client` — no redirects, bounded requests,
 /// normal TLS trust).
@@ -366,6 +388,24 @@ pub(crate) mod test_support {
             }
         });
         port
+    }
+
+    /// A loopback port nothing listens on: connecting to it is refused at
+    /// once. Bound and released, so no other test holds it at that moment.
+    pub(crate) fn closed_port() -> u16 {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.local_addr().unwrap().port()
+    }
+
+    /// An SSH tunnel config whose server is `127.0.0.1:port`.
+    pub(crate) fn ssh_to(port: u16) -> crate::ssh_tunnel::SshConfig {
+        crate::ssh_tunnel::SshConfig {
+            enabled: true,
+            host: "127.0.0.1".into(),
+            port,
+            user: "u".into(),
+            auth: crate::ssh_tunnel::SshAuth::Password { password: "p".into() },
+        }
     }
 }
 
@@ -654,7 +694,13 @@ mod tests {
             auth: crate::ssh_tunnel::SshAuth::Password { password: "p".into() },
         };
         let uri = "mongodb://db.internal:27017/?authMechanism=MONGODB-OIDC&authSource=$external";
-        let login = HumanLogin { login_id: Some("tunnel-login".into()), ..HumanLogin::unattended() };
+        // The real host is allowed, so the tunnel is actually attempted.
+        let config = OidcProfileConfig { allowed_hosts: vec!["db.internal".into()] };
+        let login = HumanLogin {
+            config: Some(&config),
+            login_id: Some("tunnel-login".into()),
+            ..HumanLogin::unattended()
+        };
 
         let call = crate::connect_db_with_login(&state, uri, Some(&ssh), login);
         // Cancels from inside the race, while the connect call is still
@@ -676,6 +722,111 @@ mod tests {
         };
 
         assert!(cancelled, "the cancel must reach the session the callback will use");
+    }
+
+    // ---- allowed hosts through an SSH tunnel -----------------------------
+
+    use super::test_support::{closed_port, ssh_to};
+
+    const HOST_NOT_ALLOWED: &str = "auth.oidc.errors.hostNotAllowed";
+
+    /// Through a tunnel the driver only ever sees `127.0.0.1`, so the real
+    /// host must be checked before the tunnel opens. The SSH port is closed:
+    /// had the tunnel been tried, this would be an SSH connection error.
+    #[tokio::test]
+    async fn an_oidc_connect_over_ssh_refuses_a_real_host_outside_the_allowed_list_before_tunnelling() {
+        let state = AppState::new();
+        let ssh = ssh_to(closed_port());
+        let config = OidcProfileConfig { allowed_hosts: vec!["*.corp.example".into()] };
+        let (open, opened) = recording_opener();
+        let login = HumanLogin { config: Some(&config), open, ..HumanLogin::unattended() };
+        let uri = "mongodb://db.internal:27017/?authMechanism=MONGODB-OIDC&authSource=$external";
+
+        let result = crate::connect_db_with_login(&state, uri, Some(&ssh), login).await;
+
+        assert_eq!(result, Err(HOST_NOT_ALLOWED.to_string()));
+        assert!(opened.lock().unwrap().is_empty(), "no browser may open");
+        assert!(live_ids(&state.oidc_sessions).is_empty());
+    }
+
+    /// With no custom list, the effective list is the driver's defaults, and
+    /// a tunnelled connection no longer slips through on `127.0.0.1`.
+    #[tokio::test]
+    async fn an_oidc_connect_over_ssh_checks_the_real_host_against_the_driver_defaults() {
+        let state = AppState::new();
+        let ssh = ssh_to(closed_port());
+        let uri = "mongodb://db.internal:27017/?authMechanism=MONGODB-OIDC&authSource=$external";
+
+        let result = crate::connect_db_with_login(&state, uri, Some(&ssh), HumanLogin::unattended()).await;
+
+        assert_eq!(result, Err(HOST_NOT_ALLOWED.to_string()));
+    }
+
+    /// An allowed real host gets past the check and on to the tunnel, which
+    /// is what fails here. A custom list without `127.0.0.1` is fine.
+    #[tokio::test]
+    async fn an_oidc_connect_over_ssh_whose_real_host_is_allowed_goes_on_to_the_tunnel() {
+        let state = AppState::new();
+        let ssh_port = closed_port();
+        let ssh = ssh_to(ssh_port);
+        let config = OidcProfileConfig { allowed_hosts: vec!["*.internal".into()] };
+        let login = HumanLogin { config: Some(&config), ..HumanLogin::unattended() };
+        let uri = "mongodb://db.internal:27017/?authMechanism=MONGODB-OIDC&authSource=$external";
+
+        let result = crate::connect_db_with_login(&state, uri, Some(&ssh), login).await;
+
+        let error = result.expect_err("nothing listens on the SSH port");
+        assert!(
+            error.starts_with(&format!("SSH connection to 127.0.0.1:{ssh_port} failed")),
+            "the tunnel must have been tried, got {error}"
+        );
+    }
+
+    /// Once the real host passes, the driver is left on its defaults, which
+    /// allow the tunnel's `127.0.0.1`. The profile's list, and with it the
+    /// remote host, never reaches the driver.
+    #[tokio::test]
+    async fn once_the_real_host_passes_the_driver_gets_no_custom_list() {
+        let config = OidcProfileConfig { allowed_hosts: vec!["db.internal".into()] };
+        let login = HumanLogin { config: Some(&config), ..HumanLogin::unattended() };
+        let uri = "mongodb://db.internal:27017/?authMechanism=MONGODB-OIDC&authSource=$external";
+
+        let login = check_real_host_before_tunnel(uri, login).expect("db.internal is allowed");
+
+        let sessions = OidcSessions::default();
+        let mut options =
+            parsed("mongodb://127.0.0.1:1/?authMechanism=MONGODB-OIDC&authSource=$external&directConnection=true").await;
+        let _registration = prepare_human_login(&mut options, &sessions, login, quiet_session()).unwrap();
+        let properties = options.credential.as_ref().and_then(|c| c.mechanism_properties.as_ref());
+        assert!(
+            properties.is_none_or(|p| !p.contains_key("ALLOWED_HOSTS")),
+            "the driver must get no custom list, got {properties:?}"
+        );
+    }
+
+    #[test]
+    fn a_real_host_outside_the_list_is_refused_with_the_host_not_allowed_key() {
+        let config = OidcProfileConfig { allowed_hosts: vec!["*.corp.example".into()] };
+        let login = HumanLogin { config: Some(&config), ..HumanLogin::unattended() };
+        let uri = "mongodb://user@db.internal:27017,db2.corp.example/?authMechanism=MONGODB-OIDC";
+
+        let result = check_real_host_before_tunnel(uri, login).map(|_| ());
+
+        assert_eq!(result, Err(HOST_NOT_ALLOWED.to_string()));
+    }
+
+    /// Allowed hosts are OIDC's alone; other mechanisms tunnel as before.
+    #[tokio::test]
+    async fn a_non_oidc_connect_over_ssh_is_not_checked_against_allowed_hosts() {
+        let state = AppState::new();
+        let ssh_port = closed_port();
+        let ssh = ssh_to(ssh_port);
+        let uri = "mongodb://u:pw@db.internal:27017/?authMechanism=SCRAM-SHA-256&authSource=admin";
+
+        let result = crate::connect_db_with_login(&state, uri, Some(&ssh), HumanLogin::unattended()).await;
+
+        let error = result.expect_err("nothing listens on the SSH port");
+        assert!(error.starts_with("SSH connection to"), "got {error}");
     }
 
     // ---- LoginReport -----------------------------------------------------
