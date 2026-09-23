@@ -14,7 +14,7 @@ import {
 import { useDialogs } from './dialogs/DialogProvider';
 import { PasswordInput } from './PasswordInput';
 import { useEscapeClose } from '../lib/useEscapeClose';
-import { describeConnectError } from '../lib/describeConnectError';
+import { connectErrorText, describeConnectError, isOidcErrorKey } from '../lib/describeConnectError';
 import { EPHEMERAL_PROFILE_PREFIX } from '../workspace/persistence';
 import { formatShortcut, shortcutById } from '@/lib/shortcuts';
 import {
@@ -288,11 +288,17 @@ export const summarizeConnectionError = (raw: string): ConnectionErrorSummary =>
  *
  * Both the connection test and a failed Connect show the same diagnosis, so the
  * classification lives in one place; only the surrounding banner differs.
+ *
+ * An OIDC locale key (#430) is not driver text to diagnose: it is already the
+ * diagnosis, written as what happened plus what to do. It is translated whole
+ * — the first-sentence cut below would drop the half that says what to do —
+ * and here, at render, so it follows the current language.
  */
 export const describeConnectionError = (
   raw: string,
   t: (key: string) => string,
 ): { summary: string; hint?: string } => {
+  if (isOidcErrorKey(raw)) return { summary: describeConnectError(raw, t) };
   const info = summarizeConnectionError(raw);
   // Pulled out rather than inlined below: the i18n coverage scanner reads a
   // string literal sitting directly after `hint:` as untranslated UI copy,
@@ -655,7 +661,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   // cancelled/the dialog closes.
   const [testLoginId, setTestLoginId] = useState<string | null>(null);
   const [connectLoginId, setConnectLoginId] = useState<string | null>(null);
-  // `message` carries raw (English) driver text for the failure path only; the
+  // `message` carries the failure exactly as the backend sent it — raw
+  // (English) driver text, or an OIDC locale key translated at render (#430),
+  // like `connectError` below. The
   // success path has no driver text to preserve, so its label is rendered from
   // `success` at display time (see t('test.successMessage') below) rather than
   // being frozen into state, so it doesn't go stale on a mid-session language switch.
@@ -1121,7 +1129,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
         };
       });
     } catch (err: any) {
-      if (attempt === connectAttemptRef.current) setConnectError(describeConnectError(err, t));
+      if (attempt === connectAttemptRef.current) setConnectError(connectErrorText(err));
     } finally {
       // Only the attempt that is still current may release the button. An
       // abandoned one clearing it would re-enable Connect while the NEW attempt
@@ -1699,7 +1707,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       // being shown as failed too, and it must not keep spinning forever.
       steps.forEach((s) => { if (s.status === 'running') s.status = 'pending'; });
       setTestSteps([...steps]);
-      setTestResult({ success: false, message: describeConnectError(err, t) });
+      setTestResult({ success: false, message: connectErrorText(err) });
     } finally {
       setTesting(false);
       setTestLoginId(null);
@@ -2933,7 +2941,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                           </Button>
                           {showErrDetail && (
                             <pre data-testid="test-error-detail" className="mb-0 mt-1.5 whitespace-pre-wrap break-words font-mono text-[10px] leading-relaxed text-muted-foreground">
-                              {testResult.message}
+                              {describeConnectError(testResult.message ?? '', t)}
                             </pre>
                           )}
                         </>
@@ -2986,7 +2994,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                       data-testid="connect-error-detail"
                       className="mb-0 mt-1.5 whitespace-pre-wrap break-words font-mono text-[10px] leading-relaxed text-muted-foreground"
                     >
-                      {connectError}
+                      {describeConnectError(connectError, t)}
                     </pre>
                   )}
                 </div>

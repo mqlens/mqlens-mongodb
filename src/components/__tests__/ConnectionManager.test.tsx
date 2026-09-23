@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ReactElement } from 'react';
-import { render as rtlRender, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render as rtlRender, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import {
   ConnectionManager,
   buildUri,
@@ -3053,6 +3053,63 @@ describe('waiting-for-browser-login UI (#430 Task 15)', () => {
 
     expect(await screen.findByTestId('connect-error-summary')).toHaveTextContent(/login was cancelled/i);
     expect(screen.queryByText(/auth\.oidc\.errors\.cancelled/)).not.toBeInTheDocument();
+  });
+
+  // OIDC messages are two sentences: what happened, then what to do. The
+  // generic driver-error summary cuts at the first ". ", which hid exactly
+  // the actionable half (M1).
+  it('shows the whole OIDC message as the test result, not just its first sentence', async () => {
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'test_connection_uri') return Promise.reject('auth.oidc.errors.tokenExchangeFailed');
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+    render(<ConnectionManager isOpen onClose={() => {}} onConnect={() => {}} />);
+    await openEditorWith('mongodb://mock');
+    fireEvent.click(screen.getByRole('button', { name: /test connection/i }));
+
+    const summary = await screen.findByTestId('test-result-summary');
+    expect(summary).toHaveTextContent(/could not exchange the login for a token/i);
+    expect(summary).toHaveTextContent(/not through the connection's SOCKS5 proxy/i);
+  });
+
+  it('shows the whole OIDC message in the connect-error banner, not just its first sentence', async () => {
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'connect_db') return Promise.reject('auth.oidc.errors.hostNotAllowed');
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+    render(<ConnectionManager isOpen onClose={() => {}} onConnect={() => {}} />);
+    await openEditorWith('mongodb://mock');
+    fireEvent.click(screen.getByTestId('editor-connect-btn'));
+
+    const summary = await screen.findByTestId('connect-error-summary');
+    expect(summary).toHaveTextContent(/not in the allowed hosts for OIDC/i);
+    expect(summary).toHaveTextContent(/add it under allowed hosts/i);
+  });
+
+  // The key is kept and translated at render, so a result on screen follows
+  // a language switch instead of staying in the language it arrived in (#32).
+  it('re-renders an OIDC test result in the new language after a language switch', async () => {
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'test_connection_uri') return Promise.reject('auth.oidc.errors.cancelled');
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+    const { i18next } = await import('@/lib/i18n');
+    render(<ConnectionManager isOpen onClose={() => {}} onConnect={() => {}} />);
+    await openEditorWith('mongodb://mock');
+    fireEvent.click(screen.getByRole('button', { name: /test connection/i }));
+    expect(await screen.findByTestId('test-result-summary')).toHaveTextContent('The login was cancelled.');
+
+    try {
+      await act(async () => { await i18next.changeLanguage('de'); });
+      await waitFor(() =>
+        expect(screen.getByTestId('test-result-summary')).toHaveTextContent('Die Anmeldung wurde abgebrochen.'),
+      );
+    } finally {
+      await act(async () => { await i18next.changeLanguage('en'); });
+    }
   });
 
   it('offers cancel and reopen while an OIDC connect (no phase stream) is in flight', async () => {

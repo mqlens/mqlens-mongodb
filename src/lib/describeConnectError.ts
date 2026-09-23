@@ -14,7 +14,18 @@
  */
 const OIDC_ERROR_PREFIX = 'auth.oidc.errors.';
 
+/**
+ * The failure exactly as the backend sent it: driver text, or an OIDC key.
+ * For state that is rendered later — keeping the key rather than its
+ * translation lets the render translate it whole, in the current language.
+ */
+export const connectErrorText = (error: unknown): string =>
+  error instanceof Error ? error.message : typeof error === 'string' ? error : String(error);
+
+/** Whether `raw` is an OIDC error locale key rather than driver text. */
+export const isOidcErrorKey = (raw: string): boolean => raw.startsWith(OIDC_ERROR_PREFIX);
+
 export const describeConnectError = (error: unknown, t: (key: string) => string): string => {
-  const raw = error instanceof Error ? error.message : typeof error === 'string' ? error : String(error);
-  return raw.startsWith(OIDC_ERROR_PREFIX) ? t(`connections:${raw}`) : raw;
+  const raw = connectErrorText(error);
+  return isOidcErrorKey(raw) ? t(`connections:${raw}`) : raw;
 };
