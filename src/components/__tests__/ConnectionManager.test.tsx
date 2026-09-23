@@ -139,6 +139,21 @@ describe('parseUriIntoFields (import → form)', () => {
     expect(f.topology).toBe('standalone');
   });
 
+  // `;` separates options as `&` does, for the driver and the backend's
+  // normaliser alike. Missing it dropped an OIDC mechanism on import, so the
+  // editor rebuilt the URI with no authentication at all (PR #433 review).
+  it('reads options separated by semicolons, the OIDC mechanism included', () => {
+    const f = parseUriIntoFields(
+      'mongodb+srv://cluster.example.com/?retryWrites=true;authMechanism=MONGODB-OIDC;authSource=$external',
+    );
+    expect(f.authMethod).toBe('oidc');
+
+    const g = parseUriIntoFields('mongodb://h1:27017,h2:27018/?tls=true;replicaSet=rs0;tlsInsecure=true');
+    expect(g.tlsMode).toBe('system');
+    expect(g.replicaSetName).toBe('rs0');
+    expect(g.tlsAllowInvalidCerts).toBe(true);
+  });
+
   it('keeps a non-admin auth database instead of resetting it to admin (#349)', () => {
     // Reported bug: a SCRAM connection saved with its own authSource came back
     // showing `admin`, silently changing the authSource the connection used.

@@ -348,7 +348,9 @@ export const parseUriIntoFields = (uri: string) => {
     authPass = m[2] ? decodeURIComponent(m[2]) : '';
     hostStr = m[3] || hostStr;
     defaultDb = m[4] || '';
-    query = m[5] || '';
+    // `;` separates options as `&` does, for the driver and the backend's
+    // normaliser alike, so every lookup below reads either.
+    query = (m[5] || '').replace(/;/g, '&');
     const param = (name: string): string | null => {
       const mm = query.match(new RegExp(`(?:^|&)${name}=([^&]*)`, 'i'));
       return mm ? decodeURIComponent(mm[1]) : null;
