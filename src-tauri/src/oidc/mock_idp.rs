@@ -38,6 +38,14 @@ struct Inner {
     /// working — lets tests exercise the fallback from a stale refresh
     /// token to the interactive flow.
     reject_refresh_tokens: AtomicBool,
+    /// Run while serving the discovery document, before the response is
+    /// sent — so a test can make something happen at the exact moment
+    /// discovery is about to finish.
+    discovery_hook: Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
+    /// When set, `/token` answers every request with a `307` to this URL
+    /// instead of a token — an IdP (or something in front of it) trying to
+    /// bounce the code and verifier somewhere else, e.g. to plain `http://`.
+    token_redirect: Mutex<Option<String>>,
 }
 
 /// A single-key, single-issuer OIDC provider double bound to a random
@@ -132,6 +140,8 @@ impl MockIdp {
             requests: Mutex::new(Vec::new()),
             lying_issuer: Mutex::new(None),
             reject_refresh_tokens: AtomicBool::new(false),
+            discovery_hook: Mutex::new(None),
+            token_redirect: Mutex::new(None),
         });
         let server = Arc::new(server);
 
@@ -180,6 +190,19 @@ impl MockIdp {
     /// unaffected.
     pub fn reject_refresh_tokens(&self) {
         self.inner.reject_refresh_tokens.store(true, Ordering::SeqCst);
+    }
+
+    /// From now on, `hook` runs each time the discovery document is served,
+    /// just before the response goes out.
+    pub fn on_discovery(&self, hook: impl Fn() + Send + Sync + 'static) {
+        *self.inner.discovery_hook.lock().unwrap() = Some(Box::new(hook));
+    }
+
+    /// From now on, `/token` answers with `307 Temporary Redirect` to `url`
+    /// — the status that tells a client to resend the same POST, body and
+    /// all, to the new location.
+    pub fn redirect_token_requests_to(&self, url: &str) {
+        *self.inner.token_redirect.lock().unwrap() = Some(url.to_string());
     }
 }
 
@@ -295,6 +318,9 @@ fn handle_request(mut request: tiny_http::Request, inner: &Inner) {
         (tiny_http::Method::Get, "/.well-known/openid-configuration") => {
             let lying = inner.lying_issuer.lock().unwrap().clone();
             let advertised_issuer = lying.as_deref().unwrap_or(&inner.issuer);
+            if let Some(hook) = inner.discovery_hook.lock().unwrap().as_ref() {
+                hook();
+            }
             json_response(discovery_document(&inner.issuer, advertised_issuer))
         }
         (tiny_http::Method::Get, "/jwks") => json_response(jwks_document(&inner.modulus_b64)),
@@ -309,7 +335,15 @@ fn handle_request(mut request: tiny_http::Request, inner: &Inner) {
             let reject_this = record.grant_type == "refresh_token"
                 && inner.reject_refresh_tokens.load(Ordering::SeqCst);
             inner.requests.lock().unwrap().push(record);
-            if reject_this {
+            let redirect = inner.token_redirect.lock().unwrap().clone();
+            if let Some(location) = redirect {
+                tiny_http::Response::empty(307)
+                    .with_header(
+                        tiny_http::Header::from_bytes(&b"Location"[..], location.as_bytes())
+                            .expect("Location header is valid ASCII"),
+                    )
+                    .boxed()
+            } else if reject_this {
                 json_response_with_status(400, serde_json::json!({"error": "invalid_grant"}))
             } else {
                 json_response(token_document(inner, &body))

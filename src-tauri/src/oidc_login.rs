@@ -112,9 +112,10 @@ pub struct HumanLogin<'a> {
     /// The id the UI minted to cancel or reopen this login, if any.
     pub login_id: Option<String>,
     pub open: BrowserOpener,
-    /// For the IdP. `None` — production — builds a plain client with normal
-    /// TLS trust, and only once `prepare_human_login` knows the connection is
-    /// OIDC. Only tests substitute one that also trusts a TEST-ONLY CA.
+    /// For the IdP. `None` — production — builds `oidc::idp_http_client`
+    /// (normal TLS trust, no redirects, bounded requests), and only once
+    /// `prepare_human_login` knows the connection is OIDC. Only tests
+    /// substitute one that also trusts a TEST-ONLY CA.
     pub http: Option<reqwest::Client>,
 }
 
@@ -189,11 +190,38 @@ pub fn prepare_human_login<'s>(
     if !uses_oidc(options) {
         return Ok(None);
     }
-    let registration = register_login(sessions, login.login_id, session.clone())?;
-    let allowed_hosts = login.config.map(|c| c.allowed_hosts.as_slice()).unwrap_or(&[]);
-    let http = login.http.unwrap_or_else(reqwest::Client::new);
-    attach_human_callback(options, session, allowed_hosts, login.open, http);
+    let registration = register_login(sessions, login.login_id.clone(), session.clone())?;
+    attach_human_login(options, login, session)?;
     Ok(Some(registration))
+}
+
+/// `prepare_human_login` for a caller that registered `session` itself,
+/// earlier — the connect path does so before its SSH tunnel and URI parse,
+/// so a cancel sent during them is not lost. Attaches the driver callback
+/// only for `MONGODB-OIDC`; registers nothing.
+pub fn attach_human_login(
+    options: &mut ClientOptions,
+    login: HumanLogin<'_>,
+    session: Arc<OidcSession>,
+) -> Result<(), String> {
+    if !uses_oidc(options) {
+        return Ok(());
+    }
+    let allowed_hosts = login.config.map(|c| c.allowed_hosts.as_slice()).unwrap_or(&[]);
+    let http = idp_client(login.http)?;
+    attach_human_callback(options, session, allowed_hosts, login.open, http);
+    Ok(())
+}
+
+/// The IdP client a login uses: the one a test injected, or else
+/// production's (`oidc::idp_http_client` — no redirects, bounded requests,
+/// normal TLS trust).
+fn idp_client(injected: Option<reqwest::Client>) -> Result<reqwest::Client, String> {
+    match injected {
+        Some(http) => Ok(http),
+        None => crate::oidc::idp_http_client()
+            .map_err(|e| format!("Failed to create the identity provider client: {e}")),
+    }
 }
 
 /// The opener for user-initiated connects and tests: the system browser.
@@ -528,6 +556,48 @@ mod tests {
         assert!(state.connections.lock().unwrap().is_empty());
     }
 
+    /// The UI can cancel the moment it has invoked, and the SSH tunnel and
+    /// `ClientOptions::parse` (SRV and TXT lookups) can take a while before
+    /// the driver ever calls back. The login must already be registered
+    /// through that window, so a cancel sent then reaches the session the
+    /// callback will use instead of finding no entry and being dropped.
+    #[tokio::test]
+    async fn an_oidc_connect_is_cancellable_while_its_ssh_tunnel_is_still_opening() {
+        let state = AppState::new();
+        // An SSH server that never sends its banner: the tunnel stays opening.
+        let ssh_port = silent_server().await;
+        let ssh = crate::ssh_tunnel::SshConfig {
+            enabled: true,
+            host: "127.0.0.1".into(),
+            port: ssh_port,
+            user: "u".into(),
+            auth: crate::ssh_tunnel::SshAuth::Password { password: "p".into() },
+        };
+        let uri = "mongodb://db.internal:27017/?authMechanism=MONGODB-OIDC&authSource=$external";
+        let login = HumanLogin { login_id: Some("tunnel-login".into()), ..HumanLogin::unattended() };
+
+        let call = crate::connect_db_with_login(&state, uri, Some(&ssh), login);
+        // Cancels from inside the race, while the connect call is still
+        // alive: once it is dropped its registration goes with it.
+        let cancel_while_opening = async {
+            for _ in 0..200 {
+                let live = state.oidc_sessions.lock().unwrap().get("tunnel-login").cloned();
+                if let Some(session) = live {
+                    cancel_oidc_login_impl(&state, "tunnel-login").unwrap();
+                    return Some(session.is_cancelled());
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            None
+        };
+        let cancelled = tokio::select! {
+            result = call => panic!("premise: the tunnel to a silent SSH server must still be opening, got {result:?}"),
+            cancelled = cancel_while_opening => cancelled.expect("the login must be registered before the tunnel opens"),
+        };
+
+        assert!(cancelled, "the cancel must reach the session the callback will use");
+    }
+
     // ---- LoginReport -----------------------------------------------------
 
     fn report_of(phases: Vec<crate::oidc::OidcPhase>) -> LoginReport {
@@ -578,6 +648,31 @@ mod tests {
     fn describing_a_login_builds_no_http_client() {
         assert!(HumanLogin::unattended().http.is_none());
         assert!(HumanLogin::interactive(None, Some("login-1".into()), no_browser_opener()).http.is_none());
+    }
+
+    /// A production login — no client injected — must get the hardened IdP
+    /// client, not a default one: here, one that will not resend the code
+    /// and verifier to wherever a `307` points.
+    #[tokio::test]
+    async fn a_login_without_an_injected_client_uses_the_hardened_idp_client() {
+        let sink = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let elsewhere = format!("http://{}/stolen", sink.local_addr().unwrap());
+        let reached = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = reached.clone();
+        tokio::spawn(async move {
+            while let Ok((socket, _)) = sink.accept().await {
+                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                drop(socket);
+            }
+        });
+        let idp = crate::oidc::mock_idp::MockIdp::start();
+        idp.redirect_token_requests_to(&elsewhere);
+
+        let http = idp_client(None).unwrap();
+        let endpoints = crate::oidc::discover(&idp.issuer(), &http).await.unwrap();
+        let _ = crate::oidc::refresh_token(&endpoints, "client-abc", "test-refresh-token", &http).await;
+
+        assert_eq!(reached.load(std::sync::atomic::Ordering::SeqCst), 0, "a redirect must not be followed");
     }
 
     // ---- openers ---------------------------------------------------------

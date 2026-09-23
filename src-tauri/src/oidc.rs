@@ -235,6 +235,33 @@ pub async fn discover(issuer: &str, http: &reqwest::Client) -> Result<Endpoints,
     })
 }
 
+/// The HTTP client production logins use to talk to the identity provider.
+///
+/// - Normal TLS trust, never relaxed — whatever the MongoDB connection's own
+///   TLS settings allow.
+/// - No redirects followed: a `307` from the token endpoint would resend the
+///   POST, authorization code and PKCE verifier included, wherever it
+///   points — plain `http://` among them.
+/// - Every request bounded on its own, well inside the driver's five-minute
+///   deadline. `run_flow` races the whole flow against that deadline anyway;
+///   these just stop one stuck request from using all of it.
+pub fn idp_http_client() -> Result<reqwest::Client, reqwest::Error> {
+    idp_http_client_builder(IDP_CONNECT_TIMEOUT, IDP_REQUEST_TIMEOUT).build()
+}
+
+const IDP_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+const IDP_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+fn idp_http_client_builder(
+    connect_timeout: std::time::Duration,
+    request_timeout: std::time::Duration,
+) -> reqwest::ClientBuilder {
+    reqwest::Client::builder()
+        .connect_timeout(connect_timeout)
+        .timeout(request_timeout)
+        .redirect(reqwest::redirect::Policy::none())
+}
+
 use mongodb::options::oidc::IdpServerInfo;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -727,7 +754,26 @@ pub async fn run_flow(
     open: BrowserOpener,
     http: reqwest::Client,
 ) -> Result<IdpServerResponse, OidcError> {
-    let result = run_flow_inner(ctx, &session, open, http).await;
+    // The whole body — discovery, refresh, the browser wait and the code
+    // exchange — runs under the driver's deadline and the session's cancel
+    // (spec: "the whole callback body runs under timeout_at(ctx.timeout)
+    // raced against the session's cancel flag"). The driver passes the
+    // deadline in but never enforces it, and during a reauth it holds the
+    // client's credential-cache lock while this runs, so an IdP that hangs
+    // mid-request must not be able to hang the login with it.
+    //
+    // `biased;` with the flow first, for the same reason as the listener
+    // race in `run_flow_inner`: an outcome the flow already has in the same
+    // wake as the deadline or a cancel is the real answer and must not be
+    // discarded by a random tie-break. Losing arms drop the flow future, and
+    // with it any bound `LoopbackListener`, whose `Drop` releases the port.
+    let deadline = ctx.timeout;
+    let result = tokio::select! {
+        biased;
+        result = run_flow_inner(ctx, &session, open, http) => result,
+        _ = wait_for_deadline(deadline) => Err(OidcError::TimedOut),
+        _ = wait_for_cancel(&session) => Err(OidcError::Cancelled),
+    };
     match &result {
         Ok(_) => session.emit(OidcPhase::Completed),
         Err(error) => session.emit(OidcPhase::Failed(error.clone())),
@@ -759,6 +805,13 @@ async fn run_flow_inner(
     // Captured before `listener` is moved into `wait()` below.
     let redirect_uri = listener.redirect_uri.clone();
 
+    // `run_flow`'s race notices a cancel only on its next poll tick, and
+    // once discovery (or a rejected refresh) resolves, this function runs
+    // straight to `open()` without yielding. A cancel that landed in that
+    // gap must still never put a login page in front of the user.
+    if session.is_cancelled() {
+        return Err(OidcError::Cancelled);
+    }
     session.set_authorization_url(request.url.clone());
     session.emit(OidcPhase::WaitingForBrowser);
     open(&request.url)?;
@@ -1544,6 +1597,101 @@ mod tests {
         assert!(!rendered.contains("super-secret-verifier"), "got {rendered}");
     }
 
+    // ---- the production IdP client -----------------------------------------
+
+    /// A TCP listener that counts the connections it accepts and drops each
+    /// one immediately. Returns its URL and the counter.
+    async fn counting_sink() -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/stolen", listener.local_addr().unwrap());
+        let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = count.clone();
+        tokio::spawn(async move {
+            while let Ok((socket, _)) = listener.accept().await {
+                counter.fetch_add(1, Ordering::SeqCst);
+                drop(socket);
+            }
+        });
+        (url, count)
+    }
+
+    /// M9: a `307` tells a client to resend the same POST, body included, to
+    /// wherever it points. Followed, one to `http://` would put the code and
+    /// the PKCE verifier on the wire in clear. The production client follows
+    /// no redirect at all; the exchange simply fails.
+    #[tokio::test]
+    async fn the_idp_client_never_follows_a_redirect_with_the_code() {
+        let idp = MockIdp::start();
+        let (elsewhere, reached) = counting_sink().await;
+        idp.redirect_token_requests_to(&elsewhere);
+        let http = idp_http_client().unwrap();
+        let endpoints = discover(&idp.issuer(), &http).await.unwrap();
+
+        let result = exchange_code(
+            &endpoints,
+            "client-abc",
+            "test-auth-code",
+            &PkceVerifier::from_string("super-secret-verifier".into()),
+            "http://127.0.0.1:1/callback",
+            &http,
+        )
+        .await;
+
+        assert!(matches!(result, Err(OidcError::TokenExchangeFailed)), "got {result:?}");
+        assert_eq!(
+            reached.load(Ordering::SeqCst),
+            0,
+            "the code and verifier must never be resent to a redirect target"
+        );
+    }
+
+    /// Each IdP request is bounded on its own, below the driver's deadline:
+    /// a server that accepts and never answers ends in an error, not a hang.
+    #[tokio::test]
+    async fn the_idp_client_gives_up_on_a_server_that_never_answers() {
+        let port = crate::oidc_login::test_support::silent_server().await;
+        let http = idp_http_client_builder(
+            std::time::Duration::from_millis(500),
+            std::time::Duration::from_millis(300),
+        )
+        .build()
+        .unwrap();
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            http.get(format!("http://127.0.0.1:{port}/.well-known/openid-configuration")).send(),
+        )
+        .await
+        .expect("a request to a silent server must time out on its own");
+
+        assert!(result.as_ref().is_err_and(|e| e.is_timeout()), "got {result:?}");
+    }
+
+    /// The production client trusts exactly what a normal client trusts. A
+    /// server whose certificate chains only to the TEST-ONLY CA must be
+    /// refused — by the same client every production login uses.
+    #[tokio::test]
+    async fn the_idp_client_never_trusts_an_unknown_certificate_authority() {
+        let idp = MockIdp::start_tls("host.docker.internal", 0);
+        let addr = idp.tls_addr().expect("a TLS mock IdP");
+        let http = idp_http_client().unwrap();
+
+        let result = http
+            .get(format!("https://{addr}/.well-known/openid-configuration"))
+            .send()
+            .await;
+
+        assert!(result.is_err(), "a certificate from an untrusted CA must be refused, got {result:?}");
+    }
+
+    /// The production bounds: every request well inside the driver's
+    /// five-minute callback deadline.
+    #[test]
+    fn the_idp_client_timeouts_sit_well_inside_the_drivers_deadline() {
+        assert!(IDP_CONNECT_TIMEOUT <= IDP_REQUEST_TIMEOUT);
+        assert!(IDP_REQUEST_TIMEOUT <= std::time::Duration::from_secs(60));
+    }
+
     fn percent_decode(value: &str) -> String {
         let bytes = value.replace('+', " ").into_bytes();
         let mut out = Vec::new();
@@ -1621,37 +1769,6 @@ mod tests {
             tokio::spawn(async move {
                 let _ = http.get(&url).send().await;
             });
-            Ok(())
-        });
-        (opener, opened)
-    }
-
-    /// Like `simulating_opener`, but completes the IdP redirect *before
-    /// returning* rather than merely kicking it off — so that by the time
-    /// `run_flow_inner` reaches its `tokio::select!`, the loopback
-    /// listener's oneshot has already fired and that arm is genuinely ready
-    /// on the very first poll, not just "ready soon". `open` is a
-    /// synchronous `Fn`, so it can't `.await` the GET itself: the GET runs
-    /// on a plain OS thread with its own standalone tokio runtime, and
-    /// `open` blocks (via `JoinHandle::join`) until that thread is done.
-    /// Requires a multi-threaded test runtime with at least one other
-    /// worker thread free to run the listener's own accept loop while this
-    /// one blocks — see the callers, which use
-    /// `#[tokio::test(flavor = "multi_thread", ...)]`.
-    pub(super) fn completing_opener() -> (BrowserOpener, Arc<StdMutex<Vec<String>>>) {
-        let opened = Arc::new(StdMutex::new(Vec::new()));
-        let recorder = opened.clone();
-        let opener: BrowserOpener = Arc::new(move |url: &str| {
-            recorder.lock().unwrap().push(url.to_string());
-            let url = url.to_string();
-            let handle = std::thread::spawn(move || {
-                let rt = tokio::runtime::Runtime::new()
-                    .expect("build a standalone runtime for the completing opener");
-                rt.block_on(async {
-                    let _ = reqwest::Client::new().get(&url).send().await;
-                });
-            });
-            handle.join().expect("completing opener thread panicked");
             Ok(())
         });
         (opener, opened)
@@ -1837,39 +1954,172 @@ mod tests {
         url_params(url).get(key).cloned().unwrap_or_default()
     }
 
-    /// Drives the real `run_flow` through the exact race the review
-    /// flagged: by the time `run_flow_inner` reaches its `tokio::select!`,
-    /// all three arms are already ready on the very first poll —
-    /// `completing_opener` has already driven the callback into the
-    /// loopback listener's oneshot before `run_flow_inner` even calls
-    /// `open()`'s continuation, the deadline is already in the past, and
-    /// the session is already cancelled. Without `biased;` (and the
-    /// listener arm listed first) in `run_flow_inner`'s `select!`, the
-    /// random tie-break would discard the held authorization code roughly
-    /// two times out of three; looping 50 times makes a regression catch
-    /// near-certain.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn a_callback_already_in_hand_beats_an_already_elapsed_deadline_and_a_pre_cancelled_session(
-    ) {
+    /// A browser answer that has already landed when the deadline passes and
+    /// a cancel arrives is what the user did — it must be what the flow
+    /// reports, not "expired" or "cancelled".
+    ///
+    /// The test polls `run_flow` by hand, so nothing moves between polls
+    /// except what the test does. It drives the flow to the browser step,
+    /// then — with the flow held still — delivers a denial to the loopback
+    /// listener, cancels the session, and waits out a near deadline and a
+    /// tick of the cancel poll. The next poll finds every arm of both races
+    /// ready at once: `run_flow_inner`'s listener/deadline/cancel `select!`,
+    /// and `run_flow`'s whole-body race around it. Both are `biased;` with
+    /// the flow first; drop either and the random tie-break reports
+    /// `TimedOut` or `Cancelled` about two times out of three, so 50
+    /// iterations make a regression catch near-certain.
+    ///
+    /// A denial rather than a code: with the whole body under the deadline
+    /// (spec line 153), a code in hand still needs a network exchange, which
+    /// a deadline that has already passed rightly abandons — a success cannot
+    /// win this race by design. A denial is the final answer the callback
+    /// itself carries.
+    #[tokio::test]
+    async fn a_browser_answer_already_in_hand_beats_a_later_cancel_and_an_elapsed_deadline() {
+        use std::task::Poll;
         let idp = MockIdp::start();
 
         for _ in 0..50 {
             let (session, _) = test_session();
-            session.cancel();
-            let (opener, _) = completing_opener();
-
+            let (opener, opened) = recording_opener();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_millis(250);
             let mut context = context_for(&idp, None);
-            context.timeout = Some(std::time::Instant::now() - std::time::Duration::from_secs(1));
+            context.timeout = Some(deadline);
 
-            let result = run_flow(context, session, opener, reqwest::Client::new()).await;
-            match result {
-                Ok(response) => assert!(!response.access_token.is_empty()),
-                Err(error) => panic!(
-                    "a callback already in hand must win over an already-elapsed \
-                     deadline and a pre-cancelled session; got {error:?}"
-                ),
+            let flow = run_flow(context, session.clone(), opener, reqwest::Client::new());
+            tokio::pin!(flow);
+
+            // To the browser step, one poll at a time.
+            while opened.lock().unwrap().is_empty() {
+                if let Poll::Ready(result) = futures::poll!(&mut flow) {
+                    panic!("premise: the flow must reach the browser step, got {result:?}");
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(2)).await;
             }
+
+            // The flow is not polled again until all three have happened.
+            let url = opened.lock().unwrap()[0].clone();
+            let callback = format!(
+                "{}?error=access_denied&state={}",
+                query_value(&url, "redirect_uri"),
+                query_value(&url, "state"),
+            );
+            reqwest::Client::new().get(&callback).send().await.expect("deliver the denial");
+            session.cancel();
+            let until = deadline.max(std::time::Instant::now()) + std::time::Duration::from_millis(150);
+            tokio::time::sleep_until(tokio::time::Instant::from_std(until)).await;
+
+            let result = match futures::poll!(&mut flow) {
+                Poll::Ready(result) => result,
+                Poll::Pending => panic!("every arm of both races is ready; the flow must finish in this poll"),
+            };
+            assert!(
+                matches!(result, Err(OidcError::ConsentDenied)),
+                "the denial already in hand must win over a later cancel and an \
+                 elapsed deadline; got {result:?}"
+            );
         }
+    }
+
+    fn context_with_issuer(issuer: String, timeout: std::time::Duration) -> CallbackContext {
+        CallbackContext::builder()
+            .version(1u32)
+            .timeout(Some(std::time::Instant::now() + timeout))
+            .refresh_token(None)
+            .idp_info(Some(
+                IdpServerInfo::builder()
+                    .issuer(issuer)
+                    .client_id(Some("mqlens-test".to_string()))
+                    .request_scopes(None)
+                    .build(),
+            ))
+            .build()
+    }
+
+    /// Spec line 153: the *whole* callback body is raced against cancel, not
+    /// just the browser wait. An IdP that accepts the connection and never
+    /// answers discovery must not keep a cancelled login alive — and must
+    /// never get as far as opening a browser.
+    #[tokio::test]
+    async fn a_cancel_during_discovery_returns_promptly_without_opening_the_browser() {
+        let port = crate::oidc_login::test_support::silent_server().await;
+        let (session, phases) = test_session();
+        let (opener, opened) = recording_opener();
+        let cancelling = session.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            cancelling.cancel();
+        });
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            run_flow(
+                context_with_issuer(format!("http://127.0.0.1:{port}"), std::time::Duration::from_secs(30)),
+                session,
+                opener,
+                reqwest::Client::new(),
+            ),
+        )
+        .await
+        .expect("a cancel during discovery must not leave the flow hanging");
+
+        assert!(matches!(result, Err(OidcError::Cancelled)), "got {result:?}");
+        assert!(opened.lock().unwrap().is_empty(), "a cancelled login must never open the browser");
+        assert_eq!(*phases.lock().unwrap(), vec!["Failed(Cancelled)".to_string()]);
+    }
+
+    /// The driver hands us a deadline but does not enforce it; during a
+    /// reauth it holds the client's credential-cache lock while our callback
+    /// runs. A hung IdP must therefore end at the deadline, not hang forever.
+    #[tokio::test]
+    async fn an_unresponsive_idp_times_out_instead_of_hanging() {
+        let port = crate::oidc_login::test_support::silent_server().await;
+        let (session, _) = test_session();
+        let (opener, opened) = recording_opener();
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            run_flow(
+                context_with_issuer(format!("http://127.0.0.1:{port}"), std::time::Duration::from_millis(300)),
+                session,
+                opener,
+                reqwest::Client::new(),
+            ),
+        )
+        .await
+        .expect("an unresponsive IdP must not hang the flow past its deadline");
+
+        assert!(matches!(result, Err(OidcError::TimedOut)), "got {result:?}");
+        assert!(opened.lock().unwrap().is_empty());
+    }
+
+    /// The race only notices a cancel on its next poll tick; once discovery
+    /// resolves, the flow runs straight through to `open()` without yielding.
+    /// A cancel that lands just as discovery finishes must still stop it
+    /// short of the browser — here the IdP itself cancels while serving the
+    /// discovery document.
+    #[tokio::test]
+    async fn a_cancel_that_lands_as_discovery_finishes_never_opens_the_browser() {
+        let idp = MockIdp::start();
+        let (session, phases) = test_session();
+        let cancelling = session.clone();
+        idp.on_discovery(move || cancelling.cancel());
+        let (opener, opened) = recording_opener();
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            run_flow(context_for(&idp, None), session, opener, reqwest::Client::new()),
+        )
+        .await
+        .expect("the flow must not hang");
+
+        assert!(matches!(result, Err(OidcError::Cancelled)), "got {result:?}");
+        assert!(opened.lock().unwrap().is_empty(), "a cancelled login must never open the browser");
+        assert!(
+            !phases.lock().unwrap().iter().any(|p| p == "WaitingForBrowser"),
+            "a cancelled login must not announce a browser wait: {:?}",
+            phases.lock().unwrap()
+        );
     }
 
     mod attach_human_callback_tests {

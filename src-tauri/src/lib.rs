@@ -794,6 +794,30 @@ pub(crate) async fn connect_db_with_login(
         return Ok(connection_id);
     }
 
+    // Connect streams no phases, but still records what the login reported,
+    // so a failed ping is explained by the login as a locale key rather than
+    // the driver's English. The registration is held to the end of the call:
+    // dropping it removes the login's entry. The driver's callback keeps its
+    // own handle, so reauthentication still works for the client's lifetime
+    // (see `oidc_login::LoginRegistration`).
+    let report = Arc::new(std::sync::Mutex::new(oidc_login::LoginReport::default()));
+    let recorder = report.clone();
+    let session = oidc::OidcSession::new(Arc::new(move |phase| {
+        if let Ok(mut report) = recorder.lock_safe() {
+            report.record(&phase);
+        }
+    }));
+    // Registered before the SSH tunnel and `ClientOptions::parse` (which can
+    // do SRV and TXT lookups), decided from the string alone: the UI can
+    // cancel the moment it has invoked, and a cancel sent during either must
+    // reach this session, which the flow then honours before it ever opens
+    // a browser.
+    let early_login = if oidc_login::uri_requests_oidc(uri) {
+        Some(oidc_login::register_login(&state.oidc_sessions, login.login_id.clone(), session.clone())?)
+    } else {
+        None
+    };
+
     // If an SSH tunnel is configured, open it and rewrite the URI to the local
     // forwarded port before the driver connects.
     let mut effective_uri = uri.to_string();
@@ -815,20 +839,16 @@ pub(crate) async fn connect_db_with_login(
     client_options.app_name = Some("MQLens-Engine".to_string());
     apply_main_timeouts(&mut client_options);
 
-    // Connect streams no phases, but still records what the login reported,
-    // so a failed ping is explained by the login as a locale key rather than
-    // the driver's English. The registration is held to the end of the call:
-    // dropping it removes the login's entry. The driver's callback keeps its
-    // own handle, so reauthentication still works for the client's lifetime
-    // (see `oidc_login::LoginRegistration`).
-    let report = Arc::new(std::sync::Mutex::new(oidc_login::LoginReport::default()));
-    let recorder = report.clone();
-    let session = oidc::OidcSession::new(Arc::new(move |phase| {
-        if let Ok(mut report) = recorder.lock_safe() {
-            report.record(&phase);
+    // `uri_requests_oidc` reads the URI the way the driver does, so the two
+    // agree; should they ever not, the driver's reading still wins and the
+    // login is registered here instead.
+    let _login = match early_login {
+        Some(registration) => {
+            oidc_login::attach_human_login(&mut client_options, login, session)?;
+            Some(registration)
         }
-    }));
-    let _login = oidc_login::prepare_human_login(&mut client_options, &state.oidc_sessions, login, session)?;
+        None => oidc_login::prepare_human_login(&mut client_options, &state.oidc_sessions, login, session)?,
+    };
 
     let client = Client::with_options(client_options)
         .map_err(|e| format!("Failed to create client: {}", e))?;
