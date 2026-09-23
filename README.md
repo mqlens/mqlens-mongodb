@@ -40,8 +40,8 @@ queries actually do — from a single cross-platform desktop app.
   configurable connect / server-selection timeouts. A staged "Test Connection"
   reports each real phase (parse → DNS resolve → connect → ping).
 - **Authentication** — SCRAM-SHA-1/256, X.509, `MONGODB-AWS` (IAM, incl. session
-  token), GSSAPI/Kerberos, and LDAP (PLAIN), with the correct `$external`
-  plumbing.
+  token), GSSAPI/Kerberos, LDAP (PLAIN), and [OIDC browser login](docs/oidc.md),
+  with the correct `$external` plumbing.
 - **Browse** — databases, collections, views, GridFS buckets, and system
   collections in a tree.
 - **Query** — `find` with filter / sort / projection / skip / limit and
