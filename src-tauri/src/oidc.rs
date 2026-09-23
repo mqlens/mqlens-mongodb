@@ -240,14 +240,18 @@ pub async fn discover(issuer: &str, http: &reqwest::Client) -> Result<Endpoints,
 /// - Normal TLS trust, never relaxed — whatever the MongoDB connection's own
 ///   TLS settings allow. It trusts the bundled public roots and the OS
 ///   certificate store (reqwest's `rustls-tls` and `rustls-tls-native-roots`),
-///   as the browser does, so an IdP behind an internal CA or a TLS-inspecting
-///   proxy works.
+///   so an IdP behind an internal CA or a TLS-inspecting proxy works.
+///   `SSL_CERT_FILE`/`SSL_CERT_DIR`, when set, replace the OS store.
 /// - No redirects followed: a `307` from the token endpoint would resend the
 ///   POST, authorization code and PKCE verifier included, wherever it
 ///   points — plain `http://` among them.
 /// - Every request bounded on its own, well inside the driver's five-minute
 ///   deadline. `run_flow` races the whole flow against that deadline anyway;
 ///   these just stop one stuck request from using all of it.
+///
+/// Keep this a bare `.build()` of `idp_http_client_builder`: the OS-store
+/// test (`the_idp_client_also_trusts_the_os_certificate_store`) exercises the
+/// builder, so anything added here would go untested.
 pub fn idp_http_client() -> Result<reqwest::Client, reqwest::Error> {
     idp_http_client_builder(IDP_CONNECT_TIMEOUT, IDP_REQUEST_TIMEOUT).build()
 }
@@ -1850,7 +1854,7 @@ mod tests {
     fn the_idp_client_also_trusts_the_os_certificate_store() {
         let ca = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/oidc-test-ca.pem");
         let (_, module) = module_path!().split_once("::").expect("a crate-qualified module path");
-        let child_test = format!("{module}::the_idp_client_requests_trusting_only_its_built_in_roots");
+        let child_test = format!("{module}::the_idp_client_reaches_a_server_whose_root_is_only_in_ssl_cert_file");
 
         let output = std::process::Command::new(std::env::current_exe().expect("this test binary's path"))
             .args([child_test.as_str(), "--exact", "--include-ignored", "--nocapture", "--test-threads=1"])
@@ -1878,7 +1882,7 @@ mod tests {
     /// TEST-ONLY CA can only be trusted through the OS-store roots.
     #[tokio::test]
     #[ignore = "run only as a child of the_idp_client_also_trusts_the_os_certificate_store"]
-    async fn the_idp_client_requests_trusting_only_its_built_in_roots() {
+    async fn the_idp_client_reaches_a_server_whose_root_is_only_in_ssl_cert_file() {
         if std::env::var_os(OS_STORE_CHILD).is_none() {
             return;
         }
