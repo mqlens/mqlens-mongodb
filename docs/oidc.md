@@ -70,8 +70,9 @@ MQLens stays valid for `mongosh` and other tools.
 - A login started from the **sidebar** or a **reconnect** has **no cancel
   button**. MQLens abandons it on its own after the driver's **5-minute**
   limit.
-- A slow sign-in is fine — logins taking well over a minute were tested and
-  work.
+- A slow sign-in is fine: it isn't cut off by the connection's own timeouts.
+  Logins lasting up to about 45 seconds have been tested. The hard limit is
+  the driver's 5 minutes, after which MQLens abandons the login.
 
 ## Staying signed in
 
