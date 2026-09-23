@@ -158,7 +158,7 @@ vi.mock('../Sidebar', () => ({
             name: 'OIDC Corp',
             uri: 'mongodb://mongo.corp.example.com:27017/?authMechanism=MONGODB-OIDC&authSource=$external',
             ssh: null,
-            oidc: { allowed_hosts: ['mongo.corp.example.com'] },
+            oidc: { allowed_hosts: ['mongo.corp.example.com'], use_id_token: true },
           })
         }
       >
@@ -2835,7 +2835,7 @@ describe('App Component', () => {
               name: 'Prod Cluster',
               uri: 'mongodb://mongo.corp.example.com:27017/?authMechanism=MONGODB-OIDC&authSource=$external',
               ssh: null,
-              oidc: { allowed_hosts: ['mongo.corp.example.com'] },
+              oidc: { allowed_hosts: ['mongo.corp.example.com'], use_id_token: true },
             },
           ]);
         }
@@ -2851,7 +2851,7 @@ describe('App Component', () => {
 
       await waitFor(() => {
         const connectCall = calls.find((c) => c.cmd === 'connect_db');
-        expect(connectCall?.args?.oidc).toEqual({ allowed_hosts: ['mongo.corp.example.com'] });
+        expect(connectCall?.args?.oidc).toEqual({ allowed_hosts: ['mongo.corp.example.com'], use_id_token: true });
       });
     });
 
@@ -3314,7 +3314,7 @@ describe('App Component', () => {
 
       await waitFor(() => {
         const call = calls.find((c) => c.cmd === 'connect_db');
-        expect(call?.args?.oidc).toEqual({ allowed_hosts: ['mongo.corp.example.com'] });
+        expect(call?.args?.oidc).toEqual({ allowed_hosts: ['mongo.corp.example.com'], use_id_token: true });
       });
     });
 

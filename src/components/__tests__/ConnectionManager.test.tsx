@@ -2703,6 +2703,32 @@ describe('OIDC auth method and URI round-trip (#430)', () => {
     it('returns null when oidc is selected but the host list is empty', () => {
       expect(buildOidcConfig({ ...baseConn, authMethod: 'oidc', oidcAllowedHosts: '  , ,' })).toBeNull();
     });
+
+    // T21: the ID-token option is a setting of its own, so a profile with
+    // only it set still has an OIDC config to send and save.
+    it('returns just use_id_token when that is the only OIDC setting', () => {
+      expect(
+        buildOidcConfig({ ...baseConn, authMethod: 'oidc', oidcAllowedHosts: '', oidcUseIdToken: true }),
+      ).toEqual({ use_id_token: true });
+    });
+
+    it('carries the allowed hosts and use_id_token together', () => {
+      expect(
+        buildOidcConfig({ ...baseConn, authMethod: 'oidc', oidcAllowedHosts: 'a.example.com', oidcUseIdToken: true }),
+      ).toEqual({ allowed_hosts: ['a.example.com'], use_id_token: true });
+    });
+
+    it('leaves use_id_token out when it is off', () => {
+      expect(
+        buildOidcConfig({ ...baseConn, authMethod: 'oidc', oidcAllowedHosts: 'a.example.com', oidcUseIdToken: false }),
+      ).toEqual({ allowed_hosts: ['a.example.com'] });
+    });
+
+    it('returns null when the method is not oidc, even with use_id_token set', () => {
+      expect(
+        buildOidcConfig({ ...baseConn, authMethod: 'scram-256', oidcAllowedHosts: '', oidcUseIdToken: true }),
+      ).toBeNull();
+    });
   });
 
   it('offers OIDC in the auth selector', async () => {
@@ -2836,6 +2862,146 @@ describe('OIDC auth method and URI round-trip (#430)', () => {
     await waitFor(() => {
       const call = calls.find((c) => c.cmd === 'connect_db');
       expect(call?.args?.oidc).toEqual({ allowed_hosts: ['mongo.corp.example.com'] });
+    });
+  });
+
+  describe('"Use ID token instead of access token" (T21)', () => {
+    const useIdToken = () => screen.getByRole('checkbox', { name: /use id token instead of access token/i });
+
+    it('offers the option, off by default, with help text that names the audience', async () => {
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+        return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+      });
+      render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+      await openAuthTab();
+      await pickSelectOption('auth-method-select', /oidc \(browser login\)/i);
+
+      expect(useIdToken()).not.toBeChecked();
+      expect(screen.getByText(/rejects your identity provider's access tokens/i)).toHaveTextContent(/client id/i);
+    });
+
+    it('is not offered for other authentication methods', async () => {
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+        return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+      });
+      render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+      await openAuthTab();
+
+      expect(screen.queryByRole('checkbox', { name: /use id token/i })).not.toBeInTheDocument();
+    });
+
+    it('saves use_id_token on its own, with no allowed hosts', async () => {
+      let savedProfile: any = null;
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+        if (cmd === 'save_connection_profile') {
+          savedProfile = args.profile;
+          return Promise.resolve();
+        }
+        return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+      });
+      render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+      await openAuthTab();
+      await pickSelectOption('auth-method-select', /oidc \(browser login\)/i);
+      fireEvent.click(useIdToken());
+      fireEvent.change(screen.getByLabelText(/display name/i), { target: { value: 'cidaas' } });
+
+      fireEvent.click(screen.getByRole('button', { name: /save/i }));
+
+      await waitFor(() => {
+        expect(savedProfile?.oidc).toEqual({ use_id_token: true });
+      });
+    });
+
+    it('is restored from the saved profile on reopen', async () => {
+      const profile = {
+        id: 'p-cidaas',
+        name: 'cidaas OIDC',
+        uri: 'mongodb://mongo.corp.example.com:27017/?authMechanism=MONGODB-OIDC&authSource=$external',
+        ssh: null,
+        color_tag: null,
+        oidc: { use_id_token: true },
+      };
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'load_connection_profiles') return Promise.resolve([profile]);
+        return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+      });
+      render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+      fireEvent.click((await screen.findAllByText('cidaas OIDC'))[0]);
+      fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+      fireEvent.click(screen.getByRole('button', { name: /^authentication$/i }));
+
+      expect(useIdToken()).toBeChecked();
+    });
+
+    it('sends use_id_token to connect_db for an unsaved configuration', async () => {
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+        if (cmd === 'connect_db') return Promise.resolve('conn-oidc-1');
+        return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+      });
+      render(<ConnectionManager isOpen onClose={() => {}} onConnect={() => {}} />);
+      await openAuthTab();
+      await pickSelectOption('auth-method-select', /oidc \(browser login\)/i);
+      fireEvent.click(useIdToken());
+
+      fireEvent.click(screen.getByTestId('editor-connect-btn'));
+
+      await waitFor(() => {
+        const call = calls.find((c) => c.cmd === 'connect_db');
+        expect(call?.args?.oidc).toEqual({ use_id_token: true });
+      });
+    });
+
+    it('sends use_id_token to test_connection_uri', async () => {
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+        if (cmd === 'test_connection_uri') return Promise.resolve();
+        return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+      });
+      render(<ConnectionManager isOpen onClose={() => {}} onConnect={() => {}} />);
+      await openAuthTab();
+      await pickSelectOption('auth-method-select', /oidc \(browser login\)/i);
+      fireEvent.click(useIdToken());
+
+      fireEvent.click(screen.getByRole('button', { name: /test connection/i }));
+
+      await waitFor(() => {
+        const call = calls.find((c) => c.cmd === 'test_connection_uri');
+        expect(call?.args?.oidc).toEqual({ use_id_token: true });
+      });
+    });
+
+    it('sends a saved profile’s use_id_token to connect_db from the profile list', async () => {
+      const calls: any[] = [];
+      const profile = {
+        id: 'p-cidaas',
+        name: 'cidaas OIDC',
+        uri: 'mongodb://mongo.corp.example.com:27017/?authMechanism=MONGODB-OIDC&authSource=$external',
+        ssh: null,
+        color_tag: null,
+        oidc: { use_id_token: true },
+      };
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'load_connection_profiles') return Promise.resolve([profile]);
+        if (cmd === 'connect_db') return Promise.resolve('conn-cidaas');
+        return Promise.resolve(null);
+      });
+      render(<ConnectionManager isOpen onClose={() => {}} onConnect={() => {}} />);
+      fireEvent.click((await screen.findAllByText('cidaas OIDC'))[0]);
+      fireEvent.click(screen.getByRole('button', { name: /^connect$/i }));
+
+      await waitFor(() => {
+        const call = calls.find((c) => c.cmd === 'connect_db');
+        expect(call?.args?.oidc).toEqual({ use_id_token: true });
+      });
     });
   });
 

@@ -61,6 +61,8 @@
     "oidcAllowedHosts": "Erlaubte Hosts (optional)",
     "oidcAllowedHostsHelp": "Nur für selbstverwaltete Bereitstellungen erforderlich. MongoDB-Atlas-Hosts sind bereits zugelassen. Kommagetrennt, z. B. mongo.corp.example.com",
     "oidcNote": "Die Anmeldung öffnet sich in deinem System-Browser. Deine Anmeldedaten werden ausschließlich bei deinem Identitätsanbieter eingegeben — MQLens bekommt sie nie zu sehen, und es wird kein Token gespeichert.",
+    "oidcUseIdToken": "ID-Token statt Access-Token verwenden",
+    "oidcUseIdTokenHelp": "Aktiviere dies, wenn MongoDB die Access-Tokens deines Identitätsanbieters ablehnt (zum Beispiel bei cidaas). MongoDB prüft dann das ID-Token, dessen Audience deine Client-ID ist.",
     "passLabelAws": "Geheimer Zugriffsschlüssel",
     "passLabelDefault": "Passwort",
     "serviceName": "Servicename (optional, Standard: mongodb)",

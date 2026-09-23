@@ -85,7 +85,7 @@ interface ConnectionProfile {
   /** Read-only / confirm-destructive production safeguard. Mirrors backend `ConnectionProfile::connection_mode`. */
   connection_mode?: ConnectionMode;
   /** Human OIDC settings (#430). Mirrors backend `ConnectionProfile::oidc`. */
-  oidc?: { allowed_hosts?: string[] } | null;
+  oidc?: { allowed_hosts?: string[]; use_id_token?: boolean } | null;
 }
 
 interface ConnectionManagerProps {
@@ -157,6 +157,10 @@ const BLANK_CONN = {
   // text — never written into the URI (`ClientOptions::parse` rejects
   // ALLOWED_HOSTS), split into the profile's `oidc.allowed_hosts` on save.
   oidcAllowedHosts: '',
+  // "Use ID token instead of access token" (T21): the profile's
+  // `oidc.use_id_token`, for an identity provider whose access tokens MongoDB
+  // refuses. Never in the URI either.
+  oidcUseIdToken: false,
   tlsMode: 'off',
   tlsCa: '',
   tlsClientCert: '',
@@ -543,17 +547,26 @@ export const buildUri = (s: typeof BLANK_CONN) => {
 
 /**
  * Build the profile's OIDC config from editor state (#430), or `null` when
- * the method isn't OIDC or there is no explicit host to allow. Backs every
- * connect/test-uri call site and the profile save path, so the allowed-hosts
- * text field is split in exactly one place.
+ * the method isn't OIDC or no OIDC setting is set (no explicit host to allow,
+ * and the ID-token option off). Backs every connect/test-uri call site and
+ * the profile save path, so the allowed-hosts text field is split in exactly
+ * one place. Each field is present only when set, matching what the backend
+ * writes; the names are snake_case because Tauri converts only a command's
+ * top-level argument names, not the fields inside them.
  */
-export const buildOidcConfig = (s: typeof BLANK_CONN): { allowed_hosts: string[] } | null => {
+export const buildOidcConfig = (
+  s: typeof BLANK_CONN,
+): { allowed_hosts?: string[]; use_id_token?: boolean } | null => {
   if (s.authMethod !== 'oidc') return null;
   const hosts = s.oidcAllowedHosts
     .split(',')
     .map((h) => h.trim())
     .filter(Boolean);
-  return hosts.length ? { allowed_hosts: hosts } : null;
+  const config = {
+    ...(hosts.length ? { allowed_hosts: hosts } : {}),
+    ...(s.oidcUseIdToken ? { use_id_token: true } : {}),
+  };
+  return Object.keys(config).length ? config : null;
 };
 
 /**
@@ -884,6 +897,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       // ALLOWED_HOSTS there), so they are restored from the profile alone —
       // the same source save reads them from (#430).
       oidcAllowedHosts: (profile.oidc?.allowed_hosts ?? []).join(', '),
+      oidcUseIdToken: profile.oidc?.use_id_token ?? false,
       ...sshFields,
     };
     setEditorState(opened);
@@ -2585,6 +2599,21 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                             />
                             <span className="text-[10.5px] leading-relaxed text-muted-foreground">
                               {t('auth.oidcAllowedHostsHelp')}
+                            </span>
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            <label className="flex items-center gap-2 text-[11px]">
+                              <input
+                                type="checkbox"
+                                id="oidc-use-id-token"
+                                aria-describedby="oidc-use-id-token-help"
+                                checked={editorState.oidcUseIdToken}
+                                onChange={e => setEditorState(prev => ({ ...prev, oidcUseIdToken: e.target.checked }))}
+                              />
+                              <span>{t('auth.oidcUseIdToken')}</span>
+                            </label>
+                            <span id="oidc-use-id-token-help" className="text-[10.5px] leading-relaxed text-muted-foreground">
+                              {t('auth.oidcUseIdTokenHelp')}
                             </span>
                           </div>
                         </>

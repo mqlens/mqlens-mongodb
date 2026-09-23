@@ -61,6 +61,8 @@
     "oidcAllowedHosts": "Allowed hosts (optional)",
     "oidcAllowedHostsHelp": "Only needed for self-managed deployments. MongoDB Atlas hosts are already allowed. Comma-separated, e.g. mongo.corp.example.com",
     "oidcNote": "Login opens in your system browser. Your credentials are entered only at your identity provider — MQLens never sees them, and no token is saved.",
+    "oidcUseIdToken": "Use ID token instead of access token",
+    "oidcUseIdTokenHelp": "Turn this on if MongoDB rejects your identity provider's access tokens (for example cidaas). MongoDB then checks the ID token, whose audience is your client ID.",
     "passLabelAws": "Secret Access Key",
     "passLabelDefault": "Password",
     "serviceName": "Service Name (optional, default: mongodb)",

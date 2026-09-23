@@ -16,7 +16,7 @@ export interface ConnectionProfile {
   /** Read-only / confirm-destructive production safeguard. Mirrors backend `ConnectionProfile::connection_mode`. */
   connection_mode?: ConnectionMode;
   /** Human OIDC settings (#430). Mirrors backend `ConnectionProfile::oidc`. */
-  oidc?: { allowed_hosts?: string[] } | null;
+  oidc?: { allowed_hosts?: string[]; use_id_token?: boolean } | null;
 }
 
 /** Options for exporting a connection URI for sharing. */
