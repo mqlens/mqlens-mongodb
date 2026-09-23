@@ -12,6 +12,9 @@ your **system browser**. You never paste or store a token.
 3. **Username** is optional — a principal hint for your identity provider,
    not a credential. There's no password field.
 4. **Allowed hosts** is needed only for self-managed deployments (see below).
+5. **Use ID token instead of access token** is off by default. Turn it on
+   only if MongoDB rejects your identity provider's access tokens (see
+   **When MongoDB rejects your identity provider's access tokens** below).
 
 The driver already allows these hosts by default: `*.mongodb.net`,
 `*.mongodb-qa.net`, `*.mongodb-dev.net`, `*.mongodbgov.net`, `localhost`,
@@ -42,7 +45,37 @@ MQLens stays valid for `mongosh` and other tools.
   free port each time it logs in, so there's no fixed port to configure.
 - The access token's **audience** must match the `audience` your MongoDB
   deployment checks. This is the most common reason a login succeeds in the
-  browser but the token is then rejected by MongoDB.
+  browser but the token is then rejected by MongoDB. (With **Use ID token
+  instead of access token** on, MongoDB checks the ID token, whose audience
+  is the client ID; see the next section.)
+
+## When MongoDB rejects your identity provider's access tokens
+
+MongoDB accepts a token only if its JWT header has no `typ`, or has
+`typ: "JWT"`. Some identity providers, cidaas among them, issue access
+tokens typed `at+jwt` (the RFC 9068 access-token format), and MongoDB
+refuses those before it checks anything else. The browser login succeeds,
+and then MongoDB rejects the token. MQLens recognises this case and tells you
+to turn on the option below.
+
+Turn on **Use ID token instead of access token** in the OIDC section of the
+Authentication tab. MQLens then gives MongoDB the **ID token** from the same
+login, which such identity providers type as plain `JWT`. This is the same
+escape hatch as mongosh's `--oidcIdTokenAsAccessToken`.
+
+- **The deployment's `audience` must be your client ID.** An ID token's
+  audience is always the client ID it was issued to. On a self-managed
+  server, set `audience` in `oidcIdentityProviders` to the same value as
+  `clientId`.
+- MongoDB takes the user name, and any groups claim it uses for
+  authorization, from the ID token. Make sure your identity provider puts
+  those claims in the ID token and not only in the access token.
+- MQLens checks that the ID token belongs to this login: its `nonce` must
+  match the one MQLens sent. MongoDB checks the signature, issuer and
+  audience.
+- When the identity provider's refresh response includes a new ID token,
+  MQLens uses it. When it doesn't, MQLens starts a new browser login instead
+  of resending the old ID token.
 
 ## Requirements on the identity provider
 
@@ -108,10 +141,10 @@ it.
 
 ## Privacy
 
-- **Stored:** the connection URI and the optional allowed-hosts list.
-  Nothing else.
-- **Never stored:** access tokens, refresh tokens, authorization codes, or
-  PKCE material.
+- **Stored:** the connection URI, the optional allowed-hosts list, and
+  whether **Use ID token instead of access token** is on. Nothing else.
+- **Never stored:** access tokens, ID tokens, refresh tokens, authorization
+  codes, or PKCE material.
 - Tokens are released when you disconnect or close MQLens. Nothing
   OIDC-related is written to logs, exported URIs, or the clipboard.
 
@@ -254,7 +287,10 @@ applications that might be holding loopback ports and try again.
 
 **"The login response did not match this request and was rejected. Start the login again."**
 The OAuth state returned by the identity provider didn't match what MQLens
-sent — MQLens rejects it as a safety measure. Start the login again.
+sent — MQLens rejects it as a safety measure. With **Use ID token instead of
+access token** on, the same message means the ID token's `nonce` was
+missing or didn't match this login's, so MQLens didn't send it to MongoDB.
+Start the login again.
 
 **"The browser login expired. Start the login again."**
 The login didn't finish within the driver's 5-minute limit — almost always
@@ -277,7 +313,19 @@ account without access to this deployment. In **Test Connection** the
 **Authenticate** row turns red, even though the browser part had already
 completed. Confirm your account has access,
 and check the client registration's audience (see **Registering MQLens with
-your identity provider** above).
+your identity provider** above). With **Use ID token instead of access
+token** on, check that the deployment's `audience` is your client ID and
+that the ID token carries the claims MongoDB needs (see **When MongoDB
+rejects your identity provider's access tokens** above).
+
+**"MongoDB rejected your identity provider's access token type. Turn on “Use ID token instead of access token” for this connection."**
+The browser login succeeded, but the access token your identity provider
+issued has a JWT type MongoDB refuses, typically `at+jwt`, as cidaas
+issues. MongoDB accepts only untyped tokens or `typ: "JWT"`. In **Test
+Connection** the **Authenticate** row turns red. Turn on **Use ID token
+instead of access token** in the Authentication tab, and make sure the
+deployment's `audience` is your client ID (see **When MongoDB rejects your
+identity provider's access tokens** above).
 
 ## Limitations in this release
 
