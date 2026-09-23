@@ -66,6 +66,9 @@ struct Inner {
     omit_id_token_on_refresh: AtomicBool,
     /// When set, no grant answers with an `id_token`.
     omit_id_tokens: AtomicBool,
+    /// When set, `grant_type=refresh_token` answers without a new refresh
+    /// token, as a provider that does not rotate them does.
+    keep_refresh_tokens: AtomicBool,
 }
 
 /// A single-key, single-issuer OIDC provider double bound to a random
@@ -170,6 +173,7 @@ impl MockIdp {
             wrong_nonce: AtomicBool::new(false),
             omit_id_token_on_refresh: AtomicBool::new(false),
             omit_id_tokens: AtomicBool::new(false),
+            keep_refresh_tokens: AtomicBool::new(false),
         });
         let server = Arc::new(server);
 
@@ -258,6 +262,13 @@ impl MockIdp {
     /// While `on`, no grant answers with an `id_token`.
     pub fn omit_id_tokens(&self, on: bool) {
         self.inner.omit_id_tokens.store(on, Ordering::SeqCst);
+    }
+
+    /// While `on`, the refresh grant answers without a `refresh_token`: the
+    /// one the client sent stays valid, as with a provider that does not
+    /// rotate refresh tokens.
+    pub fn keep_refresh_tokens(&self, on: bool) {
+        self.inner.keep_refresh_tokens.store(on, Ordering::SeqCst);
     }
 }
 
@@ -494,6 +505,9 @@ fn token_document(inner: &Inner, body: &str) -> serde_json::Value {
     let params = parse_form_pairs(body);
     let get = |key: &str| params.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone());
     let refreshing = get("grant_type").as_deref() == Some("refresh_token");
+    if refreshing && inner.keep_refresh_tokens.load(Ordering::SeqCst) {
+        document.as_object_mut().expect("the token response is an object").remove("refresh_token");
+    }
     let omit = inner.omit_id_tokens.load(Ordering::SeqCst)
         || (refreshing && inner.omit_id_token_on_refresh.load(Ordering::SeqCst));
     if !omit {

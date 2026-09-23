@@ -822,7 +822,7 @@ pub async fn refresh_token(
     http: &reqwest::Client,
     choice: TokenChoice,
 ) -> Result<(IdpServerResponse, Presented), OidcError> {
-    post_token_form(
+    let (mut response, presented) = post_token_form(
         endpoints,
         &[
             ("grant_type", "refresh_token"),
@@ -833,7 +833,15 @@ pub async fn refresh_token(
         choice,
         None,
     )
-    .await
+    .await?;
+    // A provider that does not rotate refresh tokens answers without one, and
+    // the one just used stays valid. The driver caches whatever this response
+    // carries in place of its old one, so hand that one back rather than
+    // leave the next expiry to a browser login.
+    if response.refresh_token.is_none() {
+        response.refresh_token = Some(refresh.to_string());
+    }
+    Ok((response, presented))
 }
 
 use mongodb::options::oidc::CallbackContext;
@@ -1906,6 +1914,40 @@ mod tests {
         assert_eq!(sent.grant_type, "refresh_token");
         assert_eq!(sent.refresh_token.as_deref(), Some("test-refresh-token"));
         assert_eq!(sent.code, None);
+    }
+
+    /// A provider that does not rotate refresh tokens answers a refresh with
+    /// none. The driver replaces its cached refresh token with whatever the
+    /// response carries, so the one just used must be handed back, or the
+    /// next expiry needs a browser login (PR #433 review).
+    #[tokio::test]
+    async fn a_refresh_answered_without_a_refresh_token_keeps_the_one_it_used() {
+        let idp = MockIdp::start();
+        idp.keep_refresh_tokens(true);
+        let http = reqwest::Client::new();
+        let endpoints = discover(&idp.issuer(), &http).await.unwrap();
+
+        let (response, _) =
+            refresh_token(&endpoints, "client-abc", "the-refresh-token-in-use", &http, TokenChoice::AccessToken)
+                .await
+                .unwrap();
+
+        assert_eq!(response.refresh_token.as_deref(), Some("the-refresh-token-in-use"));
+    }
+
+    /// A provider that rotates them sends a new one, which replaces the old.
+    #[tokio::test]
+    async fn a_refresh_answered_with_a_new_refresh_token_hands_back_the_new_one() {
+        let idp = MockIdp::start();
+        let http = reqwest::Client::new();
+        let endpoints = discover(&idp.issuer(), &http).await.unwrap();
+
+        let (response, _) =
+            refresh_token(&endpoints, "client-abc", "the-refresh-token-in-use", &http, TokenChoice::AccessToken)
+                .await
+                .unwrap();
+
+        assert_eq!(response.refresh_token.as_deref(), Some("test-refresh-token"));
     }
 
     #[tokio::test]
