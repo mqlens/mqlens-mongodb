@@ -27,6 +27,9 @@ impl PkceVerifier {
         Self(B64.encode(bytes))
     }
 
+    /// Test fixtures only (the RFC 7636 vector, redaction checks). A
+    /// production verifier always comes from `generate()`.
+    #[cfg(test)]
     pub fn from_string(value: String) -> Self {
         Self(value)
     }
@@ -884,6 +887,23 @@ mod tests {
         let verifier = PkceVerifier::from_string("super-secret-verifier".to_string());
         let rendered = format!("{:?}", verifier);
         assert!(!rendered.contains("super-secret-verifier"), "got {rendered}");
+    }
+
+    /// A verifier must only ever come from `generate()` in production: one
+    /// built from a caller-chosen string is predictable. `from_string` exists
+    /// for the RFC vector above and similar fixtures, so it is compiled into
+    /// test builds only — a production caller then fails to build in release.
+    #[test]
+    fn a_verifier_can_be_built_from_a_string_only_in_tests() {
+        let source = include_str!("oidc.rs");
+        let production_source = source
+            .split("\n#[cfg(test)]\nmod tests {")
+            .next()
+            .expect("mod tests must exist");
+        assert!(
+            production_source.contains("    #[cfg(test)]\n    pub fn from_string("),
+            "PkceVerifier::from_string must carry an item-level #[cfg(test)]"
+        );
     }
 
     #[test]
