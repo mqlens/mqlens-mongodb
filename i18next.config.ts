@@ -154,6 +154,12 @@ export default defineConfig({
       'connections:auth.oidc.errors.discoveryFailed',
       'connections:auth.oidc.errors.cancelled',
       'connections:auth.oidc.errors.timedOut',
+      // `shell:tools.errors.oidcUnsupportedByDatabaseTools` (#430 Task 16) is
+      // read through describeToolTaskError.ts's `t(`shell:${error}`)`, where
+      // `error` is a dump/restore task's backend-supplied error string — a
+      // template literal keyed off runtime data, not a string literal the
+      // extractor's static analysis can see.
+      'shell:tools.errors.oidcUnsupportedByDatabaseTools',
       'errors:conn.tlsNotTrusted',
       'errors:conn.tlsNotTrustedHint',
       'errors:conn.authFailed',

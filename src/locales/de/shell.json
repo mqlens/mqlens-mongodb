@@ -444,6 +444,11 @@
     },
     "dismissAriaLabel": "Benachrichtigung verwerfen"
   },
+  "tools": {
+    "errors": {
+      "oidcUnsupportedByDatabaseTools": "Die mitgelieferten MongoDB Database Tools unterstützen OIDC nur für automatisierte (Workload-)Umgebungen, nicht für die Browser-Anmeldung — dieser Dump oder diese Wiederherstellung kann sich daher nicht mit einer OIDC-Verbindung authentifizieren. Verwende stattdessen einen SCRAM-Benutzer für Dumps und Wiederherstellungen."
+    }
+  },
   "toolSetupDialog": {
     "actions": {
       "dismiss": "Verwerfen",

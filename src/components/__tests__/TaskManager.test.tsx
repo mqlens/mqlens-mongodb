@@ -105,6 +105,21 @@ describe('TaskManager', () => {
     expect(screen.getByText('Permission denied')).toBeInTheDocument();
   });
 
+  it('translates the Database Tools OIDC failure key instead of showing it raw', () => {
+    const oidcFailedTask: ExportTaskInfo = {
+      ...failedTask,
+      id: 'task-failed-oidc',
+      error: 'tools.errors.oidcUnsupportedByDatabaseTools',
+    };
+    renderTaskManager([oidcFailedTask]);
+    expect(screen.queryByText('tools.errors.oidcUnsupportedByDatabaseTools')).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "The bundled MongoDB Database Tools support OIDC only for automated (workload) environments, not browser login, so this dump or restore can't authenticate with an OIDC connection. Use a SCRAM user for dumps and restores instead."
+      )
+    ).toBeInTheDocument();
+  });
+
   it('refreshes tasks when the refresh control is clicked', () => {
     const { onRefresh } = renderTaskManager([completedTask]);
     fireEvent.click(screen.getByRole('button', { name: 'Refresh tasks' }));

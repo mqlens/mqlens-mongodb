@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
+import { describeToolTaskError } from '@/lib/describeToolTaskError';
 
 export interface CopySummaryInfo {
   collectionsCopied: number;
@@ -199,7 +200,9 @@ export const TaskManager: React.FC<TaskManagerProps> = ({
                       </span>
                     </div>
                     <div className="mt-0.5 flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
-                      <span className="truncate">{task.error || task.message}</span>
+                      <span className="truncate">
+                        {describeToolTaskError(task.error, t) || task.message}
+                      </span>
                       {task.total !== null && task.total !== undefined && (
                         <span className="flex-shrink-0 tabular-nums">
                           {task.processed}/{task.total}
