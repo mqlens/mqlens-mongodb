@@ -3055,6 +3055,72 @@ describe('waiting-for-browser-login UI (#430 Task 15)', () => {
     expect(screen.queryByText(/auth\.oidc\.errors\.cancelled/)).not.toBeInTheDocument();
   });
 
+  // M11: every way the manager goes away must cancel a login still waiting
+  // on the browser, or it runs on unobserved until the driver's 5 minutes
+  // are up. App keeps the manager mounted and closes it through `isOpen`,
+  // and the X, the footer Close and Escape all call `onClose` directly, so
+  // the dialog's own `onOpenChange` never sees them.
+  it('closing the manager while a test login is pending cancels it', async () => {
+    const test = startOidcTest();
+    const { rerender } = render(<ConnectionManager isOpen onClose={() => {}} onConnect={() => {}} />);
+    await openEditorWith('mongodb://mock');
+    fireEvent.click(screen.getByRole('button', { name: /test connection/i }));
+    await runToAuthenticateStart(test);
+    await screen.findByRole('button', { name: /cancel login/i });
+
+    rerender(<DialogProvider><ConnectionManager isOpen={false} onClose={() => {}} onConnect={() => {}} /></DialogProvider>);
+
+    await waitFor(() => expect(test.calls.some((c) => c.cmd === 'cancel_oidc_login')).toBe(true));
+    const testCall = test.calls.find((c) => c.cmd === 'test_connection_uri')!;
+    const cancelCall = test.calls.find((c) => c.cmd === 'cancel_oidc_login')!;
+    expect(cancelCall.args.loginId).toBe(testCall.args.loginId);
+  });
+
+  it('closing the manager while a list-view OIDC connect is pending cancels it', async () => {
+    const calls: { cmd: string; args: any }[] = [];
+    const profile = {
+      id: 'p-oidc',
+      name: 'Corp OIDC',
+      uri: 'mongodb://mongo.corp.example.com:27017/?authMechanism=MONGODB-OIDC&authSource=$external',
+      ssh: null,
+      color_tag: null,
+      oidc: null,
+    };
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      calls.push({ cmd, args });
+      if (cmd === 'load_connection_profiles') return Promise.resolve([profile]);
+      if (cmd === 'connect_db') return new Promise(() => {});
+      if (cmd === 'cancel_oidc_login') return Promise.resolve(null);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+    const { rerender } = render(<ConnectionManager isOpen onClose={() => {}} onConnect={() => {}} />);
+    fireEvent.click((await screen.findAllByText('Corp OIDC'))[0]);
+    fireEvent.click(screen.getByRole('button', { name: /^connect$/i }));
+    await screen.findByTestId('connect-cancel-login');
+
+    rerender(<DialogProvider><ConnectionManager isOpen={false} onClose={() => {}} onConnect={() => {}} /></DialogProvider>);
+
+    await waitFor(() => expect(calls.some((c) => c.cmd === 'cancel_oidc_login')).toBe(true));
+    const connectCall = calls.find((c) => c.cmd === 'connect_db')!;
+    const cancelCall = calls.find((c) => c.cmd === 'cancel_oidc_login')!;
+    expect(cancelCall.args.loginId).toBe(connectCall.args.loginId);
+  });
+
+  it('unmounting the manager while a test login is pending cancels it', async () => {
+    const test = startOidcTest();
+    const { unmount } = render(<ConnectionManager isOpen onClose={() => {}} onConnect={() => {}} />);
+    await openEditorWith('mongodb://mock');
+    fireEvent.click(screen.getByRole('button', { name: /test connection/i }));
+    await runToAuthenticateStart(test);
+    await screen.findByRole('button', { name: /cancel login/i });
+
+    unmount();
+
+    const testCall = test.calls.find((c) => c.cmd === 'test_connection_uri')!;
+    const cancelCall = test.calls.find((c) => c.cmd === 'cancel_oidc_login');
+    expect(cancelCall?.args.loginId).toBe(testCall.args.loginId);
+  });
+
   // OIDC messages are two sentences: what happened, then what to do. The
   // generic driver-error summary cuts at the first ". ", which hid exactly
   // the actionable half (M1).

@@ -602,6 +602,17 @@ export const buildSshConfig = (s: typeof BLANK_CONN): SshConfig | null => {
   };
 };
 
+/**
+ * Best-effort: ask the backend to cancel a pending OIDC login (#430). Never
+ * awaited and never surfaces its own failure — the login is being abandoned
+ * either way (the dialog is closing, or the user asked to stop), and an
+ * unknown `loginId` already answers `Ok` on the backend.
+ */
+const cancelOidcLogin = (loginId: string | null) => {
+  if (!loginId) return;
+  void invoke('cancel_oidc_login', { loginId }).catch(() => {});
+};
+
 export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   isOpen,
   onClose,
@@ -753,6 +764,30 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     if (!showEditDialog) connectAttemptRef.current += 1;
   }, [showEditDialog]);
   useEscapeClose(isOpen && !showEditDialog && !nestedLayerOpen, onClose);
+
+  // A login still waiting on the browser — a test's, or a Connect's, from
+  // the editor or the list — has nowhere to report once the manager is gone,
+  // so every way out cancels it (#430). App keeps the manager mounted and
+  // closes it through `isOpen`, and the X, the footer Close and Escape all
+  // call `onClose` directly, so the dialog's own `onOpenChange` never sees
+  // those: the close is watched here instead. The ref gives the unmount
+  // cleanup the ids of the last render rather than the first.
+  const pendingLoginIdsRef = useRef({ test: testLoginId, connect: connectLoginId });
+  pendingLoginIdsRef.current = { test: testLoginId, connect: connectLoginId };
+  const cancelPendingLogins = () => {
+    const { test, connect } = pendingLoginIdsRef.current;
+    if (test) { cancelOidcLogin(test); setTestLoginId(null); }
+    if (connect) { cancelOidcLogin(connect); setConnectLoginId(null); }
+  };
+  useEffect(() => {
+    if (!isOpen) cancelPendingLogins();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reads the latest ids through the ref
+  }, [isOpen]);
+  useEffect(() => () => {
+    const { test, connect } = pendingLoginIdsRef.current;
+    cancelOidcLogin(test);
+    cancelOidcLogin(connect);
+  }, []);
 
   const loadFoldersFromStorage = () => {
     const { folders: currentFolders, profileFolderMap: map } = loadConnectionFolders();
@@ -1184,17 +1219,6 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
         : undefined,
       pending.state.connectionMode,
     );
-  };
-
-  /**
-   * Best-effort: ask the backend to cancel a pending OIDC login (#430). Never
-   * awaited and never surfaces its own failure — the login is being abandoned
-   * either way (the dialog is closing, or the user asked to stop), and an
-   * unknown `loginId` already answers `Ok` on the backend.
-   */
-  const cancelOidcLogin = (loginId: string | null) => {
-    if (!loginId) return;
-    void invoke('cancel_oidc_login', { loginId }).catch(() => {});
   };
 
   /**
@@ -1748,9 +1772,10 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     {/* No click-outside close: dismiss only via the X button or Escape. */}
     <Dialog open={isOpen} onOpenChange={(open) => {
       if (!open) {
-        // The list view's own OIDC connect (handleConnectClick) has no nested
-        // dialog to close through `closeEditor` — cancel it here instead (#430).
-        if (connectLoginId) { cancelOidcLogin(connectLoginId); setConnectLoginId(null); }
+        // A pending test login or connect (the list view's has no nested
+        // dialog to close through `closeEditor`) is cancelled with the
+        // manager (#430); see `cancelPendingLogins`.
+        cancelPendingLogins();
         onClose();
       }
     }}>
