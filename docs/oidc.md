@@ -220,11 +220,13 @@ MQLens refuses to talk to a plain-HTTP identity provider. This isn't
 configurable; the identity provider needs an HTTPS endpoint.
 
 **"Login succeeded, but the database did not respond. Check the host, TLS and network settings."**
-The browser login itself worked and MongoDB accepted the login, but the
-database then failed to answer the connection check for some other reason.
-Check the host, TLS configuration, and network settings on the connection
-itself. (If MongoDB had refused the login, you'd see "MongoDB rejected the
-login token" instead.)
+The login with your identity provider completed, and then the connection
+check failed with an error that isn't about authentication. That doesn't
+mean MongoDB accepted the login: the failure may come before MongoDB ever
+checks the token, for example a timeout or a dropped connection, or be an
+unrelated command error. Check the host, TLS configuration, and network
+settings on the connection itself. (If MongoDB had refused the token, you'd
+see "MongoDB rejected the login token" instead.)
 
 **"This deployment did not supply an OIDC client id, so a browser login cannot start. Ask your administrator to configure one."**
 MongoDB's OIDC handshake didn't return a client ID, so MQLens has nothing to
