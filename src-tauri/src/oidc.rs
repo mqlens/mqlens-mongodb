@@ -180,7 +180,8 @@ pub struct Endpoints {
 /// widen the exception into a runtime flag without a release build failing
 /// to compile.
 pub fn require_secure(url: &str) -> Result<(), OidcError> {
-    if url.starts_with("https://") {
+    // A URI scheme is case-insensitive (RFC 3986 §3.1): `HTTPS://` is TLS too.
+    if url.get(..8).is_some_and(|scheme| scheme.eq_ignore_ascii_case("https://")) {
         return Ok(());
     }
     #[cfg(test)]
@@ -1454,6 +1455,17 @@ mod tests {
             Err(OidcError::InsecureEndpoint)
         );
         assert_eq!(require_secure("https://idp.example.com/authorize"), Ok(()));
+    }
+
+    /// A URI scheme is case-insensitive (RFC 3986 §3.1), so an upper- or
+    /// mixed-case `https` is still TLS; an upper-case `http` is still not
+    /// (PR #433 review).
+    #[test]
+    fn the_https_scheme_is_recognised_in_any_case() {
+        assert_eq!(require_secure("HTTPS://idp.example.com/authorize"), Ok(()));
+        assert_eq!(require_secure("Https://idp.example.com/authorize"), Ok(()));
+        assert_eq!(require_secure("HTTP://idp.example.com/authorize"), Err(OidcError::InsecureEndpoint));
+        assert_eq!(require_secure("https:/idp.example.com/authorize"), Err(OidcError::InsecureEndpoint));
     }
 
     /// The loopback exception exists only so tests can run a mock IdP. It is
