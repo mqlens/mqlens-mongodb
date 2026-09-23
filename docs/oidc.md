@@ -54,9 +54,11 @@ MQLens stays valid for `mongosh` and other tools.
 MongoDB accepts a token only if its JWT header has no `typ`, or has
 `typ: "JWT"`. Some identity providers, cidaas among them, issue access
 tokens typed `at+jwt` (the RFC 9068 access-token format), and MongoDB
-refuses those before it checks anything else. The browser login succeeds,
+refuses those, whatever else the token carries. The browser login succeeds,
 and then MongoDB rejects the token. MQLens recognises this case and tells you
-to turn on the option below.
+to turn on the option below. Turning it on is always needed for such tokens,
+but it may not be all that's needed: if the issuer or audience is also wrong,
+MongoDB will still reject the login.
 
 Turn on **Use ID token instead of access token** in the OIDC section of the
 Authentication tab. MQLens then gives MongoDB the **ID token** from the same
@@ -75,7 +77,13 @@ escape hatch as mongosh's `--oidcIdTokenAsAccessToken`.
   audience.
 - When the identity provider's refresh response includes a new ID token,
   MQLens uses it. When it doesn't, MQLens starts a new browser login instead
-  of resending the old ID token.
+  of resending the old ID token. MQLens also stops using an ID token when
+  it expires, even if the access token from the same login is still valid.
+- MongoDB receives the ID token itself, including the profile claims your
+  identity provider puts in it (for example your name and email address).
+  If other people run the deployment, bear that in mind before turning the
+  option on. **Allowed hosts** still limit which servers a token can be
+  sent to (see **Privacy** below).
 
 ## Requirements on the identity provider
 
@@ -147,6 +155,10 @@ it.
   codes, or PKCE material.
 - Tokens are released when you disconnect or close MQLens. Nothing
   OIDC-related is written to logs, exported URIs, or the clipboard.
+- With **Use ID token instead of access token** on, MongoDB receives your
+  **ID token**, profile claims such as name and email included, instead of
+  the access token. Keep that in mind on a deployment others administer.
+  Allowed hosts still decide which servers can receive it.
 
 ## Proxies
 
