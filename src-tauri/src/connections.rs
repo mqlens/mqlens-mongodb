@@ -1074,6 +1074,31 @@ pub async fn run_connection_test_with_oidc(
         return Ok(());
     }
 
+    // Login progress is reported from the driver's own task, which can outlive
+    // this call's borrow of `emit`, so the session's sink only queues it and
+    // this call forwards it while the ping runs.
+    let (progress_tx, mut progress) = tokio::sync::mpsc::unbounded_channel();
+    let session = crate::oidc::OidcSession::new(std::sync::Arc::new(move |phase| {
+        let _ = progress_tx.send(phase);
+    }));
+    // Registered before the DNS lookup, the SSH tunnel and
+    // `ClientOptions::parse`, decided from the string alone, as the connect
+    // path does: the UI cancels by this id the moment the editor closes, and a
+    // cancel sent during any of them must reach this session, which the flow
+    // honours before it ever opens a browser. Held to the end of the call.
+    let early_login = if crate::oidc_login::uri_requests_oidc(uri) {
+        match crate::oidc_login::register_login(sessions, login.login_id.clone(), session.clone()) {
+            Ok(registration) => Some(registration),
+            Err(e) => {
+                emit(PhaseUpdate::start(TestPhase::Parse));
+                emit(PhaseUpdate::fail(TestPhase::Parse, e.clone()));
+                return Err(e);
+            }
+        }
+    } else {
+        None
+    };
+
     let ssh_enabled = ssh.map(|c| c.enabled).unwrap_or(false);
 
     // Phase 1: Parse the URI.
@@ -1186,15 +1211,16 @@ pub async fn run_connection_test_with_oidc(
     client_options.connect_timeout = Some(std::time::Duration::from_secs(5));
     client_options.server_selection_timeout = Some(std::time::Duration::from_secs(5));
 
-    // Login progress is reported from the driver's own task, which can outlive
-    // this call's borrow of `emit`, so the session's sink only queues it and
-    // this call forwards it while the ping runs.
-    let (progress_tx, mut progress) = tokio::sync::mpsc::unbounded_channel();
-    let session = crate::oidc::OidcSession::new(std::sync::Arc::new(move |phase| {
-        let _ = progress_tx.send(phase);
-    }));
-    // Held to the end of the call: dropping it removes the login's entry.
-    let _login = match crate::oidc_login::prepare_human_login(&mut client_options, sessions, login, session) {
+    // `uri_requests_oidc` reads the URI the way the driver does, so the two
+    // agree; should they ever not, the driver's reading still wins and the
+    // login is registered here instead. Held to the end of the call: dropping
+    // it removes the login's entry.
+    let attached = match early_login {
+        Some(registration) => crate::oidc_login::attach_human_login(&mut client_options, login, session)
+            .map(|()| Some(registration)),
+        None => crate::oidc_login::prepare_human_login(&mut client_options, sessions, login, session),
+    };
+    let _login = match attached {
         Ok(registration) => registration,
         Err(e) => {
             emit(PhaseUpdate::fail(TestPhase::Ping, e.clone()));

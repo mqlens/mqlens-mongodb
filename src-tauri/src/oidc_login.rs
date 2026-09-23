@@ -811,6 +811,52 @@ mod tests {
         assert!(cancelled, "the cancel must reach the session the callback will use");
     }
 
+    /// The connection test's twin of the case above (PR #433 review): closing
+    /// the editor cancels by the test's login id while the tunnel, a DNS
+    /// lookup or the URI parse is still pending, and that cancel must reach
+    /// the session instead of finding no entry and letting the test go on to
+    /// open a browser.
+    #[tokio::test]
+    async fn an_oidc_connection_test_is_cancellable_while_its_ssh_tunnel_is_still_opening() {
+        let state = AppState::new();
+        let ssh_port = silent_server().await;
+        let ssh = crate::ssh_tunnel::SshConfig {
+            enabled: true,
+            host: "127.0.0.1".into(),
+            port: ssh_port,
+            user: "u".into(),
+            auth: crate::ssh_tunnel::SshAuth::Password { password: "p".into() },
+        };
+        let uri = "mongodb://db.internal:27017/?authMechanism=MONGODB-OIDC&authSource=$external";
+        let config = OidcProfileConfig { allowed_hosts: vec!["db.internal".into()], ..Default::default() };
+        let login = HumanLogin {
+            config: Some(&config),
+            login_id: Some("test-tunnel-login".into()),
+            ..HumanLogin::unattended()
+        };
+        let emit = |_: crate::connections::PhaseUpdate| {};
+
+        let call =
+            crate::connections::run_connection_test_with_oidc(&state.oidc_sessions, uri, Some(&ssh), login, &emit);
+        let cancel_while_opening = async {
+            for _ in 0..200 {
+                let live = state.oidc_sessions.lock().unwrap().get("test-tunnel-login").cloned();
+                if let Some(session) = live {
+                    cancel_oidc_login_impl(&state, "test-tunnel-login").unwrap();
+                    return Some(session.is_cancelled());
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            None
+        };
+        let cancelled = tokio::select! {
+            result = call => panic!("premise: the tunnel to a silent SSH server must still be opening, got {result:?}"),
+            cancelled = cancel_while_opening => cancelled.expect("the login must be registered before the tunnel opens"),
+        };
+
+        assert!(cancelled, "the cancel must reach the session the callback will use");
+    }
+
     // ---- allowed hosts through an SSH tunnel -----------------------------
 
     use super::test_support::{closed_port, ssh_to};
