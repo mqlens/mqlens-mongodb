@@ -611,12 +611,24 @@ mod tests {
         let started = AtomicUsize::new(0);
         let finished = AtomicUsize::new(0);
         let mut stale = 0;
+        // Spins, but yields to the scheduler every 128 spins, so an
+        // oversubscribed parallel test run cannot stall the two threads on
+        // each other. Waits are usually far shorter than that.
+        let wait_for = |counter: &AtomicUsize, round: usize| {
+            let mut spins: u32 = 0;
+            while counter.load(Ordering::Acquire) != round {
+                spins = spins.wrapping_add(1);
+                if spins % 128 == 0 {
+                    std::thread::yield_now();
+                } else {
+                    std::hint::spin_loop();
+                }
+            }
+        };
         std::thread::scope(|s| {
             s.spawn(|| {
                 for round in 1..=ROUNDS {
-                    while started.load(Ordering::Acquire) != round {
-                        std::hint::spin_loop();
-                    }
+                    wait_for(&started, round);
                     cancel_oidc_login_impl(&state, "racing").unwrap();
                     finished.store(round, Ordering::Release);
                 }
@@ -632,9 +644,7 @@ mod tests {
                     std::hint::spin_loop();
                 }
                 drop(registration);
-                while finished.load(Ordering::Acquire) != round {
-                    std::hint::spin_loop();
-                }
+                wait_for(&finished, round);
                 if session.is_cancelled() {
                     stale += 1;
                 }
