@@ -1002,7 +1002,8 @@ mod tests {
     /// test builds only — a production caller then fails to build in release.
     #[test]
     fn a_verifier_can_be_built_from_a_string_only_in_tests() {
-        let source = include_str!("oidc.rs");
+        // Normalised: a Windows checkout with core.autocrlf=true has CRLF.
+        let source = include_str!("oidc.rs").replace("\r\n", "\n");
         let production_source = source
             .split("\n#[cfg(test)]\nmod tests {")
             .next()
@@ -1258,7 +1259,8 @@ mod tests {
     /// its gate without a release build breaking.
     #[test]
     fn the_http_exception_is_compile_time_only() {
-        let source = include_str!("oidc.rs");
+        // Normalised: a Windows checkout with core.autocrlf=true has CRLF.
+        let source = include_str!("oidc.rs").replace("\r\n", "\n");
         let production_source = source
             .split("\n#[cfg(test)]\nmod tests {")
             .next()
