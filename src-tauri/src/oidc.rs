@@ -1855,10 +1855,11 @@ mod tests {
 
     #[tokio::test]
     async fn cancelling_returns_promptly_and_does_not_hang() {
-        // `idp` is started but deliberately never contacted: `recording_opener`
-        // never navigates, so nothing ever drives a callback into the
-        // loopback listener, and `run_flow` must fall out via cancellation
-        // instead of hanging on a callback that will never arrive.
+        // `idp` serves discovery, so the flow reaches the browser step, but
+        // its login is never completed: `recording_opener` never navigates,
+        // so nothing ever drives a callback into the loopback listener, and
+        // `run_flow` must fall out via cancellation instead of hanging on a
+        // callback that will never arrive.
         let idp = MockIdp::start();
         let (session, _) = test_session();
         let (opener, _) = recording_opener();
@@ -1884,7 +1885,7 @@ mod tests {
     #[tokio::test]
     async fn an_expired_deadline_reports_a_timeout() {
         // Same as `cancelling_returns_promptly_and_does_not_hang` above:
-        // `idp` is started but deliberately never contacted, since
+        // `idp` serves discovery, but its login is never completed, since
         // `recording_opener` never navigates — `run_flow` must fall out via
         // the deadline instead of hanging on a callback that will never
         // arrive.
