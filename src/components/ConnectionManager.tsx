@@ -579,8 +579,30 @@ export const buildOidcConfig = (
  * `loginId` is minted from, for both the editor's own Connect and the saved
  * profile list's, since `connect_db` streams no phases for either to key a
  * pending-login UI on otherwise.
+ *
+ * It reads the URI as the backend's `uri_requests_oidc` (oidc_login.rs) and so
+ * the driver do: the query starts at the first `?`, options are split on `&`
+ * or `;`, and the value is percent-decoded, so `MONGODB%2DOIDC` counts. A miss
+ * here would start a browser login with no Cancel.
  */
-export const isOidcUri = (uri: string): boolean => /authMechanism=MONGODB-OIDC/i.test(uri);
+export const isOidcUri = (uri: string): boolean => {
+  const queryStart = uri.indexOf('?');
+  if (queryStart < 0) return false;
+  return uri
+    .slice(queryStart + 1)
+    .split(/[&;]/)
+    .some((part) => {
+      const eq = part.indexOf('=');
+      if (eq < 0 || part.slice(0, eq).trim().toLowerCase() !== 'authmechanism') return false;
+      let value = part.slice(eq + 1);
+      try {
+        value = decodeURIComponent(value);
+      } catch {
+        // A malformed escape stays as typed, which is not the mechanism's name.
+      }
+      return value.trim().toUpperCase() === 'MONGODB-OIDC';
+    });
+};
 
 // Build the structured SSH tunnel config the backend expects, or null when disabled.
 /**

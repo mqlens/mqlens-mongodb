@@ -6,6 +6,7 @@ import {
   buildUri,
   buildSshConfig,
   buildOidcConfig,
+  isOidcUri,
   parseUriIntoFields,
   summarizeConnectionError,
   suggestConnectionName,
@@ -3029,6 +3030,45 @@ describe('OIDC auth method and URI round-trip (#430)', () => {
   });
 });
 
+// A `loginId` is minted only when this says yes, and the backend starts a
+// browser login whenever the driver reads the URI as MONGODB-OIDC. So this must
+// read a URI the way `uri_requests_oidc` (oidc_login.rs) does, or a login runs
+// with no Cancel. The cases mirror that function's own tests.
+describe('isOidcUri reads the mechanism as the backend does (#430)', () => {
+  it.each([
+    'mongodb://h:27017/?authMechanism=MONGODB-OIDC&authSource=$external',
+    'mongodb://h/?authSource=%24external&authmechanism=MONGODB-OIDC',
+    'mongodb://h/?AUTHMECHANISM=mongodb-oidc',
+    'mongodb://h/db?authMechanism=MONGODB%2DOIDC',
+    'mongodb://h/?authmechanism=MONGODB%2DOIDC&authSource=%24external',
+    'mongodb+srv://cluster.example.com/?retryWrites=true;authMechanism=MONGODB-OIDC',
+    'mongodb://h/?authMechanism= MONGODB-OIDC ',
+    'mongodb://h/?appName=x#&authMechanism=MONGODB-OIDC&authSource=$external',
+    'mongodb://h/#?authMechanism=MONGODB-OIDC&authSource=$external',
+  ])('detects OIDC in %s', (uri) => {
+    expect(isOidcUri(uri)).toBe(true);
+  });
+
+  it.each([
+    'mongodb://h:27017/',
+    'mongodb://h/?authMechanism=SCRAM-SHA-256',
+    'mongodb://u:pw@h/?authMechanism=MONGODB-X509',
+    'mongodb://MONGODB-OIDC:pw@h/?authSource=admin',
+    'mongodb://h/authMechanism=MONGODB-OIDC',
+    'mongodb://h/?authMechanismProperties=ENVIRONMENT:MONGODB-OIDC',
+    'mongodb://h/?appName=authMechanism=MONGODB-OIDC',
+    'mongodb://h/?authMechanism=MONGODB-OIDC-EXTRA',
+  ])('does not treat %s as OIDC', (uri) => {
+    expect(isOidcUri(uri)).toBe(false);
+  });
+
+  it('reads a malformed escape as not OIDC instead of throwing', () => {
+    expect(isOidcUri('mongodb://h/?authMechanism=MONGODB-OIDC%ZZ')).toBe(false);
+    expect(isOidcUri('mongodb://h/?authMechanism=%E0%A4%A')).toBe(false);
+    expect(isOidcUri('mongodb://h/?authMechanism=MONGODB%2DOIDC&appName=%ZZ')).toBe(true);
+  });
+});
+
 describe('waiting-for-browser-login UI (#430 Task 15)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -3270,6 +3310,33 @@ describe('waiting-for-browser-login UI (#430 Task 15)', () => {
     const connectCall = calls.find((c) => c.cmd === 'connect_db')!;
     const cancelCall = calls.find((c) => c.cmd === 'cancel_oidc_login')!;
     expect(cancelCall.args.loginId).toBe(connectCall.args.loginId);
+  });
+
+  // An imported URI may percent-encode the mechanism. The backend still starts
+  // a browser login for it, so the connect must still carry a cancellable id.
+  it('offers cancel for a saved profile whose URI percent-encodes the OIDC mechanism', async () => {
+    const calls: { cmd: string; args: any }[] = [];
+    const profile = {
+      id: 'p-oidc-encoded',
+      name: 'Encoded OIDC',
+      uri: 'mongodb://mongo.corp.example.com:27017/?authMechanism=MONGODB%2DOIDC&authSource=%24external',
+      ssh: null,
+      color_tag: null,
+      oidc: null,
+    };
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      calls.push({ cmd, args });
+      if (cmd === 'load_connection_profiles') return Promise.resolve([profile]);
+      if (cmd === 'connect_db') return new Promise(() => {});
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+    render(<ConnectionManager isOpen onClose={() => {}} onConnect={() => {}} />);
+    fireEvent.click((await screen.findAllByText('Encoded OIDC'))[0]);
+    fireEvent.click(screen.getByRole('button', { name: /^connect$/i }));
+
+    expect(await screen.findByTestId('connect-cancel-login')).toBeInTheDocument();
+    const connectCall = calls.find((c) => c.cmd === 'connect_db')!;
+    expect(typeof connectCall.args.loginId).toBe('string');
   });
 
   it('unmounting the manager while a test login is pending cancels it', async () => {
