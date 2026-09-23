@@ -448,12 +448,15 @@ fn callback_outcome_page(params: &CallbackParams, expected_state: Option<&str>) 
     }
 }
 
+/// One callback, from its `application/x-www-form-urlencoded` parameters:
+/// the query string of a GET redirect, or the body of a `form_post` POST.
+/// Both take the same path, state check and one-shot completion included.
 fn handle_callback(
-    uri: axum::http::Uri,
+    encoded_params: &str,
     result_tx: std::sync::Arc<StdMutex<Option<oneshot::Sender<CallbackParams>>>>,
     expected_state: &std::sync::OnceLock<String>,
 ) -> axum::response::Html<&'static str> {
-    let params = parse_callback_params(uri.query().unwrap_or(""));
+    let params = parse_callback_params(encoded_params);
     let outcome_page = callback_outcome_page(&params, expected_state.get().map(String::as_str));
     let sender = result_tx.lock().expect("callback result mutex poisoned").take();
     match sender {
@@ -469,7 +472,8 @@ use std::sync::Mutex as StdMutex;
 use tokio::sync::oneshot;
 
 /// A one-shot HTTP server on a loopback port, waiting for exactly one
-/// `GET /callback` from the system browser. Modeled on the MCP server's own
+/// `/callback` from the system browser (a GET redirect, or a POST for
+/// `response_mode=form_post`). Modeled on the MCP server's own
 /// `TcpListener::bind` + `axum::serve(..).with_graceful_shutdown(..)`
 /// idiom (`mcp.rs`).
 pub struct LoopbackListener {
@@ -483,10 +487,10 @@ pub struct LoopbackListener {
 
 impl LoopbackListener {
     /// Bind an ephemeral port on loopback only (`127.0.0.1:0` — never a LAN
-    /// interface) and start serving `GET /callback` in the background. The
-    /// server accepts exactly one request that finds the one-shot sender
-    /// still present; every later request (replay, reload) gets
-    /// [`CALLBACK_REPLAY_PAGE`] instead and does not touch the waiter.
+    /// interface) and start serving `/callback` (GET and POST) in the
+    /// background. The server accepts exactly one request that finds the
+    /// one-shot sender still present; every later request (replay, reload)
+    /// gets [`CALLBACK_REPLAY_PAGE`] instead and does not touch the waiter.
     pub async fn bind() -> Result<Self, OidcError> {
         let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
             .await
@@ -503,12 +507,21 @@ impl LoopbackListener {
         let expected_state = std::sync::Arc::new(std::sync::OnceLock::new());
         let handler_state = std::sync::Arc::clone(&expected_state);
 
+        // GET for the usual redirect (`response_mode=query`); POST for a
+        // provider that answers with `response_mode=form_post`, whose
+        // parameters are in the body. A POST's query string is not read.
+        let (get_tx, get_state) = (std::sync::Arc::clone(&result_tx), std::sync::Arc::clone(&handler_state));
         let router = axum::Router::new().route(
             "/callback",
             axum::routing::get(move |uri: axum::http::Uri| {
+                let result_tx = std::sync::Arc::clone(&get_tx);
+                let expected_state = std::sync::Arc::clone(&get_state);
+                async move { handle_callback(uri.query().unwrap_or(""), result_tx, &expected_state) }
+            })
+            .post(move |body: String| {
                 let result_tx = std::sync::Arc::clone(&result_tx);
                 let expected_state = std::sync::Arc::clone(&handler_state);
-                async move { handle_callback(uri, result_tx, &expected_state) }
+                async move { handle_callback(&body, result_tx, &expected_state) }
             }),
         );
 
@@ -1626,21 +1639,72 @@ mod tests {
         assert_eq!(waiter.await.unwrap(), Ok("test-auth-code".to_string()));
     }
 
+    /// A provider answering with `response_mode=form_post` sends the same
+    /// parameters as a form body, in a POST (PR #433 review).
+    async fn post_form(url: &str, body: &str) -> reqwest::Response {
+        reqwest::Client::new()
+            .post(url)
+            .header(reqwest::header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(body.to_string())
+            .send()
+            .await
+            .unwrap()
+    }
+
     #[tokio::test]
-    async fn a_post_is_not_the_callback() {
+    async fn a_form_post_callback_yields_the_authorization_code() {
         let listener = LoopbackListener::bind().await.unwrap();
+        listener.expect_state("state-abc");
         let redirect = listener.redirect_uri.clone();
         let waiter = tokio::spawn(async move { listener.wait("state-abc").await });
 
-        let response = reqwest::Client::new()
-            .post(format!("{redirect}?code=test-auth-code&state=state-abc"))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(response.status(), 405);
+        let response = post_form(&redirect, "code=test-auth-code&state=state-abc").await;
 
-        get(&format!("{redirect}?code=test-auth-code&state=state-abc")).await;
+        assert!(response.status().is_success(), "got {}", response.status());
+        assert_eq!(response.text().await.unwrap(), CALLBACK_SUCCESS_PAGE);
         assert_eq!(waiter.await.unwrap(), Ok("test-auth-code".to_string()));
+    }
+
+    #[tokio::test]
+    async fn a_form_post_callback_with_the_wrong_state_is_refused() {
+        let listener = LoopbackListener::bind().await.unwrap();
+        listener.expect_state("state-abc");
+        let redirect = listener.redirect_uri.clone();
+        let waiter = tokio::spawn(async move { listener.wait("state-abc").await });
+
+        let page = post_form(&redirect, "code=test-auth-code&state=someone-elses").await.text().await.unwrap();
+
+        assert_eq!(page, CALLBACK_NOT_COMPLETED_PAGE);
+        assert_eq!(waiter.await.unwrap(), Err(OidcError::StateMismatch));
+    }
+
+    #[tokio::test]
+    async fn a_form_post_callback_carrying_a_provider_error_is_refused() {
+        let listener = LoopbackListener::bind().await.unwrap();
+        listener.expect_state("state-abc");
+        let redirect = listener.redirect_uri.clone();
+        let waiter = tokio::spawn(async move { listener.wait("state-abc").await });
+
+        let page = post_form(&redirect, "error=access_denied&state=state-abc").await.text().await.unwrap();
+
+        assert_eq!(page, CALLBACK_NOT_COMPLETED_PAGE);
+        assert_eq!(waiter.await.unwrap(), Err(OidcError::ConsentDenied));
+    }
+
+    /// A form post's parameters are in its body. The query string of a POST
+    /// is not read, so a state or code there cannot complete the login.
+    #[tokio::test]
+    async fn a_form_post_reads_its_body_not_its_query_string() {
+        let listener = LoopbackListener::bind().await.unwrap();
+        listener.expect_state("state-abc");
+        let redirect = listener.redirect_uri.clone();
+        let waiter = tokio::spawn(async move { listener.wait("state-abc").await });
+
+        let url = format!("{redirect}?code=test-auth-code&state=state-abc");
+        let page = post_form(&url, "").await.text().await.unwrap();
+
+        assert_eq!(page, CALLBACK_NOT_COMPLETED_PAGE);
+        assert_eq!(waiter.await.unwrap(), Err(OidcError::StateMismatch));
     }
 
     #[tokio::test]

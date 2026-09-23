@@ -43,6 +43,12 @@ MQLens stays valid for `mongosh` and other tools.
   secret, PKCE enabled.
 - **Redirect URI: `http://127.0.0.1/callback` on any port.** MQLens picks a
   free port each time it logs in, so there's no fixed port to configure.
+- **Response mode.** MQLens sends no `response_mode`, so the default
+  applies: a redirect with the code in the query string. If your identity
+  provider is set to post the response instead (`response_mode=form_post`),
+  MQLens accepts that too. Prefer the redirect where you can choose: some
+  browsers restrict or ask about a web page that posts a form to a local
+  address, which a redirect avoids.
 - The access token's **audience** must match the `audience` your MongoDB
   deployment checks. This is the most common reason a login succeeds in the
   browser but the token is then rejected by MongoDB. (With **Use ID token
