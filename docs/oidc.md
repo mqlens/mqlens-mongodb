@@ -140,6 +140,8 @@ The bundled MongoDB Database Tools support OIDC only for automated
 (workload) environments, not browser login. Exporting or importing on an
 OIDC profile **fails immediately**, without contacting the server, and shows
 an explanatory message. Use a SCRAM user for exports and imports instead.
+Browser-login support for export and import is tracked in
+[issue #432](https://github.com/mqlens/mqlens-mongodb/issues/432).
 
 ## AI agents (MCP)
 

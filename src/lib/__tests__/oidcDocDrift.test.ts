@@ -30,4 +30,10 @@ describe('docs/oidc.md troubleshooting coverage', () => {
       ).toBe(true);
     }
   });
+
+  it('links the Database Tools follow-up issue from the export and import section', () => {
+    const doc = readFileSync('docs/oidc.md', 'utf-8');
+    const section = doc.split('## Export and import')[1]?.split('\n## ')[0] ?? '';
+    expect(section).toContain('https://github.com/mqlens/mqlens-mongodb/issues/432');
+  });
 });

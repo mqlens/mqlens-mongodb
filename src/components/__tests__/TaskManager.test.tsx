@@ -115,7 +115,7 @@ describe('TaskManager', () => {
     expect(screen.queryByText('tools.errors.oidcUnsupportedByDatabaseTools')).not.toBeInTheDocument();
     expect(
       screen.getByText(
-        "The bundled MongoDB Database Tools support OIDC only for automated (workload) environments, not browser login, so this dump or restore can't authenticate with an OIDC connection. Use a SCRAM user for dumps and restores instead."
+        "The bundled MongoDB Database Tools support OIDC only for automated (workload) environments, not browser login, so this dump or restore can't authenticate with an OIDC connection. Use a SCRAM user for dumps and restores instead. Browser-login support is tracked in issue #432 (https://github.com/mqlens/mqlens-mongodb/issues/432)."
       )
     ).toBeInTheDocument();
   });
