@@ -37,7 +37,7 @@ tokio = { version = "1", features = ["full"] }
 futures = "0.3"
 uuid = { version = "1", features = ["v4", "serde"] }
 russh = "0.63.1"
-sysinfo = "0.38.4"
+sysinfo = "0.39.6"
 # TLS roots: `rustls-tls` is Mozilla's bundled set (webpki-roots), and
 # `rustls-tls-native-roots` adds the OS certificate store, so an identity
 # provider behind an internal CA, or reached through a TLS-inspecting proxy,
