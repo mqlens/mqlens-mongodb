@@ -2471,6 +2471,10 @@ mod tests {
             extract_target_host_port("mongodb://myhost:not-a-port/mydb"),
             ("myhost".to_string(), 27017)
         );
+        assert_eq!(
+            extract_target_host_port("mongodb+srv://user:pass@srvhost.example.com/mydb"),
+            ("srvhost.example.com".to_string(), 27017)
+        );
     }
 
     #[test]
@@ -2513,6 +2517,25 @@ mod tests {
             out,
             "mongodb://localhost:27019?retryWrites=true&directConnection=true"
         );
+    }
+
+    #[tokio::test]
+    async fn test_rewrite_uri_handles_mongodb_srv_scheme() {
+        use crate::ssh_tunnel::rewrite_uri_hosts;
+        let uri = "mongodb+srv://root:secret@cluster0.abcde.mongodb.net/admin?authMechanism=SCRAM-SHA-256";
+        let out = rewrite_uri_hosts(uri, "127.0.0.1", 27017);
+
+        assert!(
+            out.starts_with("mongodb://root:secret@127.0.0.1:27017"),
+            "rewritten URI should not mangle scheme or credentials, got: {}",
+            out
+        );
+        assert!(!out.contains("mongodb+srv://"), "rewritten URI should not contain inner mongodb+srv scheme");
+        assert!(out.contains("directConnection=true"));
+
+        // Must be parseable by MongoDB driver without password encoding error (#440)
+        let parsed = mongodb::options::ClientOptions::parse(&out).await;
+        assert!(parsed.is_ok(), "ClientOptions::parse failed on rewritten URI: {:?}", parsed.err());
     }
 
     #[test]

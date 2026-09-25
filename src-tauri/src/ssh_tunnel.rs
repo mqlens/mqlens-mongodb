@@ -33,12 +33,17 @@ pub struct SshConfig {
     pub auth: SshAuth,
 }
 
-/// Split a `mongodb://` URI into (scheme_prefix, authority, rest) where `rest`
+/// Split a `mongodb://` or `mongodb+srv://` URI into (scheme_prefix, authority, rest) where `rest`
 /// is the path+query starting at the first '/' or '?' (or empty).
 fn split_uri(uri: &str) -> (&str, &str, &str) {
-    let scheme = "mongodb://";
-    let after = uri.strip_prefix(scheme).unwrap_or(uri);
-    let end = after.find(|c| c == '/' || c == '?').unwrap_or(after.len());
+    let (scheme, after) = if let Some(rest) = uri.strip_prefix("mongodb+srv://") {
+        ("mongodb+srv://", rest)
+    } else if let Some(rest) = uri.strip_prefix("mongodb://") {
+        ("mongodb://", rest)
+    } else {
+        ("mongodb://", uri)
+    };
+    let end = after.find(['/', '?']).unwrap_or(after.len());
     let (authority, rest) = after.split_at(end);
     (scheme, authority, rest)
 }
@@ -63,11 +68,12 @@ pub fn extract_target_host_port(uri: &str) -> (String, u16) {
     }
 }
 
-/// Rewrite a `mongodb://` URI so it points at a locally-forwarded address
+/// Rewrite a `mongodb://` or `mongodb+srv://` URI so it points at a locally-forwarded address
 /// (the SSH tunnel's listener). Forces `directConnection=true` and drops
 /// `replicaSet` (a single forwarded host cannot drive replica-set discovery).
+/// The rewritten URI always uses `mongodb://` as it connects to a local IP/port.
 pub fn rewrite_uri_hosts(uri: &str, local_host: &str, local_port: u16) -> String {
-    let (scheme, authority, rest) = split_uri(uri);
+    let (_scheme, authority, rest) = split_uri(uri);
 
     let creds = match authority.rfind('@') {
         Some(i) => &authority[..=i], // includes the '@'
@@ -101,7 +107,7 @@ pub fn rewrite_uri_hosts(uri: &str, local_host: &str, local_port: u16) -> String
         format!("?{}", params.join("&"))
     };
 
-    format!("{}{}{}{}", scheme, new_authority, path, query_str)
+    format!("{}{}{}{}", "mongodb://", new_authority, path, query_str)
 }
 
 // ── Live SSH tunnel (russh) ────────────────────────────────────────────────
