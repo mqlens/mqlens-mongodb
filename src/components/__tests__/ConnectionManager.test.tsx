@@ -712,6 +712,34 @@ describe('SSH agent auth in the editor (issue #130)', () => {
       expect(savedProfile?.ssh).toEqual(agentProfile.ssh);
     });
   });
+
+  it('displays a warning when SSH tunnel is enabled for a mongodb+srv:// connection (#440)', async () => {
+    const srvProfile = {
+      id: 'srv-1',
+      name: 'Atlas Cluster',
+      uri: 'mongodb+srv://user:pass@cluster0.abcde.mongodb.net/test',
+      ssh: { enabled: true, host: 'jump.example.com', port: 22, user: 'ops', auth: { type: 'agent' } },
+      color_tag: null,
+    };
+    renderWithProfiles([srvProfile]);
+
+    fireEvent.click((await screen.findAllByText('Atlas Cluster'))[0]);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+
+    fireEvent.click(screen.getByRole('button', { name: /ssh tunnel/i }));
+    expect(screen.getByTestId('ssh-srv-warning')).toBeInTheDocument();
+    expect(screen.getByTestId('ssh-srv-warning')).toHaveTextContent(/cannot be used with the current single-host SSH tunnel/i);
+  });
+
+  it('does not display srv warning for a standard mongodb:// connection', async () => {
+    renderWithProfiles([agentProfile]);
+
+    fireEvent.click((await screen.findAllByText('Bastion'))[0]);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+
+    fireEvent.click(screen.getByRole('button', { name: /ssh tunnel/i }));
+    expect(screen.queryByTestId('ssh-srv-warning')).not.toBeInTheDocument();
+  });
 });
 
 describe('ConnectionManager Component', () => {

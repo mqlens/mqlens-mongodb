@@ -2539,6 +2539,22 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_ssh_uri() {
+        use crate::ssh_tunnel::validate_ssh_uri;
+
+        // mongodb+srv:// is rejected with guidance
+        let err = validate_ssh_uri("mongodb+srv://user:pass@cluster0.abcde.mongodb.net/test").unwrap_err();
+        assert_eq!(
+            err,
+            "mongodb+srv:// cannot be used with the current single-host SSH tunnel. Use a standard mongodb:// URI with a specific MongoDB node hostname and port instead."
+        );
+
+        // standard mongodb:// URIs are accepted
+        assert!(validate_ssh_uri("mongodb://localhost:27017").is_ok());
+        assert!(validate_ssh_uri("mongodb://user:pass@node1.example.com:27017/db?ssl=true").is_ok());
+    }
+
+    #[test]
     fn test_ssh_config_serde_roundtrip() {
         use crate::ssh_tunnel::{SshAuth, SshConfig};
         let cfg = SshConfig {
@@ -4166,6 +4182,27 @@ mod tests {
         .await;
         assert!(res3.is_err());
         assert_eq!(failed_phase(&log3), Some(TestPhase::Resolve));
+
+        // mongodb+srv:// with SSH enabled: fails at Parse phase with clear guidance.
+        let log4: Mutex<Vec<PhaseUpdate>> = Mutex::new(Vec::new());
+        let ssh_cfg = crate::ssh_tunnel::SshConfig {
+            enabled: true,
+            host: "ssh.example.com".into(),
+            port: 22,
+            user: "test".into(),
+            auth: crate::ssh_tunnel::SshAuth::Agent,
+        };
+        let res4 = run_connection_test(
+            "mongodb+srv://user:pass@cluster0.abcde.mongodb.net/test",
+            Some(&ssh_cfg),
+            &|u| log4.lock().unwrap().push(u),
+        )
+        .await;
+        assert!(res4.is_err());
+        assert_eq!(failed_phase(&log4), Some(TestPhase::Parse));
+        assert!(
+            res4.unwrap_err().contains("mongodb+srv:// cannot be used with the current single-host SSH tunnel"),
+        );
     }
 
     #[test]

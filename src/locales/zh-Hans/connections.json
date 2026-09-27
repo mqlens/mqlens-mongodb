@@ -245,6 +245,7 @@
     "password": "SSH 密码",
     "port": "SSH 端口",
     "privateKeyPath": "私钥路径",
+    "srvWarning": "mongodb+srv:// 无法与当前的单主机 SSH 隧道一起使用。请改用包含特定 MongoDB 节点主机名和端口的标准 mongodb:// URI。",
     "username": "SSH 用户名"
   },
   "subtitle": "管理已保存的 MongoDB 配置和文件夹",

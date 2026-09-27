@@ -1103,6 +1103,12 @@ pub async fn run_connection_test_with_oidc(
 
     // Phase 1: Parse the URI.
     emit(PhaseUpdate::start(TestPhase::Parse));
+    if ssh_enabled {
+        if let Err(e) = crate::ssh_tunnel::validate_ssh_uri(uri) {
+            emit(PhaseUpdate::fail(TestPhase::Parse, e.clone()));
+            return Err(e);
+        }
+    }
     let normalized_uri = normalize_mongodb_uri_options(uri);
     if let Err(e) = mongodb::options::ClientOptions::parse(&normalized_uri).await {
         let msg = format!("Failed to parse connection URI: {}", e);
@@ -1162,6 +1168,10 @@ pub async fn run_connection_test_with_oidc(
     let mut effective_uri = uri.to_string();
     let mut _tunnel: Option<crate::ssh_tunnel::SshTunnel> = None;
     if ssh_enabled {
+        if let Err(e) = crate::ssh_tunnel::validate_ssh_uri(uri) {
+            emit(PhaseUpdate::fail(TestPhase::Connect, e.clone()));
+            return Err(e);
+        }
         let cfg = ssh.expect("ssh_enabled implies ssh is Some");
         match crate::ssh_tunnel::open_tunnel(cfg, target_host.clone(), target_port).await {
             Ok(t) => {

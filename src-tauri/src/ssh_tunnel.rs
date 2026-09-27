@@ -33,6 +33,16 @@ pub struct SshConfig {
     pub auth: SshAuth,
 }
 
+/// Validate that a connection URI can be used with the SSH tunnel gateway.
+/// The single-target tunnel cannot route to multiple replica-set nodes or preserve
+/// TLS verification for SRV seed domains, so `mongodb+srv://` is rejected (#440).
+pub fn validate_ssh_uri(uri: &str) -> Result<(), String> {
+    if uri.starts_with("mongodb+srv://") {
+        return Err("mongodb+srv:// cannot be used with the current single-host SSH tunnel. Use a standard mongodb:// URI with a specific MongoDB node hostname and port instead.".into());
+    }
+    Ok(())
+}
+
 /// Split a `mongodb://` or `mongodb+srv://` URI into (scheme_prefix, authority, rest) where `rest`
 /// is the path+query starting at the first '/' or '?' (or empty).
 fn split_uri(uri: &str) -> (&str, &str, &str) {

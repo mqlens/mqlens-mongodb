@@ -835,6 +835,7 @@ pub(crate) async fn connect_db_with_login(
     let mut tunnel: Option<ssh_tunnel::SshTunnel> = None;
     if let Some(cfg) = ssh {
         if cfg.enabled {
+            ssh_tunnel::validate_ssh_uri(uri)?;
             let (target_host, target_port) = ssh_tunnel::extract_target_host_port(uri);
             let t = ssh_tunnel::open_tunnel(cfg, target_host, target_port).await?;
             effective_uri = ssh_tunnel::rewrite_uri_hosts(uri, "127.0.0.1", t.local_port);

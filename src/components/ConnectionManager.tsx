@@ -2731,6 +2731,17 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
 
                   {editorState.sshEnabled && (
                     <div className="flex flex-col gap-2 border-t border-border pt-2.5">
+                      {(editorState.topology === 'uri'
+                        ? /^mongodb\+srv:\/\//i.test(editorState.uri.trim())
+                        : editorState.protocol === 'mongodb+srv') && (
+                        <div
+                          data-testid="ssh-srv-warning"
+                          className="flex items-start gap-1.5 rounded border border-amber-500/30 bg-amber-500/10 p-2 text-[11px] text-amber-600 dark:text-amber-400"
+                        >
+                          <AlertCircle size={12} className="mt-0.5 shrink-0" />
+                          <span>{t('ssh.srvWarning')}</span>
+                        </div>
+                      )}
                       <div className="flex gap-2">
                         <div className="flex flex-[2] flex-col gap-1">
                           <Label>{t('ssh.host')}</Label>

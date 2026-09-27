@@ -247,6 +247,7 @@
     "password": "SSH-Passwort",
     "port": "SSH-Port",
     "privateKeyPath": "Pfad zum privaten Schlüssel",
+    "srvWarning": "mongodb+srv:// kann nicht mit dem aktuellen Einzel-Host-SSH-Tunnel verwendet werden. Verwende stattdessen eine standardmäßige mongodb://-URI mit Hostnamen und Port eines bestimmten MongoDB-Knotens.",
     "username": "SSH-Benutzername"
   },
   "subtitle": "Gespeicherte MongoDB-Profile und Ordner verwalten",
