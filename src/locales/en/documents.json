@@ -68,7 +68,8 @@
       "next": "Next",
       "prev": "Prev",
       "schema": "Schema",
-      "updateMany": "Update Many"
+      "updateMany": "Update Many",
+      "updateOrDelete": "Update or Delete"
     },
     "dialogs": {
       "bulkAllWarning_one": "\n\n⚠ This affects the only document in the collection.",

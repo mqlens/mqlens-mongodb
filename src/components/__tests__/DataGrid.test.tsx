@@ -404,13 +404,17 @@ describe('DataGrid — connectionMode (#188 Task 6: disable write UI on read_onl
     onDeleteDocument: () => {},
   };
 
-  it('read_only: disables the Insert / Update Many / Delete Many toolbar buttons with a tooltip', () => {
+  it('read_only: disables Insert and the bulk-write menu with a tooltip', () => {
     render(<DataGrid documents={mockDocuments} {...writeHandlers} connectionMode="read_only" />);
-    for (const testId of ['insert-doc-btn', 'update-many-btn', 'delete-many-btn']) {
-      const btn = screen.getByTestId(testId);
-      expect(btn).toBeDisabled();
-      expect(btn).toHaveAttribute('title', 'Connection is read-only');
-    }
+    const insert = screen.getByTestId('insert-doc-btn');
+    expect(insert).toBeDisabled();
+    expect(insert).toHaveAttribute('title', 'Connection is read-only');
+
+    const bulk = screen.getByTestId('bulk-write-menu-btn');
+    expect(bulk).toBeDisabled();
+    expect(bulk).toHaveAttribute('title', 'Connection is read-only');
+    expect(screen.queryByText('Update Many')).toBeNull();
+    expect(screen.queryByText('Delete Many')).toBeNull();
   });
 
   it('read_only: disables the inline row Edit/Delete buttons (with tooltip) but leaves Copy enabled', () => {
@@ -454,9 +458,12 @@ describe('DataGrid — connectionMode (#188 Task 6: disable write UI on read_onl
 
   it('confirm_destructive: leaves every write control ENABLED (regression guard — only read_only disables)', () => {
     render(<DataGrid documents={mockDocuments} {...writeHandlers} connectionMode="confirm_destructive" />);
-    for (const testId of ['insert-doc-btn', 'update-many-btn', 'delete-many-btn']) {
-      expect(screen.getByTestId(testId)).not.toBeDisabled();
-    }
+    expect(screen.getByTestId('insert-doc-btn')).not.toBeDisabled();
+    expect(screen.getByTestId('bulk-write-menu-btn')).not.toBeDisabled();
+    fireEvent.click(screen.getByTestId('bulk-write-menu-btn'));
+    expect(screen.getByTestId('update-many-btn')).not.toHaveAttribute('data-disabled');
+    expect(screen.getByTestId('delete-many-btn')).not.toHaveAttribute('data-disabled');
+    fireEvent.keyDown(document.body, { key: 'Escape' });
     fireEvent.click(screen.getByRole('button', { name: /table/i }));
     expect(screen.getAllByTestId('edit-doc-btn')[0]).not.toBeDisabled();
     expect(screen.getAllByTestId('delete-doc-btn')[0]).not.toBeDisabled();
@@ -468,13 +475,37 @@ describe('DataGrid — connectionMode (#188 Task 6: disable write UI on read_onl
 
   it('normal (and unset connectionMode): leaves every write control ENABLED', () => {
     const { rerender } = render(<DataGrid documents={mockDocuments} {...writeHandlers} connectionMode="normal" />);
-    for (const testId of ['insert-doc-btn', 'update-many-btn', 'delete-many-btn']) {
-      expect(screen.getByTestId(testId)).not.toBeDisabled();
-    }
+    expect(screen.getByTestId('insert-doc-btn')).not.toBeDisabled();
+    expect(screen.getByTestId('bulk-write-menu-btn')).not.toBeDisabled();
+
     rerender(<DataGrid documents={mockDocuments} {...writeHandlers} />);
-    for (const testId of ['insert-doc-btn', 'update-many-btn', 'delete-many-btn']) {
-      expect(screen.getByTestId(testId)).not.toBeDisabled();
-    }
+    expect(screen.getByTestId('insert-doc-btn')).not.toBeDisabled();
+    expect(screen.getByTestId('bulk-write-menu-btn')).not.toBeDisabled();
+  });
+
+  it('groups Update Many and Delete Many behind one menu without changing their handlers', () => {
+    const onUpdateMany = vi.fn();
+    const onDeleteMany = vi.fn();
+    render(
+      <DataGrid
+        documents={mockDocuments}
+        onUpdateMany={onUpdateMany}
+        onDeleteMany={onDeleteMany}
+      />
+    );
+
+    expect(screen.getByTestId('bulk-write-menu-btn')).toHaveTextContent('Update or Delete');
+    expect(screen.queryByText('Update Many')).toBeNull();
+    expect(screen.queryByText('Delete Many')).toBeNull();
+
+    fireEvent.click(screen.getByTestId('bulk-write-menu-btn'));
+    fireEvent.click(screen.getByTestId('update-many-btn'));
+    expect(onUpdateMany).toHaveBeenCalledTimes(1);
+    expect(onDeleteMany).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId('bulk-write-menu-btn'));
+    fireEvent.click(screen.getByTestId('delete-many-btn'));
+    expect(onDeleteMany).toHaveBeenCalledTimes(1);
   });
 
   // The COLLSCAN "Create Index" suggestion button is a real write
