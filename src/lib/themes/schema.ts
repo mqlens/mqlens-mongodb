@@ -20,6 +20,8 @@ export const TOKEN_NAMES = [
   "destructive-foreground",
   "border",
   "input",
+  "editor-selection",
+  "editor-inactive-selection",
   "ring",
   "success",
   "warning",
