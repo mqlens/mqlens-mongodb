@@ -23,12 +23,14 @@ test.describe('Bulk writes', () => {
   test('a guarded connection asks for the collection name before Delete Many and Update Many', async ({ app, page }) => {
     await openCustomers(app, page, { connection_mode: 'confirm_destructive' });
 
+    await view(page).getByTestId('bulk-write-menu-btn').click();
     await view(page).getByTestId('delete-many-btn').click();
     await page.getByTestId('dialog-input').fill('customers');
     const deleted = await callFrom(app, 'delete_many', () => page.getByTestId('dialog-confirm').click());
     expect(deleted.confirmed).toBe(true);
     await expect(toast(page, 'Deleted')).toBeVisible();
 
+    await view(page).getByTestId('bulk-write-menu-btn').click();
     await view(page).getByTestId('update-many-btn').click();
     await page.getByTestId('dialog-input').fill('{ "$set": { "tier": "Gold" } }');
     await page.getByTestId('dialog-confirm').click();
@@ -42,10 +44,12 @@ test.describe('Bulk writes', () => {
   test('cancelling the last confirmation writes nothing', async ({ app, page }) => {
     await openCustomers(app, page);
 
+    await view(page).getByTestId('bulk-write-menu-btn').click();
     await view(page).getByTestId('delete-many-btn').click();
     await page.getByTestId('dialog-cancel').click();
     await expect(page.getByTestId('dialog-title')).toHaveCount(0);
 
+    await view(page).getByTestId('bulk-write-menu-btn').click();
     await view(page).getByTestId('update-many-btn').click();
     await page.getByTestId('dialog-input').fill('{ "$set": { "tier": "Gold" } }');
     await page.getByTestId('dialog-confirm').click();

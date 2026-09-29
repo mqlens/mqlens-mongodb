@@ -96,10 +96,12 @@ test.describe('Writes', () => {
     await expect(toast(page, 'Failed to delete document: document is locked')).toBeVisible();
 
     await app.failNext('delete_many', 'not authorized to remove');
+    await view(page).getByTestId('bulk-write-menu-btn').click();
     await view(page).getByTestId('delete-many-btn').click();
     await page.getByTestId('dialog-confirm').click();
     await expect(toast(page, 'not authorized to remove')).toBeVisible();
 
+    await view(page).getByTestId('bulk-write-menu-btn').click();
     await view(page).getByTestId('update-many-btn').click();
     await page.getByTestId('dialog-input').fill('[]');
     await page.getByTestId('dialog-confirm').click();

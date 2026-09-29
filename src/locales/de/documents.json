@@ -268,7 +268,8 @@
       "next": "Weiter",
       "prev": "Zurück",
       "schema": "Schema",
-      "updateMany": "Mehrere aktualisieren"
+      "updateMany": "Mehrere aktualisieren",
+      "updateOrDelete": "Aktualisieren oder Löschen"
     },
     "dialogs": {
       "bulkAllWarning_one": "\n\n⚠ Dies betrifft das einzige Dokument in der Collection.",
@@ -368,13 +369,11 @@
       "copyExplainPlan": "Explain-Plan kopieren",
       "copyQueryCode": "Abfragecode kopieren",
       "deleteDocument": "Dokument löschen",
-      "deleteMany": "Alle Dokumente löschen, die dem aktuellen Filter entsprechen",
       "editDocument": "Dokument bearbeiten",
       "expand": "Ausklappen",
       "insert": "Ein neues Dokument einfügen",
       "readOnly": "Verbindung ist schreibgeschützt",
-      "resizeColumn": "Spalte {{label}} anpassen",
-      "updateMany": "Alle Dokumente aktualisieren, die dem aktuellen Filter entsprechen"
+      "resizeColumn": "Spalte {{label}} anpassen"
     },
     "viewModes": {
       "chart": "Diagramm",
