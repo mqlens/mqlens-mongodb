@@ -66,8 +66,7 @@
       "next": "下一页",
       "prev": "上一页",
       "schema": "结构",
-      "updateMany": "批量更新",
-      "updateOrDelete": "更新或删除"
+      "updateMany": "批量更新"
     },
     "dialogs": {
       "bulkAllWarning_other": "\n\n⚠ 此操作会影响该 Collection 中的全部 {{count}} 个文档。",

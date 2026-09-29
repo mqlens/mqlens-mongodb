@@ -25,7 +25,7 @@
     "createIndex": "Index erstellen",
     "createView": "View erstellen",
     "deleteIndex": "Index löschen",
-    "destructiveActions": "Verwalten",
+    "destructiveActions": "Destruktive Aktionen",
     "disconnect": "Trennen",
     "dropCollection": "Collection löschen",
     "dropDatabase": "Datenbank löschen",

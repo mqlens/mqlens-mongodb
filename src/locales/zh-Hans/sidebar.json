@@ -25,7 +25,7 @@
     "createIndex": "创建索引",
     "createView": "创建 View",
     "deleteIndex": "删除索引",
-    "destructiveActions": "管理",
+    "destructiveActions": "危险操作",
     "disconnect": "断开连接",
     "dropCollection": "删除 Collection",
     "dropDatabase": "删除数据库",

@@ -268,8 +268,7 @@
       "next": "Weiter",
       "prev": "Zurück",
       "schema": "Schema",
-      "updateMany": "Mehrere aktualisieren",
-      "updateOrDelete": "Aktualisieren oder Löschen"
+      "updateMany": "Mehrere aktualisieren"
     },
     "dialogs": {
       "bulkAllWarning_one": "\n\n⚠ Dies betrifft das einzige Dokument in der Collection.",
