@@ -11,8 +11,8 @@ vi.mock('../theme/ThemePicker', () => ({
 // Sidebar now uses the in-app dialog system, so it must render inside a provider.
 const render = (ui: ReactElement) => rtlRender(<DialogProvider>{ui}</DialogProvider>);
 
-const openDestructiveActionsMenu = async () => {
-  const trigger = await screen.findByRole('menuitem', { name: 'Destructive actions' });
+const openManageMenu = async () => {
+  const trigger = await screen.findByRole('menuitem', { name: 'Manage' });
   fireEvent.keyDown(trigger, { key: 'ArrowRight' });
   return trigger;
 };
@@ -308,7 +308,7 @@ describe('Sidebar Component', () => {
     fireEvent.contextMenu(indexNode);
     expect(screen.getByText('Copy Index Name')).toBeInTheDocument();
     expect(screen.queryByText('Delete Index')).toBeNull();
-    await openDestructiveActionsMenu();
+    await openManageMenu();
     fireEvent.click(await screen.findByText('Delete Index'));
     expect(handleDeleteIndex).toHaveBeenCalledWith('conn-1', 'sales_db', 'customers', 'email_1');
 
@@ -976,7 +976,7 @@ describe('Sidebar Component', () => {
     // Right-click collection to drop it
     fireEvent.contextMenu(newCollNode);
     expect(screen.queryByText('Drop Collection')).toBeNull();
-    await openDestructiveActionsMenu();
+    await openManageMenu();
     const dropCollOption = await screen.findByText('Drop Collection');
     fireEvent.click(dropCollOption);
 
@@ -1207,7 +1207,7 @@ describe('Sidebar Component', () => {
     expect(screen.queryByText('Validation Rules')).not.toBeInTheDocument();
     expect(screen.getByText('Analyze Schema')).toBeInTheDocument();
     expect(screen.queryByText('Drop View')).toBeNull();
-    await openDestructiveActionsMenu();
+    await openManageMenu();
     expect(await screen.findByText('Drop View')).toBeInTheDocument();
     fireEvent.keyDown(document.body, { key: 'Escape' });
     fireEvent.keyDown(document.body, { key: 'Escape' });
@@ -1387,7 +1387,7 @@ describe('Sidebar Component', () => {
 
     fireEvent.contextMenu(ordersNode);
     expect(screen.queryByText('Drop Collection')).toBeNull();
-    await openDestructiveActionsMenu();
+    await openManageMenu();
     fireEvent.click(await screen.findByText('Drop Collection'));
     await clickConfirm();
     await waitFor(() => {
@@ -1415,7 +1415,7 @@ describe('Sidebar Component', () => {
 
     fireEvent.contextMenu(dbNode);
     expect(screen.queryByText('Drop Database')).toBeNull();
-    await openDestructiveActionsMenu();
+    await openManageMenu();
     fireEvent.click(await screen.findByText('Drop Database'));
     await clickConfirm();
     await waitFor(() => {
@@ -1494,7 +1494,7 @@ describe('Sidebar Component', () => {
     // with confirmed:true.
     fireEvent.contextMenu(ordersNode);
     expect(screen.queryByText('Drop Collection')).toBeNull();
-    await openDestructiveActionsMenu();
+    await openManageMenu();
     fireEvent.click(await screen.findByText('Drop Collection'));
     await typeAndSubmit('not_orders');
     expect(await screen.findByTestId('dialog-error')).toHaveTextContent('Name does not match');
@@ -1531,7 +1531,7 @@ describe('Sidebar Component', () => {
     // with confirmed:true.
     fireEvent.contextMenu(dbNode);
     expect(screen.queryByText('Drop Database')).toBeNull();
-    await openDestructiveActionsMenu();
+    await openManageMenu();
     fireEvent.click(await screen.findByText('Drop Database'));
     await typeAndSubmit('wrong_db');
     expect(await screen.findByTestId('dialog-error')).toHaveTextContent('Name does not match');
