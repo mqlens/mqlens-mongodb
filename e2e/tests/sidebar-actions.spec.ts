@@ -24,6 +24,9 @@ async function connectStaging(app: App, page: Page, profile: Partial<ProfileSeed
 
 async function menu(page: Page, row: ReturnType<Page['getByRole']>, item: string): Promise<void> {
   await row.click({ button: 'right' });
+  if (item.startsWith('Drop ') || item === 'Delete Index') {
+    await page.getByRole('menuitem', { name: 'Manage', exact: true }).press('ArrowRight');
+  }
   await page.getByRole('menuitem', { name: item, exact: true }).click();
 }
 
