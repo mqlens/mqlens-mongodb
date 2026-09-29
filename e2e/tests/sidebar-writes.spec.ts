@@ -11,11 +11,17 @@ const toast = (page: Page, text: string | RegExp) => page.getByTestId('dialog-to
 
 const collectionMenu = async (page: Page, name: string, item: string) => {
   await sidebar(page).getByText(name, { exact: true }).click({ button: 'right' });
+  if (item.startsWith('Drop ')) {
+    await page.getByRole('menuitem', { name: 'Manage', exact: true }).press('ArrowRight');
+  }
   await page.getByRole('menuitem', { name: item, exact: true }).click();
 };
 
 const databaseMenu = async (page: Page, name: string, item: string) => {
   await sidebar(page).getByRole('button', { name: `Database ${name}` }).click({ button: 'right' });
+  if (item.startsWith('Drop ')) {
+    await page.getByRole('menuitem', { name: 'Manage', exact: true }).press('ArrowRight');
+  }
   await page.getByRole('menuitem', { name: item, exact: true }).click();
 };
 

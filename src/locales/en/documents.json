@@ -68,7 +68,8 @@
       "next": "Next",
       "prev": "Prev",
       "schema": "Schema",
-      "updateMany": "Update Many"
+      "updateMany": "Update Many",
+      "updateOrDelete": "Update or Delete"
     },
     "dialogs": {
       "bulkAllWarning_one": "\n\n⚠ This affects the only document in the collection.",
@@ -171,13 +172,11 @@
       "copyQueryCode": "Copy query code",
       "dateTimezone": "Toggle Date display timezone",
       "deleteDocument": "Delete document",
-      "deleteMany": "Delete all documents matching the current filter",
       "editDocument": "Edit document",
       "expand": "Expand",
       "insert": "Insert a new document",
       "readOnly": "Connection is read-only",
-      "resizeColumn": "Resize {{label}} column",
-      "updateMany": "Update all documents matching the current filter"
+      "resizeColumn": "Resize {{label}} column"
     },
     "viewModes": {
       "chart": "Chart",

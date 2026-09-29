@@ -61,6 +61,9 @@ import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from '@/components/ui/context-menu';
@@ -1663,17 +1666,26 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <span>{t('ctx.renameCollection')}</span>
             </ContextMenuItem>
             <ContextMenuSeparator />
-            <ContextMenuItem
-              className={cn(ctxItemClass, 'text-destructive focus:text-destructive')}
-              onClick={() => handleDropCollection(connId, dbName, collName)}
-            >
-              <Trash2 />
-              <span>
-                {(collections[`${connId}/${dbName}`] || []).find((c) => c.name === collName)?.type === 'view'
-                  ? t('ctx.dropView')
-                  : t('ctx.dropCollection')}
-              </span>
-            </ContextMenuItem>
+            <ContextMenuSub>
+              <ContextMenuSubTrigger className={cn(ctxItemClass, 'text-destructive focus:text-destructive')}>
+                <Trash2 />
+                <span>{t('ctx.destructiveActions')}</span>
+                <ChevronRight className="ml-auto" />
+              </ContextMenuSubTrigger>
+              <ContextMenuSubContent>
+                <ContextMenuItem
+                  className={cn(ctxItemClass, 'text-destructive focus:text-destructive')}
+                  onClick={() => handleDropCollection(connId, dbName, collName)}
+                >
+                  <Trash2 />
+                  <span>
+                    {(collections[`${connId}/${dbName}`] || []).find((c) => c.name === collName)?.type === 'view'
+                      ? t('ctx.dropView')
+                      : t('ctx.dropCollection')}
+                  </span>
+                </ContextMenuItem>
+              </ContextMenuSubContent>
+            </ContextMenuSub>
           </ContextMenuContent>
         </ContextMenu>
 
@@ -1748,13 +1760,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           <span>{t('ctx.copyIndexName')}</span>
                         </ContextMenuItem>
                         <ContextMenuSeparator />
-                        <ContextMenuItem
-                          className={cn(ctxItemClass, 'text-destructive focus:text-destructive')}
-                          onClick={() => onDeleteIndex?.(connId, dbName, collName, indexName)}
-                        >
-                          <Trash2 />
-                          <span>{t('ctx.deleteIndex')}</span>
-                        </ContextMenuItem>
+                        <ContextMenuSub>
+                          <ContextMenuSubTrigger className={cn(ctxItemClass, 'text-destructive focus:text-destructive')}>
+                            <Trash2 />
+                            <span>{t('ctx.destructiveActions')}</span>
+                            <ChevronRight className="ml-auto" />
+                          </ContextMenuSubTrigger>
+                          <ContextMenuSubContent>
+                            <ContextMenuItem
+                              className={cn(ctxItemClass, 'text-destructive focus:text-destructive')}
+                              onClick={() => onDeleteIndex?.(connId, dbName, collName, indexName)}
+                            >
+                              <Trash2 />
+                              <span>{t('ctx.deleteIndex')}</span>
+                            </ContextMenuItem>
+                          </ContextMenuSubContent>
+                        </ContextMenuSub>
                       </ContextMenuContent>
                     </ContextMenu>
                   );
@@ -2169,13 +2190,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
                               <span>{t('ctx.generateData')}</span>
                             </ContextMenuItem>
                             <ContextMenuSeparator />
-                            <ContextMenuItem
-                              className={cn(ctxItemClass, 'text-destructive focus:text-destructive')}
-                              onClick={() => handleDropDatabase(conn.id, dbName)}
-                            >
-                              <Trash2 />
-                              <span>{t('ctx.dropDatabase')}</span>
-                            </ContextMenuItem>
+                            <ContextMenuSub>
+                              <ContextMenuSubTrigger className={cn(ctxItemClass, 'text-destructive focus:text-destructive')}>
+                                <Trash2 />
+                                <span>{t('ctx.destructiveActions')}</span>
+                                <ChevronRight className="ml-auto" />
+                              </ContextMenuSubTrigger>
+                              <ContextMenuSubContent>
+                                <ContextMenuItem
+                                  className={cn(ctxItemClass, 'text-destructive focus:text-destructive')}
+                                  onClick={() => handleDropDatabase(conn.id, dbName)}
+                                >
+                                  <Trash2 />
+                                  <span>{t('ctx.dropDatabase')}</span>
+                                </ContextMenuItem>
+                              </ContextMenuSubContent>
+                            </ContextMenuSub>
                           </ContextMenuContent>
                         </ContextMenu>
 
