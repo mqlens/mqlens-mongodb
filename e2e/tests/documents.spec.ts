@@ -123,7 +123,7 @@ test.describe('Documents in a collection', () => {
     await expect(view(page).getByText('Bob Johnson')).toHaveCount(0);
 
     await view(page).getByTestId('bulk-write-menu-btn').click();
-    await view(page).getByTestId('update-many-btn').click();
+    await page.getByTestId('update-many-btn').click();
     await page.getByTestId('dialog-input').fill('{ "$set": { "tier": "Gold" } }');
     await page.getByTestId('dialog-confirm').click();
     await expect(page.getByTestId('dialog-input')).toHaveCount(0);
@@ -144,7 +144,7 @@ test.describe('Documents in a collection', () => {
 
   test('Update Many rejects an update that is not valid JSON, without writing', async ({ app, page }) => {
     await view(page).getByTestId('bulk-write-menu-btn').click();
-    await view(page).getByTestId('update-many-btn').click();
+    await page.getByTestId('update-many-btn').click();
     await page.getByTestId('dialog-input').fill('{ $set: ');
     await page.getByTestId('dialog-confirm').click();
 
@@ -159,7 +159,7 @@ test.describe('Documents in a collection', () => {
     await expect(view(page).getByText('Bob Johnson').first()).toBeVisible();
 
     await view(page).getByTestId('bulk-write-menu-btn').click();
-    await view(page).getByTestId('delete-many-btn').click();
+    await page.getByTestId('delete-many-btn').click();
     await page.getByTestId('dialog-confirm').click();
 
     await expect(view(page).getByText('Bob Johnson')).toHaveCount(0);
