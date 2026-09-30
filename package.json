@@ -80,7 +80,7 @@
     "jsdom": "^29.1.1",
     "monaco-editor": "0.55.1",
     "monocart-coverage-reports": "2.13.0",
-    "typescript": "~5.8.3",
+    "typescript": "~7.0.2",
     "vite": "^8.2.2",
     "vitest": "^4.1.7"
   },
