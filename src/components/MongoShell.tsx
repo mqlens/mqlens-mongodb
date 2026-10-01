@@ -176,7 +176,7 @@ const parseLoose = (source: string, fallback: unknown, t: (key: string, opts?: a
   }
 };
 
-const firstArg = (argText: string) => {
+const splitArgs = (argText: string) => {
   let depth = 0;
   let quote: string | null = null;
   for (let i = 0; i < argText.length; i++) {
@@ -190,10 +190,10 @@ const firstArg = (argText: string) => {
     } else if (ch === '}' || ch === ']' || ch === ')') {
       depth--;
     } else if (ch === ',' && depth === 0) {
-      return argText.slice(0, i);
+      return [argText.slice(0, i), argText.slice(i + 1)];
     }
   }
-  return argText;
+  return [argText];
 };
 
 // mongosh prints with util.inspect, which leaves identifier-like keys bare and
@@ -1134,8 +1134,10 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   ) => {
     const op = calls[0];
     const call = (name: string) => calls.find((candidate) => candidate.name === name);
-    const filter = parseLoose(firstArg(op.argText), {}, t);
+    const [filterArg, projectionArg] = splitArgs(op.argText);
+    const filter = parseLoose(filterArg, {}, t);
     const sort = call('sort') ? parseLoose(call('sort')!.argText, {}, t) : {};
+    const projection = parseLoose(call('projection')?.argText ?? projectionArg ?? '', {}, t);
     const skip = call('skip') ? Number.parseInt(call('skip')!.argText, 10) || 0 : 0;
     const limit = forceLimit ?? (call('limit') ? Number.parseInt(call('limit')!.argText, 10) || 50 : 50);
     const started = performance.now();
@@ -1145,6 +1147,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
       collection: collName,
       filter: JSON.stringify(filter),
       sort: JSON.stringify(sort),
+      projection: JSON.stringify(projection),
       limit,
       skip,
     });
@@ -1339,7 +1342,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
             id: connectionId,
             database: currentDb,
             collection: collName,
-            filter: JSON.stringify(parseLoose(firstArg(calls[0].argText), {}, t)),
+            filter: JSON.stringify(parseLoose(splitArgs(calls[0].argText)[0], {}, t)),
           });
           appendEntries([{ kind: 'value', value: count }, { kind: 'note', text: `${Math.round((performance.now() - started) * 10) / 10} ms` }]);
           setTab('console');

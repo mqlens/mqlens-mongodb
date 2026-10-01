@@ -28,6 +28,13 @@ describe('bsonValueText — what the JSON and tree views display', () => {
     expect(bsonValueText(new Double(1.5))).toBe('Double(1.5)');
   });
 
+  it('can display dates in local time without changing the UTC default', () => {
+    const date = new Date('2026-08-27T10:00:00.000Z');
+    expect(bsonValueText(date)).toBe('ISODate("2026-08-27T10:00:00.000Z")');
+    const local = bsonValueText(date, { dateTimezone: 'local' });
+    expect(local).toMatch(/^ISODate\("\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.000[+-]\d{2}:\d{2}"\)$/);
+  });
+
   it('quotes and escapes strings the way the view renders them', () => {
     expect(bsonValueText('Alice')).toBe('"Alice"');
     // A newline is on screen as the two characters \n, so that is what a search
@@ -60,7 +67,10 @@ describe('bsonCallOf', () => {
     expect(bsonCallOf(new ObjectId('507f1f77bcf86cd799439011'))).toEqual({
       ctor: 'ObjectId',
       args: [{ text: '"507f1f77bcf86cd799439011"', kind: 'string' }],
+      title: '2012-10-17T21:13:27.000Z',
     });
+    expect(bsonCallOf(new ObjectId('507f1f77bcf86cd799439011'), { dateTimezone: 'local' })?.title)
+      .toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.000[+-]\d{2}:\d{2}$/);
     expect(bsonCallOf(Long.fromString('42'))).toEqual({
       ctor: 'NumberLong',
       args: [{ text: '42', kind: 'number' }],
@@ -97,6 +107,7 @@ describe('plainBsonShape — the table view’s extended-JSON shapes', () => {
     expect(plainBsonShape({ $oid: '507f1f77bcf86cd799439011' })).toEqual({
       text: '507f1f77bcf86cd799439011',
       kind: 'string',
+      title: '2012-10-17T21:13:27.000Z',
     });
     expect(plainBsonShape({ $date: '2026-08-27T10:00:00.000Z' })).toEqual({
       text: '2026-08-27T10:00:00.000Z',
@@ -110,6 +121,26 @@ describe('plainBsonShape — the table view’s extended-JSON shapes', () => {
     expect(plainBsonShape({ $numberDecimal: '1.25' })).toEqual({ text: '1.25', kind: 'number' });
     expect(plainBsonShape({ $numberInt: '7' })).toEqual({ text: '7', kind: 'number' });
     expect(plainBsonShape({ $numberDouble: '1.5' })).toEqual({ text: '1.5', kind: 'number' });
+  });
+
+  it('formats table dates locally and falls back safely for malformed dates', () => {
+    const localString = plainBsonShape(
+      { $date: '2026-08-27T10:00:00.000Z' },
+      { dateTimezone: 'local' },
+    );
+    expect(localString?.text).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.000[+-]\d{2}:\d{2}$/);
+
+    const localLong = plainBsonShape(
+      { $date: { $numberLong: '0' } },
+      { dateTimezone: 'local' },
+    );
+    expect(localLong?.text).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.000[+-]\d{2}:\d{2}$/);
+
+    expect(plainBsonShape({ $date: 'invalid' })).toEqual({ text: 'invalid', kind: 'string' });
+    expect(plainBsonShape({ $date: { $numberLong: 'abc' } })).toEqual({
+      text: 'abc',
+      kind: 'string',
+    });
   });
 
   it('is null for an ordinary object', () => {
@@ -129,6 +160,15 @@ describe('tableValueText — what the table view displays', () => {
     expect(tableValueText({ $oid: '507f1f77bcf86cd799439011' })).toBe(
       '507f1f77bcf86cd799439011',
     );
+  });
+
+  it('uses the local date display for table text too', () => {
+    expect(
+      tableValueText(
+        { $date: '2026-08-27T10:00:00.000Z' },
+        { dateTimezone: 'local' },
+      ),
+    ).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.000[+-]\d{2}:\d{2}$/);
   });
 
   it('still calls a constructor when the value is a real BSON instance', () => {

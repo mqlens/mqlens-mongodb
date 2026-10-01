@@ -35,8 +35,32 @@ test.describe('mongosh commands', () => {
     await openShell(page);
     await expect(transcript(page)).toContainText('sales_db> show collections');
 
-    const found = await callFrom(app, 'execute_mql_query', () => run(page, "db.customers.find({ tier: 'Premium' }, { name: 1 })"));
+    const found = await callFrom(app, 'execute_mql_query', () =>
+      run(page, "db.customers.find({ tier: 'Premium' }).skip(0).limit(50).projection({ name: 1 })")
+    );
     expect(JSON.parse(String(found.filter))).toEqual({ tier: 'Premium' });
+    expect(JSON.parse(String(found.projection))).toEqual({ name: 1 });
+    expect(found).toMatchObject({ skip: 0, limit: 50 });
+
+    await shell(page).getByRole('tab', { name: 'Console' }).click();
+    const positional = await callFrom(app, 'execute_mql_query', () =>
+      run(page, "db.customers.find({ tier: 'Premium' }, { name: 1 })")
+    );
+    expect(JSON.parse(String(positional.projection))).toEqual({ name: 1 });
+
+    await shell(page).getByRole('tab', { name: 'Console' }).click();
+    const one = await callFrom(app, 'execute_mql_query', () =>
+      run(page, 'db.customers.findOne().projection({ name: 1 })')
+    );
+    expect(JSON.parse(String(one.projection))).toEqual({ name: 1 });
+    expect(one).toMatchObject({ limit: 1 });
+
+    await shell(page).getByRole('tab', { name: 'Console' }).click();
+    const onePositional = await callFrom(app, 'execute_mql_query', () =>
+      run(page, 'db.customers.findOne({}, { name: 1 })')
+    );
+    expect(JSON.parse(String(onePositional.projection))).toEqual({ name: 1 });
+    expect(onePositional).toMatchObject({ limit: 1 });
 
     await shell(page).getByRole('tab', { name: 'Console' }).click();
     await run(page, 'db.customers.find({ tier: ObjectId("x") })');

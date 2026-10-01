@@ -145,6 +145,7 @@
       "fields_other": "{ {{count}} fields }",
       "generatingQueryPlan": "Generating query plan...",
       "key": "Key",
+      "local": "Local",
       "page": "Page {{page}}",
       "pageOf": "Page {{page}} / {{totalPages}}",
       "perPageOption": "{{size}} / page",
@@ -153,6 +154,7 @@
       "showingRange": "showing {{from}}–{{to}}",
       "streamingDocuments": "Streaming documents asynchronously...",
       "type": "Type",
+      "utc": "UTC",
       "value": "Value"
     },
     "tabs": {
@@ -168,6 +170,7 @@
       "copyDocument": "Copy document",
       "copyExplainPlan": "Copy Explain Plan",
       "copyQueryCode": "Copy query code",
+      "dateTimezone": "Toggle Date display timezone",
       "deleteDocument": "Delete document",
       "editDocument": "Edit document",
       "expand": "Expand",

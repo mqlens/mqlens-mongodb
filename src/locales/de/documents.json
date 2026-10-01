@@ -353,7 +353,9 @@
       "showingRange": "zeige {{from}}–{{to}}",
       "streamingDocuments": "Dokumente werden asynchron gestreamt...",
       "type": "Typ",
-      "value": "Wert"
+      "value": "Wert",
+      "utc": "UTC",
+      "local": "Lokal"
     },
     "tabs": {
       "explainPlan": "Explain-Plan",
@@ -373,7 +375,8 @@
       "expand": "Ausklappen",
       "insert": "Ein neues Dokument einfügen",
       "readOnly": "Verbindung ist schreibgeschützt",
-      "resizeColumn": "Spalte {{label}} anpassen"
+      "resizeColumn": "Spalte {{label}} anpassen",
+      "dateTimezone": "Zeitzone für Datumsanzeige umschalten"
     },
     "viewModes": {
       "chart": "Diagramm",
