@@ -29,21 +29,19 @@ export function registerMongoCompletionProvider(monaco: Monaco) {
   // Drop the DOM library from the JS language service so the mongosh editor
   // doesn't suggest browser types (Headers, HTMLElement, …). Keep core
   // JavaScript (ES) + our Mongo completions only.
-  const ts = (monaco.languages as unknown as { typescript?: any }).typescript;
-  if (ts?.javascriptDefaults) {
-    const d = ts.javascriptDefaults;
-    d.setCompilerOptions({ ...d.getCompilerOptions(), lib: ['es2020'], allowNonTsExtensions: true });
-  }
+  //
+  // The language services are top-level namespaces (`monaco.typescript`,
+  // `monaco.json`). Monaco 0.55 also aliased them under `monaco.languages`;
+  // 0.56 dropped the alias, and reading it then quietly configured nothing.
+  const d = monaco.typescript.javascriptDefaults;
+  d.setCompilerOptions({ ...d.getCompilerOptions(), lib: ['es2020'], allowNonTsExtensions: true });
 
   // Belt-and-braces: also disable the built-in JSON language completions
   // ($schema, etc.) in case any editor still uses JSON mode. The query editors
   // themselves now run in JavaScript mode with diagnostics turned off (see
   // QueryEditor), since query text is mongosh-style, not strict JSON.
-  const json = (monaco.languages as unknown as { json?: any }).json;
-  if (json?.jsonDefaults) {
-    const jd = json.jsonDefaults;
-    jd.setModeConfiguration({ ...jd.modeConfiguration, completionItems: false });
-  }
+  const jd = monaco.json.jsonDefaults;
+  jd.setModeConfiguration({ ...jd.modeConfiguration, completionItems: false });
 
   const provider = {
     // Word-starting characters: '.' (db.<coll>, field paths), '$' (operators),

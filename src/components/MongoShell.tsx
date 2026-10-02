@@ -1621,7 +1621,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
               // Explicit here so the behavior is intentional and independent of
               // whether a query editor (which disables diagnostics globally) has
               // mounted first.
-              monaco.languages.typescript?.javascriptDefaults?.setDiagnosticsOptions({
+              monaco.typescript.javascriptDefaults.setDiagnosticsOptions({
                 noSemanticValidation: true,
                 noSyntaxValidation: true,
                 noSuggestionDiagnostics: true,
