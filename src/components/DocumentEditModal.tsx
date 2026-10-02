@@ -206,7 +206,7 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
                 suggestOnTriggerCharacters: false,
                 wordBasedSuggestions: 'off',
                 parameterHints: { enabled: false },
-                hover: { enabled: false },
+                hover: { enabled: 'off' },
                 readOnly: frozen,
               }}
             />

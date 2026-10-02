@@ -4,20 +4,20 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // which copy the loader hands out. The workers are stand-ins too: jsdom has no
 // Worker, and what matters is which one each language service gets.
 vi.mock('monaco-editor', () => ({ editor: {}, languages: {}, typescript: {}, json: {} }));
-vi.mock('monaco-editor/esm/vs/editor/editor.worker.js?worker', () => ({
+vi.mock('monaco-editor/editor/editor.worker.js?worker', () => ({
   default: class EditorWorker {},
 }));
-vi.mock('monaco-editor/esm/vs/language/json/json.worker.js?worker', () => ({
+vi.mock('monaco-editor/languages/features/json/json.worker.js?worker', () => ({
   default: class JsonWorker {},
 }));
-vi.mock('monaco-editor/esm/vs/language/typescript/ts.worker.js?worker', () => ({
+vi.mock('monaco-editor/languages/features/typescript/ts.worker.js?worker', () => ({
   default: class TsWorker {},
 }));
 
 import * as bundledMonaco from 'monaco-editor';
-import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker.js?worker';
-import JsonWorker from 'monaco-editor/esm/vs/language/json/json.worker.js?worker';
-import TsWorker from 'monaco-editor/esm/vs/language/typescript/ts.worker.js?worker';
+import EditorWorker from 'monaco-editor/editor/editor.worker.js?worker';
+import JsonWorker from 'monaco-editor/languages/features/json/json.worker.js?worker';
+import TsWorker from 'monaco-editor/languages/features/typescript/ts.worker.js?worker';
 
 describe('monacoSetup', () => {
   beforeEach(() => {

@@ -54,7 +54,7 @@
     "cmdk": "^1.1.1",
     "i18next": "^26.4.0",
     "lucide-react": "^1.34.0",
-    "monaco-editor": "0.55.1",
+    "monaco-editor": "0.57.0",
     "mongodb-query-parser": "^5.0.1",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
