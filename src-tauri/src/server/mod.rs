@@ -88,6 +88,16 @@ impl ServerRuntime {
         Ok(())
     }
 
+    /// Forgets a remote connection; nothing for a local id.
+    pub(crate) fn forget_remote(&self, id: &str) -> Result<(), String> {
+        let mut remotes = self
+            .remotes
+            .lock()
+            .map_err(|_| "internal state lock poisoned".to_string())?;
+        remotes.remove(id);
+        Ok(())
+    }
+
     /// The remote connection behind a desktop id, if it is one.
     pub(crate) fn remote(&self, id: &str) -> Result<Option<Arc<remote::RemoteConn>>, String> {
         let remotes = self

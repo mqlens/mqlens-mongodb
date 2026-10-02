@@ -264,6 +264,8 @@ pub(crate) async fn server_connect_impl(
     state.server.add_remote(RemoteConn {
         desktop_id: id.clone(),
         account_id: account.id.clone(),
+        account_name: account.name.clone(),
+        server_url: account.url.clone(),
         remote_id: remote_id.to_string(),
         op_classes: op_classes.clone(),
         features: capabilities.features,

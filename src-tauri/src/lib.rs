@@ -946,6 +946,9 @@ pub async fn disconnect_db_impl(state: &AppState, id: &str) -> Result<(), String
         let mut meta = state.connection_meta.lock_safe()?;
         meta.remove(id);
     }
+    // A connection made through an MQLens Server has no driver client to
+    // drop; what makes it routable goes instead.
+    state.server.forget_remote(id)?;
     // A human disconnecting (Sidebar's onDisconnect -> this command) an
     // agent-opened connection must also drop it from the MCP server's own
     // `session_connections` bookkeeping (final whole-branch review fix
@@ -994,8 +997,17 @@ pub fn connection_list_impl(state: &AppState) -> Result<Vec<ConnectionEntry>, St
     let meta = state.connection_meta.lock_safe()?;
     let mut list: Vec<ConnectionEntry> = meta
         .iter()
-        .map(|(id, m)| ConnectionEntry { id: id.clone(), profile_id: m.profile_id.clone(), name: m.name.clone(), via_mcp: m.via_mcp, mode: m.mode })
-        .collect();
+        .map(|(id, m)| {
+            Ok(ConnectionEntry {
+                id: id.clone(),
+                profile_id: m.profile_id.clone(),
+                name: m.name.clone(),
+                via_mcp: m.via_mcp,
+                mode: m.mode,
+                server: state.server.remote(id)?.map(|conn| conn.info()),
+            })
+        })
+        .collect::<Result<_, String>>()?;
     list.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(list)
 }
