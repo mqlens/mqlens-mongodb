@@ -163,6 +163,7 @@ const LOCAL_COMMANDS: &[&str] = &[
     "server_sign_in",
     "server_sign_out",
     "server_list_connections",
+    "server_connect", // connects through the server; no data touched yet
     "test_connection_uri", // ephemeral test connection, never tracked in connection_meta
     "load_app_settings",
     "save_app_settings",

@@ -3429,6 +3429,17 @@ async fn server_list_connections(
 }
 
 #[tauri::command]
+async fn server_connect(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    account_id: String,
+    remote_id: String,
+) -> Result<server::commands::ServerConnectResult, String> {
+    let path = connections::get_server_accounts_path(&app_handle);
+    server::commands::server_connect_impl(&state, &path, &account_id, &remote_id).await
+}
+
+#[tauri::command]
 async fn load_app_settings(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
@@ -4277,6 +4288,7 @@ pub fn run() {
             server_sign_in,
             server_sign_out,
             server_list_connections,
+            server_connect,
             connections::test_connection_uri,
             load_app_settings,
             save_app_settings,
