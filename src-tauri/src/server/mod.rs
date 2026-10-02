@@ -19,6 +19,7 @@ pub(crate) mod errors;
 pub(crate) mod fake;
 pub(crate) mod pb;
 pub(crate) mod remote;
+pub(crate) mod routes;
 pub(crate) mod session;
 
 use session::{AccountSession, KeySource, TokenStore};
