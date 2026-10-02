@@ -41,7 +41,12 @@ async fn list_databases_impl_inner(state: &AppState, id: &str) -> Result<Vec<Str
         ]);
     }
 
-    let client = crate::require_real_client(state, id)?;
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            return crate::server::ops::metadata::list_databases(state, &conn).await;
+        }
+    };
 
     let dbs = client
         .list_database_names()
@@ -105,7 +110,12 @@ async fn list_collections_impl_inner(
             .collect());
     }
 
-    let client = crate::require_real_client(state, id)?;
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            return crate::server::ops::metadata::list_collections(state, &conn, db).await;
+        }
+    };
 
     let database = client.database(db);
     match full_collection_specs(&database).await {
@@ -219,7 +229,12 @@ async fn list_indexes_impl_inner(
         return Ok(mock_indexes.get(&key).unwrap().clone());
     }
 
-    let client = crate::require_real_client(state, id)?;
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            return crate::server::ops::metadata::list_indexes(state, &conn, db, collection).await;
+        }
+    };
 
     let database = client.database(db);
     let coll = database.collection::<mongodb::bson::Document>(collection);

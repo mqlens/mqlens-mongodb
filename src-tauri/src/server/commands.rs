@@ -52,7 +52,7 @@ pub(crate) struct SignOutResult {
     pub ended_on_server: bool,
 }
 
-fn token_store(state: &AppState, path: &Path) -> Arc<dyn TokenStore> {
+pub(crate) fn token_store(state: &AppState, path: &Path) -> Arc<dyn TokenStore> {
     Arc::new(FileTokenStore::new(
         path.to_path_buf(),
         key_source(state.vault_key.clone()),
@@ -264,6 +264,7 @@ pub(crate) async fn server_connect_impl(
     state.server.add_remote(RemoteConn {
         desktop_id: id.clone(),
         account_id: account.id.clone(),
+        accounts_path: path.to_path_buf(),
         account_name: account.name.clone(),
         server_url: account.url.clone(),
         remote_id: remote_id.to_string(),

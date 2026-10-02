@@ -13,6 +13,8 @@ pub(crate) struct RemoteConn {
     /// The desktop's id for it, as a local connection has one.
     pub desktop_id: String,
     pub account_id: String,
+    /// The accounts file the account is stored in, to resume its session.
+    pub accounts_path: std::path::PathBuf,
     pub account_name: String,
     /// The account's MQLens Server URL.
     pub server_url: String,
@@ -96,6 +98,7 @@ mod tests {
         RemoteConn {
             desktop_id: id.to_string(),
             account_id: "account".to_string(),
+            accounts_path: std::path::PathBuf::new(),
             account_name: "Acme".to_string(),
             server_url: "https://mqlens.acme.test".to_string(),
             remote_id: format!("srv-{id}"),
@@ -230,12 +233,12 @@ mod tests {
             crate::require_real_client(&state, "r1"),
         );
         assert_not_available(
-            "get_mongodb_version",
-            crate::db::version::get_mongodb_version_impl(&state, "r1").await,
+            "count_documents",
+            crate::db::query::count_documents_impl(&state, "r1", "db", "c", "{}").await,
         );
         assert_not_available(
-            "list_databases",
-            crate::db::metadata::list_databases_impl(&state, "r1").await,
+            "db_stats",
+            crate::db::stats::db_stats_impl(&state, "r1", "db").await,
         );
         assert_not_available(
             "resolve_conn_uri",

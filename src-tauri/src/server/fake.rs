@@ -25,10 +25,11 @@ use crate::server::pb::mqlens::v1::{
     RefreshRequest, WhoAmIRequest, WhoAmIResponse,
 };
 use crate::server::pb::mqlens::v1::{
-    ConnectionCapabilities, CreateIndexRequest, DropIndexRequest, GetCapabilitiesRequest,
-    GetCapabilitiesResponse, ListCollectionsRequest, ListCollectionsResponse, ListDatabasesRequest,
-    ListDatabasesResponse, ListIndexesRequest, ListIndexesResponse, MetadataAck,
-    MongoVersionRequest, MongoVersionResponse,
+    CollectionInfo as PbCollectionInfo, ConnectionCapabilities, CreateIndexRequest,
+    DropIndexRequest, GetCapabilitiesRequest, GetCapabilitiesResponse, IndexInfo as PbIndexInfo,
+    ListCollectionsRequest, ListCollectionsResponse, ListDatabasesRequest, ListDatabasesResponse,
+    ListIndexesRequest, ListIndexesResponse, MetadataAck, MongoVersionRequest,
+    MongoVersionResponse,
 };
 use crate::server::session::{unix_now, AccountSession, FileTokenStore, TokenStore};
 use std::collections::{HashMap, HashSet};
@@ -78,6 +79,13 @@ pub(crate) struct FakeState {
     pub features: Vec<String>,
     /// A code MongoVersion fails with, to play an unreachable deployment.
     pub version_failure: Option<Code>,
+    /// Procedures GetCapabilities announces.
+    pub procedures: Vec<String>,
+    /// What the metadata procedures answer, for any connection the caller
+    /// can reach.
+    pub databases: Vec<String>,
+    pub collections: Vec<PbCollectionInfo>,
+    pub indexes: Vec<PbIndexInfo>,
     pub logins: u32,
     pub refreshes: u32,
     pub logouts: u32,
@@ -127,6 +135,20 @@ impl FakeState {
     fn revoke_family(&mut self, family: u64) {
         for record in self.refresh.values_mut().filter(|r| r.family == family) {
             record.revoked = true;
+        }
+    }
+
+    /// A signed-in caller asking about a connection it can reach.
+    fn authorize_connection<T>(
+        &self,
+        request: &Request<T>,
+        connection_id: &str,
+    ) -> Result<(), Status> {
+        self.authenticate(request)?;
+        if self.connections.iter().any(|c| c.id == connection_id) {
+            Ok(())
+        } else {
+            Err(Status::not_found("connection not found"))
         }
     }
 
@@ -188,6 +210,50 @@ impl Fake {
                 }],
                 features: vec!["documents.raw_bson".to_string()],
                 version_failure: None,
+                procedures: [
+                    "MetadataService/ListDatabases",
+                    "MetadataService/ListCollections",
+                    "MetadataService/ListIndexes",
+                    "MetadataService/MongoVersion",
+                ]
+                .iter()
+                .map(|p| format!("/mqlens.v1.{p}"))
+                .collect(),
+                databases: vec!["admin".to_string(), "orders".to_string()],
+                collections: [
+                    ("customers", "collection"),
+                    ("recent", "view"),
+                    ("metrics", "timeseries"),
+                    // A server that could not tell the type.
+                    ("legacy", ""),
+                ]
+                .iter()
+                .map(|(name, kind)| PbCollectionInfo {
+                    name: name.to_string(),
+                    r#type: kind.to_string(),
+                })
+                .collect(),
+                indexes: vec![
+                    PbIndexInfo {
+                        name: "_id_".to_string(),
+                        keys_json: r#"{"_id":{"$numberInt":"1"}}"#.to_string(),
+                        unique: false,
+                        sparse: false,
+                    },
+                    PbIndexInfo {
+                        name: "z_1_a_-1".to_string(),
+                        keys_json: r#"{"z":{"$numberInt":"1"},"a":{"$numberInt":"-1"}}"#
+                            .to_string(),
+                        unique: true,
+                        sparse: true,
+                    },
+                    PbIndexInfo {
+                        name: "loc_2dsphere".to_string(),
+                        keys_json: r#"{"loc":"2dsphere"}"#.to_string(),
+                        unique: false,
+                        sparse: false,
+                    },
+                ],
                 logins: 0,
                 refreshes: 0,
                 logouts: 0,
@@ -376,7 +442,7 @@ impl CapabilityService for Fake {
             .collect();
         Ok(Response::new(GetCapabilitiesResponse {
             server_version: "fake".to_string(),
-            procedures: Vec::new(),
+            procedures: state.procedures.clone(),
             features: state.features.clone(),
             principal: Some(principal()),
             connections,
@@ -389,16 +455,24 @@ impl CapabilityService for Fake {
 impl MetadataService for Fake {
     async fn list_databases(
         &self,
-        _request: Request<ListDatabasesRequest>,
+        request: Request<ListDatabasesRequest>,
     ) -> Result<Response<ListDatabasesResponse>, Status> {
-        Err(Status::unimplemented("ListDatabases is not implemented"))
+        let state = self.state.lock().unwrap();
+        state.authorize_connection(&request, &request.get_ref().connection_id)?;
+        Ok(Response::new(ListDatabasesResponse {
+            databases: state.databases.clone(),
+        }))
     }
 
     async fn list_collections(
         &self,
-        _request: Request<ListCollectionsRequest>,
+        request: Request<ListCollectionsRequest>,
     ) -> Result<Response<ListCollectionsResponse>, Status> {
-        Err(Status::unimplemented("ListCollections is not implemented"))
+        let state = self.state.lock().unwrap();
+        state.authorize_connection(&request, &request.get_ref().connection_id)?;
+        Ok(Response::new(ListCollectionsResponse {
+            collections: state.collections.clone(),
+        }))
     }
 
     async fn mongo_version(
@@ -424,9 +498,13 @@ impl MetadataService for Fake {
 
     async fn list_indexes(
         &self,
-        _request: Request<ListIndexesRequest>,
+        request: Request<ListIndexesRequest>,
     ) -> Result<Response<ListIndexesResponse>, Status> {
-        Err(Status::unimplemented("ListIndexes is not implemented"))
+        let state = self.state.lock().unwrap();
+        state.authorize_connection(&request, &request.get_ref().connection_id)?;
+        Ok(Response::new(ListIndexesResponse {
+            indexes: state.indexes.clone(),
+        }))
     }
 
     async fn create_index(

@@ -15,7 +15,12 @@ pub async fn get_mongodb_version_impl(state: &AppState, id: &str) -> Result<Stri
         return Ok("7.0.5".to_string());
     }
 
-    let client = crate::require_real_client(state, id)?;
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            return crate::server::ops::metadata::mongo_version(state, &conn).await;
+        }
+    };
 
     let db = client.database("admin");
     let result = db

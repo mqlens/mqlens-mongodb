@@ -71,7 +71,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
             procedures: &["/mqlens.v1.MetadataService/MongoVersion"],
             class: OpClass::Read,
             features: &[],
-            adapter: false,
+            adapter: true,
         },
     },
     CommandRoute {
@@ -80,7 +80,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
             procedures: &["/mqlens.v1.MetadataService/ListDatabases"],
             class: OpClass::Read,
             features: &[],
-            adapter: false,
+            adapter: true,
         },
     },
     CommandRoute {
@@ -89,7 +89,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
             procedures: &["/mqlens.v1.MetadataService/ListCollections"],
             class: OpClass::Read,
             features: &[],
-            adapter: false,
+            adapter: true,
         },
     },
     CommandRoute {
@@ -98,7 +98,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
             procedures: &["/mqlens.v1.MetadataService/ListIndexes"],
             class: OpClass::Read,
             features: &[],
-            adapter: false,
+            adapter: true,
         },
     },
     CommandRoute {
@@ -590,20 +590,50 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
 /// has, by procedures and features the server announced, for a user with the
 /// op class it needs. Deferred commands never can.
 pub(crate) fn command_available(route: &CommandRoute, conn: &RemoteConn) -> bool {
-    match route.serve {
-        Serve::Deferred { .. } => false,
+    check(route, conn).is_ok()
+}
+
+/// Why `route` cannot run on `conn`, if it cannot: in words the user can
+/// act on, whether that means waiting for the desktop, a newer server or a
+/// different role.
+pub(crate) fn check(route: &CommandRoute, conn: &RemoteConn) -> Result<(), String> {
+    let (procedures, class, features) = match route.serve {
+        Serve::Deferred { reason } => return Err(reason.to_string()),
+        Serve::Rpc { adapter: false, .. } => {
+            return Err(crate::server::remote::NOT_SERVED.to_string())
+        }
         Serve::Rpc {
             procedures,
             class,
             features,
-            adapter,
-        } => {
-            let has = |list: &[String], item: &str| list.iter().any(|x| x == item);
-            adapter
-                && has(&conn.op_classes, class.as_str())
-                && procedures.iter().all(|p| has(&conn.procedures, p))
-                && features.iter().all(|f| has(&conn.features, f))
-        }
+            adapter: true,
+        } => (procedures, class, features),
+    };
+    let has = |list: &[String], item: &str| list.iter().any(|x| x == item);
+    if let Some(missing) = procedures.iter().find(|p| !has(&conn.procedures, p)) {
+        return Err(format!(
+            "This MQLens Server does not offer {missing}; it may need updating"
+        ));
+    }
+    if let Some(missing) = features.iter().find(|f| !has(&conn.features, f)) {
+        return Err(format!(
+            "This MQLens Server does not support {missing} yet; it may need updating"
+        ));
+    }
+    if !has(&conn.op_classes, class.as_str()) {
+        return Err(format!(
+            "Your role on this MQLens Server connection does not allow {} operations",
+            class.as_str()
+        ));
+    }
+    Ok(())
+}
+
+/// `check` for the route of `command`, which must have one.
+pub(crate) fn require(command: &str, conn: &RemoteConn) -> Result<(), String> {
+    match ROUTES.iter().find(|route| route.command == command) {
+        Some(route) => check(route, conn),
+        None => Err(crate::server::remote::NOT_SERVED.to_string()),
     }
 }
 
@@ -653,6 +683,7 @@ mod tests {
             .add_remote(RemoteConn {
                 desktop_id: id.to_string(),
                 account_id: "account".to_string(),
+                accounts_path: std::path::PathBuf::new(),
                 account_name: "Acme".to_string(),
                 server_url: "https://mqlens.acme.test".to_string(),
                 remote_id: format!("srv-{id}"),
@@ -669,6 +700,7 @@ mod tests {
         RemoteConn {
             desktop_id: "r1".to_string(),
             account_id: "account".to_string(),
+            accounts_path: std::path::PathBuf::new(),
             account_name: "Acme".to_string(),
             server_url: "https://mqlens.acme.test".to_string(),
             remote_id: "srv-r1".to_string(),
@@ -738,10 +770,43 @@ mod tests {
         assert!(!command_available(&deferred, &all), "a deferred command");
     }
 
-    // No command has a server adapter yet, so a remote connection, however
-    // capable, can run none of them.
+    // Each condition that fails says which, so the user knows whether to ask
+    // for a role or for a newer server.
     #[test]
-    fn every_command_is_blocked_until_its_adapter_lands() {
+    fn an_unavailable_command_says_why() {
+        let route = CommandRoute {
+            command: "update_many",
+            serve: Serve::Rpc {
+                procedures: &["/mqlens.v1.WriteService/UpdateMany"],
+                class: OpClass::Write,
+                features: &["writes.thing"],
+                adapter: true,
+            },
+        };
+        let all = |classes: &[&str], features: &[&str], procedures: &[&str]| {
+            check(&route, &conn(classes, features, procedures))
+        };
+        let procedure = ["/mqlens.v1.WriteService/UpdateMany"];
+
+        assert_eq!(
+            all(&["read", "write"], &["writes.thing"], &procedure),
+            Ok(())
+        );
+        let err = all(&["read", "write"], &["writes.thing"], &[]).unwrap_err();
+        assert!(
+            err.contains("does not offer /mqlens.v1.WriteService/UpdateMany"),
+            "{err}"
+        );
+        let err = all(&["read", "write"], &[], &procedure).unwrap_err();
+        assert!(err.contains("does not support writes.thing"), "{err}");
+        let err = all(&["read"], &["writes.thing"], &procedure).unwrap_err();
+        assert!(err.contains("does not allow write operations"), "{err}");
+    }
+
+    // A connection that has everything is blocked exactly where the desktop
+    // has no adapter yet, and for deferred commands.
+    #[test]
+    fn a_capable_connection_is_blocked_only_without_an_adapter() {
         let every_procedure: Vec<&str> = ROUTES
             .iter()
             .flat_map(|route| match route.serve {
@@ -761,7 +826,12 @@ mod tests {
             ],
             &every_procedure,
         );
-        assert_eq!(blocked_commands(&capable).len(), ROUTES.len());
+        let without_adapter: Vec<&str> = ROUTES
+            .iter()
+            .filter(|route| !matches!(route.serve, Serve::Rpc { adapter: true, .. }))
+            .map(|route| route.command)
+            .collect();
+        assert_eq!(blocked_commands(&capable), without_adapter);
     }
 
     #[test]

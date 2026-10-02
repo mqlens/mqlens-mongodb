@@ -17,6 +17,7 @@ pub(crate) mod ejson;
 pub(crate) mod errors;
 #[cfg(test)]
 pub(crate) mod fake;
+pub(crate) mod ops;
 pub(crate) mod pb;
 pub(crate) mod remote;
 pub(crate) mod routes;
