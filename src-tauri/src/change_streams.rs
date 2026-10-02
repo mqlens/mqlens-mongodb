@@ -684,12 +684,8 @@ pub fn retire_reader(stream: &LiveStream) -> u64 {
 }
 
 fn spawn_reader(state: &AppState, stream: Arc<LiveStream>) -> Result<(), String> {
-    let client = state
-        .connections
-        .lock_safe()?
-        .get(&stream.connection_id)
-        .cloned()
-        .ok_or_else(|| format!("connection {} is not open", stream.connection_id))?;
+    let client = crate::require_real_client(state, &stream.connection_id)
+        .map_err(|_| format!("connection {} is not open", stream.connection_id))?;
     let my_generation = retire_reader(&stream);
     // Whoever was reading before is the one whose final resume point this
     // reader has to wait for. Recorded here rather than derived from the

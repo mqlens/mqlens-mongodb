@@ -281,6 +281,8 @@ mod tests {
                     Some(at) => &text[..at],
                     None => &text[..],
                 };
+                // Whitespace removed: a read split over lines counts too.
+                let code: String = code.chars().filter(|c| !c.is_whitespace()).collect();
                 let reads = code.matches(".connections.lock").count();
                 if reads > 0 {
                     let rel = path
