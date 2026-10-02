@@ -1190,7 +1190,7 @@ pub async fn run_mongosh_script_impl(
     mongosh_path: &str,
     script: &str,
 ) -> Result<MongoshCommandOutput, String> {
-    server::remote::reject_if_remote(state, connection_id, "The MongoDB shell")?;
+    server::routes::refuse_deferred(state, "run_mongosh_script", &[connection_id])?;
     if write_guard::connection_mode(state, connection_id)? == connections::ConnectionMode::ReadOnly
     {
         return Err(write_guard::READ_ONLY_MSG.to_string());

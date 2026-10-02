@@ -376,6 +376,7 @@ pub async fn start_import_task_impl(
     csv_options: Option<CsvImportOptions>,
     mode: &str,
 ) -> Result<TaskInfo, String> {
+    crate::server::routes::refuse_deferred(state, "start_import_task", &[id])?;
     let started = std::time::Instant::now();
     let audit_summary = format!("import {database}.{collection} ({format}, {mode})");
     let result = start_import_task_inner(

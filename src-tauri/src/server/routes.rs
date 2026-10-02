@@ -586,10 +586,138 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
     },
 ];
 
+/// Refuses a deferred command when any of `ids` is a remote connection,
+/// with the reason its route gives. Called first thing, before any work.
+pub(crate) fn refuse_deferred(
+    state: &crate::state::AppState,
+    command: &str,
+    ids: &[&str],
+) -> Result<(), String> {
+    for id in ids {
+        if state.server.remote(id)?.is_some() {
+            let reason = ROUTES
+                .iter()
+                .find_map(|route| match route.serve {
+                    Serve::Deferred { reason } if route.command == command => Some(reason),
+                    _ => None,
+                })
+                .unwrap_or(crate::server::remote::NOT_SERVED);
+            return Err(reason.to_string());
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::server::remote::RemoteConn;
+    use crate::state::AppState;
     use std::collections::{BTreeMap, BTreeSet};
+
+    fn with_remote(id: &str) -> AppState {
+        let state = AppState::new();
+        state
+            .server
+            .add_remote(RemoteConn {
+                desktop_id: id.to_string(),
+                account_id: "account".to_string(),
+                account_name: "Acme".to_string(),
+                server_url: "https://mqlens.acme.test".to_string(),
+                remote_id: format!("srv-{id}"),
+                op_classes: vec!["read".to_string()],
+                features: Vec::new(),
+            })
+            .unwrap();
+        state.mocks.lock().unwrap().insert(id.to_string(), false);
+        state
+    }
+
+    #[test]
+    fn a_deferred_command_refuses_any_remote_connection_with_its_reason() {
+        let state = with_remote("r1");
+        assert_eq!(
+            refuse_deferred(&state, "start_collection_copy", &["local", "r1"]),
+            Err(TASKS.to_string())
+        );
+        assert_eq!(
+            refuse_deferred(&state, "start_change_stream", &["r1"]),
+            Err("Change streams are not available on MQLens Server connections yet".to_string())
+        );
+        assert_eq!(
+            refuse_deferred(&state, "start_collection_copy", &["local"]),
+            Ok(())
+        );
+    }
+
+    #[tokio::test]
+    async fn deferred_commands_refuse_a_remote_connection_before_any_work() {
+        let state = with_remote("r1");
+        match crate::db::copy::preflight_copy_impl(&state, "r1", "db", Vec::new(), Vec::new()).await
+        {
+            Err(e) => assert_eq!(e, TASKS),
+            Ok(_) => panic!("preflight_copy ran for a remote connection"),
+        }
+        let err = crate::db::generate::infer_generate_template_impl(&state, "r1", "db", "c", None)
+            .await
+            .unwrap_err();
+        assert_eq!(err, TASKS);
+    }
+
+    // Every deferred command refuses a remote connection itself, by name, so
+    // none can reach a driver client, a URI or a background task first.
+    #[test]
+    fn every_deferred_command_calls_refuse_deferred() {
+        fn sources(dir: &std::path::Path, out: &mut String) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    sources(&path, out);
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    out.push_str(
+                        &std::fs::read_to_string(&path)
+                            .unwrap()
+                            .replace("\r\n", "\n"),
+                    );
+                    out.push('\n');
+                }
+            }
+        }
+        let mut all = String::new();
+        sources(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+            &mut all,
+        );
+        // A function's text, up to the next item that starts a line.
+        let body = |name: &str| -> Option<String> {
+            let start = all.find(&format!("fn {name}("))?;
+            let rest = &all[start..];
+            let end = [
+                "\npub async fn ",
+                "\npub fn ",
+                "\nasync fn ",
+                "\nfn ",
+                "\n#[tauri::command]",
+            ]
+            .iter()
+            .filter_map(|next| rest[1..].find(next))
+            .min()
+            .unwrap_or(rest.len() - 1);
+            Some(rest[..=end].to_string())
+        };
+        for route in ROUTES {
+            if let Serve::Deferred { .. } = route.serve {
+                let name = route.command;
+                let code = body(&format!("{name}_impl"))
+                    .or_else(|| body(name))
+                    .unwrap_or_else(|| panic!("{name}: no function found"));
+                assert!(
+                    code.contains("refuse_deferred(") && code.contains(&format!("\"{name}\"")),
+                    "{name} must call refuse_deferred(state, \"{name}\", ..) first"
+                );
+            }
+        }
+    }
 
     /// Commands bucketed LOCAL that still touch the deployment: a change
     /// stream opens a cursor on it.

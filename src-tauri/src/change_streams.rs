@@ -707,6 +707,7 @@ pub async fn start_change_stream(
     collection: Option<String>,
     operation_types: Vec<String>,
 ) -> Result<(), String> {
+    crate::server::routes::refuse_deferred(&state, "start_change_stream", &[&connection_id])?;
     let database = database.filter(|d| !d.trim().is_empty());
     let collection = collection.filter(|c| !c.trim().is_empty());
 

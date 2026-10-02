@@ -962,6 +962,7 @@ pub async fn start_dump_task_impl(
     tool_path: &str,
     options: DumpOptions,
 ) -> Result<TaskInfo, String> {
+    crate::server::routes::refuse_deferred(state, "start_dump_task", &[id])?;
     let uri = require_real_conn_uri(state, id)?;
     let tunneled = state.ssh_tunnels.lock_safe()?.contains_key(id);
     let args = build_dump_args(&options)?;
@@ -1010,6 +1011,7 @@ pub async fn start_restore_task_impl(
     tool_path: &str,
     options: RestoreOptions,
 ) -> Result<TaskInfo, String> {
+    crate::server::routes::refuse_deferred(state, "start_restore_task", &[id])?;
     let started = std::time::Instant::now();
     let source = restore_source_path(&options.source).to_string();
     let audit_summary = format!("restore from {}", basename(&source));
