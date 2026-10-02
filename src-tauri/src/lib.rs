@@ -1048,6 +1048,7 @@ pub async fn start_mongosh_session_impl(
     // window closes can stop the child it spawned. Empty opts out.
     window_id: &str,
 ) -> Result<MongoshSessionInfo, String> {
+    server::remote::reject_if_remote(state, connection_id, "The MongoDB shell")?;
     if write_guard::connection_mode(state, connection_id)? == connections::ConnectionMode::ReadOnly
     {
         return Err(write_guard::READ_ONLY_MSG.to_string());
@@ -1189,6 +1190,7 @@ pub async fn run_mongosh_script_impl(
     mongosh_path: &str,
     script: &str,
 ) -> Result<MongoshCommandOutput, String> {
+    server::remote::reject_if_remote(state, connection_id, "The MongoDB shell")?;
     if write_guard::connection_mode(state, connection_id)? == connections::ConnectionMode::ReadOnly
     {
         return Err(write_guard::READ_ONLY_MSG.to_string());
@@ -1533,6 +1535,11 @@ pub async fn stop_mongosh_session_impl(state: &AppState, session_id: &str) -> Re
 }
 
 pub(crate) fn require_real_client(state: &AppState, id: &str) -> Result<Client, String> {
+    // A connection made through an MQLens Server has no driver client: its
+    // commands run on the server through an adapter, or not at all.
+    if state.server.remote(id)?.is_some() {
+        return Err(server::remote::NOT_SERVED.to_string());
+    }
     let connections = state.connections.lock_safe()?;
     connections
         .get(id)

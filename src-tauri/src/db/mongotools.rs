@@ -633,6 +633,9 @@ pub fn parse_tool_progress(line: &str) -> Option<ToolProgress> {
 /// `connect_db_impl` for a real connection. Mock connections are never
 /// inserted into `conn_uris`, so they — and unknown ids — fail here.
 pub fn resolve_conn_uri(state: &AppState, id: &str) -> Result<String, String> {
+    if state.server.remote(id)?.is_some() {
+        return Err(crate::server::remote::NOT_SERVED.to_string());
+    }
     let conn_uris = state.conn_uris.lock_safe()?;
     conn_uris
         .get(id)

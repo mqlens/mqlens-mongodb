@@ -24,6 +24,9 @@ pub(crate) struct RemoteConn {
     pub features: Vec<String>,
 }
 
+/// What a command without a server adapter yet says for a remote connection.
+pub(crate) const NOT_SERVED: &str = "This is not available on MQLens Server connections yet";
+
 /// What the connection list shows about a remote connection. Never a
 /// connection string or credential: the desktop has none.
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -188,6 +191,116 @@ mod tests {
             crate::require_real_client(&state, "r1").unwrap_err()
         );
         assert!(crate::connection_list_impl(&state).unwrap().is_empty());
+    }
+
+    fn assert_not_available<T: std::fmt::Debug>(what: &str, result: Result<T, String>) {
+        match result {
+            Err(e) if e.contains("not available on MQLens Server") => {}
+            other => panic!("{what}: expected a clear refusal, got {other:?}"),
+        }
+    }
+
+    // Until a command has an adapter, every path from a command to MongoDB
+    // refuses a remote connection plainly: no driver client, no URI, no
+    // mongosh process.
+    #[tokio::test]
+    async fn every_path_to_mongodb_refuses_a_remote_connection() {
+        let state = AppState::new();
+        state.server.add_remote(remote("r1")).unwrap();
+        state.mocks.lock().unwrap().insert("r1".to_string(), false);
+
+        assert_not_available(
+            "require_real_client",
+            crate::require_real_client(&state, "r1"),
+        );
+        assert_not_available(
+            "get_mongodb_version",
+            crate::db::version::get_mongodb_version_impl(&state, "r1").await,
+        );
+        assert_not_available(
+            "list_databases",
+            crate::db::metadata::list_databases_impl(&state, "r1").await,
+        );
+        assert_not_available(
+            "resolve_conn_uri",
+            crate::db::mongotools::resolve_conn_uri(&state, "r1"),
+        );
+        assert_not_available(
+            "start_mongosh_session",
+            crate::start_mongosh_session_impl(
+                &state,
+                "r1",
+                "mongodb://127.0.0.1:1",
+                "admin",
+                "no-such-mongosh-binary",
+                "",
+            )
+            .await
+            .map(|_| ()),
+        );
+        assert_not_available(
+            "run_mongosh_script",
+            crate::run_mongosh_script_impl(
+                &state,
+                "r1",
+                "mongodb://127.0.0.1:1",
+                "admin",
+                "no-such-mongosh-binary",
+                "db.version()",
+            )
+            .await
+            .map(|_| ()),
+        );
+    }
+
+    // Commands reach a driver client only through require_real_client, so a
+    // remote id is never handed one by another path. Counts the reads of the
+    // client map outside test modules.
+    #[test]
+    fn only_require_real_client_reads_driver_clients() {
+        fn walk(
+            dir: &std::path::Path,
+            root: &std::path::Path,
+            found: &mut std::collections::BTreeMap<String, usize>,
+        ) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    walk(&path, root, found);
+                    continue;
+                }
+                let name = path.file_name().unwrap().to_string_lossy().to_string();
+                if !name.ends_with(".rs") || name == "tests.rs" || name.ends_with("_tests.rs") {
+                    continue;
+                }
+                let text = std::fs::read_to_string(&path).unwrap();
+                let code = match text
+                    .find("#[cfg(test)]\nmod tests {")
+                    .or_else(|| text.find("#[cfg(test)]\r\nmod tests {"))
+                {
+                    Some(at) => &text[..at],
+                    None => &text[..],
+                };
+                let reads = code.matches(".connections.lock").count();
+                if reads > 0 {
+                    let rel = path
+                        .strip_prefix(root)
+                        .unwrap()
+                        .to_string_lossy()
+                        .replace('\\', "/");
+                    found.insert(rel, reads);
+                }
+            }
+        }
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut found = std::collections::BTreeMap::new();
+        walk(&root, &root, &mut found);
+        // connect inserts, disconnect removes, require_real_client reads.
+        assert_eq!(
+            found,
+            std::collections::BTreeMap::from([("lib.rs".to_string(), 3)]),
+            "read driver clients through crate::require_real_client"
+        );
     }
 
     #[test]
