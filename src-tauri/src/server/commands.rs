@@ -269,6 +269,7 @@ pub(crate) async fn server_connect_impl(
         remote_id: remote_id.to_string(),
         op_classes: op_classes.clone(),
         features: capabilities.features,
+        procedures: capabilities.procedures,
     })?;
     Ok(ServerConnectResult {
         id,

@@ -586,6 +586,36 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
     },
 ];
 
+/// Whether `route` can run on `conn`: served through an adapter the desktop
+/// has, by procedures and features the server announced, for a user with the
+/// op class it needs. Deferred commands never can.
+pub(crate) fn command_available(route: &CommandRoute, conn: &RemoteConn) -> bool {
+    match route.serve {
+        Serve::Deferred { .. } => false,
+        Serve::Rpc {
+            procedures,
+            class,
+            features,
+            adapter,
+        } => {
+            let has = |list: &[String], item: &str| list.iter().any(|x| x == item);
+            adapter
+                && has(&conn.op_classes, class.as_str())
+                && procedures.iter().all(|p| has(&conn.procedures, p))
+                && features.iter().all(|f| has(&conn.features, f))
+        }
+    }
+}
+
+/// The commands `conn` cannot run.
+pub(crate) fn blocked_commands(conn: &RemoteConn) -> Vec<&'static str> {
+    ROUTES
+        .iter()
+        .filter(|route| !command_available(route, conn))
+        .map(|route| route.command)
+        .collect()
+}
+
 /// Refuses a deferred command when any of `ids` is a remote connection,
 /// with the reason its route gives. Called first thing, before any work.
 pub(crate) fn refuse_deferred(
@@ -608,10 +638,11 @@ pub(crate) fn refuse_deferred(
     Ok(())
 }
 
+use crate::server::remote::RemoteConn;
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::server::remote::RemoteConn;
     use crate::state::AppState;
     use std::collections::{BTreeMap, BTreeSet};
 
@@ -627,10 +658,110 @@ mod tests {
                 remote_id: format!("srv-{id}"),
                 op_classes: vec!["read".to_string()],
                 features: Vec::new(),
+                procedures: Vec::new(),
             })
             .unwrap();
         state.mocks.lock().unwrap().insert(id.to_string(), false);
         state
+    }
+
+    fn conn(op_classes: &[&str], features: &[&str], procedures: &[&str]) -> RemoteConn {
+        RemoteConn {
+            desktop_id: "r1".to_string(),
+            account_id: "account".to_string(),
+            account_name: "Acme".to_string(),
+            server_url: "https://mqlens.acme.test".to_string(),
+            remote_id: "srv-r1".to_string(),
+            op_classes: op_classes.iter().map(|s| s.to_string()).collect(),
+            features: features.iter().map(|s| s.to_string()).collect(),
+            procedures: procedures.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    // A command runs only when every condition holds; each one alone blocks it.
+    #[test]
+    fn a_command_is_available_only_with_its_adapter_procedures_features_and_class() {
+        let route = CommandRoute {
+            command: "update_many",
+            serve: Serve::Rpc {
+                procedures: &["/mqlens.v1.WriteService/UpdateMany"],
+                class: OpClass::Write,
+                features: &["writes.thing"],
+                adapter: true,
+            },
+        };
+        let all = conn(
+            &["read", "write"],
+            &["writes.thing"],
+            &["/mqlens.v1.WriteService/UpdateMany"],
+        );
+        assert!(command_available(&route, &all));
+
+        let no_class = conn(
+            &["read"],
+            &["writes.thing"],
+            &["/mqlens.v1.WriteService/UpdateMany"],
+        );
+        assert!(
+            !command_available(&route, &no_class),
+            "without the op class"
+        );
+        let no_feature = conn(
+            &["read", "write"],
+            &[],
+            &["/mqlens.v1.WriteService/UpdateMany"],
+        );
+        assert!(
+            !command_available(&route, &no_feature),
+            "without the feature"
+        );
+        let no_procedure = conn(&["read", "write"], &["writes.thing"], &[]);
+        assert!(
+            !command_available(&route, &no_procedure),
+            "without the procedure"
+        );
+
+        let no_adapter = CommandRoute {
+            command: "update_many",
+            serve: Serve::Rpc {
+                procedures: &["/mqlens.v1.WriteService/UpdateMany"],
+                class: OpClass::Write,
+                features: &["writes.thing"],
+                adapter: false,
+            },
+        };
+        assert!(!command_available(&no_adapter, &all), "without an adapter");
+        let deferred = CommandRoute {
+            command: "start_import_task",
+            serve: Serve::Deferred { reason: TASKS },
+        };
+        assert!(!command_available(&deferred, &all), "a deferred command");
+    }
+
+    // No command has a server adapter yet, so a remote connection, however
+    // capable, can run none of them.
+    #[test]
+    fn every_command_is_blocked_until_its_adapter_lands() {
+        let every_procedure: Vec<&str> = ROUTES
+            .iter()
+            .flat_map(|route| match route.serve {
+                Serve::Rpc { procedures, .. } => procedures.to_vec(),
+                Serve::Deferred { .. } => Vec::new(),
+            })
+            .collect();
+        let capable = conn(
+            &["read", "write", "ddl", "admin"],
+            &[
+                RAW_BSON,
+                COUNT_ESTIMATE,
+                EXPLAIN_VERBOSITY,
+                GRIDFS_UPLOAD_OPTIONS,
+                RENAME_DATABASE_RESULT,
+                SHELL_STDERR,
+            ],
+            &every_procedure,
+        );
+        assert_eq!(blocked_commands(&capable).len(), ROUTES.len());
     }
 
     #[test]

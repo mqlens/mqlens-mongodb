@@ -22,6 +22,8 @@ pub(crate) struct RemoteConn {
     pub op_classes: Vec<String>,
     /// The feature strings the server announced.
     pub features: Vec<String>,
+    /// The procedures the server serves, as "/package.Service/Method".
+    pub procedures: Vec<String>,
 }
 
 /// What a command without a server adapter yet says for a remote connection.
@@ -37,6 +39,8 @@ pub struct RemoteConnectionInfo {
     pub server_url: String,
     pub remote_id: String,
     pub op_classes: Vec<String>,
+    /// Commands this connection cannot run; the UI disables them.
+    pub blocked_commands: Vec<String>,
 }
 
 impl RemoteConn {
@@ -47,6 +51,10 @@ impl RemoteConn {
             server_url: self.server_url.clone(),
             remote_id: self.remote_id.clone(),
             op_classes: self.op_classes.clone(),
+            blocked_commands: crate::server::routes::blocked_commands(self)
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
         }
     }
 }
@@ -93,6 +101,7 @@ mod tests {
             remote_id: format!("srv-{id}"),
             op_classes: vec!["read".to_string()],
             features: Vec::new(),
+            procedures: Vec::new(),
         }
     }
 
@@ -156,8 +165,15 @@ mod tests {
                 server_url: "https://mqlens.acme.test".to_string(),
                 remote_id: "srv-r1".to_string(),
                 op_classes: vec!["read".to_string()],
+                blocked_commands: crate::server::routes::blocked_commands(
+                    &state.server.remote("r1").unwrap().unwrap()
+                )
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
             })
         );
+        assert!(!list[0].server.as_ref().unwrap().blocked_commands.is_empty());
     }
 
     // The connection list reaches the frontend and MCP clients; a local entry
