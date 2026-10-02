@@ -21,7 +21,7 @@ interface DocumentDiffModalProps {
 // DataGrid's parsedDocs, so the diff engine compares real ObjectId/Date/Long.
 function toBson(doc: Record<string, unknown>): Record<string, unknown> {
   try {
-    return EJSON.parse(JSON.stringify(doc)) as Record<string, unknown>;
+    return EJSON.parse(JSON.stringify(doc), { relaxed: false }) as Record<string, unknown>;
   } catch {
     return doc;
   }
