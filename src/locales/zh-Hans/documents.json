@@ -66,7 +66,8 @@
       "next": "下一页",
       "prev": "上一页",
       "schema": "结构",
-      "updateMany": "批量更新"
+      "updateMany": "批量更新",
+      "updateOrDelete": "更新或删除"
     },
     "dialogs": {
       "bulkAllWarning_other": "\n\n⚠ 此操作会影响该 Collection 中的全部 {{count}} 个文档。",
@@ -161,13 +162,11 @@
       "copyExplainPlan": "复制执行计划",
       "copyQueryCode": "复制查询代码",
       "deleteDocument": "删除文档",
-      "deleteMany": "删除所有匹配当前筛选条件的文档",
       "editDocument": "编辑文档",
       "expand": "展开",
       "insert": "插入新文档",
       "readOnly": "该连接为只读",
       "resizeColumn": "调整“{{label}}”列宽",
-      "updateMany": "更新所有匹配当前筛选条件的文档",
       "dateTimezone": "切换日期显示时区"
     },
     "viewModes": {

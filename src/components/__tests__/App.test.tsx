@@ -506,6 +506,7 @@ describe('App Component', () => {
     fireEvent.click(screen.getByTestId('select-collection-btn'));
     expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
 
+    fireEvent.pointerDown(screen.getByTestId('bulk-write-menu-btn'), { button: 0, pointerType: 'mouse' });
     fireEvent.click(screen.getByTestId('delete-many-btn'));
     fireEvent.click(await screen.findByTestId('dialog-confirm'));
 
@@ -542,6 +543,7 @@ describe('App Component', () => {
     fireEvent.click(screen.getByTestId('select-collection-btn'));
     expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
 
+    fireEvent.pointerDown(screen.getByTestId('bulk-write-menu-btn'), { button: 0, pointerType: 'mouse' });
     fireEvent.click(screen.getByTestId('delete-many-btn'));
 
     // Wrong typed name -> no invoke, dialog stays open with an error.
@@ -579,6 +581,7 @@ describe('App Component', () => {
     fireEvent.click(screen.getByTestId('select-collection-btn'));
     expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
 
+    fireEvent.pointerDown(screen.getByTestId('bulk-write-menu-btn'), { button: 0, pointerType: 'mouse' });
     fireEvent.click(screen.getByTestId('update-many-btn'));
     // Prompt for the update doc, then submit it.
     const input = await screen.findByTestId('dialog-input');
@@ -621,6 +624,7 @@ describe('App Component', () => {
     fireEvent.click(screen.getByTestId('select-collection-btn'));
     expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
 
+    fireEvent.pointerDown(screen.getByTestId('bulk-write-menu-btn'), { button: 0, pointerType: 'mouse' });
     fireEvent.click(screen.getByTestId('update-many-btn'));
     // The update-body prompt is unchanged (data entry, not a confirmation).
     const updateInput = await screen.findByTestId('dialog-input');
@@ -767,6 +771,7 @@ describe('App Component', () => {
     fireEvent.click(screen.getByTestId('select-collection-btn'));
     expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
 
+    fireEvent.pointerDown(screen.getByTestId('bulk-write-menu-btn'), { button: 0, pointerType: 'mouse' });
     fireEvent.click(screen.getByTestId('update-many-btn'));
     const input = await screen.findByTestId('dialog-input');
     fireEvent.change(input, { target: { value: '{"tier":"Gold"}' } });
@@ -5046,10 +5051,12 @@ describe('App Component', () => {
         fireEvent.click(screen.getByTestId('select-collection-btn'));
         expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
 
+        fireEvent.pointerDown(screen.getByTestId('bulk-write-menu-btn'), { button: 0, pointerType: 'mouse' });
         fireEvent.click(screen.getByTestId('delete-many-btn'));
         expect(await screen.findByTestId('dialog-confirm')).toHaveTextContent('Löschen');
         fireEvent.click(screen.getByTestId('dialog-cancel'));
 
+        fireEvent.pointerDown(screen.getByTestId('bulk-write-menu-btn'), { button: 0, pointerType: 'mouse' });
         fireEvent.click(screen.getByTestId('update-many-btn'));
         expect(
           await screen.findByText('Dokument aktualisieren (Operatoren, z. B. {"$set": {...}}):'),

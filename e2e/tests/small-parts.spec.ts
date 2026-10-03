@@ -17,6 +17,7 @@ test.describe('A toast', () => {
     // A failed drop is reported as a toast.
     await app.failNext('drop_collection', 'not authorized on sales_db to drop products');
     await sidebar(page).getByText('products', { exact: true }).click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Manage', exact: true }).press('ArrowRight');
     await page.getByRole('menuitem', { name: 'Drop Collection' }).click();
     await page.getByTestId('dialog-confirm').click();
 
