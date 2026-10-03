@@ -122,24 +122,9 @@ pub(crate) async fn list_indexes(
 mod tests {
     use crate::db::metadata::{list_collections_impl, list_databases_impl, list_indexes_impl};
     use crate::db::version::get_mongodb_version_impl;
-    use crate::server::commands::{server_connect_impl, sign_in_impl};
-    use crate::server::fake::{Env, KEY, PASSWORD};
-    use crate::AppState;
+    use crate::server::fake::Env;
+    use crate::server::ops::connected;
     use mongodb::bson::doc;
-
-    /// Signed in and connected to the fake's connection "c1".
-    async fn connected(env: &Env) -> (AppState, String) {
-        let state = AppState::new();
-        *state.vault_key.lock().unwrap() = Some(KEY);
-        sign_in_impl(&state, &env.path, &env.account.id, PASSWORD.to_string())
-            .await
-            .unwrap();
-        let id = server_connect_impl(&state, &env.path, &env.account.id, "c1")
-            .await
-            .unwrap()
-            .id;
-        (state, id)
-    }
 
     #[tokio::test]
     async fn the_version_comes_from_the_server() {

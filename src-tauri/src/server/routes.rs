@@ -126,7 +126,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
             procedures: &["/mqlens.v1.DataService/Find"],
             class: OpClass::Read,
             features: &[RAW_BSON],
-            adapter: false,
+            adapter: true,
         },
     },
     CommandRoute {
@@ -162,7 +162,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
             procedures: &["/mqlens.v1.DataService/Aggregate"],
             class: OpClass::Read,
             features: &[RAW_BSON],
-            adapter: false,
+            adapter: true,
         },
     },
     CommandRoute {

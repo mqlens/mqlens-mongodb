@@ -38,6 +38,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tonic::metadata::MetadataValue;
 use tonic::transport::Channel;
+use tonic::Streaming;
 use tonic::{Request, Response, Status};
 use zeroize::Zeroizing;
 
@@ -52,6 +53,14 @@ pub(crate) const CALL_TIMEOUT: Duration = if cfg!(test) {
     Duration::from_secs(30)
 };
 const LOGOUT_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long a stream may go without the server answering: to open, or
+/// between batches. Not a limit on the whole stream, which a long query
+/// legitimately takes.
+pub(crate) const STREAM_IDLE_TIMEOUT: Duration = if cfg!(test) {
+    Duration::from_secs(2)
+} else {
+    Duration::from_secs(300)
+};
 
 pub(crate) const SESSION_ENDED: &str = "Your MQLens Server session has ended. Sign in again.";
 
@@ -356,10 +365,43 @@ impl AccountSession {
         F: Fn(Channel, Request<M>) -> Fut,
         Fut: Future<Output = Result<Response<R>, Status>>,
     {
+        self.call_bounded(message, rpc, Bound::Deadline).await
+    }
+
+    /// Opens a server stream, refreshing and retrying once like `call`. No
+    /// deadline covers the whole stream, which a long query legitimately
+    /// takes: opening waits at most `STREAM_IDLE_TIMEOUT`, and `next_message`
+    /// bounds each wait for a batch.
+    pub(crate) async fn open_stream<M, T, F, Fut>(
+        &self,
+        message: M,
+        rpc: F,
+    ) -> Result<Streaming<T>, String>
+    where
+        M: Clone,
+        F: Fn(Channel, Request<M>) -> Fut,
+        Fut: Future<Output = Result<Response<Streaming<T>>, Status>>,
+    {
+        self.call_bounded(message, rpc, Bound::Opening).await
+    }
+
+    async fn call_bounded<M, R, F, Fut>(
+        &self,
+        message: M,
+        rpc: F,
+        bound: Bound,
+    ) -> Result<R, String>
+    where
+        M: Clone,
+        F: Fn(Channel, Request<M>) -> Fut,
+        Fut: Future<Output = Result<Response<R>, Status>>,
+    {
         let (token, generation) = self.access_token(None).await?;
-        match rpc(
+        match send(
+            &rpc,
             self.channel.clone(),
-            with_deadline(authorized(message.clone(), &token)?),
+            authorized(message.clone(), &token)?,
+            bound,
         )
         .await
         {
@@ -368,9 +410,11 @@ impl AccountSession {
             Err(status) => return Err(errors::describe(&status)),
         }
         let (token, retried) = self.access_token(Some(generation)).await?;
-        match rpc(
+        match send(
+            &rpc,
             self.channel.clone(),
-            with_deadline(authorized(message, &token)?),
+            authorized(message, &token)?,
+            bound,
         )
         .await
         {
@@ -552,6 +596,43 @@ impl AccountSession {
         tokens.access = None;
         tokens.generation += 1;
         cleared.map(|()| ended_on_server)
+    }
+}
+
+/// How a call is kept from waiting forever on a server that never answers.
+#[derive(Clone, Copy)]
+enum Bound {
+    /// A deadline on the whole call.
+    Deadline,
+    /// A limit on the wait for a stream to open; the stream itself has none.
+    Opening,
+}
+
+async fn send<M, R, F, Fut>(
+    rpc: &F,
+    channel: Channel,
+    request: Request<M>,
+    bound: Bound,
+) -> Result<Response<R>, Status>
+where
+    F: Fn(Channel, Request<M>) -> Fut,
+    Fut: Future<Output = Result<Response<R>, Status>>,
+{
+    match bound {
+        Bound::Deadline => rpc(channel, with_deadline(request)).await,
+        Bound::Opening => tokio::time::timeout(STREAM_IDLE_TIMEOUT, rpc(channel, request))
+            .await
+            .unwrap_or_else(|_| Err(Status::deadline_exceeded(""))),
+    }
+}
+
+/// The next message of a server stream, or `None` at its end. Gives up when
+/// the server sends nothing for `STREAM_IDLE_TIMEOUT`.
+pub(crate) async fn next_message<T>(stream: &mut Streaming<T>) -> Result<Option<T>, String> {
+    match tokio::time::timeout(STREAM_IDLE_TIMEOUT, stream.message()).await {
+        Ok(Ok(message)) => Ok(message),
+        Ok(Err(status)) => Err(errors::describe(&status)),
+        Err(_) => Err(errors::describe(&Status::deadline_exceeded(""))),
     }
 }
 

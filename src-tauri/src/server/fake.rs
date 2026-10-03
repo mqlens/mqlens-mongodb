@@ -16,6 +16,7 @@ use crate::server::pb::mqlens::v1::connection_service_client::ConnectionServiceC
 use crate::server::pb::mqlens::v1::connection_service_server::{
     ConnectionService, ConnectionServiceServer,
 };
+use crate::server::pb::mqlens::v1::data_service_server::{DataService, DataServiceServer};
 use crate::server::pb::mqlens::v1::metadata_service_server::{
     MetadataService, MetadataServiceServer,
 };
@@ -25,6 +26,10 @@ use crate::server::pb::mqlens::v1::{
     RefreshRequest, WhoAmIRequest, WhoAmIResponse,
 };
 use crate::server::pb::mqlens::v1::{
+    AggregateRequest, CountRequest, CountResponse, ExplainRequest, ExplainResponse, FindBatch,
+    FindRequest,
+};
+use crate::server::pb::mqlens::v1::{
     CollectionInfo as PbCollectionInfo, ConnectionCapabilities, CreateIndexRequest,
     DropIndexRequest, GetCapabilitiesRequest, GetCapabilitiesResponse, IndexInfo as PbIndexInfo,
     ListCollectionsRequest, ListCollectionsResponse, ListDatabasesRequest, ListDatabasesResponse,
@@ -32,8 +37,10 @@ use crate::server::pb::mqlens::v1::{
     MongoVersionResponse,
 };
 use crate::server::session::{unix_now, AccountSession, FileTokenStore, TokenStore};
+use mongodb::bson::{doc, Document};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tonic::{Code, Request, Response, Status};
@@ -86,6 +93,16 @@ pub(crate) struct FakeState {
     pub databases: Vec<String>,
     pub collections: Vec<PbCollectionInfo>,
     pub indexes: Vec<PbIndexInfo>,
+    /// The documents Find and Aggregate stream, in batches of `batch_size`.
+    pub documents: Vec<Document>,
+    pub batch_size: usize,
+    /// Held before each batch, to play a server that stalls mid-stream.
+    pub batch_delay: Duration,
+    pub last_find: Option<FindRequest>,
+    pub last_aggregate: Option<AggregateRequest>,
+    pub data_calls: u32,
+    /// Streams the client stopped reading before the end.
+    pub streams_abandoned: u32,
     pub logins: u32,
     pub refreshes: u32,
     pub logouts: u32,
@@ -215,6 +232,8 @@ impl Fake {
                     "MetadataService/ListCollections",
                     "MetadataService/ListIndexes",
                     "MetadataService/MongoVersion",
+                    "DataService/Find",
+                    "DataService/Aggregate",
                 ]
                 .iter()
                 .map(|p| format!("/mqlens.v1.{p}"))
@@ -254,6 +273,19 @@ impl Fake {
                         sparse: false,
                     },
                 ],
+                documents: vec![
+                    doc! { "_id": 1, "name": "Ada", "total": 12.5 },
+                    // Keys that look like an Extended JSON wrapper, stored as
+                    // a plain sub-document.
+                    doc! { "_id": 2, "nested": { "$numberLong": "7", "other": 1 } },
+                    doc! { "_id": 3, "big": 9_007_199_254_740_993_i64 },
+                ],
+                batch_size: 100,
+                batch_delay: Duration::ZERO,
+                last_find: None,
+                last_aggregate: None,
+                data_calls: 0,
+                streams_abandoned: 0,
                 logins: 0,
                 refreshes: 0,
                 logouts: 0,
@@ -274,6 +306,7 @@ impl Fake {
                 .add_service(ConnectionServiceServer::new(self.clone()))
                 .add_service(CapabilityServiceServer::new(self.clone()))
                 .add_service(MetadataServiceServer::new(self.clone()))
+                .add_service(DataServiceServer::new(self.clone()))
                 .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener)),
         );
         format!("http://{addr}")
@@ -519,6 +552,86 @@ impl MetadataService for Fake {
         _request: Request<DropIndexRequest>,
     ) -> Result<Response<MetadataAck>, Status> {
         Err(Status::unimplemented("DropIndex is not implemented"))
+    }
+}
+
+type Batches = Pin<Box<dyn tokio_stream::Stream<Item = Result<FindBatch, Status>> + Send>>;
+
+impl Fake {
+    /// The stored documents as raw BSON, in batches, each after
+    /// `batch_delay`. Counts a stream the client drops before the end.
+    fn batches(&self) -> Batches {
+        let (documents, size, delay) =
+            self.with(|s| (s.documents.clone(), s.batch_size.max(1), s.batch_delay));
+        let state = self.state.clone();
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        tokio::spawn(async move {
+            for chunk in documents.chunks(size) {
+                tokio::time::sleep(delay).await;
+                let batch = FindBatch {
+                    documents_ejson: Vec::new(),
+                    documents_bson: chunk
+                        .iter()
+                        .map(|d| {
+                            let mut bytes = Vec::new();
+                            d.to_writer(&mut bytes).unwrap();
+                            bytes.into()
+                        })
+                        .collect(),
+                };
+                if tx.send(Ok(batch)).await.is_err() {
+                    state.lock().unwrap().streams_abandoned += 1;
+                    return;
+                }
+            }
+        });
+        Box::pin(tokio_stream::wrappers::ReceiverStream::new(rx))
+    }
+}
+
+#[tonic::async_trait]
+impl DataService for Fake {
+    type FindStream = Batches;
+    type AggregateStream = Batches;
+
+    async fn find(
+        &self,
+        request: Request<FindRequest>,
+    ) -> Result<Response<Self::FindStream>, Status> {
+        {
+            let mut state = self.state.lock().unwrap();
+            state.authorize_connection(&request, &request.get_ref().connection_id)?;
+            state.data_calls += 1;
+            state.last_find = Some(request.get_ref().clone());
+        }
+        Ok(Response::new(self.batches()))
+    }
+
+    async fn aggregate(
+        &self,
+        request: Request<AggregateRequest>,
+    ) -> Result<Response<Self::AggregateStream>, Status> {
+        {
+            let mut state = self.state.lock().unwrap();
+            state.authorize_connection(&request, &request.get_ref().connection_id)?;
+            state.data_calls += 1;
+            state.last_aggregate = Some(request.get_ref().clone());
+        }
+        Ok(Response::new(self.batches()))
+    }
+
+    async fn count(
+        &self,
+        _request: Request<CountRequest>,
+    ) -> Result<Response<CountResponse>, Status> {
+        Err(Status::unimplemented("Count is not implemented"))
+    }
+
+    async fn explain(
+        &self,
+        _request: Request<ExplainRequest>,
+    ) -> Result<Response<ExplainResponse>, Status> {
+        Err(Status::unimplemented("Explain is not implemented"))
     }
 }
 
