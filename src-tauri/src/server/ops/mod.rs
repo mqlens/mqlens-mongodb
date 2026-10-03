@@ -2,6 +2,7 @@
 //! and returns exactly what local mode returns.
 
 pub(crate) mod metadata;
+pub(crate) mod monitoring;
 pub(crate) mod query;
 pub(crate) mod stats;
 

@@ -20,6 +20,9 @@ use crate::server::pb::mqlens::v1::data_service_server::{DataService, DataServic
 use crate::server::pb::mqlens::v1::metadata_service_server::{
     MetadataService, MetadataServiceServer,
 };
+use crate::server::pb::mqlens::v1::monitoring_service_server::{
+    MonitoringService, MonitoringServiceServer,
+};
 use crate::server::pb::mqlens::v1::stats_service_server::{StatsService, StatsServiceServer};
 use crate::server::pb::mqlens::v1::{
     login_request, ConnectionRef, GetConnectionRequest, ListConnectionsRequest,
@@ -29,6 +32,13 @@ use crate::server::pb::mqlens::v1::{
 use crate::server::pb::mqlens::v1::{
     AggregateRequest, CountRequest, CountResponse, ExplainRequest, ExplainResponse, FindBatch,
     FindRequest,
+};
+use crate::server::pb::mqlens::v1::{
+    CacheStats as PbCacheStats, CurrentOpsRequest, CurrentOpsResponse, GetProfilingStatusRequest,
+    KillOpRequest, MonitoringAck, OpCounters as PbOpCounters, ProfilingStatus as PbProfilingStatus,
+    ReadProfileRequest, ReadProfileResponse, ReplSetMember as PbReplSetMember,
+    ReplSetStatusRequest, ReplSetStatusResponse, ServerConnections, ServerMemory, ServerNetwork,
+    ServerStatusRequest, ServerStatusResponse, SetProfilingLevelRequest,
 };
 use crate::server::pb::mqlens::v1::{
     CollStatsRequest, CollStatsResponse, DbStatsRequest, DbStatsResponse, IndexStat,
@@ -112,6 +122,10 @@ pub(crate) struct FakeState {
     pub db_stats: DbStatsResponse,
     pub coll_stats: CollStatsResponse,
     pub index_stats: Vec<IndexStat>,
+    /// What the read-class monitoring procedures answer.
+    pub server_status: ServerStatusResponse,
+    pub repl_set_status: ReplSetStatusResponse,
+    pub profiling_status: PbProfilingStatus,
     pub logins: u32,
     pub refreshes: u32,
     pub logouts: u32,
@@ -246,6 +260,9 @@ impl Fake {
                     "StatsService/DbStats",
                     "StatsService/CollStats",
                     "StatsService/IndexStats",
+                    "MonitoringService/ServerStatus",
+                    "MonitoringService/ReplSetStatus",
+                    "MonitoringService/GetProfilingStatus",
                 ]
                 .iter()
                 .map(|p| format!("/mqlens.v1.{p}"))
@@ -317,6 +334,74 @@ impl Fake {
                     total_index_size: 98_304,
                     capped: true,
                 },
+                server_status: ServerStatusResponse {
+                    host: "db-1.acme.internal:27017".to_string(),
+                    version: "8.0.4".to_string(),
+                    uptime_seconds: 86_400.5,
+                    connections: Some(ServerConnections {
+                        current: 12,
+                        available: 838_848,
+                        total_created: 345,
+                    }),
+                    opcounters: Some(PbOpCounters {
+                        insert: 1,
+                        query: 2,
+                        update: 3,
+                        delete: 4,
+                        getmore: 5,
+                        command: 6,
+                    }),
+                    memory: Some(ServerMemory {
+                        resident_mb: 512,
+                        virtual_mb: 2_048,
+                    }),
+                    network: Some(ServerNetwork {
+                        bytes_in: 1_000,
+                        bytes_out: 2_000,
+                        num_requests: 30,
+                    }),
+                    cache: Some(PbCacheStats {
+                        bytes_in_cache: 7,
+                        max_bytes: 8,
+                        dirty_bytes: 9,
+                    }),
+                    repl_set: Some("rs0".to_string()),
+                },
+                repl_set_status: ReplSetStatusResponse {
+                    is_replica_set: true,
+                    cluster_type: "replicaSet".to_string(),
+                    set: "rs0".to_string(),
+                    my_state_str: "PRIMARY".to_string(),
+                    mongo_version: "8.0.4".to_string(),
+                    members: vec![
+                        PbReplSetMember {
+                            name: "db-1:27017".to_string(),
+                            state_str: "PRIMARY".to_string(),
+                            health: 1,
+                            self_: true,
+                            uptime_secs: 86_400,
+                            optime_date_ms: 1_700_000_000_000,
+                            ping_ms: None,
+                            sync_source: String::new(),
+                            lag_secs: None,
+                        },
+                        PbReplSetMember {
+                            name: "db-2:27017".to_string(),
+                            state_str: "SECONDARY".to_string(),
+                            health: 1,
+                            self_: false,
+                            uptime_secs: 86_000,
+                            optime_date_ms: 1_699_999_999_000,
+                            ping_ms: Some(3),
+                            sync_source: "db-1:27017".to_string(),
+                            lag_secs: Some(1.5),
+                        },
+                    ],
+                },
+                profiling_status: PbProfilingStatus {
+                    level: 1,
+                    slow_ms: 250,
+                },
                 // Not in size order: local mode sorts them, largest first.
                 index_stats: vec![
                     IndexStat {
@@ -360,6 +445,7 @@ impl Fake {
                 .add_service(MetadataServiceServer::new(self.clone()))
                 .add_service(DataServiceServer::new(self.clone()))
                 .add_service(StatsServiceServer::new(self.clone()))
+                .add_service(MonitoringServiceServer::new(self.clone()))
                 .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener)),
         );
         format!("http://{addr}")
@@ -717,6 +803,67 @@ impl StatsService for Fake {
         Ok(Response::new(IndexStatsResponse {
             indexes: state.index_stats.clone(),
         }))
+    }
+}
+
+/// The read-class monitoring procedures; the admin ones come with D5.
+#[tonic::async_trait]
+impl MonitoringService for Fake {
+    async fn server_status(
+        &self,
+        request: Request<ServerStatusRequest>,
+    ) -> Result<Response<ServerStatusResponse>, Status> {
+        let state = self.state.lock().unwrap();
+        state.authorize_connection(&request, &request.get_ref().connection_id)?;
+        Ok(Response::new(state.server_status.clone()))
+    }
+
+    async fn current_ops(
+        &self,
+        _request: Request<CurrentOpsRequest>,
+    ) -> Result<Response<CurrentOpsResponse>, Status> {
+        Err(Status::unimplemented("CurrentOps is not implemented"))
+    }
+
+    async fn repl_set_status(
+        &self,
+        request: Request<ReplSetStatusRequest>,
+    ) -> Result<Response<ReplSetStatusResponse>, Status> {
+        let state = self.state.lock().unwrap();
+        state.authorize_connection(&request, &request.get_ref().connection_id)?;
+        Ok(Response::new(state.repl_set_status.clone()))
+    }
+
+    async fn kill_op(
+        &self,
+        _request: Request<KillOpRequest>,
+    ) -> Result<Response<MonitoringAck>, Status> {
+        Err(Status::unimplemented("KillOp is not implemented"))
+    }
+
+    async fn get_profiling_status(
+        &self,
+        request: Request<GetProfilingStatusRequest>,
+    ) -> Result<Response<PbProfilingStatus>, Status> {
+        let state = self.state.lock().unwrap();
+        state.authorize_connection(&request, &request.get_ref().connection_id)?;
+        Ok(Response::new(state.profiling_status))
+    }
+
+    async fn set_profiling_level(
+        &self,
+        _request: Request<SetProfilingLevelRequest>,
+    ) -> Result<Response<PbProfilingStatus>, Status> {
+        Err(Status::unimplemented(
+            "SetProfilingLevel is not implemented",
+        ))
+    }
+
+    async fn read_profile(
+        &self,
+        _request: Request<ReadProfileRequest>,
+    ) -> Result<Response<ReadProfileResponse>, Status> {
+        Err(Status::unimplemented("ReadProfile is not implemented"))
     }
 }
 

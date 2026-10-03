@@ -401,7 +401,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
             procedures: &["/mqlens.v1.MonitoringService/ServerStatus"],
             class: OpClass::Read,
             features: &[],
-            adapter: false,
+            adapter: true,
         },
     },
     CommandRoute {
@@ -410,7 +410,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
             procedures: &["/mqlens.v1.MonitoringService/ReplSetStatus"],
             class: OpClass::Read,
             features: &[],
-            adapter: false,
+            adapter: true,
         },
     },
     CommandRoute {
@@ -419,7 +419,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
             procedures: &["/mqlens.v1.MonitoringService/GetProfilingStatus"],
             class: OpClass::Read,
             features: &[],
-            adapter: false,
+            adapter: true,
         },
     },
     CommandRoute {

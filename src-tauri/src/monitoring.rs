@@ -397,7 +397,12 @@ async fn server_status_impl_inner(state: &AppState, id: &str) -> Result<ServerSt
     if connection_is_mock(state, id)? {
         return Ok(mock_server_status());
     }
-    let client = require_real_client(state, id)?;
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            return crate::server::ops::monitoring::server_status(state, &conn).await;
+        }
+    };
     let raw = client
         .database("admin")
         .run_command(doc! { "serverStatus": 1 })
@@ -515,7 +520,12 @@ async fn profiling_status_impl_inner(state: &AppState, id: &str, database: &str)
     if connection_is_mock(state, id)? {
         return Ok(ProfilingStatus { level: 0, slow_ms: 100 });
     }
-    let client = require_real_client(state, id)?;
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            return crate::server::ops::monitoring::profiling_status(state, &conn, database).await;
+        }
+    };
     let raw = client
         .database(database)
         .run_command(doc! { "profile": -1 })
@@ -654,7 +664,12 @@ async fn repl_set_status_impl_inner(state: &AppState, id: &str) -> Result<ReplSe
     if connection_is_mock(state, id)? {
         return Ok(mock_repl_set_status());
     }
-    let client = require_real_client(state, id)?;
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            return crate::server::ops::monitoring::repl_set_status(state, &conn).await;
+        }
+    };
     let admin = client.database("admin");
     let hello = admin
         .run_command(doc! { "hello": 1 })
