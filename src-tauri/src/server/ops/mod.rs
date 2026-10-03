@@ -3,6 +3,7 @@
 
 pub(crate) mod metadata;
 pub(crate) mod query;
+pub(crate) mod stats;
 
 use crate::server::accounts;
 use crate::server::remote::RemoteConn;

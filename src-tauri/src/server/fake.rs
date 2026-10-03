@@ -20,6 +20,7 @@ use crate::server::pb::mqlens::v1::data_service_server::{DataService, DataServic
 use crate::server::pb::mqlens::v1::metadata_service_server::{
     MetadataService, MetadataServiceServer,
 };
+use crate::server::pb::mqlens::v1::stats_service_server::{StatsService, StatsServiceServer};
 use crate::server::pb::mqlens::v1::{
     login_request, ConnectionRef, GetConnectionRequest, ListConnectionsRequest,
     ListConnectionsResponse, LoginRequest, LoginResponse, LogoutRequest, LogoutResponse, Principal,
@@ -28,6 +29,10 @@ use crate::server::pb::mqlens::v1::{
 use crate::server::pb::mqlens::v1::{
     AggregateRequest, CountRequest, CountResponse, ExplainRequest, ExplainResponse, FindBatch,
     FindRequest,
+};
+use crate::server::pb::mqlens::v1::{
+    CollStatsRequest, CollStatsResponse, DbStatsRequest, DbStatsResponse, IndexStat,
+    IndexStatsRequest, IndexStatsResponse,
 };
 use crate::server::pb::mqlens::v1::{
     CollectionInfo as PbCollectionInfo, ConnectionCapabilities, CreateIndexRequest,
@@ -103,6 +108,10 @@ pub(crate) struct FakeState {
     pub data_calls: u32,
     /// Streams the client stopped reading before the end.
     pub streams_abandoned: u32,
+    /// What the stats procedures answer.
+    pub db_stats: DbStatsResponse,
+    pub coll_stats: CollStatsResponse,
+    pub index_stats: Vec<IndexStat>,
     pub logins: u32,
     pub refreshes: u32,
     pub logouts: u32,
@@ -234,6 +243,9 @@ impl Fake {
                     "MetadataService/MongoVersion",
                     "DataService/Find",
                     "DataService/Aggregate",
+                    "StatsService/DbStats",
+                    "StatsService/CollStats",
+                    "StatsService/IndexStats",
                 ]
                 .iter()
                 .map(|p| format!("/mqlens.v1.{p}"))
@@ -286,6 +298,46 @@ impl Fake {
                 last_aggregate: None,
                 data_calls: 0,
                 streams_abandoned: 0,
+                db_stats: DbStatsResponse {
+                    collections: 4,
+                    views: 1,
+                    objects: 12_345,
+                    avg_obj_size: 512.5,
+                    data_size: 6_327_000,
+                    storage_size: 8_192_000,
+                    indexes: 9,
+                    total_index_size: 1_048_576,
+                },
+                coll_stats: CollStatsResponse {
+                    count: 3_000,
+                    avg_obj_size: 128.25,
+                    size: 384_750,
+                    storage_size: 409_600,
+                    nindexes: 3,
+                    total_index_size: 98_304,
+                    capped: true,
+                },
+                // Not in size order: local mode sorts them, largest first.
+                index_stats: vec![
+                    IndexStat {
+                        name: "_id_".to_string(),
+                        size_bytes: 4_096,
+                        ops: 10,
+                        since_ms: 1_700_000_000_000,
+                    },
+                    IndexStat {
+                        name: "email_1".to_string(),
+                        size_bytes: 65_536,
+                        ops: 900,
+                        since_ms: 1_700_000_100_000,
+                    },
+                    IndexStat {
+                        name: "created_-1".to_string(),
+                        size_bytes: 16_384,
+                        ops: 0,
+                        since_ms: 0,
+                    },
+                ],
                 logins: 0,
                 refreshes: 0,
                 logouts: 0,
@@ -307,6 +359,7 @@ impl Fake {
                 .add_service(CapabilityServiceServer::new(self.clone()))
                 .add_service(MetadataServiceServer::new(self.clone()))
                 .add_service(DataServiceServer::new(self.clone()))
+                .add_service(StatsServiceServer::new(self.clone()))
                 .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener)),
         );
         format!("http://{addr}")
@@ -632,6 +685,38 @@ impl DataService for Fake {
         _request: Request<ExplainRequest>,
     ) -> Result<Response<ExplainResponse>, Status> {
         Err(Status::unimplemented("Explain is not implemented"))
+    }
+}
+
+#[tonic::async_trait]
+impl StatsService for Fake {
+    async fn db_stats(
+        &self,
+        request: Request<DbStatsRequest>,
+    ) -> Result<Response<DbStatsResponse>, Status> {
+        let state = self.state.lock().unwrap();
+        state.authorize_connection(&request, &request.get_ref().connection_id)?;
+        Ok(Response::new(state.db_stats))
+    }
+
+    async fn coll_stats(
+        &self,
+        request: Request<CollStatsRequest>,
+    ) -> Result<Response<CollStatsResponse>, Status> {
+        let state = self.state.lock().unwrap();
+        state.authorize_connection(&request, &request.get_ref().connection_id)?;
+        Ok(Response::new(state.coll_stats))
+    }
+
+    async fn index_stats(
+        &self,
+        request: Request<IndexStatsRequest>,
+    ) -> Result<Response<IndexStatsResponse>, Status> {
+        let state = self.state.lock().unwrap();
+        state.authorize_connection(&request, &request.get_ref().connection_id)?;
+        Ok(Response::new(IndexStatsResponse {
+            indexes: state.index_stats.clone(),
+        }))
     }
 }
 

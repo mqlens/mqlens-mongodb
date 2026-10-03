@@ -237,10 +237,6 @@ mod tests {
             crate::db::query::count_documents_impl(&state, "r1", "db", "c", "{}").await,
         );
         assert_not_available(
-            "db_stats",
-            crate::db::stats::db_stats_impl(&state, "r1", "db").await,
-        );
-        assert_not_available(
             "resolve_conn_uri",
             crate::db::mongotools::resolve_conn_uri(&state, "r1"),
         );

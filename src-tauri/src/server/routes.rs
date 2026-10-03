@@ -336,7 +336,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
             procedures: &["/mqlens.v1.StatsService/DbStats"],
             class: OpClass::Read,
             features: &[],
-            adapter: false,
+            adapter: true,
         },
     },
     CommandRoute {
@@ -345,7 +345,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
             procedures: &["/mqlens.v1.StatsService/CollStats"],
             class: OpClass::Read,
             features: &[],
-            adapter: false,
+            adapter: true,
         },
     },
     CommandRoute {
@@ -354,7 +354,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
             procedures: &["/mqlens.v1.StatsService/IndexStats"],
             class: OpClass::Read,
             features: &[],
-            adapter: false,
+            adapter: true,
         },
     },
     // GridFS

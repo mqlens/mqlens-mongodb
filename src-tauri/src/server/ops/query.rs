@@ -260,7 +260,9 @@ mod tests {
     async fn aggregation_is_capped_as_in_local_mode_and_stops_the_server() {
         let env = Env::new().await;
         env.fake.with(|s| {
-            s.documents = many(crate::limits::MAX_AGGREGATE_RESULTS + 300);
+            // Far more past the cap than HTTP/2 buffers hold, so the fake must
+            // see the stream dropped rather than finish sending first.
+            s.documents = many(crate::limits::MAX_AGGREGATE_RESULTS + 20_000);
             s.batch_size = 100;
         });
         let (state, id) = connected(&env).await;
