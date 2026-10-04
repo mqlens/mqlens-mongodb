@@ -3,17 +3,17 @@ import WorkflowLanding from '../components/WorkflowLanding.astro';
 ---
 <WorkflowLanding
   title="MongoDB explain plan GUI"
-  description="Read MongoDB explain plans as a visual tree for find and aggregate — see index usage, collection scans, and stage costs at a glance. Free native GUI, Apache-2.0, zero telemetry."
+  description="Read MongoDB explain plans as a visual tree for find and aggregate — see index usage, collection scans, and query stages at a glance. Free native GUI, Apache-2.0, zero telemetry."
   eyebrow="Visual explain plans"
   h1="See exactly what your MongoDB query does."
   grad="Explain plans as a visual tree."
-  lede="Raw <code>explain()</code> output is a deeply nested JSON blob. MQLens renders the winning plan as a readable tree for both <code>find</code> and <code>aggregate</code> — so index usage, <code>COLLSCAN</code>s, in-memory sorts, and stage costs are obvious at a glance."
-  screenshot={{ src: '/screenshots/mqlens-explain-plan.png', alt: 'MQLens explain plan with stages and synthetic execution statistics' }}
+  lede="Raw <code>explain()</code> output is a deeply nested JSON blob. MQLens renders the winning plan as a readable tree for both <code>find</code> and <code>aggregate</code> — so index usage, <code>COLLSCAN</code>s, in-memory sorts, and query stages are easier to follow."
+  screenshot={{ src: '/screenshots/mqlens-explain-plan.png', alt: 'MQLens explain plan with stages and sample execution statistics' }}
   stepsTitle="Read an explain plan"
   steps={[
-    { title: 'Run your query', body: 'Execute a <code>find</code> or aggregation with your filters, sort, and projection.' },
-    { title: 'Open the explain view', body: 'Switch to Explain to render the winning plan as a tree.' },
-    { title: 'Spot the problem', body: 'Collection scans and unindexed sorts stand out immediately, with the documents examined vs returned.' },
+    { title: 'Run your query', body: 'Enter a find filter or build an aggregation pipeline.' },
+    { title: 'Open the explain view', body: 'Choose Run Explain from the Run dropdown, or open the Explain Plan tab.' },
+    { title: 'Spot the problem', body: 'Follow scans and sorts in the visual tree, then switch to Raw JSON to compare documents examined and returned.' },
     { title: 'Add the right index', body: 'Create indexes from the GUI with real key patterns and unique / sparse flags, then re-explain to confirm the win.' },
   ]}
   featuresTitle="Tune queries without leaving the GUI"

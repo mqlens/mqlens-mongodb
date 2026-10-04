@@ -3,36 +3,36 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 const repo = 'https://github.com/mqlens/mqlens-server';
 const description = 'MQLens Server is a planned self-hosted backend for team MongoDB access, with centralized credentials, OIDC, access controls, and audit logs. Coming soon.';
 const planned = [
-  ['Keep credentials on your infrastructure', 'The planned server mode gives desktops connection references instead of MongoDB URIs or credentials. Database operations run on the server, with credentials encrypted at rest.'],
-  ['Give each team the access it needs', 'OIDC sign-in, role-based permissions, per-connection grants, and multi-tenant organization support are part of the design.'],
-  ['Understand who did what', 'The design includes queryable, exportable audit records for database operations, authentication, and administrative changes.'],
+  ['Keep credentials on your infrastructure', 'Connect your team without distributing MongoDB credentials to their desktops. Server mode will run database operations centrally and keep credentials encrypted on your infrastructure.'],
+  ['Give each team the access it needs', 'Planned access controls include single sign-on with OIDC, role-based permissions, and access to specific connections for each team.'],
+  ['Understand who did what', 'Track database operations, sign-ins, and administrative changes with searchable audit records and export options, planned for MQLens Server.'],
   ['Run it in your own environment', 'Docker deployment, a browser-based administration interface, and multi-node high availability are planned for organizations managing their own infrastructure.'],
 ];
 ---
 <BaseLayout title="MQLens Server — coming soon" description={description} desktopSchema={false} structuredData={{ '@type': 'WebPage', name: 'MQLens Server — coming soon', description, url: 'https://mqlens.com/mqlens-server/' }}>
   <section class="container server-hero">
-    <p class="status">Coming soon · In design</p>
+    <p class="status">Coming soon</p>
     <h1>MQLens Server</h1>
     <p class="headline">Your team's MongoDB access.<br />Managed on your infrastructure.</p>
-    <p class="intro">A planned, self-hosted backend that connects the MQLens desktop workspace to your organization's MongoDB deployments through a central access layer.</p>
-    <div class="actions"><a class="btn btn-primary" href={repo}>Follow development on GitHub</a><a class="btn btn-ghost" href="#planned-capabilities">Explore the plans</a></div>
-    <p class="availability">Not yet available. Scope may change; no launch date or pricing has been announced.</p>
+    <p class="intro">A self-hosted backend, coming soon, that will connect the MQLens desktop workspace to your organization's MongoDB deployments through a central access layer.</p>
+    <div class="actions"><a class="btn btn-primary" href={repo}>Follow development on GitHub</a><a class="btn btn-ghost" href="#planned-capabilities">Explore what’s coming</a></div>
+    <p class="availability">Launch date and pricing will be announced. Planned capabilities may change before release.</p>
   </section>
 
   <section class="container architecture" aria-labelledby="flow-title">
     <h2 id="flow-title">A familiar workspace. A central point of control.</h2>
-    <p>In the planned server mode, the desktop signs in to MQLens Server, which authorizes and executes MongoDB operations on its behalf.</p>
+    <p>With server mode, your team will sign in through the desktop app. MQLens Server will check permissions and run MongoDB operations on your infrastructure.</p>
     <ol class="flow" aria-label="Planned connection flow">
       <li><span>Workspace</span><strong>MQLens desktop</strong><p>Sign in and choose an allowed connection.</p></li>
       <li class="server-node"><span>Your infrastructure</span><strong>MQLens Server</strong><p>Manage credentials, permissions, and audit records.</p></li>
       <li><span>Your databases</span><strong>MongoDB</strong><p>Receive database operations from the server.</p></li>
     </ol>
-    <p>The desktop would receive connection references and results, while MongoDB credentials stay on the server.</p>
+    <p>Your team will work with the connections they’re allowed to access, while MongoDB credentials stay on the server.</p>
   </section>
 
   <section class="container capabilities" id="planned-capabilities">
     <h2>Planned for teams that manage shared databases</h2>
-    <p>These capabilities describe the current design, not a released feature set.</p>
+    <p>Here’s what we’re planning for MQLens Server.</p>
     <div class="capability-grid">{planned.map(([title, body]) => <article><h3>{title}</h3><p>{body}</p></article>)}</div>
   </section>
 

@@ -3,16 +3,16 @@ import WorkflowLanding from '../components/WorkflowLanding.astro';
 ---
 <WorkflowLanding
   title="MongoDB client for Windows"
-  description="A fast native MongoDB client for Windows — signed .msi/.exe installer, multiple authentication methods, SSH/TLS, aggregation pipelines, explain plans. Free, Apache-2.0, zero telemetry."
+  description="A fast native MongoDB client for Windows — .msi/.exe installers, multiple authentication methods, SSH/TLS, aggregation pipelines, explain plans. Free, Apache-2.0, zero telemetry."
   eyebrow="Windows 10 / 11"
   h1="A native MongoDB client for Windows."
   grad="Signed, lightweight, complete."
   ctaLabel="Download for Windows"
-  lede="MQLens is a small native Windows app (Tauri + WebView2, not Electron) with a code-signed <code>.msi</code> / <code>.exe</code> installer. Every feature is here: all auth modes, TLS / SSH / SOCKS5, aggregation pipelines, visual explain plans, schema analysis, GridFS, and an embedded mongosh."
-  screenshot={{ src: '/screenshots/mqlens-documents.png', alt: 'MQLens document workspace with synthetic sample data' }}
-  featuresTitle="Everything, in a tiny signed installer"
+  lede="MQLens is a small native Windows app (Tauri + WebView2, not Electron) with an <code>.msi</code> / <code>.exe</code> installer. Every feature is here: supported authentication methods, TLS / SSH / SOCKS5, aggregation pipelines, visual explain plans, schema analysis, GridFS, and an embedded mongosh."
+  screenshot={{ src: '/screenshots/mqlens-documents.png', alt: 'MQLens document workspace with sample data' }}
+  featuresTitle="Choose your Windows installer"
   features={[
-    { h3: 'Signed installer', p: 'Code-signed <code>.msi</code> / <code>.exe</code> via Azure Trusted Signing.' },
+    { h3: 'Windows installers', p: 'Choose <code>.msi</code> or <code>.exe</code> from the release page. Check the release details and verify your download before installing.' },
     { h3: 'Every connection mode', p: 'All auth mechanisms (SCRAM, X.509, AWS IAM, Kerberos, LDAP) plus TLS / SSH / SOCKS5.' },
     { h3: 'Encrypted vault', p: 'Connection credentials encrypted locally with AES-256-GCM and Argon2id.' },
     { h3: 'Full feature set', p: 'Aggregation pipelines, explain plans, schema analysis, GridFS, and embedded mongosh.' },

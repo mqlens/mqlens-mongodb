@@ -22,13 +22,13 @@ The initial audience is developers choosing a MongoDB desktop GUI. The main acti
 | MongoDB GUI without telemetry | `/mongodb-gui-no-telemetry/` | Understand optional network requests |
 | MongoDB MCP server | `/mongodb-mcp-server/` | Read tool reference and access controls |
 | MongoDB AI query assistant | `/mongodb-ai-query-assistant/` | Review provider setup and data handling |
-| MQLens demo | `/demo/` | Watch, read transcript, download |
+| MQLens demo | `/demo/` | Watch, explore workflows, download |
 
 These are intent hypotheses, not search-volume estimates. Use query data to refine them. Expand an existing guide before creating another page that answers the same question.
 
 ## Implemented discovery foundation
 
-The site renders its important content as static HTML. Pages have individual descriptions, canonical URLs, social previews, internal links, and software/organization metadata. Interior pages have visible breadcrumbs and matching structured data. The demo has a stable video URL, poster, captions, transcript, and `VideoObject` metadata. The sitemap excludes the 404 page. Browser checks validate routes, metadata, local assets, navigation, and download fallbacks.
+The site renders its important content as static HTML. Pages have individual descriptions, canonical URLs, social previews, internal links, and software/organization metadata. Interior pages have visible breadcrumbs and matching structured data. The demo has a stable video URL, poster, captions, a workflow summary, and `VideoObject` metadata. The sitemap excludes the 404 page. Browser checks validate routes, metadata, local assets, navigation, and download fallbacks.
 
 `robots.txt` already permits crawlers. No special AI text file, fake review markup, tracking beacon, or automatic outbound submission is added. Google says normal SEO fundamentals apply to its AI search features and does not require an AI text file or special schema. [Google guidance](https://developers.google.com/search/docs/appearance/ai-features).
 
@@ -51,7 +51,7 @@ IndexNow remains an optional hosting follow-up: the existing sitemap is sufficie
 
 ## Baseline and scorecard
 
-Local baseline reviewed: October 4, 2026, source `7a26138`. The original site generated 21 pages. The refreshed production build generates 24 pages. Search metrics below are unavailable without the owner's dashboards; unavailable does not mean zero.
+Local baseline reviewed: October 4, 2026, source `7a26138`. The original site generated 21 pages. The refreshed production build generates 25 pages. Search metrics below are unavailable without the owner's dashboards; unavailable does not mean zero.
 
 | Metric | Baseline | Review source |
 | --- | --- | --- |
@@ -103,8 +103,8 @@ Package-manager distribution is a separate follow-up: check whether maintained H
 
 ## Local validation — October 4, 2026
 
-- Production Astro build: 24 pages, passed.
-- Browser acceptance suite: 11 tests passed, covering metadata and internal links across generated pages, sitemap, mobile layouts/navigation, no-JavaScript access, release lookup fallback, and captioned video playback.
+- Production Astro build: 25 pages, passed.
+- Browser acceptance suite: 12 tests passed, covering metadata and internal links across generated pages, sitemap, mobile layouts/navigation, no-JavaScript access, release lookup fallback, and captioned video playback.
 - Mobile Lighthouse on the local production preview: performance 98, accessibility 100, best practices 96, SEO 100. Best practices lost points because GitHub’s public release API returned HTTP 403; the tested manual download fallback remained available. These are lab scores, not production field measurements or ranking guarantees.
 - Independent review findings corrected: two media descriptions now match their captures. Social preview and representative desktop/mobile layouts inspected visually.
 - Media uses current application UI with synthetic browser fixtures. Native desktop behavior and live MongoDB operations still require separate validation before making corresponding claims.

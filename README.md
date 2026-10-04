@@ -10,7 +10,7 @@
 
 [![MQLens workspace with two collections open side by side](website/public/screenshots/mqlens-workspace.png)](https://mqlens.com/demo/)
 
-*Current interface previews use synthetic data in the browser harness. They illustrate workflows, not live database performance.*
+*Screenshots and demos use sample data, including illustrative query results and execution statistics.*
 
 ## From a collection to an answer
 
@@ -25,7 +25,7 @@
 
 ## MQLens Server — coming soon
 
-A planned, self-hosted backend for teams, with server-held MongoDB credentials, centralized access controls, and audit logs. It is in the design phase, with commercial licensing planned separately from the free desktop app. [Explore MQLens Server](https://mqlens.com/mqlens-server/) or [follow the project](https://github.com/mqlens/mqlens-server).
+A self-hosted backend for teams is coming soon, bringing centralized MongoDB credentials, access controls, and audit logs. MQLens Server will be a separate paid product; the desktop app stays free and open source. [Explore MQLens Server](https://mqlens.com/mqlens-server/) or [follow the project](https://github.com/mqlens/mqlens-server).
 
 ## Install and run your first query
 
@@ -45,13 +45,13 @@ See [installation and connection help](https://mqlens.com/docs/). The optional e
 
 ## A quick look
 
-[![MQLens demo browsing synthetic documents in table and tree views](assets/demo.gif)](https://mqlens.com/demo/)
+[![MQLens demo browsing sample documents in table and tree views](assets/demo.gif)](https://mqlens.com/demo/)
 
-[Watch the full demo and read its transcript](https://mqlens.com/demo/).
+[Watch the full demo and explore the workflows](https://mqlens.com/demo/).
 
 | Build an aggregation | Read an explain plan |
 | --- | --- |
-| [![MQLens aggregation stages with sample results](website/public/screenshots/mqlens-aggregation.png)](https://mqlens.com/guides/mongodb-aggregation-gui/) | [![MQLens explain plan with synthetic execution details](website/public/screenshots/mqlens-explain-plan.png)](https://mqlens.com/guides/read-mongodb-explain-plan/) |
+| [![MQLens aggregation stages with sample results](website/public/screenshots/mqlens-aggregation.png)](https://mqlens.com/guides/mongodb-aggregation-gui/) | [![MQLens explain plan with sample execution details](website/public/screenshots/mqlens-explain-plan.png)](https://mqlens.com/guides/read-mongodb-explain-plan/) |
 
 ## Trust and privacy
 

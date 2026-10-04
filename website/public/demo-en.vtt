@@ -13,4 +13,4 @@ Read documents as syntax-highlighted JSON.
 Build and run an aggregation that groups customers and seats by region.
 
 00:28.000 --> 00:37.540
-Inspect the explain plan. This walkthrough uses synthetic data and plan statistics.
+Inspect the explain plan. This walkthrough uses sample data and illustrative plan statistics.

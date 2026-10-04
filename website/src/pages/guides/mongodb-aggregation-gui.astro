@@ -37,8 +37,8 @@ const projectExample = `{
         <p class="lede">
           MongoDB's aggregation framework is one of the most powerful data-processing
           tools in any database — but writing correct pipelines in raw JSON is slow
-          and error-prone. MQLens provides a stage-by-stage pipeline builder with live
-          result previews and an integrated explain plan so you can build, test, and
+          and error-prone. MQLens provides a stage-by-stage pipeline builder with on-demand
+          results and an integrated explain plan so you can build, test, and
           optimize pipelines without leaving the app.
         </p>
       </header>
@@ -63,10 +63,9 @@ const projectExample = `{
         </p>
         <pre><code set:html={matchExample}></code></pre>
         <p>
-          Click <strong>Preview</strong> (or press the preview shortcut). MQLens runs
+          Click the play button in the stage header (<strong>Run pipeline to stage 1</strong>). MQLens runs
           the pipeline up to this stage against the real collection and displays the
-          first documents in the result pane. The preview uses a default limit so it
-          never accidentally returns millions of documents.
+          first documents in the result pane. Add a <code>$limit</code> stage when you only need a small sample.
         </p>
         <figure class="guide-shot">
           <a href="/screenshots/mqlens-aggregation.png" target="_blank" rel="noopener">
@@ -77,8 +76,7 @@ const projectExample = `{
         <p>
           Placing a <code>$match</code> as the first stage is important: MongoDB can
           use an index on the matched fields when <code>$match</code> comes first,
-          whereas a <code>$match</code> later in the pipeline must scan the full output
-          of all prior stages.
+          though MongoDB can also move eligible filters earlier during optimization.
         </p>
 
         <h2>Grouping data with $group</h2>
@@ -96,7 +94,8 @@ const projectExample = `{
         <h2>Joining collections with $lookup</h2>
         <p>
           <code>$lookup</code> performs a left-outer join between the pipeline documents
-          and another collection. Add a stage, select <code>$lookup</code>, and fill in
+          and another collection. For a separate example using documents with a <code>productId</code> field,
+          add <code>$lookup</code> before grouping and fill in
           the fields:
         </p>
         <pre><code set:html={lookupExample}></code></pre>
@@ -108,7 +107,7 @@ const projectExample = `{
         </p>
         <p>
           MQLens also supports the pipeline form of <code>$lookup</code> for
-          correlated subqueries — paste the full stage document directly into the
+          correlated subqueries — enter the <code>$lookup</code> body directly into the
           stage editor.
         </p>
 
@@ -136,8 +135,8 @@ const projectExample = `{
         <h2>Previewing results at each stage</h2>
         <p>
           The key workflow advantage of building pipelines in MQLens is the
-          per-stage preview. At any point you can click the stage number in the
-          left rail to see the output of just that stage. This lets you:
+          per-stage run control. Click the play button in a stage header to run
+          all enabled stages up to that point and see their combined output. This lets you:
         </p>
         <ul>
           <li>Verify that a <code>$match</code> is returning the documents you expect before you add grouping logic.</li>
@@ -148,10 +147,10 @@ const projectExample = `{
         <h2>Getting an explain plan for the pipeline</h2>
         <p>
           Once you are happy with the pipeline's correctness, click
-          <strong>Explain Pipeline</strong>. MQLens runs the pipeline with
+          <strong>Run Explain</strong> in the dropdown beside <strong>Run</strong>. MQLens runs the pipeline with
           <code>executionStats</code> verbosity and renders a visual plan tree.
-          Each node in the tree shows its stage type, documents examined, and
-          execution time. Look for:
+          The visual tree shows stage types and index details. Switch to
+          <strong>Raw JSON</strong> for execution statistics. Look for:
         </p>
         <ul>
           <li>A COLLSCAN in the first stage — signals you need an index on the <code>$match</code> predicate.</li>
@@ -161,21 +160,21 @@ const projectExample = `{
         <p>
           The visual plan tree makes it easy to see the flow: the collection scan or
           index scan at the bottom feeds into the first pipeline stage, and the
-          document counts at each stage boundary show you exactly where the pipeline
-          is processing the most data.
+          execution statistics in the raw output help you find where the pipeline
+          processes the most data.
         </p>
 
         <h2>Saving and re-running pipelines</h2>
         <p>
-          MQLens saves open pipelines with the connection profile, so your work
+          MQLens saves open pipelines as part of your workspace session, so your work
           persists across sessions. You can also copy the full pipeline as a JSON
           array to paste into your application code or into <code>mongosh</code>.
         </p>
 
         <div class="cta-block">
           <p>
-            Download {SITE.name} free — a full aggregation pipeline builder with live
-            previews and visual explain plans, no Atlas subscription required.
+            Download {SITE.name} free — a full aggregation pipeline builder with per-stage
+            runs and visual explain plans, no Atlas subscription required.
           </p>
           <Download />
         </div>

@@ -19,13 +19,19 @@ const year = new Date().getUTCFullYear();
         <a href="/#download">Download</a>
         <a href="/changelog/">Changelog</a>
         <a href="/demo/">Watch the demo</a>
-        <a href="/mqlens-server/">MQLens Server · Coming soon</a>
+        <a href="/mqlens-server/">Server · Coming soon</a>
+        <a href="/mongodb-client-for-mac/">macOS</a>
+        <a href="/mongodb-client-for-windows/">Windows</a>
+        <a href="/mongodb-gui-for-linux/">Linux</a>
       </div>
       <div>
-        <h3>Docs</h3>
+        <h3>Resources</h3>
         <a href="/docs/">Getting started</a>
         <a href="/docs/#verifying">Verify downloads</a>
         <a href="/docs/#security">Security</a>
+        <a href={SITE.repo} target="_blank" rel="noopener">GitHub</a>
+        <a href={SITE.releases} target="_blank" rel="noopener">Releases</a>
+        <a href={`${SITE.repo}/issues`} target="_blank" rel="noopener">Issues</a>
       </div>
       <div>
         <h3>Compare</h3>
@@ -33,12 +39,6 @@ const year = new Date().getUTCFullYear();
         <a href="/compare/studio-3t-alternative/">vs Studio 3T</a>
         <a href="/compare/robo-3t-alternative/">vs Robo 3T</a>
         <a href="/compare/nosqlbooster-alternative/">vs NoSQLBooster</a>
-      </div>
-      <div>
-        <h3>Platforms</h3>
-        <a href="/mongodb-client-for-mac/">MongoDB client for Mac</a>
-        <a href="/mongodb-client-for-windows/">MongoDB client for Windows</a>
-        <a href="/mongodb-gui-for-linux/">MongoDB GUI for Linux</a>
       </div>
       <div>
         <h3>Workflows</h3>
@@ -50,12 +50,6 @@ const year = new Date().getUTCFullYear();
         <a href="/mongodb-gui-no-telemetry/">No telemetry</a>
         <a href="/mongodb-mcp-server/">MongoDB MCP server</a>
         <a href="/mongodb-ai-query-assistant/">AI query assistant</a>
-      </div>
-      <div>
-        <h3>Project</h3>
-        <a href={SITE.repo} target="_blank" rel="noopener">GitHub</a>
-        <a href={SITE.releases} target="_blank" rel="noopener">Releases</a>
-        <a href={`${SITE.repo}/issues`} target="_blank" rel="noopener">Issues</a>
       </div>
     </div>
   </div>
@@ -69,19 +63,19 @@ const year = new Date().getUTCFullYear();
   .footer {
     border-top: 1px solid var(--border);
     background: var(--bg-soft);
-    padding: 56px 0 28px;
+    padding: 36px 0 24px;
     margin-top: 40px;
   }
   .foot-inner {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 40px;
-    justify-content: space-between;
+    display: grid;
+    grid-template-columns: 190px minmax(0, 1fr);
+    gap: 32px;
   }
   .foot-brand { max-width: 280px; }
   .brand-row { display: flex; align-items: center; gap: 8px; font-size: 1.1rem; }
   .foot-brand p { color: var(--text-dim); margin: 10px 0 0; }
-  .foot-cols { display: flex; gap: 56px; flex-wrap: wrap; }
+  .foot-cols { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 24px; }
+  .foot-cols > div { min-width: 0; }
   .foot-cols h3 {
     font-size: 0.8rem;
     text-transform: none;
@@ -96,10 +90,18 @@ const year = new Date().getUTCFullYear();
     justify-content: space-between;
     flex-wrap: wrap;
     gap: 8px;
-    margin-top: 40px;
-    padding-top: 22px;
+    margin-top: 24px;
+    padding-top: 18px;
     border-top: 1px solid var(--border);
     color: var(--text-dim);
     font-size: 0.85rem;
+  }
+  @media (max-width: 1050px) {
+    .foot-inner { grid-template-columns: 1fr; gap: 24px; }
+    .foot-brand { max-width: none; }
+  }
+  @media (max-width: 600px) {
+    .foot-cols { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 16px; }
+    .foot-cols a { overflow-wrap: anywhere; }
   }
 </style>

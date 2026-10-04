@@ -4,14 +4,14 @@ test.beforeEach(async ({ page }) => {
   await page.route('https://api.github.com/**', route => route.fulfill({ status: 503, body: '{}' }));
 });
 
-test('demo is an indexable watch page with accessible playback and a transcript', async ({ page }) => {
+test('demo is an indexable watch page with accessible playback and a workflow summary', async ({ page }) => {
   const response = await page.goto('/demo/');
   expect(response?.status()).toBe(200);
   await expect(page.locator('h1')).toContainText('MQLens');
   await expect(page.locator('video[controls]')).toBeVisible();
   await expect(page.locator('video source')).toHaveAttribute('src', '/demo.mp4');
   await expect(page.locator('video')).not.toHaveAttribute('autoplay');
-  await expect(page.getByRole('heading', { name: 'Demo transcript' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'What you’ll see' })).toBeVisible();
   const schema = await page.locator('script[type="application/ld+json"]').allTextContents();
   expect(schema.some(s => JSON.stringify(JSON.parse(s)).includes('VideoObject'))).toBe(true);
 });
@@ -96,7 +96,7 @@ test('supporting pages remain readable on mobile', async ({ page }) => {
 test('server preview clearly identifies planned availability and separate licensing', async ({ page }) => {
   await page.goto('/mqlens-server/');
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('MQLens Server');
-  await expect(page.getByText('Coming soon · In design', { exact: true })).toBeVisible();
+  await expect(page.getByText('Coming soon', { exact: true })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Follow development on GitHub' })).toHaveAttribute('href', 'https://github.com/mqlens/mqlens-server');
   const graph = await page.locator('script[type="application/ld+json"]').evaluate(el => JSON.parse(el.textContent!)['@graph']);
   expect(graph.some((item: Record<string, unknown>) => item['@type'] === 'SoftwareApplication')).toBe(false);

@@ -3,14 +3,14 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 import Download from '../components/Download.astro';
 import { SITE } from '../consts';
 const workflows = [
-  { id: 'explore', label: 'Explore your data', title: 'From a collection to a clear picture.', body: 'Browse documents as a table, tree, or JSON. Follow nested fields, filter your results, and edit without losing your place.', image: 'documents', alt: 'MQLens document workspace showing synthetic customer records', link: '/features/#documents', cta: 'Explore the document tools' },
+  { id: 'explore', label: 'Explore your data', title: 'From a collection to a clear picture.', body: 'Browse documents as a table, tree, or JSON. Follow nested fields, filter your results, and edit without losing your place.', image: 'documents', alt: 'MQLens document workspace showing sample customer records', link: '/features/#documents', cta: 'Explore the document tools' },
   { id: 'query', label: 'Build better queries', title: 'Write the query. Understand the result.', body: 'Build aggregation pipelines one stage at a time. Open an explain plan to inspect how MongoDB executes your query and where an index could help.', image: 'aggregation', alt: 'MQLens aggregation pipeline editor with stages and query results', link: '/guides/mongodb-aggregation-gui/', cta: 'Build your first aggregation' },
   { id: 'workspace', label: 'Make room for your work', title: 'A workspace that works your way.', body: 'Keep collections side by side with split panes. Open a shell, detach a tab into another window, and return to your saved workspace next time.', image: 'workspace', alt: 'MQLens workspace with two collection panes side by side', link: '/features/#workspace', cta: 'See workspace features' },
 ];
 const gallery = [
   { image: 'explain-plan', title: 'Understand an explain plan', link: '/mongodb-explain-plan-gui/', alt: 'Query plan stages and execution details in MQLens' },
   { image: 'schema', title: 'Explore your document structure', link: '/mongodb-schema-analysis-tool/', alt: 'MQLens schema report with field types and presence' },
-  { image: 'gridfs', title: 'Keep files close to your data', link: '/mongodb-gridfs-gui/', alt: 'MQLens GridFS browser with synthetic sample files' },
+  { image: 'gridfs', title: 'Keep files close to your data', link: '/mongodb-gridfs-gui/', alt: 'MQLens GridFS browser with sample files' },
 ];
 ---
 <BaseLayout>
@@ -33,7 +33,7 @@ const gallery = [
       <figure class="hero-preview">
         <div class="preview-bar"><span>MQLens workspace</span><a href="/demo/">See it in action <span aria-hidden="true">↗</span></a></div>
         <a href="/screenshots/mqlens-workspace.png" aria-label="Open full-size MQLens workspace screenshot">
-          <picture><source media="(max-width: 640px)" srcset="/screenshots/mqlens-workspace-mobile.webp" width="640" height="500" /><img src="/screenshots/mqlens-workspace.webp" alt="Current MQLens interface with two collections open side by side using synthetic sample data" width="1600" height="1000" fetchpriority="high" /></picture>
+          <picture><source media="(max-width: 640px)" srcset="/screenshots/mqlens-workspace-mobile.webp" width="640" height="500" /><img src="/screenshots/mqlens-workspace.webp" alt="Current MQLens interface with two collections open side by side using sample data" width="1600" height="1000" fetchpriority="high" /></picture>
         </a>
         <figcaption>One workspace. Your collections, queries, and tools together. <span>Interface preview with sample data.</span></figcaption>
       </figure>
@@ -65,7 +65,7 @@ const gallery = [
   </section>
 
   <section class="section" id="gallery">
-    <div class="container"><div class="section-intro"><p class="section-label">A closer look</p><h2>Tools for the next question.</h2><p>Current interface previews with synthetic data. Open a workflow to learn more.</p></div>
+    <div class="container"><div class="section-intro"><p class="section-label">A closer look</p><h2>Tools for the next question.</h2><p>Explore the tools with sample data, then open a workflow to learn more.</p></div>
       <div class="gallery-grid">{gallery.map(s => <a class="gallery-item" href={s.link}><img src={`/screenshots/mqlens-${s.image}.webp`} alt={s.alt} width="1600" height="1000" loading="lazy" /><h3>{s.title}</h3></a>)}</div>
     </div>
   </section>

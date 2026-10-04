@@ -6,7 +6,7 @@ import { SITE } from '../../consts';
 
 <BaseLayout
   title="How to read a MongoDB explain plan"
-  description="Understand MongoDB explain output — COLLSCAN vs IXSCAN, stages, docs examined vs returned — and see how MQLens renders it as an interactive visual plan tree for both find queries and aggregation pipelines."
+  description="Understand MongoDB explain output — COLLSCAN vs IXSCAN, stages, docs examined vs returned — and see how MQLens renders it as a visual plan tree for both find queries and aggregation pipelines."
 >
   <article class="section guide-page">
     <div class="container guide-inner">
@@ -28,7 +28,7 @@ import { SITE } from '../../consts';
           When you run <code>db.collection.find(&#123;&#8230;&#125;).explain("executionStats")</code>,
           MongoDB returns a nested document describing the <em>winning plan</em>: the
           execution strategy the query planner chose from all the candidates it
-          considered. The two most important fields at each stage are:
+          considered. Useful fields across the explain document include:
         </p>
         <ul>
           <li><strong>stage</strong> — what type of work this node performs (see below).</li>
@@ -118,24 +118,23 @@ import { SITE } from '../../consts';
 
         <h2>Reading explain plans visually in MQLens</h2>
         <p>
-          Raw explain JSON can be hundreds of lines deep. MQLens renders the plan as an
-          interactive tree: each node shows its stage name, <code>nReturned</code>,
-          documents examined, and execution time. You can expand or collapse branches and
-          immediately see which stage is responsible for the most document reads.
+          Raw explain JSON can be hundreds of lines deep. MQLens renders the plan as a
+          visual tree showing stage names and index details. Switch to
+          <strong>Raw JSON</strong> to inspect document counts, keys examined, and
+          execution timing reported by MongoDB.
         </p>
         <p>
           To get an explain plan in MQLens:
         </p>
         <ol>
-          <li>Open a collection and write your find filter, sort, and projection in the query panel.</li>
-          <li>Click the <strong>Explain</strong> button next to the Run button. MQLens runs the query with <code>executionStats</code> verbosity.</li>
-          <li>The visual plan tree opens in a side panel. COLLSCAN nodes are highlighted in amber; IXSCAN nodes appear in the accent color.</li>
-          <li>For aggregation pipelines, open the pipeline builder, compose your stages, and click <strong>Explain Pipeline</strong>. The tree expands to show each pipeline stage alongside its inner query plan node.</li>
+          <li>Open a collection and write your find filter in the query panel.</li>
+          <li>Open the dropdown beside <strong>Run</strong> and choose <strong>Run Explain</strong>. MQLens runs the query with <code>executionStats</code> verbosity.</li>
+          <li>The results area opens the <strong>Explain Plan</strong> tab. Switch between <strong>Visual Tree</strong> and <strong>Raw JSON</strong>.</li>
+          <li>For aggregation pipelines, open the pipeline builder, compose your stages, and choose <strong>Run Explain</strong> from the same dropdown. The visual tree shows pipeline stages and the available query plan.</li>
         </ol>
         <p>
-          The tree view makes it immediately obvious when a deep nested COLLSCAN is
-          hiding inside an otherwise indexed aggregation pipeline — something that is
-          easy to miss in raw JSON output.
+          Use the tree to follow the plan structure, then inspect the raw output for
+          detailed statistics and nested lookup plans.
         </p>
 
         <div class="cta-block">
