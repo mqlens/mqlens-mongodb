@@ -1,5 +1,7 @@
 # MQLens
 
+**English** · [Deutsch](README.de.md) · [简体中文](README.zh-CN.md)
+
 **Browse, query, and understand MongoDB.** A free, open-source desktop workspace for macOS, Windows, and Linux.
 
 [![CI](https://github.com/mqlens/mqlens-mongodb/actions/workflows/ci.yml/badge.svg)](https://github.com/mqlens/mqlens-mongodb/actions/workflows/ci.yml)
@@ -9,7 +11,15 @@
 [![Stars](https://img.shields.io/github/stars/mqlens/mqlens-mongodb?style=flat)](https://github.com/mqlens/mqlens-mongodb/stargazers)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
+<br />
+
+Connect to local MongoDB databases, self-hosted deployments, or MongoDB Atlas. Explore documents, build queries, and inspect results in one desktop workspace, with tabs and split panes for working across collections.
+
+Start with familiar table and JSON views, then reach for aggregation tools, explain plans, schema analysis, or the built-in shell as your work grows. The desktop app works without a MQLens account; AI assistance is optional.
+
 **[Download MQLens](https://mqlens.com/#download)** · [Watch the demo](https://mqlens.com/demo/) · [Documentation](https://mqlens.com/docs/) · [Website](https://mqlens.com)
+
+<br />
 
 [![MQLens workspace with two collections open side by side](website/public/screenshots/mqlens-workspace.png)](https://mqlens.com/demo/)
 
@@ -66,6 +76,10 @@ See [installation and connection help](https://mqlens.com/docs/). The optional e
 - Releases include verification information. See [how to verify downloads](docs/verifying-downloads.md) and the [security policy](.github/SECURITY.md).
 
 Choosing between tools? Read the [MongoDB Compass](https://mqlens.com/compare/mongodb-compass-alternative/) and [Studio 3T](https://mqlens.com/compare/studio-3t-alternative/) comparisons.
+
+## Your language
+
+The app supports English, German, and Simplified Chinese. Choose your language in Settings. Read this guide in [Deutsch](README.de.md) or [简体中文](README.zh-CN.md); linked website pages and technical guides are currently in English.
 
 ## Contribute
 
