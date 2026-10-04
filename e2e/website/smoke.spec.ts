@@ -100,5 +100,5 @@ test('server preview clearly identifies planned availability and separate licens
   await expect(page.getByRole('link', { name: 'Follow development on GitHub' })).toHaveAttribute('href', 'https://github.com/mqlens/mqlens-server');
   const graph = await page.locator('script[type="application/ld+json"]').evaluate(el => JSON.parse(el.textContent!)['@graph']);
   expect(graph.some((item: Record<string, unknown>) => item['@type'] === 'SoftwareApplication')).toBe(false);
-  await expect(page.getByText('MQLens Server is planned as a separate commercial product.', { exact: false })).toBeVisible();
+  await expect(page.getByText('MQLens Server will be a paid product,', { exact: false })).toBeVisible();
 });

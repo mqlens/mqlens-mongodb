@@ -37,16 +37,15 @@ const planned = [
   </section>
 
   <section class="container questions" aria-labelledby="questions-title">
-    <h2 id="questions-title">Before you plan a rollout</h2>
-    <h3>Can I use MQLens Server today?</h3>
-    <p>Not yet. The <a href={repo}>server repository</a> currently describes the project as being in its design phase. Follow it for implementation progress and future release information.</p>
-    <h3>Will I still be able to connect directly from the desktop?</h3>
-    <p>Yes. The design keeps the desktop's existing direct-connection mode alongside the planned server mode. You can <a href="/#download">download the free desktop app</a> today.</p>
-    <h3>How will licensing work?</h3>
-    <p>MQLens Server is planned as a separate commercial product. Pricing and final licensing terms are not yet published. The MQLens desktop app remains free and open source under Apache-2.0.</p>
-    <h3>Is this the desktop's MCP server?</h3>
-    <p>MQLens Server is the planned backend for organizational database access. The desktop's existing <a href="/mongodb-mcp-server/">optional MCP server</a> connects compatible AI agents to selected MongoDB connections.</p>
-    <p class="source">Based on the <a href={repo}>project README</a> and its <a href={`${repo}/blob/dev/docs/specs/2026-06-07-mqlens-server-design.md`}>draft design specification</a>, reviewed October 4, 2026.</p>
+    <h2 id="questions-title">Frequently asked questions</h2>
+    <h3>When will MQLens Server be available?</h3>
+    <p>MQLens Server is coming soon. We’ll share availability and release details as launch approaches. <a href={repo}>Follow MQLens Server on GitHub</a> for updates.</p>
+    <h3>Will I need MQLens Server to use the desktop app?</h3>
+    <p>No. You can continue connecting directly to MongoDB with the free MQLens desktop app. MQLens Server will be an optional choice for teams that want to manage database access centrally. <a href="/#download">Download MQLens for desktop</a>.</p>
+    <h3>Will MQLens Server be free?</h3>
+    <p>MQLens Server will be a paid product, with pricing and licensing details announced before launch. The MQLens desktop app remains free and open source under Apache-2.0.</p>
+    <h3>How is MQLens Server different from MCP?</h3>
+    <p>MQLens Server will help teams manage shared MongoDB access, permissions, and audit logs. The desktop app’s <a href="/mongodb-mcp-server/">MCP integration</a> lets compatible AI agents work with the MongoDB connections you choose.</p>
   </section>
 </BaseLayout>
 
@@ -58,7 +57,7 @@ const planned = [
   .intro { max-width:700px; font-size:1.15rem; }
   p { color:var(--text-dim); max-width:76ch; }
   .actions { display:flex; gap:16px; flex-wrap:wrap; margin-top:28px; }
-  .availability, .source { font-size:.9rem; }
+  .availability { font-size:.9rem; }
   .architecture, .capabilities, .questions { padding-block:40px; }
   h2 { font-size:clamp(1.7rem,3vw,2.3rem); max-width:760px; }
   .flow { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:24px; list-style:none; padding:0; margin:32px 0; }
@@ -72,6 +71,5 @@ const planned = [
   h3 { font-size:1.2rem; line-height:1.4; }
   .questions h3 { margin-top:32px; }
   .questions a { text-decoration:underline; text-underline-offset:3px; }
-  .source { margin-top:40px; }
   @media (max-width:720px) { .server-hero { padding-top:32px; } .flow, .capability-grid { grid-template-columns:1fr; } }
 </style>
