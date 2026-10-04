@@ -290,6 +290,17 @@ describe('RestoreView drop confirmation', () => {
     expect(screen.queryByTestId('restore-drop-confirm')).not.toBeInTheDocument();
     expect(props.onRunRestore).toHaveBeenCalledTimes(1);
   });
+
+  it('cancels the inline drop confirmation without starting restore', async () => {
+    const props = renderRestoreView();
+    await browseFolder(props);
+    fireEvent.click(screen.getByTestId('restore-opt-drop'));
+    fireEvent.click(screen.getByTestId('restore-run-btn'));
+    expect(screen.getByTestId('restore-drop-confirm')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('restore-drop-cancel-btn'));
+    expect(screen.queryByTestId('restore-drop-confirm')).not.toBeInTheDocument();
+    expect(props.onRunRestore).not.toHaveBeenCalled();
+  });
 });
 
 describe('RestoreView command preview', () => {

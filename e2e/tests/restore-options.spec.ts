@@ -107,7 +107,7 @@ test.describe('Restore options', () => {
     await page.getByTestId('restore-run-btn').click();
     await expect(page.getByTestId('restore-drop-confirm')).toContainText('(entire archive)');
 
-    await page.getByTestId('restore-drop-confirm').getByRole('button', { name: 'Cancel' }).click();
+    await page.getByTestId('restore-drop-cancel-btn').click();
     await expect(page.getByTestId('restore-drop-confirm')).toHaveCount(0);
     expect(await app.calls('start_restore_task')).toHaveLength(0);
   });

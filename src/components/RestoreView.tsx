@@ -643,6 +643,7 @@ export const RestoreView: React.FC<RestoreViewProps> = ({
                   size="sm"
                   variant="outline"
                   onClick={() => setShowDropConfirm(false)}
+                  data-testid="restore-drop-cancel-btn"
                 >
                   {t('restoreView.actions.cancel')}
                 </Button>
