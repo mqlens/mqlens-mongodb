@@ -22,7 +22,8 @@ test.describe('Sidebar confirmations and failures', () => {
     await expandCollections(page, 'sales_db');
 
     await menu(page, sidebar(page).getByText('products', { exact: true }), 'Drop Collection');
-    await page.getByTestId('dialog-cancel').click();
+    await page.getByTestId('dialog-overlay').dispatchEvent('keydown', { key: 'Escape' });
+    await expect(page.getByTestId('dialog-overlay')).toHaveCount(0);
     await dismissHoverCards(page);
 
     await menu(page, databaseRow(page, 'user_analytics'), 'Drop Database');
