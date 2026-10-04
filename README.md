@@ -8,7 +8,6 @@
 [![Downloads](https://img.shields.io/github/downloads/mqlens/mqlens-mongodb/total)](https://github.com/mqlens/mqlens-mongodb/releases)
 [![Stars](https://img.shields.io/github/stars/mqlens/mqlens-mongodb?style=flat)](https://github.com/mqlens/mqlens-mongodb/stargazers)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![MQLens browsing MongoDB documents](website/public/screenshots/mqlens-documents.png)](website/public/screenshots/mqlens-documents.png)
 
 **[Download MQLens](https://mqlens.com/#download)** · [Watch the demo](https://mqlens.com/demo/) · [Documentation](https://mqlens.com/docs/) · [Website](https://mqlens.com)
 
