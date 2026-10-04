@@ -24,6 +24,7 @@ test('every built page has unique metadata, valid schema and working local links
     const description=html.match(/<meta name="description" content="([^"]*)"/)?.[1];
     expect(title, file).toBeTruthy(); expect(descriptions.has(description!), file).toBe(false);
     expect(description, file).toBeTruthy(); expect(titles.has(title!), file).toBe(false);
+    expect(title, file).not.toContain("— MQLens — MQLens");
     titles.add(title!); descriptions.add(description!);
     expect((html.match(/<h1[ >]/g) ?? []).length, file).toBe(1);
     expect(html, file).toContain('rel="canonical"');
