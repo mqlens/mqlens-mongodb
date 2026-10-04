@@ -5698,7 +5698,7 @@ mod tests {
         // to compile (not just fail at runtime) the moment a `uri` field is
         // added, since the struct literal below is exhaustive.
         let meta = crate::ConnectionMeta { profile_id: "p".into(), name: "n".into(), via_mcp: false, mode: Default::default() };
-        let entry = crate::ConnectionEntry { id: "c".into(), profile_id: meta.profile_id.clone(), name: meta.name.clone(), via_mcp: meta.via_mcp, mode: meta.mode };
+        let entry = crate::ConnectionEntry { id: "c".into(), profile_id: meta.profile_id.clone(), name: meta.name.clone(), via_mcp: meta.via_mcp, mode: meta.mode, server: None };
         assert_eq!(entry.id, "c");
     }
 

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { act, render } from '@testing-library/react';
 import { useEffect, useState } from 'react';
+import { createFakeMonaco, type FakeMonaco } from '../../test/fakeMonaco';
 
 type KeyDownHandler = (e: {
   keyCode: number;
@@ -120,16 +121,21 @@ function createFakeEditor(initialValue: string) {
 }
 type FakeEditor = ReturnType<typeof createFakeEditor>;
 
+/** The Monaco namespace the last editor was handed, before and at mount. */
+let lastMonaco: FakeMonaco | undefined;
+
 vi.mock('@monaco-editor/react', async () => {
   const React = await import('react');
   return {
-    // Mirrors @monaco-editor/react where QueryEditor depends on it: onChange
-    // reports every model change except the library's own, and a new `value`
-    // is pushed into the model as one edit while onChange is muted.
+    // Mirrors @monaco-editor/react where QueryEditor depends on it: beforeMount
+    // runs before the editor exists, onChange reports every model change
+    // except the library's own, and a new `value` is pushed into the model as
+    // one edit while onChange is muted.
     default: ({
       value,
       defaultValue,
       onChange,
+      beforeMount,
       onMount,
       options,
       height,
@@ -141,10 +147,17 @@ vi.mock('@monaco-editor/react', async () => {
       options?: Record<string, unknown>;
       height?: number | string;
       wrapperProps?: Record<string, unknown>;
-      onMount?: (ed: unknown, monaco: { KeyCode: typeof KeyCode; editor: { defineTheme: () => void; setTheme: () => void; EditorOption: { readOnly: number } } }) => void;
+      beforeMount?: (monaco: FakeMonaco) => void;
+      onMount?: (ed: unknown, monaco: FakeMonaco) => void;
     }) => {
       lastOptions = options;
       lastHeight = height;
+      const monacoRef = React.useRef<FakeMonaco | null>(null);
+      if (!monacoRef.current) {
+        monacoRef.current = createFakeMonaco();
+        lastMonaco = monacoRef.current;
+        beforeMount?.(monacoRef.current);
+      }
       const editorRef = React.useRef<FakeEditor | null>(null);
       editorRef.current ??= createFakeEditor(value ?? defaultValue ?? '');
       const onChangeRef = React.useRef(onChange);
@@ -154,7 +167,7 @@ vi.mock('@monaco-editor/react', async () => {
       React.useEffect(() => {
         const ed = editorRef.current!;
         lastEditor = ed;
-        onMount?.(ed, { KeyCode, editor: { defineTheme: vi.fn(), setTheme: vi.fn(), EditorOption: { readOnly: 0 } } });
+        onMount?.(ed, monacoRef.current!);
         ed.onDidChangeModelContent(() => {
           if (!pushingValue.current) onChangeRef.current?.(ed.getValue());
         });
@@ -253,6 +266,18 @@ describe('QueryEditor', () => {
     expect(enterRunWhen).toContain('!suggestWidgetVisible');
     enterRunCommand?.();
     expect(onRun).toHaveBeenCalledTimes(1);
+  });
+
+  // Query text is mongosh-style (unquoted keys, ObjectId(…)), so the language
+  // services' own validation would red-squiggle valid input.
+  it('turns off script and JSON validation before the editor mounts', () => {
+    render(<QueryEditor surface="filter" value="{ a: 1 }" onChange={() => {}} fields={[]} />);
+    expect(lastMonaco!.typescript.javascriptDefaults.setDiagnosticsOptions).toHaveBeenCalledWith({
+      noSemanticValidation: true,
+      noSyntaxValidation: true,
+      noSuggestionDiagnostics: true,
+    });
+    expect(lastMonaco!.json.jsonDefaults.setDiagnosticsOptions).toHaveBeenCalledWith({ validate: false });
   });
 });
 

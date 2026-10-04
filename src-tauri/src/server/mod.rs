@@ -18,6 +18,8 @@ pub(crate) mod errors;
 #[cfg(test)]
 pub(crate) mod fake;
 pub(crate) mod pb;
+pub(crate) mod remote;
+pub(crate) mod routes;
 pub(crate) mod session;
 
 use session::{AccountSession, KeySource, TokenStore};
@@ -32,6 +34,9 @@ use std::sync::{Arc, Mutex};
 #[derive(Default)]
 pub(crate) struct ServerRuntime {
     sessions: tokio::sync::Mutex<HashMap<String, Arc<AccountSession>>>,
+    /// Remote connections by desktop connection id. A std mutex: routing is
+    /// synchronous, like the local client lookup it sits beside.
+    remotes: Mutex<HashMap<String, Arc<remote::RemoteConn>>>,
 }
 
 impl ServerRuntime {
@@ -72,6 +77,35 @@ impl ServerRuntime {
 
     pub(crate) async fn remove(&self, account_id: &str) -> Option<Arc<AccountSession>> {
         self.sessions.lock().await.remove(account_id)
+    }
+
+    /// Registers a remote connection under its desktop id.
+    pub(crate) fn add_remote(&self, conn: remote::RemoteConn) -> Result<(), String> {
+        let mut remotes = self
+            .remotes
+            .lock()
+            .map_err(|_| "internal state lock poisoned".to_string())?;
+        remotes.insert(conn.desktop_id.clone(), Arc::new(conn));
+        Ok(())
+    }
+
+    /// Forgets a remote connection; nothing for a local id.
+    pub(crate) fn forget_remote(&self, id: &str) -> Result<(), String> {
+        let mut remotes = self
+            .remotes
+            .lock()
+            .map_err(|_| "internal state lock poisoned".to_string())?;
+        remotes.remove(id);
+        Ok(())
+    }
+
+    /// The remote connection behind a desktop id, if it is one.
+    pub(crate) fn remote(&self, id: &str) -> Result<Option<Arc<remote::RemoteConn>>, String> {
+        let remotes = self
+            .remotes
+            .lock()
+            .map_err(|_| "internal state lock poisoned".to_string())?;
+        Ok(remotes.get(id).cloned())
     }
 
     /// Drops every session. The vault is locking, and no session may outlive

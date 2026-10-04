@@ -18,7 +18,7 @@ async function fetchRelease(): Promise<{ totalDownloads: number | null; assets: 
     if (token) headers.Authorization = `Bearer ${token}`;
     const res = await fetch(
       'https://api.github.com/repos/mqlens/mqlens-mongodb/releases?per_page=100',
-      { headers },
+      { headers, signal: AbortSignal.timeout(5000) },
     );
     if (!res.ok) return { totalDownloads: null, assets: [] };
     const releases: any = await res.json();
@@ -44,11 +44,11 @@ const fmtSize = (bytes: number): string =>
 
 // Resolve a download button to the matching latest-release asset (direct URL +
 // real size), or fall back to the releases page with an approximate size.
-const dl = (test: (name: string) => boolean, fallbackSize: string) => {
+const dl = (test: (name: string) => boolean, _fallbackSize: string) => {
   const a = assets.find((x) => typeof x.name === 'string' && test(x.name.toLowerCase()));
   return a
     ? { href: a.browser_download_url, size: fmtSize(a.size) }
-    : { href: SITE.releasesLatest, size: fallbackSize };
+    : { href: SITE.releasesLatest, size: 'View release' };
 };
 
 const cards = [
@@ -86,7 +86,7 @@ const cards = [
   {downloadsLabel && (
     <p class="dl-stat" aria-label={`${downloadsLabel} total downloads`}>
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-      <strong>{downloadsLabel}</strong> downloads and counting
+      <strong>{downloadsLabel}</strong> release asset downloads
     </p>
   )}
   <div class="dl-cards">
@@ -255,6 +255,7 @@ const cards = [
   .dl-btn-secondary { background: var(--bg-elevated); color: var(--text); border-color: var(--border); }
   .dl-btn-secondary:hover { border-color: var(--accent); }
   .dl-size { font-size: 0.82rem; font-weight: 500; opacity: 0.8; }
+  .dl-btn-primary .dl-size { opacity: 1; color: #fff; }
 
   .dl-stat {
     display: flex;

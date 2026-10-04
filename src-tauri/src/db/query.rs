@@ -90,13 +90,7 @@ async fn execute_mql_query_inner(
         serde_json::from_str(sort).map_err(|e| format!("Invalid MQL sort JSON: {}", e))?
     };
 
-    let client = {
-        let connections = state.connections.lock_safe()?;
-        connections
-            .get(id)
-            .cloned()
-            .ok_or_else(|| "Connection client not found".to_string())?
-    };
+    let client = crate::require_real_client(state, id)?;
 
     let db = client.database(database);
     let coll = db.collection::<mongodb::bson::Document>(collection);
@@ -198,13 +192,7 @@ async fn count_documents_impl_inner(
     let filter_doc = mongodb::bson::to_document(&filter_val)
         .map_err(|e| format!("BSON conversion error: {}", e))?;
 
-    let client = {
-        let connections = state.connections.lock_safe()?;
-        connections
-            .get(id)
-            .cloned()
-            .ok_or_else(|| "Connection client not found".to_string())?
-    };
+    let client = crate::require_real_client(state, id)?;
 
     let coll = client
         .database(database)
@@ -266,13 +254,7 @@ async fn explain_mql_query_impl_inner(
         return Ok(mock_db::get_mock_explain(database, collection, filter));
     }
 
-    let client = {
-        let connections = state.connections.lock_safe()?;
-        connections
-            .get(id)
-            .cloned()
-            .ok_or_else(|| "Connection client not found".to_string())?
-    };
+    let client = crate::require_real_client(state, id)?;
 
     let db = client.database(database);
     let filter_val: serde_json::Value = if filter.trim().is_empty() {

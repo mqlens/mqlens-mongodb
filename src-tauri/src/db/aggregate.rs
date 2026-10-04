@@ -109,13 +109,7 @@ async fn execute_aggregate_inner(
         return Err("Aggregation pipelines are not supported on mock connections".to_string());
     }
 
-    let client = {
-        let connections = state.connections.lock_safe()?;
-        connections
-            .get(id)
-            .cloned()
-            .ok_or_else(|| "Connection client not found".to_string())?
-    };
+    let client = crate::require_real_client(state, id)?;
 
     let coll = client
         .database(database)
@@ -206,13 +200,7 @@ async fn explain_aggregate_query_impl_inner(
         return Err("Aggregation explain is not supported on mock connections".to_string());
     }
 
-    let client = {
-        let connections = state.connections.lock_safe()?;
-        connections
-            .get(id)
-            .cloned()
-            .ok_or_else(|| "Connection client not found".to_string())?
-    };
+    let client = crate::require_real_client(state, id)?;
 
     let db = client.database(database);
     let command = mongodb::bson::doc! {

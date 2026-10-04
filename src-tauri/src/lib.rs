@@ -946,6 +946,9 @@ pub async fn disconnect_db_impl(state: &AppState, id: &str) -> Result<(), String
         let mut meta = state.connection_meta.lock_safe()?;
         meta.remove(id);
     }
+    // A connection made through an MQLens Server has no driver client to
+    // drop; what makes it routable goes instead.
+    state.server.forget_remote(id)?;
     // A human disconnecting (Sidebar's onDisconnect -> this command) an
     // agent-opened connection must also drop it from the MCP server's own
     // `session_connections` bookkeeping (final whole-branch review fix
@@ -994,8 +997,17 @@ pub fn connection_list_impl(state: &AppState) -> Result<Vec<ConnectionEntry>, St
     let meta = state.connection_meta.lock_safe()?;
     let mut list: Vec<ConnectionEntry> = meta
         .iter()
-        .map(|(id, m)| ConnectionEntry { id: id.clone(), profile_id: m.profile_id.clone(), name: m.name.clone(), via_mcp: m.via_mcp, mode: m.mode })
-        .collect();
+        .map(|(id, m)| {
+            Ok(ConnectionEntry {
+                id: id.clone(),
+                profile_id: m.profile_id.clone(),
+                name: m.name.clone(),
+                via_mcp: m.via_mcp,
+                mode: m.mode,
+                server: state.server.remote(id)?.map(|conn| conn.info()),
+            })
+        })
+        .collect::<Result<_, String>>()?;
     list.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(list)
 }
@@ -1036,6 +1048,7 @@ pub async fn start_mongosh_session_impl(
     // window closes can stop the child it spawned. Empty opts out.
     window_id: &str,
 ) -> Result<MongoshSessionInfo, String> {
+    server::remote::reject_if_remote(state, connection_id, "The MongoDB shell")?;
     if write_guard::connection_mode(state, connection_id)? == connections::ConnectionMode::ReadOnly
     {
         return Err(write_guard::READ_ONLY_MSG.to_string());
@@ -1177,6 +1190,7 @@ pub async fn run_mongosh_script_impl(
     mongosh_path: &str,
     script: &str,
 ) -> Result<MongoshCommandOutput, String> {
+    server::routes::refuse_deferred(state, "run_mongosh_script", &[connection_id])?;
     if write_guard::connection_mode(state, connection_id)? == connections::ConnectionMode::ReadOnly
     {
         return Err(write_guard::READ_ONLY_MSG.to_string());
@@ -1521,6 +1535,11 @@ pub async fn stop_mongosh_session_impl(state: &AppState, session_id: &str) -> Re
 }
 
 pub(crate) fn require_real_client(state: &AppState, id: &str) -> Result<Client, String> {
+    // A connection made through an MQLens Server has no driver client: its
+    // commands run on the server through an adapter, or not at all.
+    if state.server.remote(id)?.is_some() {
+        return Err(server::remote::NOT_SERVED.to_string());
+    }
     let connections = state.connections.lock_safe()?;
     connections
         .get(id)
@@ -3429,6 +3448,17 @@ async fn server_list_connections(
 }
 
 #[tauri::command]
+async fn server_connect(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    account_id: String,
+    remote_id: String,
+) -> Result<server::commands::ServerConnectResult, String> {
+    let path = connections::get_server_accounts_path(&app_handle);
+    server::commands::server_connect_impl(&state, &path, &account_id, &remote_id).await
+}
+
+#[tauri::command]
 async fn load_app_settings(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
@@ -4277,6 +4307,7 @@ pub fn run() {
             server_sign_in,
             server_sign_out,
             server_list_connections,
+            server_connect,
             connections::test_connection_uri,
             load_app_settings,
             save_app_settings,

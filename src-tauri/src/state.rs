@@ -54,6 +54,10 @@ pub struct ConnectionEntry {
     /// Mirrors `ConnectionMeta::mode` -- surfaced to the frontend for the
     /// read-only/confirm-destructive banner and sidebar badge (#188).
     pub mode: crate::connections::ConnectionMode,
+    /// Set for a connection made through an MQLens Server. Omitted otherwise,
+    /// so a local entry serializes exactly as it did before server mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server: Option<crate::server::remote::RemoteConnectionInfo>,
 }
 
 /// The `connections-changed` broadcast payload: the full current connection

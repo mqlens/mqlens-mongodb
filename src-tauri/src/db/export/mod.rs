@@ -522,13 +522,7 @@ async fn start_export_task(
     let client = if is_mock {
         None
     } else {
-        Some({
-            let connections = state.connections.lock_safe()?;
-            connections
-                .get(id)
-                .cloned()
-                .ok_or_else(|| "Connection client not found".to_string())?
-        })
+        Some(crate::require_real_client(state, id)?)
     };
 
     let task_id = Uuid::new_v4().to_string();

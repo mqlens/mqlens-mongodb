@@ -60,7 +60,7 @@ import { SITE } from '../../consts';
         <ul>
           <li><strong>SSH Host / Port</strong> — the public address of your bastion and its SSH port.</li>
           <li><strong>SSH Username</strong> — the username on the bastion server.</li>
-          <li><strong>Authentication method</strong> — choose <em>Private Key</em> to browse for a <code>.pem</code> or <code>.key</code> file, or choose <em>Password</em> to type it inline (stored encrypted in the keychain).</li>
+          <li><strong>Authentication method</strong> — choose <em>Private Key</em> to browse for a <code>.pem</code> or <code>.key</code> file, or choose <em>Password</em> to type it inline (stored in your encrypted local vault).</li>
           <li><strong>Private key passphrase</strong> — if your key is passphrase-protected, enter it here; MQLens never stores it in plaintext.</li>
         </ul>
         <p>
@@ -75,17 +75,16 @@ import { SITE } from '../../consts';
           Before saving, click <strong>Test Connection</strong>. MQLens runs the
           connection in distinct, named phases and reports the outcome of each one:
         </p>
-        <ol>
-          <li><strong>Parse</strong> — validates that the URI and all form fields are syntactically correct.</li>
-          <li><strong>DNS</strong> — resolves the bastion hostname to an IP address. A failure here usually means a typo or a VPN that is not active.</li>
-          <li><strong>Connect</strong> — opens the TCP connection to the bastion on its SSH port and completes the SSH handshake. Failures here are typically firewall rules or a wrong port number.</li>
-          <li><strong>Ping</strong> — sends a MongoDB <code>hello</code> (ping) command through the forwarded tunnel. A failure at this stage with the previous steps passing means the tunnel is working but MongoDB is not reachable at the host:port you specified.</li>
-        </ol>
+        <ul>
+          <li><strong>Parse</strong> checks the connection URI.</li>
+          <li><strong>Resolve</strong> checks the database hostname for direct connections. With SSH enabled, the database hostname is resolved through the remote host, so this local check is skipped.</li>
+          <li><strong>Connect</strong> opens the SSH tunnel. Check the bastion address, port, SSH credentials, and firewall rules if it fails.</li>
+          <li><strong>Ping</strong> checks MongoDB through the tunnel. Errors can indicate a database address, TLS, or authentication problem; use the reported error to narrow it down.</li>
+        </ul>
         <p>
-          This staged output lets you isolate the failure immediately rather than
-          guessing at a generic "connection refused" message. Once all four phases
-          turn green, save the connection. MQLens will re-establish the SSH tunnel
-          automatically on every reconnect.
+          Some authentication methods also show a sign-in step. Once the test
+          succeeds, save the connection. MQLens will re-establish the SSH tunnel
+          when you reconnect.
         </p>
 
         <h2>SOCKS5 proxy as an alternative</h2>
@@ -94,7 +93,7 @@ import { SITE } from '../../consts';
           <code>ssh -D 1080 user@bastion</code>), MQLens supports that too. Switch
           the proxy type to <strong>SOCKS5</strong>, point it at
           <code>127.0.0.1:1080</code>, and leave the SSH tunnel fields empty.
-          The Test Connection phases work identically for proxy connections.
+          Use <strong>Test Connection</strong> to check the resulting connection.
         </p>
 
         <div class="cta-block">

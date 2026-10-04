@@ -36,7 +36,7 @@ const {
       <p class="lede" set:html={lede} />
       <div class="hero-cta">
         <a class="btn btn-primary" href="#download">{ctaLabel}</a>
-        <a class="btn btn-ghost" href={SITE.repo} target="_blank" rel="noopener">Star on GitHub ★</a>
+        <a class="btn btn-ghost" href={SITE.repo} target="_blank" rel="noopener">View on GitHub</a>
       </div>
       <p class="hero-note">Free &amp; open source (Apache-2.0) · No telemetry · No account.</p>
     </div>
@@ -46,7 +46,7 @@ const {
     <section class="section-tight">
       <div class="container shot-wrap">
         <a href={screenshot.src} target="_blank" rel="noopener" aria-label="Open full-size screenshot">
-          <img src={screenshot.src} alt={screenshot.alt} loading="lazy" width="1280" height="800" />
+          <img src={screenshot.src.replace('.png', '.webp')} alt={screenshot.alt} loading="lazy" width="1600" height="1000" />
         </a>
       </div>
     </section>

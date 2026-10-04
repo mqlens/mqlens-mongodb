@@ -41,13 +41,7 @@ async fn list_databases_impl_inner(state: &AppState, id: &str) -> Result<Vec<Str
         ]);
     }
 
-    let client = {
-        let connections = state.connections.lock_safe()?;
-        connections
-            .get(id)
-            .cloned()
-            .ok_or_else(|| "Connection client not found".to_string())?
-    };
+    let client = crate::require_real_client(state, id)?;
 
     let dbs = client
         .list_database_names()
@@ -111,13 +105,7 @@ async fn list_collections_impl_inner(
             .collect());
     }
 
-    let client = {
-        let connections = state.connections.lock_safe()?;
-        connections
-            .get(id)
-            .cloned()
-            .ok_or_else(|| "Connection client not found".to_string())?
-    };
+    let client = crate::require_real_client(state, id)?;
 
     let database = client.database(db);
     match full_collection_specs(&database).await {
@@ -231,13 +219,7 @@ async fn list_indexes_impl_inner(
         return Ok(mock_indexes.get(&key).unwrap().clone());
     }
 
-    let client = {
-        let connections = state.connections.lock_safe()?;
-        connections
-            .get(id)
-            .cloned()
-            .ok_or_else(|| "Connection client not found".to_string())?
-    };
+    let client = crate::require_real_client(state, id)?;
 
     let database = client.database(db);
     let coll = database.collection::<mongodb::bson::Document>(collection);
@@ -345,13 +327,7 @@ async fn create_index_inner(
         return Ok(());
     }
 
-    let client = {
-        let connections = state.connections.lock_safe()?;
-        connections
-            .get(id)
-            .cloned()
-            .ok_or_else(|| "Connection client not found".to_string())?
-    };
+    let client = crate::require_real_client(state, id)?;
 
     let database = client.database(db);
     let coll = database.collection::<mongodb::bson::Document>(collection);
@@ -436,13 +412,7 @@ async fn delete_index_inner(
         return Ok(());
     }
 
-    let client = {
-        let connections = state.connections.lock_safe()?;
-        connections
-            .get(id)
-            .cloned()
-            .ok_or_else(|| "Connection client not found".to_string())?
-    };
+    let client = crate::require_real_client(state, id)?;
 
     let database = client.database(db);
     let coll = database.collection::<mongodb::bson::Document>(collection);

@@ -5,10 +5,6 @@
 // Nothing here ships: the app's own index.html loads src/main.tsx directly.
 import { loader } from '@monaco-editor/react';
 import { mockIPC, mockWindows } from '@tauri-apps/api/mocks';
-import * as monaco from 'monaco-editor';
-import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker.js?worker';
-import JsonWorker from 'monaco-editor/esm/vs/language/json/json.worker.js?worker';
-import TsWorker from 'monaco-editor/esm/vs/language/typescript/ts.worker.js?worker';
 import { Backend, type InvokeArgs } from './backend';
 import { registerAdminHandlers } from './handlers/admin';
 import { registerAiHandlers } from './handlers/ai';
@@ -44,19 +40,9 @@ registerShellHandlers(backend, state);
 registerStreamHandlers(backend, state);
 registerTransferHandlers(backend, state);
 window.__MQLENS_E2E__ = backend;
-// Monaco from this repo's own copy, the same version the loader would fetch from
-// its CDN, so a run never depends on jsdelivr and editors load without a network
-// round trip. The workers are bundled alongside.
-self.MonacoEnvironment = {
-  getWorker(_workerId, label) {
-    if (label === 'json') return new JsonWorker();
-    if (label === 'typescript' || label === 'javascript') return new TsWorker();
-    return new EditorWorker();
-  },
-};
-loader.config({ monaco });
 // Monaco's ES-module build sets no global. The loader hands back the one
-// instance the app's editors share.
+// instance the app's editors share, which src/main.tsx configures (see
+// src/lib/monacoSetup.ts) exactly as it does in the shipped app.
 window.__MQLENS_E2E_MONACO__ = () => loader.init();
 
 mockWindows(seed.windowLabel ?? 'main');

@@ -9,14 +9,26 @@
 use crate::server::accounts::{self, ServerAccount, ServerAccountInput};
 use crate::server::channel::client;
 use crate::server::pb::mqlens::v1::auth_service_server::{AuthService, AuthServiceServer};
+use crate::server::pb::mqlens::v1::capability_service_server::{
+    CapabilityService, CapabilityServiceServer,
+};
 use crate::server::pb::mqlens::v1::connection_service_client::ConnectionServiceClient;
 use crate::server::pb::mqlens::v1::connection_service_server::{
     ConnectionService, ConnectionServiceServer,
+};
+use crate::server::pb::mqlens::v1::metadata_service_server::{
+    MetadataService, MetadataServiceServer,
 };
 use crate::server::pb::mqlens::v1::{
     login_request, ConnectionRef, GetConnectionRequest, ListConnectionsRequest,
     ListConnectionsResponse, LoginRequest, LoginResponse, LogoutRequest, LogoutResponse, Principal,
     RefreshRequest, WhoAmIRequest, WhoAmIResponse,
+};
+use crate::server::pb::mqlens::v1::{
+    ConnectionCapabilities, CreateIndexRequest, DropIndexRequest, GetCapabilitiesRequest,
+    GetCapabilitiesResponse, ListCollectionsRequest, ListCollectionsResponse, ListDatabasesRequest,
+    ListDatabasesResponse, ListIndexesRequest, ListIndexesResponse, MetadataAck,
+    MongoVersionRequest, MongoVersionResponse,
 };
 use crate::server::session::{unix_now, AccountSession, FileTokenStore, TokenStore};
 use std::collections::{HashMap, HashSet};
@@ -62,6 +74,10 @@ pub(crate) struct FakeState {
     /// Codes the next logouts fail with, before ending the session.
     pub logout_failures: Vec<Code>,
     pub connections: Vec<ConnectionRef>,
+    /// Feature strings GetCapabilities announces.
+    pub features: Vec<String>,
+    /// A code MongoVersion fails with, to play an unreachable deployment.
+    pub version_failure: Option<Code>,
     pub logins: u32,
     pub refreshes: u32,
     pub logouts: u32,
@@ -170,6 +186,8 @@ impl Fake {
                     deployment_kind: "replica_set".to_string(),
                     op_classes: vec!["read".to_string(), "write".to_string()],
                 }],
+                features: vec!["documents.raw_bson".to_string()],
+                version_failure: None,
                 logins: 0,
                 refreshes: 0,
                 logouts: 0,
@@ -188,6 +206,8 @@ impl Fake {
             tonic::transport::Server::builder()
                 .add_service(AuthServiceServer::new(self.clone()))
                 .add_service(ConnectionServiceServer::new(self.clone()))
+                .add_service(CapabilityServiceServer::new(self.clone()))
+                .add_service(MetadataServiceServer::new(self.clone()))
                 .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener)),
         );
         format!("http://{addr}")
@@ -328,6 +348,99 @@ impl ConnectionService for Fake {
         _request: Request<GetConnectionRequest>,
     ) -> Result<Response<ConnectionRef>, Status> {
         Err(Status::unimplemented("GetConnection is not implemented"))
+    }
+}
+
+#[tonic::async_trait]
+impl CapabilityService for Fake {
+    async fn get_capabilities(
+        &self,
+        request: Request<GetCapabilitiesRequest>,
+    ) -> Result<Response<GetCapabilitiesResponse>, Status> {
+        let state = self.state.lock().unwrap();
+        state.authenticate(&request)?;
+        // Empty op classes for an id the caller cannot reach, existing or not.
+        let connections = request
+            .get_ref()
+            .connection_ids
+            .iter()
+            .map(|id| ConnectionCapabilities {
+                connection_id: id.clone(),
+                op_classes: state
+                    .connections
+                    .iter()
+                    .find(|c| &c.id == id)
+                    .map(|c| c.op_classes.clone())
+                    .unwrap_or_default(),
+            })
+            .collect();
+        Ok(Response::new(GetCapabilitiesResponse {
+            server_version: "fake".to_string(),
+            procedures: Vec::new(),
+            features: state.features.clone(),
+            principal: Some(principal()),
+            connections,
+        }))
+    }
+}
+
+/// Only MongoVersion, the ping a connect makes; the read adapters bring more.
+#[tonic::async_trait]
+impl MetadataService for Fake {
+    async fn list_databases(
+        &self,
+        _request: Request<ListDatabasesRequest>,
+    ) -> Result<Response<ListDatabasesResponse>, Status> {
+        Err(Status::unimplemented("ListDatabases is not implemented"))
+    }
+
+    async fn list_collections(
+        &self,
+        _request: Request<ListCollectionsRequest>,
+    ) -> Result<Response<ListCollectionsResponse>, Status> {
+        Err(Status::unimplemented("ListCollections is not implemented"))
+    }
+
+    async fn mongo_version(
+        &self,
+        request: Request<MongoVersionRequest>,
+    ) -> Result<Response<MongoVersionResponse>, Status> {
+        let state = self.state.lock().unwrap();
+        state.authenticate(&request)?;
+        if let Some(code) = state.version_failure {
+            return Err(Status::new(code, "injected failure"));
+        }
+        if !state
+            .connections
+            .iter()
+            .any(|c| c.id == request.get_ref().connection_id)
+        {
+            return Err(Status::not_found("connection not found"));
+        }
+        Ok(Response::new(MongoVersionResponse {
+            version: "8.0.4".to_string(),
+        }))
+    }
+
+    async fn list_indexes(
+        &self,
+        _request: Request<ListIndexesRequest>,
+    ) -> Result<Response<ListIndexesResponse>, Status> {
+        Err(Status::unimplemented("ListIndexes is not implemented"))
+    }
+
+    async fn create_index(
+        &self,
+        _request: Request<CreateIndexRequest>,
+    ) -> Result<Response<MetadataAck>, Status> {
+        Err(Status::unimplemented("CreateIndex is not implemented"))
+    }
+
+    async fn drop_index(
+        &self,
+        _request: Request<DropIndexRequest>,
+    ) -> Result<Response<MetadataAck>, Status> {
+        Err(Status::unimplemented("DropIndex is not implemented"))
     }
 }
 

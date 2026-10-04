@@ -9,6 +9,7 @@ import {
 } from '../../lib/mongoshSession';
 import { TabVisibleContext } from '../../workspace/tabVisibility';
 import { resetResultsFindShortcutForTests } from '../../lib/resultsFindShortcut';
+import { createFakeMonaco } from '../../test/fakeMonaco';
 
 const mockInvoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({
@@ -703,6 +704,38 @@ describe('MongoShell Component', () => {
     // whose late write landed on the next keystroke and erased it.
     expect(lastEditorProps?.value).toBeUndefined();
     expect(lastEditorProps?.defaultValue).toContain('db.users.aggregate(');
+  });
+
+  // mongosh is a REPL: errors surface when a command runs, not as squiggles
+  // under half-typed JavaScript.
+  it('turns off script validation when the editor mounts', async () => {
+    render(
+      <MongoShell
+        connectionId="c1"
+        connectionName="local"
+        connectionUri="mongodb://x"
+        databaseName="test-db"
+      />
+    );
+    await screen.findByText(/mongosh session attached/);
+
+    const monaco = createFakeMonaco();
+    const editor = {
+      getValue: () => (lastEditorProps?.defaultValue as string | undefined) ?? '',
+      getModel: () => ({ uri: { toString: () => 'inmemory://shell' } }),
+      onKeyDown: vi.fn(),
+      onDidDispose: vi.fn(),
+      focus: vi.fn(),
+    };
+    act(() => {
+      (lastEditorProps!.onMount as (ed: unknown, m: unknown) => void)(editor, monaco);
+    });
+
+    expect(monaco.typescript.javascriptDefaults.setDiagnosticsOptions).toHaveBeenCalledWith({
+      noSemanticValidation: true,
+      noSyntaxValidation: true,
+      noSuggestionDiagnostics: true,
+    });
   });
 
   // Regression test: shell:mongoShell.toolbar.aiToggleLabel previously shipped

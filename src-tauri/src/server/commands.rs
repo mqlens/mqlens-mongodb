@@ -6,9 +6,15 @@
 use crate::server::accounts::{self, ServerAccount, ServerAccountInput, ServerAccountView};
 use crate::server::channel::client;
 use crate::server::key_source;
+use crate::server::pb::mqlens::v1::capability_service_client::CapabilityServiceClient;
 use crate::server::pb::mqlens::v1::connection_service_client::ConnectionServiceClient;
-use crate::server::pb::mqlens::v1::ListConnectionsRequest;
+use crate::server::pb::mqlens::v1::metadata_service_client::MetadataServiceClient;
+use crate::server::pb::mqlens::v1::{
+    GetCapabilitiesRequest, ListConnectionsRequest, MongoVersionRequest,
+};
+use crate::server::remote::RemoteConn;
 use crate::server::session::{self, blocking, AccountSession, FileTokenStore, TokenStore};
+use crate::state::LockExt;
 use crate::AppState;
 use serde::Serialize;
 use std::path::Path;
@@ -188,6 +194,88 @@ pub(crate) async fn sign_out_impl(
     let session = current_session(state, path, &account).await?;
     let ended_on_server = session.sign_out().await?;
     Ok(SignOutResult { ended_on_server })
+}
+
+/// A remote connection the desktop connected to, under its new desktop id.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ServerConnectResult {
+    pub id: String,
+    pub mongo_version: String,
+    pub op_classes: Vec<String>,
+}
+
+/// Connects to one of the account's server connections: asks the server what
+/// the user may do there, pings the deployment through it, and registers the
+/// connection under a new desktop id. No driver client is made, and no
+/// connection string reaches the desktop.
+pub(crate) async fn server_connect_impl(
+    state: &AppState,
+    path: &Path,
+    account_id: &str,
+    remote_id: &str,
+) -> Result<ServerConnectResult, String> {
+    let key = state.require_key()?;
+    let account = accounts::find(path, &key, account_id)?;
+    let session = state
+        .server
+        .session(&account, token_store(state, path))
+        .await?;
+    let capabilities = session
+        .call(
+            GetCapabilitiesRequest {
+                connection_ids: vec![remote_id.to_string()],
+            },
+            |channel, request| async move {
+                client!(CapabilityServiceClient, channel)
+                    .get_capabilities(request)
+                    .await
+            },
+        )
+        .await?;
+    // Empty for a connection the user cannot reach, whether or not it exists.
+    let op_classes = capabilities
+        .connections
+        .into_iter()
+        .find(|c| c.connection_id == remote_id)
+        .map(|c| c.op_classes)
+        .unwrap_or_default();
+    if op_classes.is_empty() {
+        return Err(format!(
+            "This connection is not available to you on the MQLens Server account \"{}\"",
+            account.name
+        ));
+    }
+    let version = session
+        .call(
+            MongoVersionRequest {
+                connection_id: remote_id.to_string(),
+            },
+            |channel, request| async move {
+                client!(MetadataServiceClient, channel)
+                    .mongo_version(request)
+                    .await
+            },
+        )
+        .await?;
+
+    let id = uuid::Uuid::new_v4().to_string();
+    state.mocks.lock_safe()?.insert(id.clone(), false);
+    state.server.add_remote(RemoteConn {
+        desktop_id: id.clone(),
+        account_id: account.id.clone(),
+        account_name: account.name.clone(),
+        server_url: account.url.clone(),
+        remote_id: remote_id.to_string(),
+        op_classes: op_classes.clone(),
+        features: capabilities.features,
+        procedures: capabilities.procedures,
+    })?;
+    Ok(ServerConnectResult {
+        id,
+        mongo_version: version.version,
+        op_classes,
+    })
 }
 
 pub(crate) async fn list_connections_impl(
@@ -631,6 +719,77 @@ mod tests {
 
         assert!(env.stored_token().is_some());
         env.fake.with(|s| assert_eq!(s.live_families(), 1));
+    }
+
+    async fn signed_in_state(env: &Env) -> AppState {
+        let state = unlocked();
+        sign_in_impl(&state, &env.path, &env.account.id, PASSWORD.to_string())
+            .await
+            .unwrap();
+        state
+    }
+
+    // A server connection becomes a desktop connection: a new id, with what
+    // the user may do there, routed to the server and never given a driver
+    // client.
+    #[tokio::test]
+    async fn connecting_registers_a_remote_connection() {
+        let env = Env::new().await;
+        let state = signed_in_state(&env).await;
+
+        let connected = server_connect_impl(&state, &env.path, &env.account.id, "c1")
+            .await
+            .unwrap();
+
+        assert_eq!(connected.mongo_version, "8.0.4");
+        assert_eq!(connected.op_classes, ["read", "write"]);
+        assert_ne!(connected.id, "c1", "the desktop id is its own");
+        match crate::server::remote::route(&state, &connected.id).unwrap() {
+            crate::server::remote::Route::Remote(conn) => {
+                assert_eq!(conn.remote_id, "c1");
+                assert_eq!(conn.account_id, env.account.id);
+                assert_eq!(conn.features, ["documents.raw_bson"]);
+            }
+            crate::server::remote::Route::Local(_) => panic!("routed to a driver client"),
+        }
+        assert_eq!(crate::connection_is_mock(&state, &connected.id), Ok(false));
+        assert!(crate::require_real_client(&state, &connected.id).is_err());
+    }
+
+    // The server reports no op classes for a connection the user cannot
+    // reach, whether or not it exists.
+    #[tokio::test]
+    async fn a_connection_the_user_cannot_reach_is_not_connected() {
+        let env = Env::new().await;
+        let state = signed_in_state(&env).await;
+
+        let err = server_connect_impl(&state, &env.path, &env.account.id, "c9")
+            .await
+            .unwrap_err();
+
+        assert!(err.contains("not available to you"), "{err}");
+        assert!(
+            state.mocks.lock().unwrap().is_empty(),
+            "something was registered"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_deployment_the_server_cannot_reach_is_not_connected() {
+        let env = Env::new().await;
+        let state = signed_in_state(&env).await;
+        env.fake
+            .with(|s| s.version_failure = Some(tonic::Code::Unavailable));
+
+        let err = server_connect_impl(&state, &env.path, &env.account.id, "c1")
+            .await
+            .unwrap_err();
+
+        assert!(err.contains("unavailable"), "{err}");
+        assert!(
+            state.mocks.lock().unwrap().is_empty(),
+            "something was registered"
+        );
     }
 
     #[tokio::test]

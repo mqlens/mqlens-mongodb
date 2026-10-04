@@ -24,7 +24,7 @@ use std::collections::HashSet;
 /// write only to the local filesystem) or from a local resource that
 /// doesn't need a connection-mode check. Never blocked by
 /// `read_only`/`confirm_destructive`, and never should be.
-const READ_COMMANDS: &[&str] = &[
+pub(crate) const READ_COMMANDS: &[&str] = &[
     "start_dump_task", // mongodump reads the DB, writes only to a local file
     "get_mongodb_version",
     "list_databases",
@@ -163,6 +163,7 @@ const LOCAL_COMMANDS: &[&str] = &[
     "server_sign_in",
     "server_sign_out",
     "server_list_connections",
+    "server_connect", // connects through the server; no data touched yet
     "test_connection_uri", // ephemeral test connection, never tracked in connection_meta
     "load_app_settings",
     "save_app_settings",
@@ -209,7 +210,7 @@ const LOCAL_COMMANDS: &[&str] = &[
 ///   transitive — see `start_mongosh_session_impl`'s doc comment for the
 ///   `confirm_destructive` limitation this implies (arbitrary shell input
 ///   can't be gated per-command).
-const GUARDED_WRITE_COMMANDS: &[&str] = &[
+pub(crate) const GUARDED_WRITE_COMMANDS: &[&str] = &[
     "start_restore_task",
     "start_mongosh_session",
     "run_mongosh_command",
