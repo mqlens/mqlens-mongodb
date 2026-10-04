@@ -85,9 +85,20 @@ test('demo video decodes with a caption track', async ({ page }) => {
 
 test('supporting pages remain readable on mobile', async ({ page }) => {
   await page.setViewportSize({width:390,height:844});
-  for (const route of ['/features/','/docs/','/demo/','/compare/mongodb-compass-alternative/','/mongodb-gui-for-linux/','/mongodb-mcp-server/','/mongodb-ai-query-assistant/']) {
+  for (const route of ['/features/','/docs/','/demo/','/compare/mongodb-compass-alternative/','/mongodb-gui-for-linux/','/mongodb-mcp-server/','/mongodb-ai-query-assistant/','/mqlens-server/']) {
     await page.goto(route);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), route).toBe(true);
     await expect(page.locator('h1')).toBeVisible();
   }
+});
+
+
+test('server preview clearly identifies planned availability and separate licensing', async ({ page }) => {
+  await page.goto('/mqlens-server/');
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('MQLens Server');
+  await expect(page.getByText('Coming soon · In design', { exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Follow development on GitHub' })).toHaveAttribute('href', 'https://github.com/mqlens/mqlens-server');
+  const graph = await page.locator('script[type="application/ld+json"]').evaluate(el => JSON.parse(el.textContent!)['@graph']);
+  expect(graph.some((item: Record<string, unknown>) => item['@type'] === 'SoftwareApplication')).toBe(false);
+  await expect(page.getByText('MQLens Server is planned as a separate commercial product.', { exact: false })).toBeVisible();
 });

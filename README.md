@@ -23,6 +23,10 @@
 
 [See all features](https://mqlens.com/features/), including schema analysis, GridFS, synthetic data generation, import/export, and the embedded `mongosh` shell.
 
+## MQLens Server — coming soon
+
+A planned, self-hosted backend for teams, with server-held MongoDB credentials, centralized access controls, and audit logs. It is in the design phase, with commercial licensing planned separately from the free desktop app. [Explore MQLens Server](https://mqlens.com/mqlens-server/) or [follow the project](https://github.com/mqlens/mqlens-server).
+
 ## Install and run your first query
 
 Get the [latest release](https://github.com/mqlens/mqlens-mongodb/releases/latest) or choose an installer on the [download page](https://mqlens.com/#download).

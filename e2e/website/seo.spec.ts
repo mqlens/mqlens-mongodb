@@ -57,7 +57,7 @@ test('sitemap exposes new discovery pages and excludes 404', async ({ request })
   const locs=[...(await index.text()).matchAll(/<loc>(.*?)<\/loc>/g)].map(m=>new URL(m[1]).pathname);
   let sitemap='';
   for(const url of locs) sitemap += await (await request.get(url)).text();
-  for(const route of ['/demo/','/mongodb-mcp-server/','/mongodb-ai-query-assistant/']) expect(sitemap).toContain(`https://mqlens.com${route}`);
+  for(const route of ['/demo/','/mongodb-mcp-server/','/mongodb-ai-query-assistant/','/mqlens-server/']) expect(sitemap).toContain(`https://mqlens.com${route}`);
   expect(sitemap).not.toContain('/404');
   const missing=await request.get('/this-page-does-not-exist/'); expect(missing.status()).toBe(404);
 });

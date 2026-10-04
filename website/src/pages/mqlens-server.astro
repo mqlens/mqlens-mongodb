@@ -1,0 +1,77 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+const repo = 'https://github.com/mqlens/mqlens-server';
+const description = 'MQLens Server is a planned self-hosted backend for team MongoDB access, with centralized credentials, OIDC, access controls, and audit logs. Coming soon.';
+const planned = [
+  ['Keep credentials on your infrastructure', 'The planned server mode gives desktops connection references instead of MongoDB URIs or credentials. Database operations run on the server, with credentials encrypted at rest.'],
+  ['Give each team the access it needs', 'OIDC sign-in, role-based permissions, per-connection grants, and multi-tenant organization support are part of the design.'],
+  ['Understand who did what', 'The design includes queryable, exportable audit records for database operations, authentication, and administrative changes.'],
+  ['Run it in your own environment', 'Docker deployment, a browser-based administration interface, and multi-node high availability are planned for organizations managing their own infrastructure.'],
+];
+---
+<BaseLayout title="MQLens Server — coming soon" description={description} desktopSchema={false} structuredData={{ '@type': 'WebPage', name: 'MQLens Server — coming soon', description, url: 'https://mqlens.com/mqlens-server/' }}>
+  <section class="container server-hero">
+    <p class="status">Coming soon · In design</p>
+    <h1>MQLens Server</h1>
+    <p class="headline">Your team's MongoDB access.<br />Managed on your infrastructure.</p>
+    <p class="intro">A planned, self-hosted backend that connects the MQLens desktop workspace to your organization's MongoDB deployments through a central access layer.</p>
+    <div class="actions"><a class="btn btn-primary" href={repo}>Follow development on GitHub</a><a class="btn btn-ghost" href="#planned-capabilities">Explore the plans</a></div>
+    <p class="availability">Not yet available. Scope may change; no launch date or pricing has been announced.</p>
+  </section>
+
+  <section class="container architecture" aria-labelledby="flow-title">
+    <h2 id="flow-title">A familiar workspace. A central point of control.</h2>
+    <p>In the planned server mode, the desktop signs in to MQLens Server, which authorizes and executes MongoDB operations on its behalf.</p>
+    <ol class="flow" aria-label="Planned connection flow">
+      <li><span>Workspace</span><strong>MQLens desktop</strong><p>Sign in and choose an allowed connection.</p></li>
+      <li class="server-node"><span>Your infrastructure</span><strong>MQLens Server</strong><p>Manage credentials, permissions, and audit records.</p></li>
+      <li><span>Your databases</span><strong>MongoDB</strong><p>Receive database operations from the server.</p></li>
+    </ol>
+    <p>The desktop would receive connection references and results, while MongoDB credentials stay on the server.</p>
+  </section>
+
+  <section class="container capabilities" id="planned-capabilities">
+    <h2>Planned for teams that manage shared databases</h2>
+    <p>These capabilities describe the current design, not a released feature set.</p>
+    <div class="capability-grid">{planned.map(([title, body]) => <article><h3>{title}</h3><p>{body}</p></article>)}</div>
+  </section>
+
+  <section class="container questions" aria-labelledby="questions-title">
+    <h2 id="questions-title">Before you plan a rollout</h2>
+    <h3>Can I use MQLens Server today?</h3>
+    <p>Not yet. The <a href={repo}>server repository</a> currently describes the project as being in its design phase. Follow it for implementation progress and future release information.</p>
+    <h3>Will I still be able to connect directly from the desktop?</h3>
+    <p>Yes. The design keeps the desktop's existing direct-connection mode alongside the planned server mode. You can <a href="/#download">download the free desktop app</a> today.</p>
+    <h3>How will licensing work?</h3>
+    <p>MQLens Server is planned as a separate commercial product. Pricing and final licensing terms are not yet published. The MQLens desktop app remains free and open source under Apache-2.0.</p>
+    <h3>Is this the desktop's MCP server?</h3>
+    <p>MQLens Server is the planned backend for organizational database access. The desktop's existing <a href="/mongodb-mcp-server/">optional MCP server</a> connects compatible AI agents to selected MongoDB connections.</p>
+    <p class="source">Based on the <a href={repo}>project README</a> and its <a href={`${repo}/blob/dev/docs/specs/2026-06-07-mqlens-server-design.md`}>draft design specification</a>, reviewed October 4, 2026.</p>
+  </section>
+</BaseLayout>
+
+<style>
+  .server-hero { padding-block:64px 56px; }
+  .status { display:inline-block; color:var(--accent); background:var(--bg-soft); border:1px solid var(--border); padding:6px 12px; border-radius:var(--radius-sm); font-weight:600; }
+  h1 { font-size:clamp(2.6rem,6vw,4.8rem); margin:20px 0; letter-spacing:-.045em; }
+  .headline { font-size:clamp(1.4rem,3vw,2.2rem); line-height:1.35; margin:0 0 24px; }
+  .intro { max-width:700px; font-size:1.15rem; }
+  p { color:var(--text-dim); max-width:76ch; }
+  .actions { display:flex; gap:16px; flex-wrap:wrap; margin-top:28px; }
+  .availability, .source { font-size:.9rem; }
+  .architecture, .capabilities, .questions { padding-block:40px; }
+  h2 { font-size:clamp(1.7rem,3vw,2.3rem); max-width:760px; }
+  .flow { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:24px; list-style:none; padding:0; margin:32px 0; }
+  .flow li { padding:24px; border:1px solid var(--border); border-radius:var(--radius); background:var(--bg-card); }
+  .flow .server-node { border:2px solid var(--accent); }
+  .flow span { display:block; color:var(--text-dim); font-size:.85rem; margin-bottom:12px; }
+  .flow strong { font-size:1.3rem; }
+  .flow p { margin-bottom:0; }
+  .capability-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px 56px; }
+  .capability-grid article { border-top:1px solid var(--border); padding-top:12px; }
+  h3 { font-size:1.2rem; line-height:1.4; }
+  .questions h3 { margin-top:32px; }
+  .questions a { text-decoration:underline; text-underline-offset:3px; }
+  .source { margin-top:40px; }
+  @media (max-width:720px) { .server-hero { padding-top:32px; } .flow, .capability-grid { grid-template-columns:1fr; } }
+</style>

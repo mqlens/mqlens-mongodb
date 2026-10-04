@@ -14,9 +14,10 @@ interface Props {
   description?: string;
   structuredData?: Record<string, unknown>;
   noindex?: boolean;
+  desktopSchema?: boolean;
 }
 
-const { title, description = SITE.description, structuredData, noindex = false } = Astro.props;
+const { title, description = SITE.description, structuredData, noindex = false, desktopSchema = true } = Astro.props;
 const fullTitle = title ? `${title} — ${SITE.name}` : `${SITE.name} — ${SITE.titleTag}`;
 const canonical = new URL(Astro.url.pathname, SITE.url).href;
 const ogImage = new URL('/og.png', SITE.url).href;
@@ -71,7 +72,7 @@ const breadcrumbSchema = pathParts.length ? {
       "@graph": [
         ...(breadcrumbSchema ? [breadcrumbSchema] : []),
         ...(structuredData ? [structuredData] : []),
-        {
+        ...(desktopSchema ? [{
           "@type": "SoftwareApplication",
           "@id": `${SITE.url}/#software`,
           "name": SITE.name,
@@ -84,7 +85,7 @@ const breadcrumbSchema = pathParts.length ? {
           "license": `https://www.apache.org/licenses/LICENSE-2.0`,
           "image": ogImage,
           "publisher": { "@id": `${SITE.url}/#org` },
-        },
+        }] : []),
         {
           "@type": "Organization",
           "@id": `${SITE.url}/#org`,

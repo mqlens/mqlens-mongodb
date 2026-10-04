@@ -14,6 +14,7 @@ export const SITE = {
 export const NAV = [
   { label: 'Features', href: '/features/' },
   { label: 'Demo', href: '/demo/' },
+  { label: 'Server', href: '/mqlens-server/' },
   { label: 'Docs', href: '/docs/' },
   { label: 'Changelog', href: '/changelog/' },
   { label: 'GitHub', href: SITE.repo, external: true },
