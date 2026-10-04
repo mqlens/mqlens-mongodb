@@ -14,6 +14,12 @@ on:
       - 'website/**'
       - '.github/workflows/website.yml'
       - '.github/workflows/website-ci.yml'
+      - 'playwright.website.config.ts'
+      - 'e2e/website/**'
+      - 'README.md'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'assets/demo.gif'
 
 concurrency:
   group: website-ci-${{ github.ref }}
@@ -46,3 +52,17 @@ jobs:
         # token avoids the unauthenticated rate limit, as in the deploy.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install browser test dependencies
+        working-directory: .
+        run: npm ci
+
+      - name: Install Chromium
+        working-directory: .
+        run: npx playwright install --with-deps chromium
+
+      - name: Check website navigation, media, and SEO
+        working-directory: .
+        run: npm run test:website
+        env:
+          ASTRO_TELEMETRY_DISABLED: '1'

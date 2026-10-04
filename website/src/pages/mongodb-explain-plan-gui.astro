@@ -8,7 +8,7 @@ import WorkflowLanding from '../components/WorkflowLanding.astro';
   h1="See exactly what your MongoDB query does."
   grad="Explain plans as a visual tree."
   lede="Raw <code>explain()</code> output is a deeply nested JSON blob. MQLens renders the winning plan as a readable tree for both <code>find</code> and <code>aggregate</code> — so index usage, <code>COLLSCAN</code>s, in-memory sorts, and stage costs are obvious at a glance."
-  screenshot={{ src: '/screenshots/mqlens-index-detail.png', alt: 'MQLens query analysis and index detail view' }}
+  screenshot={{ src: '/screenshots/mqlens-explain-plan.png', alt: 'MQLens explain plan with stages and synthetic execution statistics' }}
   stepsTitle="Read an explain plan"
   steps={[
     { title: 'Run your query', body: 'Execute a <code>find</code> or aggregation with your filters, sort, and projection.' },

@@ -1,46 +1,16 @@
-/* ============================================================
-   MQLens website theme — mirrors the desktop app's design system
-   (src/index.css): deep blue-charcoal canvas, electric sky-blue
-   accent, Inter + JetBrains Mono, small radii.
-   ============================================================ */
+/* MQLens marketing theme: a clear canvas around the dark product interface. */
 :root {
-  /* Surfaces — from the app's dark palette */
-  --bg: hsl(222, 24%, 6%);           /* app --bg-base */
-  --bg-soft: hsl(222, 24%, 8%);      /* lifted band */
-  --bg-card: hsl(222, 20%, 10%);     /* app --bg-panel (opaque) */
-  --bg-elevated: hsl(222, 20%, 13%);
-  --border: hsl(220, 15%, 18%);      /* app --border-color */
-  --border-soft: hsl(220, 15%, 14%);
-
-  /* Text */
-  --text: hsl(210, 20%, 94%);        /* app --text-main */
-  --text-dim: hsl(215, 12%, 68%);    /* app --text-muted */
-  --text-faint: hsl(215, 8%, 48%);   /* app --text-dim */
-
-  /* Brand & status accents — exact app values */
-  --accent: hsl(200, 90%, 50%);          /* primary / link (sky-blue) */
-  --accent-bright: hsl(200, 90%, 62%);
-  --accent-teal: hsl(175, 85%, 43%);
-  --accent-green: hsl(142, 70%, 45%);    /* success / live */
-  --accent-amber: hsl(38, 92%, 60%);     /* warning / the icon's warm arc */
-  --accent-purple: hsl(268, 85%, 65%);
-  --accent-red: hsl(350, 80%, 55%);
-  --accent-soft: hsla(200, 90%, 50%, 0.10);
-
-  /* The app's signature button/brand gradient */
-  --brand-gradient: linear-gradient(135deg, hsl(200, 90%, 50%) 0%, hsl(205, 95%, 45%) 100%);
-  --brand-gradient-hover: linear-gradient(135deg, hsl(200, 90%, 60%) 0%, hsl(205, 95%, 55%) 100%);
-
-  --shadow-btn: 0 2px 6px hsla(200, 90%, 50%, 0.18);
-  --shadow-btn-hover: 0 6px 18px hsla(200, 90%, 50%, 0.28);
-  --shadow-card: 0 16px 36px rgba(0, 0, 0, 0.45);
-
-  --max-width: 1200px;
-  /* Radii — app uses small radii; pills only where intended */
-  --radius: 12px;
-  --radius-sm: 6px;
-  --font: "Inter Variable", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --bg: #F6F8FC; --bg-soft: #EDF2F8; --bg-card: #FFFFFF; --bg-elevated: #FFFFFF;
+  --border: #DCE4EE; --border-soft: #E5EBF3;
+  --text: #17243B; --text-dim: #52627A; --text-faint: #596A80;
+  --accent: #0969B8; --accent-bright: #0969B8; --accent-teal: #087D75;
+  --accent-green: #247447; --accent-amber: #946000; --accent-purple: #6750A4; --accent-red: #B4233B;
+  --accent-soft: #0969B80D;
+  --brand-gradient: #0969B8; --brand-gradient-hover: #075596;
+  --shadow-btn: none; --shadow-btn-hover: none; --shadow-card: 0 12px 32px #17243B0A;
+  --max-width: 1200px; --radius: 10px; --radius-sm: 6px;
+  --font: "Inter Variable", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 }
 
 * { box-sizing: border-box; }
@@ -54,12 +24,7 @@ body {
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  /* The app's canvas: blue glow top-left, purple bottom-right over deep navy */
-  background:
-    radial-gradient(900px 520px at 8% -4%,  hsla(200, 90%, 50%, 0.10) 0%, transparent 42%),
-    radial-gradient(900px 620px at 100% 100%, hsla(268, 85%, 65%, 0.08) 0%, transparent 48%),
-    var(--bg);
-  background-attachment: fixed;
+  background: var(--bg);
 }
 
 a { color: var(--accent-bright); text-decoration: none; }
@@ -118,7 +83,7 @@ code, pre, kbd { font-family: var(--mono); font-size: 0.9em; }
   color: var(--accent-bright);
 }
 pre {
-  background: hsl(222, 26%, 4%);
+  background: var(--bg-soft);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 18px 20px;
@@ -128,8 +93,8 @@ pre {
 pre code { color: var(--text); }
 
 .eyebrow {
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
+  text-transform: none;
+  letter-spacing: 0;
   font-size: 0.76rem;
   font-weight: 700;
   color: var(--accent-bright);
@@ -187,3 +152,13 @@ pre code { color: var(--text); }
   .feature-row { grid-template-columns: 1fr; gap: 24px; }
   .feature-row:nth-child(even) .feature-media { order: 0; }
 }
+
+img { max-width: 100%; }
+[id] { scroll-margin-top: 90px; }
+.text-link { color:var(--accent); font-weight:600; text-underline-offset:4px; text-decoration:underline; }
+.skip-link { position:fixed; left:16px; top:-100px; padding:12px 20px; background:white; z-index:1000; border:2px solid var(--accent); }
+.skip-link:focus { top:12px; }
+.breadcrumbs { display:flex; flex-wrap:wrap; gap:8px; font-size:.82rem; color:var(--text-dim); padding-top:24px; }
+@media(max-width:640px) { .container { padding-inline:20px; } }
+
+p a, li a, figcaption a, .foot-bottom a { text-decoration:underline; text-underline-offset:.18em; }

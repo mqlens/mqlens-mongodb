@@ -1,252 +1,75 @@
 # MQLens
 
+**Browse, query, and understand MongoDB.** A free, open-source desktop workspace for macOS, Windows, and Linux.
+
+[![Latest release](https://img.shields.io/github/v/release/mqlens/mqlens-mongodb)](https://github.com/mqlens/mqlens-mongodb/releases/latest)
 [![CI](https://github.com/mqlens/mqlens-mongodb/actions/workflows/ci.yml/badge.svg)](https://github.com/mqlens/mqlens-mongodb/actions/workflows/ci.yml)
-[![Coverage](https://img.shields.io/badge/coverage-enabled-brightgreen.svg)](.github/workflows/ci.yml)
-[![Latest release](https://img.shields.io/github/v/release/mqlens/mqlens-mongodb)](https://github.com/mqlens/mqlens-mongodb/releases)
-[![Downloads](https://img.shields.io/github/downloads/mqlens/mqlens-mongodb/total)](https://github.com/mqlens/mqlens-mongodb/releases)
-[![Stars](https://img.shields.io/github/stars/mqlens/mqlens-mongodb?style=flat)](https://github.com/mqlens/mqlens-mongodb/stargazers)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-**A fast, native desktop GUI for MongoDB** — built with [Tauri](https://tauri.app)
-(Rust) and React + TypeScript.
+**[Download MQLens](https://mqlens.com/#download)** · [Watch the demo](https://mqlens.com/demo/) · [Documentation](https://mqlens.com/docs/) · [Website](https://mqlens.com)
 
-🌐 Website: **[mqlens.com](https://mqlens.com)**
+[![MQLens workspace with two collections open side by side](website/public/screenshots/mqlens-workspace.png)](https://mqlens.com/demo/)
 
-MQLens lets you connect to real MongoDB deployments, browse your data, run
-queries and aggregations, manage indexes and views, and inspect what your
-queries actually do — from a single cross-platform desktop app.
+*Current interface previews use synthetic data in the browser harness. They illustrate workflows, not live database performance.*
 
-> **In short:** point MQLens at any MongoDB (with TLS / SSH / proxy and every
-> auth mechanism), then browse, query, aggregate, explain, edit in bulk, manage
-> indexes and views, analyze schemas, browse GridFS, and run an embedded
-> `mongosh` — with credentials encrypted behind a master password.
+## From a collection to an answer
 
-## Demo
+- **Explore documents.** Switch between table, tree, and JSON views; filter, sort, edit, and export results.
+- **Understand your queries.** Build aggregation pipelines, inspect visual explain plans, and manage indexes.
+- **Arrange your workspace.** Split panes, detach tabs into separate windows, and restore your session.
+- **Connect to your deployments.** Use MongoDB connection strings, SSH tunnels, TLS, and supported authentication methods.
+- **Work with safeguards.** Choose read-only connections or confirmations for destructive operations. Credentials are encrypted locally behind a master password.
+- **Use AI when you want it.** Review editable MQL from the optional query assistant, or explicitly enable selected connections for an MCP-compatible agent.
 
-![MQLens demo: connect to MongoDB, run a find, build an aggregation, and read an explain plan](assets/demo.gif)
+[See all features](https://mqlens.com/features/), including schema analysis, GridFS, synthetic data generation, import/export, and the embedded `mongosh` shell.
 
-## Screenshots
+## Install and run your first query
 
-[![MQLens browsing MongoDB documents](website/public/screenshots/mqlens-documents.png)](website/public/screenshots/mqlens-documents.png)
+Get the [latest release](https://github.com/mqlens/mqlens-mongodb/releases/latest) or choose an installer on the [download page](https://mqlens.com/#download).
 
-| Query tools | GridFS |
+| Platform | Installer | Get started |
+| --- | --- | --- |
+| macOS | `.dmg` for Apple Silicon or Intel | Open the disk image and drag MQLens into Applications. |
+| Windows | `.exe` or `.msi` for x64 | Run the installer, then launch MQLens from the Start menu. |
+| Linux | `.deb`, `.rpm`, or `.AppImage` | Use your package manager, or make the AppImage executable. |
+
+1. Open MQLens and create your local credential vault.
+2. Add a MongoDB connection, or explore the built-in sample data.
+3. Open a collection, enter a filter, and run your query.
+
+See [installation and connection help](https://mqlens.com/docs/). The optional embedded shell needs [`mongosh`](https://www.mongodb.com/docs/mongodb-shell/) installed; ordinary GUI queries do not.
+
+## A quick look
+
+[![MQLens demo browsing synthetic documents in table and tree views](assets/demo.gif)](https://mqlens.com/demo/)
+
+[Watch the full demo and read its transcript](https://mqlens.com/demo/).
+
+| Build an aggregation | Read an explain plan |
 | --- | --- |
-| [![MQLens visual query builder](website/public/screenshots/mqlens-visual-builder.png)](website/public/screenshots/mqlens-visual-builder.png) | [![MQLens GridFS browser](website/public/screenshots/mqlens-gridfs.png)](website/public/screenshots/mqlens-gridfs.png) |
+| [![MQLens aggregation stages with sample results](website/public/screenshots/mqlens-aggregation.png)](https://mqlens.com/guides/mongodb-aggregation-gui/) | [![MQLens explain plan with synthetic execution details](website/public/screenshots/mqlens-explain-plan.png)](https://mqlens.com/guides/read-mongodb-explain-plan/) |
 
-## Features
+## Trust and privacy
 
-- **Connections** — standalone, replica set, or raw connection string; TLS
-  (system CA, custom CA file, client certificate), SSH tunnel, and SOCKS5 proxy;
-  configurable connect / server-selection timeouts. A staged "Test Connection"
-  reports each real phase (parse → DNS resolve → connect → ping).
-- **Authentication** — SCRAM-SHA-1/256, X.509, `MONGODB-AWS` (IAM, incl. session
-  token), GSSAPI/Kerberos, LDAP (PLAIN), and [OIDC browser login](docs/oidc.md),
-  with the correct `$external` plumbing.
-- **Browse** — databases, collections, views, GridFS buckets, and system
-  collections in a tree.
-- **Query** — `find` with filter / sort / projection / skip / limit and
-  pagination; a visual query builder; full **aggregation pipelines**; and
-  **explain plans** (find *and* full-pipeline aggregate) with a visual plan tree.
-- **Documents** — view, insert, edit, and delete; **bulk** update-many /
-  delete-many by filter with a counted, guarded confirmation.
-- **Indexes** — create, inspect (real key pattern + unique/sparse), and drop.
-- **Collections & views** — create / drop / rename collections and databases;
-  create aggregation-backed **views**.
-- **Schema analysis** — sample a collection and see per-field types and presence
-  / coverage (including nested paths).
-- **GridFS** — browse files in a bucket and download them to disk.
-- **Import / export** — JSON and CSV, including full-collection background
-  exports.
-- **Data generation** — seed collections with realistic fake documents:
-  schema-aware templates, nested objects and arrays, preview before you
-  insert, background tasks for big counts.
-- **mongosh shell** — an embedded shell backed by a real `mongosh` binary.
-- **AI query assistant** — natural-language → MQL generation, with multiple
-  providers (Anthropic / OpenAI / Gemini and local agent CLIs); the API key
-  stays in the backend.
-- **Encrypted credentials** — a master password gates the app; connection
-  profiles and settings are encrypted at rest with AES-256-GCM (Argon2id key
-  derivation).
-- **Split panes** — drag a tab to any pane edge to split the workspace; compare
-  collections side by side, keep a shell under your results.
-- **Detachable windows** — pop a tab out into its own window and spread your
-  workspace across monitors.
-- **Session restore** — your splits and tabs come back after a restart;
-  reconnect per connection with one click.
-- **MCP server** — expose your connections to Claude Code, Cursor, and other agents as
-  [Model Context Protocol tools](docs/mcp-tools.md); per-connection opt-in, writes gated behind
-  explicit confirmation, off by default.
-- **Production safeguards** — mark a connection read-only or require typed
-  confirmation for destructive operations; enforced at the command layer,
-  for the UI and AI agents alike.
+- No account required and no app telemetry.
+- Connection credentials and settings are encrypted locally with AES-256-GCM and an Argon2id-derived key.
+- Read-only and destructive-operation controls complement your MongoDB permissions and backups.
+- AI is optional. Configured providers or agent clients may receive prompts, schema context, and tool results. Keeping a key in the backend does not mean AI processing stays on your device.
+- MCP is off by default, enabled per connection, and has write confirmation controls. Read the [MCP tool reference](docs/mcp-tools.md) before enabling it.
+- Releases include verification information. See [how to verify downloads](docs/verifying-downloads.md) and the [security policy](.github/SECURITY.md).
 
-## Install
+Choosing between tools? Read the [MongoDB Compass](https://mqlens.com/compare/mongodb-compass-alternative/) and [Studio 3T](https://mqlens.com/compare/studio-3t-alternative/) comparisons.
 
-Grab the latest build for your OS from
-**[Releases](https://github.com/mqlens/mqlens-mongodb/releases/latest)**:
+## Contribute
 
-- **macOS** — download the `.dmg` (Apple-notarized; Touch ID unlock supported).
+MQLens uses React and TypeScript for its interface, with Tauri and Rust behind it. Bug reports, documentation fixes, translations, and code contributions are welcome.
 
-### Windows
-
-Download the `.exe` or `.msi` installer from the
-[latest release](https://github.com/mqlens/mqlens-mongodb/releases/latest).
-Requires Windows 10 or later (x64). Installers are signed via Azure Trusted
-Signing.
-
-**Setup (.exe, recommended)**
-
-1. Double-click `MQLens_*_x64-setup.exe`.
-2. Approve the UAC prompt if Windows asks for permission.
-3. Follow the setup wizard, then launch **MQLens** from the Start menu.
-
-**Setup (.msi)**
-
-Double-click `MQLens_*.msi` and follow the prompts, or install from an elevated
-Command Prompt or PowerShell:
-
-```powershell
-msiexec /i MQLens_*.msi
-```
-
-If SmartScreen shows "Windows protected your PC", choose **More info** → **Run
-anyway**. The installer is signed; SmartScreen may still warn on first download
-until reputation builds.
-
-### Linux
-
-Download the `.deb` or `.AppImage` from the
-[latest release](https://github.com/mqlens/mqlens-mongodb/releases/latest).
-
-**Debian / Ubuntu (.deb)**
-
-```bash
-sudo apt install ./MQLens_*.deb
-# or:
-sudo dpkg -i MQLens_*.deb
-```
-
-**Any distro (.AppImage)**
-
-```bash
-chmod +x MQLens_*.AppImage
-./MQLens_*.AppImage
-```
-
-If the AppImage won't start ("Permission denied"), the execute bit was likely
-stripped on download — run `chmod +x` on the file again.
-
-No account, no sign-up, no telemetry.
-
-## Trust & privacy
-
-- **No telemetry** — nothing is tracked or phoned home.
-- **No account required** — just download and connect.
-- **Credentials encrypted locally** with AES-256-GCM and Argon2id key derivation.
-- **Signed release assets** (detached signatures on every artifact).
-- **macOS notarized** builds and **Windows signed** installers.
-- **Apache-2.0** — fully open source.
-
-## MQLens vs. the alternatives
-
-| | MQLens | Compass | Studio 3T |
-|---|---|---|---|
-| Price | **Free (Apache-2.0)** | Free | Paid |
-| Engine | **Native (Tauri/Rust)** | Electron | Java |
-| Enterprise auth (X.509 / AWS / Kerberos / LDAP) | ✅ | ✅ | ✅ |
-| SSH tunnel | ✅ | ✅ | ✅ |
-| SOCKS5 proxy | ✅ | Not clearly exposed | Varies |
-| Aggregation + explain tree | ✅ | ✅ | ✅ |
-| Embedded `mongosh` | ✅ | ✅ | ✅ |
-| AI query assistant (bring-your-own key) | ✅ | ✅ | partial |
-| Biometric-unlocked encrypted vault | ✅ | ❌ | partial |
-| Telemetry | **None** | yes | yes |
-
-*Comparison reflects publicly documented behavior at time of writing; tools change — corrections welcome via an issue.*
-
-## Tech stack
-
-- **Frontend:** React 19 + TypeScript, Vite, Tailwind-style utility CSS.
-- **Backend:** Rust, Tauri v2, the official `mongodb` driver.
-- **Tests:** Vitest + Testing Library (frontend), `cargo test` (backend).
-
-## Prerequisites
-
-- [Node.js](https://nodejs.org/) 18+
-- [Rust](https://www.rust-lang.org/tools/install) (stable) and the
-  [Tauri prerequisites](https://tauri.app/start/prerequisites/) for your OS
-- [`mongosh`](https://www.mongodb.com/docs/mongodb-shell/) on your `PATH` (only
-  needed for the embedded shell)
-
-## Development
-
-```bash
-npm install
-npm run tauri dev      # run the desktop app with hot reload
-```
-
-For something to point the app at, seed the
-[local demo database](docs/demo-database.md) — synthetic collections, indexes,
-a view, and GridFS files that exercise every major workflow (and match the
-screenshots above).
-
-Other useful commands:
-
-```bash
-npm run dev            # frontend only (browser, no Tauri APIs)
-npm test               # frontend tests (Vitest)
-npm run coverage:frontend   # frontend tests with coverage
-cargo test --manifest-path src-tauri/Cargo.toml   # backend tests
-cargo llvm-cov --manifest-path src-tauri/Cargo.toml --summary-only --ignore-filename-regex 'src-tauri/src/(lib|main)\.rs'   # backend coverage
-npm run build          # type-check + build the frontend bundle
-```
-
-The backend integration tests (and the coverage figure CI reports) need a real
-MongoDB. They skip automatically when `MQLENS_TEST_MONGO_URI` is unset, so set it
-to exercise the live database paths:
-
-```bash
-docker run -d -p 27017:27017 mongo:7
-MQLENS_TEST_MONGO_URI=mongodb://localhost:27017 \
-  cargo llvm-cov --manifest-path src-tauri/Cargo.toml --summary-only --ignore-filename-regex 'src-tauri/src/(lib|main)\.rs'
-```
-
-## Build
-
-```bash
-npm run tauri build    # produce a platform installer / bundle
-```
-
-## Security
-
-- Connection credentials and settings are encrypted at rest behind a master
-  password; nothing is stored in plaintext once the vault is initialized.
-- Disabling TLS certificate validation is an explicit, opt-in choice (with an
-  in-app warning), never silent.
-- AI provider API keys are held in the backend, out of the frontend bundle.
-
-> MQLens talks directly to whatever MongoDB deployment you point it at. Use the
-> usual care with production credentials.
-
-## Verifying downloads
-
-Every release asset is shipped with a detached GPG signature (`.asc`), and the
-macOS bundles are also Apple-notarized. To verify a download:
-
-```bash
-# Import the MQLens release public key (once):
-gpg --import KEYS          # from this repo, or: curl -L https://mqlens.com/KEYS | gpg --import
-
-# Verify an asset against its .asc:
-gpg --verify MQLens_0.1.0_amd64.deb.asc MQLens_0.1.0_amd64.deb
-```
-
-Signing key — **MQLens Releases `<dev@mqlens.com>`**, fingerprint:
-
-```
-8E10 C09D 1FEC 8C8F 90B1  DB7E 5804 6649 06E7 D373
-```
+- [Development setup and test commands](docs/development.md)
+- [Contribution guide](.github/CONTRIBUTING.md) and [translation guide](docs/CONTRIBUTING-i18n.md)
+- [Local demo database](docs/demo-database.md)
+- [Good first issues](https://github.com/mqlens/mqlens-mongodb/labels/good%20first%20issue) and [roadmap](docs/ROADMAP.md)
+- [Report a bug](https://github.com/mqlens/mqlens-mongodb/issues/new?template=bug_report.yml)
 
 ## License
 
-Licensed under the [Apache License 2.0](LICENSE).
+[Apache-2.0](LICENSE). Free to use, inspect, and improve.

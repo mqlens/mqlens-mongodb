@@ -1,0 +1,30 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { SITE } from '../consts';
+import demo from '../data/demo.json';
+const video = {
+  '@type': 'VideoObject', name: 'MQLens MongoDB workspace demo',
+  description: 'Explore documents, build an aggregation, and inspect an explain plan in the MQLens interface with synthetic sample data.',
+  thumbnailUrl: `${SITE.url}/demo-poster.jpg`, uploadDate: demo.uploadDate, duration: demo.duration,
+  contentUrl: `${SITE.url}/demo.mp4`,
+};
+---
+<BaseLayout title="MQLens demo — explore your MongoDB workspace" description="Watch MQLens browse MongoDB documents, build an aggregation pipeline, and show an explain plan. Read the transcript and download the free desktop app." structuredData={video}>
+  <section class="section-tight"><div class="container demo-page">
+    <p class="eyebrow">See the workspace</p><h1>MQLens, from query to result.</h1>
+    <p class="intro">A short tour of browsing, querying, and understanding MongoDB. These interface previews use synthetic data in the app's browser harness; they do not measure live database performance.</p>
+    <video controls playsinline preload="none" poster="/demo-poster.jpg" width="1600" height="1000" aria-label="MQLens workspace demo with synthetic sample data">
+      <source src="/demo.mp4" type="video/mp4" />
+      <track kind="captions" src="/demo-en.vtt" srclang="en" label="English" default />
+      <p><a href="/demo.mp4">Download the demo video</a> or read the transcript below.</p>
+    </video>
+    <div class="demo-actions"><a class="btn btn-primary" href="/#download">Download MQLens</a><a class="text-link" href="/docs/">Get started</a></div>
+    <section class="transcript"><h2>Demo transcript</h2>
+      <ol><li><strong>Explore documents.</strong> Open a collection and browse customer records in a table. Switch to a tree or JSON view to inspect document structure.</li><li><strong>Build an aggregation.</strong> Open the aggregation editor, group sample records, and run the pipeline to see its results.</li><li><strong>Understand a query.</strong> Open the explain plan to inspect plan stages and execution details. The values in this demo are synthetic fixtures.</li></ol>
+      <p>Learn more with the <a href="/guides/mongodb-aggregation-gui/">aggregation guide</a>, <a href="/guides/read-mongodb-explain-plan/">explain-plan guide</a>, and <a href="/features/#workspace">workspace features</a>.</p>
+    </section>
+  </div></section>
+</BaseLayout>
+<style>
+.demo-page { max-width:1100px; } h1 { font-size:clamp(2.2rem,5vw,3.8rem); letter-spacing:-.04em; margin:16px 0 20px; } .intro { max-width:740px; color:var(--text-dim); font-size:1.1rem; margin-bottom:32px; } video { display:block; width:100%; height:auto; background:#0b1018; border-radius:10px; } .demo-actions { display:flex; gap:24px; align-items:center; flex-wrap:wrap; margin:24px 0 52px; } .transcript { max-width:760px; } .transcript li { margin-block:20px; color:var(--text-dim); }
+</style>

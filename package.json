@@ -20,7 +20,9 @@
     "check:tauri-versions": "node scripts/check-tauri-versions.js",
     "coverage:frontend": "vitest run --coverage",
     "coverage:backend": "cargo llvm-cov --manifest-path src-tauri/Cargo.toml --summary-only --ignore-filename-regex 'src-tauri/src/((lib|main)\\.rs|server/pb/)'",
-    "coverage": "npm run coverage:frontend && npm run coverage:backend"
+    "coverage": "npm run coverage:frontend && npm run coverage:backend",
+    "media:capture": "playwright test --config playwright.media.config.ts",
+    "test:website": "playwright test --config playwright.website.config.ts"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",

@@ -22,7 +22,7 @@ const sections = [
     id: 'auth',
     nav: 'Auth',
     title: 'Every authentication mechanism',
-    body: 'The full auth matrix you usually only get in paid tools — with the correct $external plumbing handled for you.',
+    body: 'Configure supported MongoDB authentication methods, including mechanisms that use the $external authentication database.',
     bullets: [
       'SCRAM-SHA-1 and SCRAM-SHA-256',
       'X.509 client certificates',
@@ -72,9 +72,7 @@ const sections = [
     img: '/screenshots/mqlens-documents.png',
     alt: 'MQLens browsing MongoDB customer documents',
   },
-  // TODO: the four cards below reuse the closest existing screenshots; swap in
-  // dedicated shots (multi-window, data generation, MCP settings, mode banner)
-  // — see docs/promotion-screenshot-plan.md.
+  // Capture recipes and provenance: docs/promotion-media.md.
   {
     id: 'workspace',
     nav: 'Workspace',
@@ -87,8 +85,8 @@ const sections = [
       'Session restore brings back your windows, splits, and tabs',
       'Tabs wake disconnected — reconnect per connection with one click',
     ],
-    img: '/screenshots/mqlens-documents.png',
-    alt: 'MQLens workspace with document tabs open',
+    img: '/screenshots/mqlens-workspace.png',
+    alt: 'MQLens split workspace with synthetic collections',
   },
   {
     id: 'generate',
@@ -101,13 +99,13 @@ const sections = [
       'Schema-aware templates, with a live preview before you insert',
       'Up to 50,000 documents as a cancellable background task',
     ],
-    img: '/screenshots/mqlens-schema.png',
-    alt: 'MQLens schema analysis of a MongoDB collection',
+    img: '/screenshots/mqlens-data-generation.png',
+    alt: 'MQLens data generator with a synthetic document template',
   },
   {
     id: 'safeguards',
     nav: 'Safeguards',
-    title: 'Safe to point at production',
+    title: 'Safeguards for production workflows',
     body: 'Mark a connection read-only or confirm-destructive and the guard is enforced in the backend — for the UI and AI agents alike, not just by hiding buttons.',
     bullets: [
       'Read-only blocks every write; a banner and badge make the mode obvious',
@@ -115,8 +113,8 @@ const sections = [
       'Enforced at the command layer across the whole app',
       'Set per connection in the connection manager',
     ],
-    img: '/screenshots/mqlens-connection-manager.png',
-    alt: 'MQLens connection manager where a connection mode is configured',
+    img: '/screenshots/mqlens-safeguards.png',
+    alt: 'MQLens read-only connection and document workspace',
   },
   {
     id: 'gridfs',
@@ -168,14 +166,14 @@ const sections = [
       'Writes gated behind explicit confirmation; read-only connections stay read-only',
       'Agent connections are badged in the sidebar with a live call log',
     ],
-    img: '/screenshots/mqlens-ai-assistant.png',
-    alt: 'MQLens AI query assistant panel beside MongoDB documents',
+    img: '/screenshots/mqlens-mcp.png',
+    alt: 'MQLens MCP settings with explicit connection controls',
   },
   {
     id: 'security',
     nav: 'Security',
     title: 'Private by design',
-    body: 'Your credentials never sit in plaintext and nothing phones home — privacy is built into the architecture, not bolted on.',
+    body: 'Connection credentials are encrypted locally, and the app has no telemetry. Optional AI workflows communicate with the providers you configure.',
     bullets: [
       'Connection profiles encrypted at rest with AES-256-GCM (Argon2id key derivation)',
       'Gated behind a master password, with Touch ID unlock on macOS',
@@ -190,7 +188,7 @@ const sections = [
 
 <BaseLayout
   title="Features — every MongoDB workflow in one native GUI"
-  description="MQLens features: every auth mode, TLS/SSH/SOCKS5, visual query builder, aggregation pipelines with explain plans, bulk edit, schema analysis, GridFS, embedded mongosh, an AI query assistant, and an encrypted local vault — free and native.">
+  description="MQLens features: supported authentication methods, TLS/SSH/SOCKS5, visual query builder, aggregation pipelines with explain plans, bulk edit, schema analysis, GridFS, embedded mongosh, an AI query assistant, and an encrypted local vault — free and native.">
   <section class="page-head">
     <div class="container">
       <span class="eyebrow">Features</span>

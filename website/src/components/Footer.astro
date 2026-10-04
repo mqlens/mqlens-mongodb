@@ -1,6 +1,6 @@
 ---
 import { SITE } from '../consts';
-const year = 2026;
+const year = new Date().getUTCFullYear();
 ---
 
 <footer class="footer">
@@ -14,41 +14,44 @@ const year = 2026;
     </div>
     <div class="foot-cols">
       <div>
-        <h4>Product</h4>
+        <h3>Product</h3>
         <a href="/#features">Features</a>
         <a href="/#download">Download</a>
         <a href="/changelog/">Changelog</a>
+        <a href="/demo/">Watch the demo</a>
       </div>
       <div>
-        <h4>Docs</h4>
+        <h3>Docs</h3>
         <a href="/docs/">Getting started</a>
         <a href="/docs/#verifying">Verify downloads</a>
         <a href="/docs/#security">Security</a>
       </div>
       <div>
-        <h4>Compare</h4>
+        <h3>Compare</h3>
         <a href="/compare/mongodb-compass-alternative/">vs MongoDB Compass</a>
         <a href="/compare/studio-3t-alternative/">vs Studio 3T</a>
         <a href="/compare/robo-3t-alternative/">vs Robo 3T</a>
         <a href="/compare/nosqlbooster-alternative/">vs NoSQLBooster</a>
       </div>
       <div>
-        <h4>Platforms</h4>
+        <h3>Platforms</h3>
         <a href="/mongodb-client-for-mac/">MongoDB client for Mac</a>
         <a href="/mongodb-client-for-windows/">MongoDB client for Windows</a>
         <a href="/mongodb-gui-for-linux/">MongoDB GUI for Linux</a>
       </div>
       <div>
-        <h4>Workflows</h4>
+        <h3>Workflows</h3>
         <a href="/mongodb-ssh-tunnel-gui/">SSH tunnel</a>
         <a href="/mongodb-explain-plan-gui/">Explain plans</a>
         <a href="/mongodb-aggregation-pipeline-gui/">Aggregation pipelines</a>
         <a href="/mongodb-schema-analysis-tool/">Schema analysis</a>
         <a href="/mongodb-gridfs-gui/">GridFS browser</a>
         <a href="/mongodb-gui-no-telemetry/">No telemetry</a>
+        <a href="/mongodb-mcp-server/">MongoDB MCP server</a>
+        <a href="/mongodb-ai-query-assistant/">AI query assistant</a>
       </div>
       <div>
-        <h4>Project</h4>
+        <h3>Project</h3>
         <a href={SITE.repo} target="_blank" rel="noopener">GitHub</a>
         <a href={SITE.releases} target="_blank" rel="noopener">Releases</a>
         <a href={`${SITE.repo}/issues`} target="_blank" rel="noopener">Issues</a>
@@ -78,10 +81,10 @@ const year = 2026;
   .brand-row { display: flex; align-items: center; gap: 8px; font-size: 1.1rem; }
   .foot-brand p { color: var(--text-dim); margin: 10px 0 0; }
   .foot-cols { display: flex; gap: 56px; flex-wrap: wrap; }
-  .foot-cols h4 {
+  .foot-cols h3 {
     font-size: 0.8rem;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
+    text-transform: none;
+    letter-spacing: 0;
     color: var(--text-dim);
     margin: 0 0 12px;
   }
