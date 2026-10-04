@@ -162,8 +162,6 @@
       "usage": "Usage"
     },
     "confirm": {
-      "deleteConfirmLabel": "Delete",
-      "deleteMessage": "Are you sure you want to delete index \"{{indexName}}\"?",
       "deleteTitle": "Delete index"
     },
     "constraints": {

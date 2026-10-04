@@ -24,7 +24,6 @@ import { cn } from '@/lib/utils';
 import { formatBytes } from '@/lib/format';
 import type { IndexInfo } from './Sidebar';
 import type { IndexStatUi } from './StatsCards';
-import { useDialogs } from './dialogs/DialogProvider';
 import { useTranslation } from 'react-i18next';
 
 interface IndexViewerProps {
@@ -44,7 +43,6 @@ export const IndexViewer: React.FC<IndexViewerProps> = ({
   onEditIndex,
   onDeleteIndex,
 }) => {
-  const { confirm } = useDialogs();
   const { t } = useTranslation('admin');
   const [copied, setCopied] = useState(false);
   const [info, setInfo] = useState<IndexInfo | null>(null);
@@ -254,18 +252,7 @@ export const IndexViewer: React.FC<IndexViewerProps> = ({
                   variant="outline"
                   size="sm"
                   className="border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                  onClick={async () => {
-                    if (
-                      await confirm({
-                        title: t('indexViewer.confirm.deleteTitle'),
-                        message: t('indexViewer.confirm.deleteMessage', { indexName }),
-                        confirmLabel: t('indexViewer.confirm.deleteConfirmLabel'),
-                        destructive: true,
-                      })
-                    ) {
-                      onDeleteIndex(indexName);
-                    }
-                  }}
+                  onClick={() => onDeleteIndex(indexName)}
                   title={t('indexViewer.actions.deleteIndex')}
                   data-testid="delete-index-btn"
                 >

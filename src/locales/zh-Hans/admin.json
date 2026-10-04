@@ -161,8 +161,6 @@
       "usage": "使用情况"
     },
     "confirm": {
-      "deleteConfirmLabel": "删除",
-      "deleteMessage": "确定要删除索引“{{indexName}}”吗？",
       "deleteTitle": "删除索引"
     },
     "constraints": {

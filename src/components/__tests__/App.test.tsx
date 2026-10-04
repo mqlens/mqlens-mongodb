@@ -440,6 +440,12 @@ describe('App Component', () => {
     // Click Delete Index button in mock sidebar
     const deleteIndexBtn = screen.getByTestId('mock-delete-index-btn');
     fireEvent.click(deleteIndexBtn);
+    const confirmInput = await screen.findByTestId('dialog-input');
+    const confirmButton = screen.getByTestId('dialog-confirm');
+    expect(confirmButton).toBeDisabled();
+    fireEvent.change(confirmInput, { target: { value: 'email_1' } });
+    expect(confirmButton).toBeEnabled();
+    fireEvent.click(confirmButton);
 
     // Verify delete_index invoke was called
     await waitFor(() => {

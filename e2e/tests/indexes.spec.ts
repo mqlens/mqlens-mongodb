@@ -1,6 +1,6 @@
 import type { Locator, Page } from '@playwright/test';
 import { test, expect } from '../fixtures';
-import { dismissHoverCards, loadSample, openCollection } from '../helpers';
+import { confirmTypedName, dismissHoverCards, loadSample, openCollection } from '../helpers';
 
 const sidebar = (page: Page) => page.getByRole('complementary');
 const view = (page: Page) => page.locator('[data-testid^="tab-content-"]:not([hidden])');
@@ -65,9 +65,10 @@ test.describe('Indexes', () => {
     await expect(view(page).getByTestId('index-viewer')).toBeVisible();
 
     await view(page).getByTestId('delete-index-btn').click();
-    await page.getByTestId('dialog-confirm').click();
+    await confirmTypedName(page, 'email_1');
 
     await expect(sidebar(page).getByText('email_1', { exact: true })).toHaveCount(0);
+    await expect(page.getByTestId('dialog-toast').filter({ hasText: 'Index "email_1" dropped successfully.' })).toBeVisible();
     const deletes = await app.calls('delete_index');
     expect(deletes).toHaveLength(1);
     expect(deletes[0].args).toMatchObject({ database: 'sales_db', collection: 'customers', indexName: 'email_1' });

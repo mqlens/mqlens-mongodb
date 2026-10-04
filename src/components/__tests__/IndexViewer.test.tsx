@@ -57,13 +57,12 @@ describe('IndexViewer (T2)', () => {
     expect(await screen.findByTestId('index-viewer-error')).toBeInTheDocument();
   });
 
-  it('deletes the index after the in-app confirm', async () => {
+  it('delegates index deletion to the shared app handler', async () => {
     mockInvokeByCommand({ list_indexes: [{ ...CITY_INDEX, unique: false }], index_stats: [] });
     const onDeleteIndex = vi.fn();
     render(<IndexViewer {...baseProps} onDeleteIndex={onDeleteIndex} />);
 
     fireEvent.click(await screen.findByTestId('delete-index-btn'));
-    fireEvent.click(await screen.findByTestId('dialog-confirm'));
 
     await waitFor(() => expect(onDeleteIndex).toHaveBeenCalledWith('city_1'));
   });

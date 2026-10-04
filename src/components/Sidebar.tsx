@@ -1060,28 +1060,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
       toast(t('toasts.readOnlyBlocked'), 'error');
       return;
     }
-    // #188 Task 3: on a confirm_destructive (production-safeguard) connection,
-    // the ordinary yes/no confirm is replaced by a typed-name match — see
-    // `confirmByTypedName`'s doc comment. `confirmed: true` is only ever
-    // passed after that exact match; the backend's `guard_writable` is the
-    // real gate either way.
     const confirmed = conn?.mode === 'confirm_destructive';
-    if (confirmed) {
-      if (
-        !(await confirmByTypedName(prompt, {
-          title: t('dialogs.dropCollection.title'),
-          kind: 'collection',
-          expectedName: collName,
-        }, t))
-      )
-        return;
-    } else if (
-      !(await confirm({
+    if (
+      !(await confirmByTypedName(prompt, {
         title: t('dialogs.dropCollection.title'),
-        message: t('dialogs.dropCollection.message', { name: collName }),
-        confirmLabel: t('dialogs.dropCollection.confirmLabel'),
+        kind: 'collection',
+        expectedName: collName,
         destructive: true,
-      }))
+      }, t))
     ) {
       return;
     }
@@ -1105,6 +1091,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       }));
       clearActiveIfDropped();
       onNamespaceMutated?.(connectionId);
+      toast(t('toasts.dropCollectionSuccess', { name: collName }), 'success');
       return;
     }
 
@@ -1113,6 +1100,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       clearActiveIfDropped();
       await handleRefreshDb(connectionId, dbName);
       onNamespaceMutated?.(connectionId);
+      toast(t('toasts.dropCollectionSuccess', { name: collName }), 'success');
     } catch (err) {
       toast(t('toasts.dropCollectionFailed', { error: `${err}` }), 'error');
     }
@@ -1226,24 +1214,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
       toast(t('toasts.readOnlyBlocked'), 'error');
       return;
     }
-    // #188 Task 3: see handleDropCollection's comment on this same pattern.
     const confirmed = conn?.mode === 'confirm_destructive';
-    if (confirmed) {
-      if (
-        !(await confirmByTypedName(prompt, {
-          title: t('dialogs.dropDatabase.title'),
-          kind: 'database',
-          expectedName: dbName,
-        }, t))
-      )
-        return;
-    } else if (
-      !(await confirm({
+    if (
+      !(await confirmByTypedName(prompt, {
         title: t('dialogs.dropDatabase.title'),
-        message: t('dialogs.dropDatabase.message', { name: dbName }),
-        confirmLabel: t('dialogs.dropDatabase.confirmLabel'),
+        kind: 'database',
+        expectedName: dbName,
         destructive: true,
-      }))
+      }, t))
     ) {
       return;
     }
@@ -1299,6 +1277,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
     if (isMock) {
       clearLocalDatabase();
+      toast(t('toasts.dropDatabaseSuccess', { name: dbName }), 'success');
       return;
     }
 
@@ -1306,6 +1285,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       await invoke('drop_database', { id: connectionId, database: dbName, confirmed });
       clearLocalDatabase();
       await loadDatabases(connectionId);
+      toast(t('toasts.dropDatabaseSuccess', { name: dbName }), 'success');
     } catch (err) {
       toast(t('toasts.dropDatabaseFailed', { error: `${err}` }), 'error');
     }

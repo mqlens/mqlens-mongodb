@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from '../fixtures';
 import { SAMPLE_SERVER } from '../harness/seed';
-import { callFrom, connectStaging, dismissHoverCards, expandCollections, loadSample, STAGING_URI } from '../helpers';
+import { callFrom, confirmTypedName, connectStaging, dismissHoverCards, expandCollections, loadSample, STAGING_URI } from '../helpers';
 
 const sidebar = (page: Page) => page.getByRole('complementary').first();
 const databaseRow = (page: Page, name: string) => sidebar(page).getByRole('button', { name: `Database ${name}` });
@@ -36,7 +36,7 @@ test.describe('Sidebar on the sample connection', () => {
     await dismissHoverCards(page);
     await expect(sidebar(page).getByText('items', { exact: true })).toBeVisible();
     await menu(page, sidebar(page).getByText('items', { exact: true }), 'Drop Collection');
-    await page.getByTestId('dialog-confirm').click();
+    await confirmTypedName(page, 'items');
     await expect(sidebar(page).getByText('items', { exact: true })).toHaveCount(0);
 
     await dismissHoverCards(page);
@@ -46,7 +46,7 @@ test.describe('Sidebar on the sample connection', () => {
     await expect(databaseRow(page, 'scratch2')).toBeVisible();
     await dismissHoverCards(page);
     await menu(page, databaseRow(page, 'scratch2'), 'Drop Database');
-    await page.getByTestId('dialog-confirm').click();
+    await confirmTypedName(page, 'scratch2');
     await expect(databaseRow(page, 'scratch2')).toHaveCount(0);
 
     for (const command of ['create_collection', 'rename_collection', 'drop_collection', 'rename_database', 'drop_database']) {
@@ -100,7 +100,7 @@ test.describe('Sidebar on a saved connection', () => {
     await expandCollections(page, 'sales_db');
     await app.failNext('drop_collection', 'collection is locked');
     await menu(page, sidebar(page).getByText('products', { exact: true }), 'Drop Collection');
-    await page.getByTestId('dialog-confirm').click();
+    await confirmTypedName(page, 'products');
     await expect(toast(page, 'collection is locked')).toBeVisible();
     await dismissHoverCards(page);
 

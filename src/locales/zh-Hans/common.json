@@ -67,6 +67,7 @@
     "exportedDocuments_other": "已将 {{count}} 个文档导出到 {{path}}",
     "failedToDeleteDocument": "删除文档失败：{{detail}}",
     "failedToDeleteIndex": "删除索引失败：{{detail}}",
+    "deleteIndexSuccess": "索引“{{name}}”已成功删除。",
     "failedToDropUser": "删除用户失败：{{detail}}",
     "failedToSaveIndex": "保存索引失败：{{detail}}",
     "favoriteNeedsSavedConnection": "请先保存此连接再收藏查询 — 收藏项是从已保存的连接中恢复的。",
@@ -99,8 +100,10 @@
     "userUpdated": "已更新用户 {{name}}"
   },
   "typedNameConfirm": {
+    "confirmLabel": "删除",
     "messageCollection": "请输入 Collection 名称以确认。",
     "messageDatabase": "请输入数据库名称以确认。",
+    "messageIndex": "请输入索引名称以确认。",
     "validationError": "名称不匹配"
   }
 }

@@ -59,6 +59,7 @@
     "deletedDocuments_other": "Deleted {{count}} document(s)",
     "deletedTitle": "Deleted",
     "deleteFailed": "Delete failed: {{detail}}",
+    "deleteIndexSuccess": "Index \"{{name}}\" dropped successfully.",
     "documentDeletedFrom": "Document deleted from {{collection}}",
     "documentEditNotSynced": "Could not save this tab’s document draft. The tab was not moved.",
     "documentInsertedInto": "Document inserted into {{collection}}",
@@ -105,8 +106,10 @@
     "userUpdated": "Updated user {{name}}"
   },
   "typedNameConfirm": {
+    "confirmLabel": "Drop",
     "messageCollection": "Type the collection name to confirm.",
     "messageDatabase": "Type the database name to confirm.",
+    "messageIndex": "Type the index name to confirm.",
     "validationError": "Name does not match"
   }
 }

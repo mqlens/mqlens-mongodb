@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 import { test, expect, type App } from '../fixtures';
-import { connectStaging, dismissHoverCards, expandCollections, openCollection, setEditorText, view } from '../helpers';
+import { confirmTypedName, connectStaging, dismissHoverCards, expandCollections, openCollection, setEditorText, view } from '../helpers';
 
 // Dropping and renaming from the sidebar (#396): what it refuses while a
 // document is still being saved there, what it asks for on a connection that
@@ -95,7 +95,7 @@ test.describe('After a drop', () => {
     await expect(sidebar(page).getByText('email_1', { exact: true })).toBeVisible();
 
     await collectionMenu(page, 'customers', 'Drop Collection');
-    await page.getByTestId('dialog-confirm').click();
+    await confirmTypedName(page, 'customers');
     await expect.poll(async () => (await app.calls('drop_collection')).length).toBe(1);
     await expect(sidebar(page).getByText('customers', { exact: true })).toHaveCount(0);
     // The tab it was open in keeps what it had loaded; closing it is the user's move.
@@ -103,7 +103,7 @@ test.describe('After a drop', () => {
 
     // And the whole database goes the same way, indexes and all.
     await databaseMenu(page, 'sales_db', 'Drop Database');
-    await page.getByTestId('dialog-confirm').click();
+    await confirmTypedName(page, 'sales_db');
     await expect.poll(async () => (await app.calls('drop_database')).length).toBe(1);
     await expect(sidebar(page).getByRole('button', { name: 'Database sales_db' })).toHaveCount(0);
     await expect(sidebar(page).getByText('email_1', { exact: true })).toHaveCount(0);

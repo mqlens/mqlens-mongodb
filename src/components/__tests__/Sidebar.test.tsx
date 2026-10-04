@@ -980,8 +980,8 @@ describe('Sidebar Component', () => {
     const dropCollOption = await screen.findByText('Drop Collection');
     fireEvent.click(dropCollOption);
 
-    // Confirm the drop via the in-app dialog; collection node is removed
-    fireEvent.click(await screen.findByTestId('dialog-confirm'));
+    // The final drop stays disabled until the exact collection name is typed.
+    await submitPrompt('created_collection');
     await waitFor(() => {
       expect(screen.queryByText('created_collection')).not.toBeInTheDocument();
     });
@@ -1389,7 +1389,7 @@ describe('Sidebar Component', () => {
     expect(screen.queryByText('Drop Collection')).toBeNull();
     await openManageMenu();
     fireEvent.click(await screen.findByText('Drop Collection'));
-    await clickConfirm();
+    await submitPrompt('orders');
     await waitFor(() => {
       const d = calls.find((x) => x.cmd === 'drop_collection');
       expect(d).toBeTruthy();
@@ -1417,7 +1417,7 @@ describe('Sidebar Component', () => {
     expect(screen.queryByText('Drop Database')).toBeNull();
     await openManageMenu();
     fireEvent.click(await screen.findByText('Drop Database'));
-    await clickConfirm();
+    await submitPrompt('shop');
     await waitFor(() => {
       const d = calls.find((x) => x.cmd === 'drop_database');
       expect(d).toBeTruthy();

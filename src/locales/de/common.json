@@ -71,6 +71,7 @@
     "exportedDocuments_other": "{{count}} Dokumente nach {{path}} exportiert",
     "failedToDeleteDocument": "Dokument konnte nicht gelöscht werden: {{detail}}",
     "failedToDeleteIndex": "Index konnte nicht gelöscht werden: {{detail}}",
+    "deleteIndexSuccess": "Index \"{{name}}\" wurde erfolgreich gelöscht.",
     "failedToDropUser": "Benutzer konnte nicht gelöscht werden: {{detail}}",
     "failedToSaveIndex": "Index konnte nicht gespeichert werden: {{detail}}",
     "favoriteNeedsSavedConnection": "Speichere diese Verbindung, bevor du eine Abfrage favorisierst — Favoriten werden aus gespeicherten Verbindungen wiederhergestellt.",
@@ -105,8 +106,10 @@
     "userUpdated": "Benutzer {{name}} aktualisiert"
   },
   "typedNameConfirm": {
+    "confirmLabel": "Löschen",
     "messageCollection": "Gib den Namen der Collection ein, um zu bestätigen.",
     "messageDatabase": "Gib den Namen der Datenbank ein, um zu bestätigen.",
+    "messageIndex": "Gib den Namen des Index ein, um zu bestätigen.",
     "validationError": "Name stimmt nicht überein"
   }
 }

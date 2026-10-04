@@ -204,9 +204,7 @@
       "copyJson": "JSON kopieren"
     },
     "confirm": {
-      "deleteTitle": "Index löschen",
-      "deleteMessage": "Möchtest du den Index „{{indexName}}“ wirklich löschen?",
-      "deleteConfirmLabel": "Löschen"
+      "deleteTitle": "Index löschen"
     },
     "type": {
       "compound": "Verbund",
