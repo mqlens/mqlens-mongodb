@@ -1,9 +1,9 @@
 ---
 // Self-hosted fonts — no render-blocking external request, no third-party.
-import '@fontsource-variable/inter';
-import '@fontsource/jetbrains-mono/400.css';
-import '@fontsource/jetbrains-mono/500.css';
-import '@fontsource/jetbrains-mono/600.css';
+import interFont from '@fontsource-variable/inter/files/inter-latin-wght-normal.woff2?url';
+import '@fontsource/jetbrains-mono/latin-400.css';
+import '@fontsource/jetbrains-mono/latin-500.css';
+import '@fontsource/jetbrains-mono/latin-600.css';
 import '../styles/global.css';
 import Nav from '../components/Nav.astro';
 import Footer from '../components/Footer.astro';
@@ -42,7 +42,8 @@ const breadcrumbSchema = pathParts.length ? {
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="theme-color" content="#0a8fd0" />
 
-    <!-- Type system (self-hosted): Inter (UI) + JetBrains Mono (code) -->
+    <link rel="preload" href={interFont} as="font" type="font/woff2" crossorigin />
+    <style is:inline set:html={`@font-face{font-family:'Inter Variable';font-style:normal;font-display:swap;font-weight:100 900;src:url('${interFont}') format('woff2')}`} />
 
     <title>{fullTitle}</title>
     <meta name="description" content={description} />

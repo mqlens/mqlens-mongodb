@@ -9,5 +9,7 @@ export default defineConfig({
   build: {
     // Emit clean URLs: /docs/ instead of /docs.html
     format: 'directory',
+    // The small marketing styles fit in the HTML; avoid blocking CSS requests.
+    inlineStylesheets: 'always',
   },
 });

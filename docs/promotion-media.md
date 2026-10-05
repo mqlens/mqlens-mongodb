@@ -59,7 +59,7 @@ python3 scripts/render-marketing-video.py /path/to/ffmpeg
 
 The capture configuration builds and serves the browser harness. Stop any older preview server on port 4173 before capturing changed application code: local runs may reuse it. An existing ffmpeg with H.264 and GIF support is required only for video export; it is not an app dependency. The encoder slows the recorded walkthrough for legibility, removes audio, and exports web-compatible H.264 with fast-start metadata.
 
-Review the new video, update caption timings to match it, and update the capture date/version in this document and the metadata generator when recapturing. The poster and social image are built from the same screenshot set. The SVG remains editable and includes an embedded workspace image.
+Review the new video, update caption timings to match it, and update the capture date/version in this document and the metadata generator when recapturing. The optimizer also generates 400-, 800-, and 1200-pixel WebP variants for homepage screenshots, plus a 400-pixel mobile hero crop. Keep the homepage srcset references in sync when adding a screenshot. The poster and social image are built from the same screenshot set. The SVG remains editable and includes an embedded workspace image.
 
 ## Release review
 

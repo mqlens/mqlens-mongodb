@@ -3,9 +3,15 @@ import sharp from 'sharp';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 const publicDir = fileURLToPath(new URL('../public/', import.meta.url));
+const homepageImages = ['workspace', 'workspace-mobile', 'documents', 'aggregation', 'ai-assistant', 'explain-plan', 'schema', 'gridfs'];
 for (const name of await readdir(`${publicDir}/screenshots`)) {
   if (!name.endsWith('.png')) continue;
   await sharp(`${publicDir}/screenshots/${name}`).webp({quality:85}).toFile(`${publicDir}/screenshots/${name.replace('.png','.webp')}`);
+  if (homepageImages.some(subject => name === `mqlens-${subject}.png`)) {
+    for (const width of name.includes('workspace-mobile') ? [400] : [400, 800, 1200]) {
+      await sharp(`${publicDir}/screenshots/${name}`).resize({width, withoutEnlargement:true}).webp({quality:85}).toFile(`${publicDir}/screenshots/${name.replace('.png', `-${width}.webp`)}`);
+    }
+  }
 }
 await sharp(`${publicDir}/screenshots/mqlens-documents.png`).jpeg({quality:85}).toFile(`${publicDir}/demo-poster.jpg`);
 const preview = await sharp(`${publicDir}/screenshots/mqlens-workspace.png`).resize(1040).png().toBuffer();

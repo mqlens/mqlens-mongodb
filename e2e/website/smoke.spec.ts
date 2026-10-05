@@ -102,3 +102,19 @@ test('server preview clearly identifies planned availability and separate licens
   expect(graph.some((item: Record<string, unknown>) => item['@type'] === 'SoftwareApplication')).toBe(false);
   await expect(page.getByText('MQLens Server will be a paid product,', { exact: false })).toBeVisible();
 });
+
+
+test('homepage loads responsive screenshots and its self-hosted font', async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 });
+  const page = await context.newPage();
+  await page.goto('/');
+  const hero = page.locator('.hero-preview img');
+  await expect.poll(() => hero.evaluate((img: HTMLImageElement) => img.currentSrc)).toContain('workspace-mobile-400.webp');
+  const workflow = page.locator('#explore img');
+  await workflow.scrollIntoViewIfNeeded();
+  await expect.poll(() => workflow.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
+  expect(await workflow.evaluate((img: HTMLImageElement) => img.currentSrc)).toContain('documents-400.webp');
+  await page.evaluate(() => document.fonts.ready);
+  expect(await page.evaluate(() => document.fonts.check('400 16px "Inter Variable"'))).toBe(true);
+  await context.close();
+});
