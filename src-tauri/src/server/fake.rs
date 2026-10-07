@@ -17,6 +17,10 @@ use crate::server::pb::mqlens::v1::connection_service_server::{
     ConnectionService, ConnectionServiceServer,
 };
 use crate::server::pb::mqlens::v1::data_service_server::{DataService, DataServiceServer};
+use crate::server::pb::mqlens::v1::ddl_service_server::{DdlService, DdlServiceServer};
+use crate::server::pb::mqlens::v1::deployment_user_service_server::{
+    DeploymentUserService, DeploymentUserServiceServer,
+};
 use crate::server::pb::mqlens::v1::metadata_service_server::{
     MetadataService, MetadataServiceServer,
 };
@@ -50,6 +54,15 @@ use crate::server::pb::mqlens::v1::{
     ListCollectionsRequest, ListCollectionsResponse, ListDatabasesRequest, ListDatabasesResponse,
     ListIndexesRequest, ListIndexesResponse, MetadataAck, MongoVersionRequest,
     MongoVersionResponse,
+};
+use crate::server::pb::mqlens::v1::{
+    CollectionValidation as PbCollectionValidation, CreateCollectionRequest,
+    CreateDeploymentUserRequest, CreateViewRequest, DdlAck, DeploymentRole, DeploymentUser,
+    DeploymentUserAck, DropCollectionRequest, DropDatabaseRequest, DropDeploymentUserRequest,
+    GetCollectionOptionsRequest, ListDeploymentRolesRequest, ListDeploymentRolesResponse,
+    ListDeploymentUsersRequest, ListDeploymentUsersResponse, RenameCollectionRequest,
+    RenameDatabaseRequest, RoleSpec as PbRoleSpec, SetValidatorRequest,
+    UpdateDeploymentUserRequest,
 };
 use crate::server::session::{unix_now, AccountSession, FileTokenStore, TokenStore};
 use mongodb::bson::{doc, Document};
@@ -126,6 +139,12 @@ pub(crate) struct FakeState {
     pub server_status: ServerStatusResponse,
     pub repl_set_status: ReplSetStatusResponse,
     pub profiling_status: PbProfilingStatus,
+    /// What GetCollectionOptions, ListUsers and ListRoles answer.
+    pub collection_options: PbCollectionValidation,
+    pub users: Vec<DeploymentUser>,
+    pub roles: Vec<DeploymentRole>,
+    /// The database the last ListUsers asked about; empty means all.
+    pub last_users_database: Option<String>,
     pub logins: u32,
     pub refreshes: u32,
     pub logouts: u32,
@@ -263,6 +282,9 @@ impl Fake {
                     "MonitoringService/ServerStatus",
                     "MonitoringService/ReplSetStatus",
                     "MonitoringService/GetProfilingStatus",
+                    "DdlService/GetCollectionOptions",
+                    "DeploymentUserService/ListUsers",
+                    "DeploymentUserService/ListRoles",
                 ]
                 .iter()
                 .map(|p| format!("/mqlens.v1.{p}"))
@@ -402,6 +424,34 @@ impl Fake {
                     level: 1,
                     slow_ms: 250,
                 },
+                collection_options: PbCollectionValidation {
+                    validator: r#"{"$jsonSchema":{"required":["email"],"properties":{"age":{"minimum":0}}}}"#
+                        .to_string(),
+                    validation_level: "strict".to_string(),
+                    validation_action: "error".to_string(),
+                },
+                users: vec![DeploymentUser {
+                    user: "app".to_string(),
+                    db: "orders".to_string(),
+                    roles: vec![PbRoleSpec {
+                        role: "readWrite".to_string(),
+                        db: "orders".to_string(),
+                    }],
+                    mechanisms: vec!["SCRAM-SHA-256".to_string()],
+                }],
+                roles: vec![
+                    DeploymentRole {
+                        role: "read".to_string(),
+                        db: "orders".to_string(),
+                        is_builtin: true,
+                    },
+                    DeploymentRole {
+                        role: "reporting".to_string(),
+                        db: "orders".to_string(),
+                        is_builtin: false,
+                    },
+                ],
+                last_users_database: None,
                 // Not in size order: local mode sorts them, largest first.
                 index_stats: vec![
                     IndexStat {
@@ -446,6 +496,8 @@ impl Fake {
                 .add_service(DataServiceServer::new(self.clone()))
                 .add_service(StatsServiceServer::new(self.clone()))
                 .add_service(MonitoringServiceServer::new(self.clone()))
+                .add_service(DdlServiceServer::new(self.clone()))
+                .add_service(DeploymentUserServiceServer::new(self.clone()))
                 .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener)),
         );
         format!("http://{addr}")
@@ -864,6 +916,116 @@ impl MonitoringService for Fake {
         _request: Request<ReadProfileRequest>,
     ) -> Result<Response<ReadProfileResponse>, Status> {
         Err(Status::unimplemented("ReadProfile is not implemented"))
+    }
+}
+
+/// Only GetCollectionOptions; the DDL writes come with D5.
+#[tonic::async_trait]
+impl DdlService for Fake {
+    async fn create_collection(
+        &self,
+        _request: Request<CreateCollectionRequest>,
+    ) -> Result<Response<DdlAck>, Status> {
+        Err(Status::unimplemented("CreateCollection is not implemented"))
+    }
+
+    async fn drop_collection(
+        &self,
+        _request: Request<DropCollectionRequest>,
+    ) -> Result<Response<DdlAck>, Status> {
+        Err(Status::unimplemented("DropCollection is not implemented"))
+    }
+
+    async fn rename_collection(
+        &self,
+        _request: Request<RenameCollectionRequest>,
+    ) -> Result<Response<DdlAck>, Status> {
+        Err(Status::unimplemented("RenameCollection is not implemented"))
+    }
+
+    async fn create_view(
+        &self,
+        _request: Request<CreateViewRequest>,
+    ) -> Result<Response<DdlAck>, Status> {
+        Err(Status::unimplemented("CreateView is not implemented"))
+    }
+
+    async fn drop_database(
+        &self,
+        _request: Request<DropDatabaseRequest>,
+    ) -> Result<Response<DdlAck>, Status> {
+        Err(Status::unimplemented("DropDatabase is not implemented"))
+    }
+
+    async fn rename_database(
+        &self,
+        _request: Request<RenameDatabaseRequest>,
+    ) -> Result<Response<DdlAck>, Status> {
+        Err(Status::unimplemented("RenameDatabase is not implemented"))
+    }
+
+    async fn get_collection_options(
+        &self,
+        request: Request<GetCollectionOptionsRequest>,
+    ) -> Result<Response<PbCollectionValidation>, Status> {
+        let state = self.state.lock().unwrap();
+        state.authorize_connection(&request, &request.get_ref().connection_id)?;
+        Ok(Response::new(state.collection_options.clone()))
+    }
+
+    async fn set_validator(
+        &self,
+        _request: Request<SetValidatorRequest>,
+    ) -> Result<Response<DdlAck>, Status> {
+        Err(Status::unimplemented("SetValidator is not implemented"))
+    }
+}
+
+/// Only the listings; creating, updating and dropping users come with D5.
+#[tonic::async_trait]
+impl DeploymentUserService for Fake {
+    async fn list_users(
+        &self,
+        request: Request<ListDeploymentUsersRequest>,
+    ) -> Result<Response<ListDeploymentUsersResponse>, Status> {
+        let mut state = self.state.lock().unwrap();
+        state.authorize_connection(&request, &request.get_ref().connection_id)?;
+        state.last_users_database = Some(request.get_ref().database.clone());
+        Ok(Response::new(ListDeploymentUsersResponse {
+            users: state.users.clone(),
+        }))
+    }
+
+    async fn list_roles(
+        &self,
+        request: Request<ListDeploymentRolesRequest>,
+    ) -> Result<Response<ListDeploymentRolesResponse>, Status> {
+        let state = self.state.lock().unwrap();
+        state.authorize_connection(&request, &request.get_ref().connection_id)?;
+        Ok(Response::new(ListDeploymentRolesResponse {
+            roles: state.roles.clone(),
+        }))
+    }
+
+    async fn create_user(
+        &self,
+        _request: Request<CreateDeploymentUserRequest>,
+    ) -> Result<Response<DeploymentUserAck>, Status> {
+        Err(Status::unimplemented("CreateUser is not implemented"))
+    }
+
+    async fn update_user(
+        &self,
+        _request: Request<UpdateDeploymentUserRequest>,
+    ) -> Result<Response<DeploymentUserAck>, Status> {
+        Err(Status::unimplemented("UpdateUser is not implemented"))
+    }
+
+    async fn drop_user(
+        &self,
+        _request: Request<DropDeploymentUserRequest>,
+    ) -> Result<Response<DeploymentUserAck>, Status> {
+        Err(Status::unimplemented("DropUser is not implemented"))
     }
 }
 

@@ -258,7 +258,15 @@ pub async fn get_collection_options_impl(
             validation_action: String::new(),
         });
     }
-    let client = require_real_client(state, id)?;
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            return crate::server::ops::ddl::get_collection_options(
+                state, &conn, database, collection,
+            )
+            .await;
+        }
+    };
     let db = client.database(database);
     let mut cursor = db
         .list_collections()

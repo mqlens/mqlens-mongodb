@@ -263,7 +263,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
             procedures: &["/mqlens.v1.DdlService/GetCollectionOptions"],
             class: OpClass::Read,
             features: &[],
-            adapter: false,
+            adapter: true,
         },
     },
     CommandRoute {
@@ -465,7 +465,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
             procedures: &["/mqlens.v1.DeploymentUserService/ListUsers"],
             class: OpClass::Admin,
             features: &[],
-            adapter: false,
+            adapter: true,
         },
     },
     CommandRoute {
@@ -474,7 +474,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
             procedures: &["/mqlens.v1.DeploymentUserService/ListRoles"],
             class: OpClass::Admin,
             features: &[],
-            adapter: false,
+            adapter: true,
         },
     },
     CommandRoute {

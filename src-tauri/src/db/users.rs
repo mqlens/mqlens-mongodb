@@ -165,7 +165,12 @@ async fn list_users_impl_inner(
             None => users,
         });
     }
-    let client = require_real_client(state, id)?;
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            return crate::server::ops::users::list_users(state, &conn, database).await;
+        }
+    };
     let (db_name, users_info) = match database {
         Some(db) => (db.to_string(), Bson::Int32(1)),
         None => ("admin".to_string(), Bson::Document(doc! { "forAllDBs": true })),
@@ -389,7 +394,12 @@ async fn list_roles_impl_inner(
     if connection_is_mock(state, id)? {
         return Ok(mock_roles(database));
     }
-    let client = require_real_client(state, id)?;
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            return crate::server::ops::users::list_roles(state, &conn, database).await;
+        }
+    };
     let raw = client
         .database(database)
         .run_command(doc! { "rolesInfo": 1, "showBuiltinRoles": true })
