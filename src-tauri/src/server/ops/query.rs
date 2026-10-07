@@ -50,7 +50,7 @@ pub(crate) async fn find(
             client!(DataServiceClient, channel).find(request).await
         })
         .await?;
-    collect(&mut stream, None).await
+    rows(collect(&mut stream, None).await?)
 }
 
 /// Each document the pipeline returns as local mode returns it, capped as
@@ -63,6 +63,38 @@ pub(crate) async fn aggregate(
     stages: &[Document],
 ) -> Result<Vec<String>, String> {
     routes::require("execute_aggregate", conn)?;
+    let documents = run_pipeline(
+        state,
+        conn,
+        database,
+        collection,
+        stages,
+        Some(MAX_AGGREGATE_RESULTS),
+    );
+    rows(documents.await?)
+}
+
+/// The documents `$sample` picks, as schema analysis samples in local mode.
+pub(crate) async fn sample(
+    state: &AppState,
+    conn: &RemoteConn,
+    database: &str,
+    collection: &str,
+    size: i64,
+) -> Result<Vec<Document>, String> {
+    routes::require("analyze_schema", conn)?;
+    let stages = [mongodb::bson::doc! { "$sample": { "size": size } }];
+    run_pipeline(state, conn, database, collection, &stages, None).await
+}
+
+async fn run_pipeline(
+    state: &AppState,
+    conn: &RemoteConn,
+    database: &str,
+    collection: &str,
+    stages: &[Document],
+    cap: Option<usize>,
+) -> Result<Vec<Document>, String> {
     let pipeline = Bson::Array(stages.iter().cloned().map(Bson::Document).collect());
     let request = AggregateRequest {
         connection_id: conn.remote_id.clone(),
@@ -77,7 +109,12 @@ pub(crate) async fn aggregate(
             client!(DataServiceClient, channel).aggregate(request).await
         })
         .await?;
-    collect(&mut stream, Some(MAX_AGGREGATE_RESULTS)).await
+    collect(&mut stream, cap).await
+}
+
+/// Each document as local mode writes one result row.
+fn rows(documents: Vec<Document>) -> Result<Vec<String>, String> {
+    documents.iter().map(ejson::ui_string).collect()
 }
 
 /// Reads every batch, decoding each document from its raw BSON. Past `cap`
@@ -86,7 +123,7 @@ pub(crate) async fn aggregate(
 async fn collect(
     stream: &mut Streaming<FindBatch>,
     cap: Option<usize>,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<Document>, String> {
     let mut results = Vec::new();
     while let Some(batch) = next_message(stream).await? {
         for bytes in batch.documents_bson {
@@ -96,7 +133,7 @@ async fn collect(
                     MAX_AGGREGATE_RESULTS
                 ));
             }
-            results.push(ejson::ui_string(&ejson::doc_from_bson(&bytes)?)?);
+            results.push(ejson::doc_from_bson(&bytes)?);
         }
     }
     Ok(results)
@@ -286,6 +323,33 @@ mod tests {
             env.fake.with(|s| s.streams_abandoned),
             1,
             "the stream was read to the end"
+        );
+    }
+
+    // Schema analysis samples through the server, as local mode samples
+    // through the driver, and infers from the documents exactly as stored.
+    #[tokio::test]
+    async fn schema_is_inferred_from_a_sample_taken_through_the_server() {
+        let env = Env::new().await;
+        let (state, id) = connected(&env).await;
+
+        let report =
+            crate::db::schema::analyze_schema_impl(&state, &id, "orders", "customers", 250)
+                .await
+                .unwrap();
+
+        let docs = env.fake.with(|s| s.documents.clone());
+        assert_eq!(
+            report,
+            serde_json::to_string(&crate::db::schema::infer_schema(&docs)).unwrap()
+        );
+        let size = crate::limits::normalize_schema_sample(250);
+        let sent = env.fake.with(|s| s.last_aggregate.clone()).unwrap();
+        assert_eq!(
+            sent.pipeline_json,
+            Bson::Array(vec![Bson::Document(doc! { "$sample": { "size": size } })])
+                .into_canonical_extjson()
+                .to_string()
         );
     }
 
