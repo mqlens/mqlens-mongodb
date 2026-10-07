@@ -13,6 +13,9 @@ pub(crate) struct RemoteConn {
     /// The desktop's id for it, as a local connection has one.
     pub desktop_id: String,
     pub account_id: String,
+    /// The account as it was when the connection was made, without its token.
+    /// Commands refuse once the stored account signs in as someone else.
+    pub identity: crate::server::accounts::ServerAccount,
     /// The accounts file the account is stored in, to resume its session.
     pub accounts_path: std::path::PathBuf,
     pub account_name: String,
@@ -90,6 +93,22 @@ pub(crate) fn reject_if_remote(state: &AppState, id: &str, command: &str) -> Res
     }
 }
 
+/// An identity for remote connections built in tests.
+#[cfg(test)]
+pub(crate) fn test_identity() -> crate::server::accounts::ServerAccount {
+    crate::server::accounts::ServerAccountInput {
+        id: Some("account".to_string()),
+        name: "Acme".to_string(),
+        url: "https://mqlens.acme.test".to_string(),
+        tenant: "acme".to_string(),
+        email: "ops@acme.test".to_string(),
+        allow_insecure_http: false,
+        extra_ca_pem: None,
+    }
+    .into_account()
+    .unwrap()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -98,6 +117,7 @@ mod tests {
         RemoteConn {
             desktop_id: id.to_string(),
             account_id: "account".to_string(),
+            identity: test_identity(),
             accounts_path: std::path::PathBuf::new(),
             account_name: "Acme".to_string(),
             server_url: "https://mqlens.acme.test".to_string(),

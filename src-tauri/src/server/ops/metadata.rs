@@ -126,6 +126,24 @@ mod tests {
     use crate::server::ops::connected;
     use mongodb::bson::doc;
 
+    // Another window points the account at another user and signs that one in.
+    // A connection made through the old identity must not run through the new
+    // one's session.
+    #[tokio::test]
+    async fn a_connection_refuses_an_account_repointed_since() {
+        let env = Env::new().await;
+        let (state, id) = connected(&env).await;
+        crate::server::accounts::update(&env.path, &crate::server::fake::KEY, |all| {
+            all[0].email = "dba@acme.test".to_string();
+            Ok(())
+        })
+        .unwrap();
+
+        let err = list_databases_impl(&state, &id).await.unwrap_err();
+
+        assert!(err.contains("Reconnect"), "{err}");
+    }
+
     #[tokio::test]
     async fn the_version_comes_from_the_server() {
         let env = Env::new().await;

@@ -620,13 +620,18 @@ pub(crate) fn check(route: &CommandRoute, conn: &RemoteConn) -> Result<(), Strin
             "This MQLens Server does not support {missing} yet; it may need updating"
         ));
     }
-    if !has(&conn.op_classes, class.as_str()) {
-        return Err(format!(
-            "Your role on this MQLens Server connection does not allow {} operations",
-            class.as_str()
-        ));
+    require_class(conn, class)
+}
+
+/// Refuses unless the user holds `class` on the connection.
+pub(crate) fn require_class(conn: &RemoteConn, class: OpClass) -> Result<(), String> {
+    if conn.op_classes.iter().any(|c| c == class.as_str()) {
+        return Ok(());
     }
-    Ok(())
+    Err(format!(
+        "Your role on this MQLens Server connection does not allow {} operations",
+        class.as_str()
+    ))
 }
 
 /// `check` for the route of `command`, which must have one.
@@ -683,6 +688,7 @@ mod tests {
             .add_remote(RemoteConn {
                 desktop_id: id.to_string(),
                 account_id: "account".to_string(),
+                identity: crate::server::remote::test_identity(),
                 accounts_path: std::path::PathBuf::new(),
                 account_name: "Acme".to_string(),
                 server_url: "https://mqlens.acme.test".to_string(),
@@ -700,6 +706,7 @@ mod tests {
         RemoteConn {
             desktop_id: "r1".to_string(),
             account_id: "account".to_string(),
+            identity: crate::server::remote::test_identity(),
             accounts_path: std::path::PathBuf::new(),
             account_name: "Acme".to_string(),
             server_url: "https://mqlens.acme.test".to_string(),

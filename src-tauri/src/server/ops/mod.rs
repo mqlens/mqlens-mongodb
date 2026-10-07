@@ -36,6 +36,8 @@ pub(crate) async fn connected(env: &crate::server::fake::Env) -> (AppState, Stri
     (state, id)
 }
 
+const ACCOUNT_REPOINTED: &str = "This connection's MQLens Server account now signs in to another server or as another user. Reconnect.";
+
 /// The signed-in session of the account a remote connection belongs to,
 /// resumed from its stored token when there is none.
 pub(crate) async fn session_for(
@@ -44,6 +46,11 @@ pub(crate) async fn session_for(
 ) -> Result<Arc<AccountSession>, String> {
     let key = state.require_key()?;
     let account = accounts::find(&conn.accounts_path, &key, &conn.account_id)?;
+    // Repointed at another server or user since the connection was made: its
+    // session would run the command somewhere else than this connection means.
+    if !account.same_identity(&conn.identity) {
+        return Err(ACCOUNT_REPOINTED.to_string());
+    }
     state
         .server
         .session(

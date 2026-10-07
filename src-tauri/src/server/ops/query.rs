@@ -54,15 +54,20 @@ pub(crate) async fn find(
 }
 
 /// Each document the pipeline returns as local mode returns it, capped as
-/// local mode caps it.
+/// local mode caps it. `writes`: the pipeline has a $out or $merge stage,
+/// which needs the write role as well.
 pub(crate) async fn aggregate(
     state: &AppState,
     conn: &RemoteConn,
     database: &str,
     collection: &str,
     stages: &[Document],
+    writes: bool,
 ) -> Result<Vec<String>, String> {
     routes::require("execute_aggregate", conn)?;
+    if writes {
+        routes::require_class(conn, routes::OpClass::Write)?;
+    }
     let documents = run_pipeline(
         state,
         conn,
@@ -351,6 +356,30 @@ mod tests {
                 .into_canonical_extjson()
                 .to_string()
         );
+    }
+
+    // A $out or $merge pipeline writes, so it needs the write role, as the
+    // local guard treats it; nothing reaches the server without it.
+    #[tokio::test]
+    async fn a_pipeline_that_writes_needs_the_write_role() {
+        let env = Env::new().await;
+        env.fake
+            .with(|s| s.connections[0].op_classes = vec!["read".to_string()]);
+        let (state, id) = connected(&env).await;
+
+        let err = execute_aggregate_impl(
+            &state,
+            &id,
+            "orders",
+            "customers",
+            r#"[{"$out":"copy"}]"#,
+            true,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(err.contains("does not allow write operations"), "{err}");
+        assert_eq!(env.fake.with(|s| s.data_calls), 0);
     }
 
     // A refused access token is refreshed once and the stream opened again.

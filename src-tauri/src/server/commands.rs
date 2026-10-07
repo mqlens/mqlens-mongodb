@@ -264,6 +264,10 @@ pub(crate) async fn server_connect_impl(
     state.server.add_remote(RemoteConn {
         desktop_id: id.clone(),
         account_id: account.id.clone(),
+        identity: ServerAccount {
+            refresh_token: None,
+            ..account.clone()
+        },
         accounts_path: path.to_path_buf(),
         account_name: account.name.clone(),
         server_url: account.url.clone(),
