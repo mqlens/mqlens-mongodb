@@ -136,7 +136,7 @@ test.describe('Dialogs and appearance', () => {
 
     chooser = page.waitForEvent('filechooser');
     await settings.getByRole('button', { name: 'Import theme' }).click();
-    await (await chooser).setFiles({ name: 'broken.json', mimeType: 'application/json', buffer: Buffer.from('{ not a theme') });
+    await (await chooser).setFiles({ name: 'broken.json', mimeType: 'application/json', buffer: Buffer.from('{}') });
     await expect(settings.getByTestId('theme-import-error')).toBeVisible();
   });
 });

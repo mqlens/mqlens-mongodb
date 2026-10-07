@@ -1,9 +1,9 @@
 ---
 // Self-hosted fonts — no render-blocking external request, no third-party.
-import '@fontsource-variable/inter';
-import '@fontsource/jetbrains-mono/400.css';
-import '@fontsource/jetbrains-mono/500.css';
-import '@fontsource/jetbrains-mono/600.css';
+import interFont from '@fontsource-variable/inter/files/inter-latin-wght-normal.woff2?url';
+import '@fontsource/jetbrains-mono/latin-400.css';
+import '@fontsource/jetbrains-mono/latin-500.css';
+import '@fontsource/jetbrains-mono/latin-600.css';
 import '../styles/global.css';
 import Nav from '../components/Nav.astro';
 import Footer from '../components/Footer.astro';
@@ -12,12 +12,24 @@ import { SITE } from '../consts';
 interface Props {
   title?: string;
   description?: string;
+  structuredData?: Record<string, unknown>;
+  noindex?: boolean;
+  desktopSchema?: boolean;
 }
 
-const { title, description = SITE.description } = Astro.props;
+const { title, description = SITE.description, structuredData, noindex = false, desktopSchema = true } = Astro.props;
 const fullTitle = title ? `${title} — ${SITE.name}` : `${SITE.name} — ${SITE.titleTag}`;
 const canonical = new URL(Astro.url.pathname, SITE.url).href;
 const ogImage = new URL('/og.png', SITE.url).href;
+const pathParts = Astro.url.pathname.split('/').filter(Boolean);
+const sectionLabels: Record<string, string> = { docs: 'Documentation', guides: 'Guides', compare: 'Compare', features: 'Features', changelog: 'Changelog', demo: 'Demo' };
+const breadcrumbItems = [{ name: 'Home', url: SITE.url + '/' }];
+if (pathParts.length > 0) breadcrumbItems.push({ name: title ?? sectionLabels[pathParts[0]] ?? 'MQLens', url: canonical });
+const breadcrumbSchema = pathParts.length ? {
+  '@type': 'BreadcrumbList',
+  itemListElement: breadcrumbItems.map((item, i) => ({ '@type': 'ListItem', position: i + 1, name: item.name, item: item.url })),
+} : null;
+
 ---
 
 <!doctype html>
@@ -30,10 +42,12 @@ const ogImage = new URL('/og.png', SITE.url).href;
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="theme-color" content="#0a8fd0" />
 
-    <!-- Type system (self-hosted): Inter (UI) + JetBrains Mono (code) -->
+    <link rel="preload" href={interFont} as="font" type="font/woff2" crossorigin />
+    <style is:inline set:html={`@font-face{font-family:'Inter Variable';font-style:normal;font-display:swap;font-weight:100 900;src:url('${interFont}') format('woff2')}`} />
 
     <title>{fullTitle}</title>
     <meta name="description" content={description} />
+    {noindex && <meta name="robots" content="noindex, follow" />}
     <link rel="canonical" href={canonical} />
     <meta name="generator" content={Astro.generator} />
 
@@ -57,7 +71,9 @@ const ogImage = new URL('/og.png', SITE.url).href;
     <script type="application/ld+json" set:html={JSON.stringify({
       "@context": "https://schema.org",
       "@graph": [
-        {
+        ...(breadcrumbSchema ? [breadcrumbSchema] : []),
+        ...(structuredData ? [structuredData] : []),
+        ...(desktopSchema ? [{
           "@type": "SoftwareApplication",
           "@id": `${SITE.url}/#software`,
           "name": SITE.name,
@@ -70,7 +86,7 @@ const ogImage = new URL('/og.png', SITE.url).href;
           "license": `https://www.apache.org/licenses/LICENSE-2.0`,
           "image": ogImage,
           "publisher": { "@id": `${SITE.url}/#org` },
-        },
+        }] : []),
         {
           "@type": "Organization",
           "@id": `${SITE.url}/#org`,
@@ -89,11 +105,13 @@ const ogImage = new URL('/og.png', SITE.url).href;
       ],
     })} />
 
-    <!-- Privacy-friendly analytics: handled by Cloudflare Web Analytics (auto-injected for the proxied site; no cookies, no in-app telemetry) -->
+    <!-- No site analytics script is included. Hosting configuration is managed separately. -->
   </head>
   <body>
+    <a class="skip-link" href="#main-content">Skip to content</a>
     <Nav />
-    <main>
+    <main id="main-content">
+      {pathParts.length > 0 && <nav class="container breadcrumbs" aria-label="Breadcrumb"><a href="/">Home</a><span aria-hidden="true">/</span><span aria-current="page">{title ?? sectionLabels[pathParts[0]] ?? 'MQLens'}</span></nav>}
       <slot />
     </main>
     <Footer />

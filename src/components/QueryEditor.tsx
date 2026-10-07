@@ -231,12 +231,12 @@ export const QueryEditor: React.FC<QueryEditorProps> = ({
         // run in beforeMount (not onMount): by the time onMount fires the JS
         // worker has already validated the model, and updating the options then
         // doesn't clear the markers.
-        monaco.languages?.typescript?.javascriptDefaults?.setDiagnosticsOptions({
+        monaco.typescript.javascriptDefaults.setDiagnosticsOptions({
           noSemanticValidation: true,
           noSyntaxValidation: true,
           noSuggestionDiagnostics: true,
         });
-        monaco.languages?.json?.jsonDefaults?.setDiagnosticsOptions({ validate: false });
+        monaco.json.jsonDefaults.setDiagnosticsOptions({ validate: false });
       }}
       onMount={(ed, monaco: Monaco) => {
         monacoRef.current = monaco;

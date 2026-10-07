@@ -1,0 +1,17 @@
+---
+import WorkflowLanding from '../components/WorkflowLanding.astro';
+---
+<WorkflowLanding title="MongoDB MCP server for your local workspace" description="Connect an MCP-compatible AI agent to MongoDB through MQLens. Choose connections explicitly, inspect calls, and apply read-only or confirmed-write controls."
+  eyebrow="MQLens and your AI agent" h1="MongoDB tools for your agent." grad="Connections you control."
+  lede="MQLens includes an optional Model Context Protocol (MCP) server. It lets compatible clients discover allowed connections and work with MongoDB through tools for querying, aggregation, explain plans, and schema analysis. MCP is off by default and access is enabled per connection."
+  screenshot={{ src: '/screenshots/mqlens-mcp.png', alt: 'MQLens MCP configuration with per-connection access controls and a hidden sample token' }}
+  stepsTitle="Connect deliberately" steps={[
+    { title: 'Choose a connection', body: 'Start with a local test database or a MongoDB account with limited permissions. Enable MCP access only for connections the agent needs.' },
+    { title: 'Configure your client', body: 'Open the MCP settings in MQLens and use the configuration shown for your compatible agent. Treat its access token as a credential.' },
+    { title: 'Inspect and confirm', body: 'Review the live call log. Read-only connections block writes; write-capable tools require the applicable confirmation. Keep database permissions scoped as well.' },
+  ]}
+  featuresTitle="Know what you are enabling" features={[
+    { h3: 'An optional local server', p: 'Enabling MCP exposes selected database tools to the client you configure. It does not make your database a public service.' },
+    { h3: 'Visible access', p: 'Connection controls and the call log make it possible to inspect what the agent can reach and what it requested.' },
+    { h3: 'Consider the agent provider', p: 'Your agent may send tool results to its model provider. Review its data handling before enabling access to sensitive records. Read the <a href="https://github.com/mqlens/mqlens-mongodb/blob/dev/docs/mcp-tools.md">MCP tool reference</a> for setup and controls.' },
+  ]} />
