@@ -55,7 +55,11 @@ export interface RemoteConnectionSeed {
   opClasses?: string[];
   /** The seeded server, by URI, whose data the connection reads. */
   server: string;
-  /** Commands the connection cannot run, as the backend reports them. */
+  /**
+   * Commands the connection cannot run, as the backend reports them. The fake
+   * reports this list as given rather than deriving it from `opClasses`, so a
+   * seed keeps the two consistent: a read-only connection lists its writes.
+   */
   blockedCommands?: string[];
 }
 

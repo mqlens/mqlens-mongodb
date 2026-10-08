@@ -42,7 +42,9 @@ function normalizeUrl(input: string, allowInsecureHttp: boolean): string {
   } catch {
     throw 'MQLens Server URL must start with https://';
   }
-  if (url.username || url.password) throw 'MQLens Server URL must not include a user name or password';
+  // Checked on the URL as written: the browser's parser drops an empty user name and a fragment.
+  if (authorityOf(trimmed).includes('@')) throw 'MQLens Server URL must not include a user name or password';
+  if (trimmed.includes('#')) throw 'Invalid MQLens Server URL: a fragment is not allowed';
   if (url.pathname !== '/' || url.search) throw 'MQLens Server URL must not include a path';
   const scheme = url.protocol.slice(0, -1).toLowerCase();
   if (scheme === 'http' && !allowInsecureHttp && !isLoopback(url.hostname)) {

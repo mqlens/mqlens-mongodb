@@ -5,7 +5,8 @@ import { callFrom, dismissHoverCards, STAGING_URI, view } from '../helpers';
 
 // MQLens Server accounts, and the connections made through them (#396).
 
-const ORDERS = { id: 'orders', name: 'Orders', server: STAGING_URI, opClasses: ['read'] };
+// Every op class, so the empty blocked list the fake reports by default is what the backend would report.
+const ORDERS = { id: 'orders', name: 'Orders', server: STAGING_URI, opClasses: ['read', 'write', 'ddl', 'admin'] };
 
 const WORK = (over: Partial<ServerAccountSeed> = {}): ServerAccountSeed => ({
   id: 'acct-w',
@@ -152,6 +153,8 @@ test.describe('Editing an account', () => {
       ['http://lab.example.com', 'me@example.com', 'must use https:// unless the server runs on this computer'],
       ['https://lab.example.com/api', 'me@example.com', 'must not include a path'],
       ['http://127.0.0.1.example.com', 'me@example.com', 'must use https:// unless the server runs on this computer'],
+      ['https://@lab.example.com', 'me@example.com', 'must not include a user name or password'],
+      ['https://lab.example.com/#settings', 'me@example.com', 'Invalid MQLens Server URL'],
       ['https://lab.example.com', 'not an email', 'Enter the email address'],
     ]) {
       await page.getByLabel('Server URL').fill(url);
