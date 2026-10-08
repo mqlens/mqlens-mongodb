@@ -345,6 +345,20 @@ const buildTabQuerySpec = (tab: QueryTab): QueryCodeSpec | null => {
   return null;
 };
 
+/** The command a tab type cannot work without; on a connection that cannot run it, the tab is not mounted. */
+const TAB_COMMANDS: Partial<Record<string, string>> = {
+  schema: 'analyze_schema',
+  gridfs: 'list_gridfs_files',
+  validation: 'set_validator',
+  users: 'list_users',
+  export: 'start_collection_export',
+  import: 'start_import_task',
+  dump: 'start_dump_task',
+  restore: 'start_restore_task',
+  generate: 'start_generate_task',
+  watch: 'start_change_stream',
+};
+
 interface ActiveConnection {
   id: string;
   profileId: string;
@@ -4581,6 +4595,14 @@ function Workspace() {
     // content (not instead of it, unlike the ReconnectBanner above) for every
     // tab type that operates on a connection; `settings`/`quickstart`/`tasks`
     // have no connection to badge.
+    // A tab whose work a server connection cannot do (one restored from an
+    // earlier session, say) says so rather than running it.
+    const tabCommand = TAB_COMMANDS[tab.type];
+    if (tabCommand && isCommandBlocked(tab.connectionId, tabCommand)) {
+      return (
+        <div className="flex h-full items-center justify-center p-8 text-center text-xs text-muted-foreground">{t('notOnServer')}</div>
+      );
+    }
     const connMode = activeConnections.find((c) => c.id === tab.connectionId)?.mode;
     const showModeBanner = !!connMode && connMode !== 'normal' && CONNECTION_TAB_TYPES.has(tab.type);
     const body = (
@@ -4757,11 +4779,7 @@ function Workspace() {
           <MonitoringView connectionId={tab.connectionId} blockedCommands={serverConnections.get(tab.connectionId)?.blockedCommands} />
         )}
         {tab.type === 'users' && (
-          isCommandBlocked(tab.connectionId, 'list_users') ? (
-            <div className="flex h-full items-center justify-center p-8 text-center text-xs text-muted-foreground">{t('notOnServer')}</div>
-          ) : (
-            <UserManagementView connectionId={tab.connectionId} database={tab.db || undefined} blockedCommands={serverConnections.get(tab.connectionId)?.blockedCommands} />
-          )
+          <UserManagementView connectionId={tab.connectionId} database={tab.db || undefined} blockedCommands={serverConnections.get(tab.connectionId)?.blockedCommands} />
         )}
         {tab.type === 'export' && (() => {
           const activeConnection = activeConnections.find(c => c.id === tab.connectionId);

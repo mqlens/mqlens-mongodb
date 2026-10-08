@@ -161,7 +161,13 @@ export const ServerAccountsPanel: React.FC<Props> = ({ onConnect, activeProfileI
               </div>
               <div className="flex shrink-0 items-center gap-1">
                 {account.signedIn ? (
-                  <Button size="sm" variant="ghost" disabled={busy} onClick={() => signOut(account)}>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={busy || hasOpen(account.id)}
+                    title={hasOpen(account.id) ? t('serverAccounts.deleteWhileOpen') : undefined}
+                    onClick={() => signOut(account)}
+                  >
                     <LogOut size={13} /> {t('serverAccounts.signOut')}
                   </Button>
                 ) : (

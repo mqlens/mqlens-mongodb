@@ -213,5 +213,13 @@ describe('ServerAccountsPanel', () => {
 
     expect(await screen.findByRole('button', { name: 'Delete Work' })).toBeEnabled();
   });
-});
 
+  it('does not sign out while the account has connections open', async () => {
+    backend([account({ signedIn: true })]);
+    render(<ServerAccountsPanel onConnect={vi.fn()} activeProfileIds={['server:a1:c1']} />);
+
+    const signOut = await screen.findByRole('button', { name: 'Sign out' });
+    expect(signOut).toBeDisabled();
+    expect(signOut).toHaveAttribute('title', "Disconnect this account's connections first.");
+  });
+});
