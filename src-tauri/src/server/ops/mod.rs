@@ -51,11 +51,14 @@ pub(crate) async fn session_for(
     if !account.same_identity(&conn.identity) {
         return Err(ACCOUNT_REPOINTED.to_string());
     }
-    state
+    let session = state
         .server
         .session(
             &account,
             crate::server::commands::token_store(state, &conn.accounts_path),
         )
-        .await
+        .await?;
+    // A session resumed since the connection was made has agreed nothing yet.
+    session.speak(conn.api_version);
+    Ok(session)
 }

@@ -15,7 +15,7 @@ message AggregateRequest {
   string collection = 3;
   string pipeline_json = 4; // Extended JSON array of stages
   // Return documents as raw BSON in FindBatch.documents_bson instead of
-  // Extended JSON. Feature "documents.raw_bson".
+  // Extended JSON. API version 2.
   bool raw_bson = 5;
 }
 
@@ -25,6 +25,9 @@ message ExplainRequest {
   string collection = 3;
   string kind = 4;        // "find" | "aggregate"
   string query_json = 5;  // filter (find) or pipeline array (aggregate)
+  // "queryPlanner" (the default when empty), "executionStats" or
+  // "allPlansExecution". API version 2.
+  string verbosity = 6;
 }
 message ExplainResponse {
   string plan_json = 1; // canonical Extended JSON
@@ -40,7 +43,7 @@ message FindRequest {
   int64 skip = 7;
   int64 limit = 8;
   // Return documents as raw BSON in FindBatch.documents_bson instead of
-  // Extended JSON. Feature "documents.raw_bson".
+  // Extended JSON. API version 2.
   bool raw_bson = 9;
 }
 // Exactly one of the two fields is filled, as the request's raw_bson chose.
@@ -57,6 +60,9 @@ message CountRequest {
   string database = 2;
   string collection = 3;
   string filter_json = 4;
+  // With no filter, estimate from collection metadata (estimatedDocumentCount)
+  // instead of counting every document. API version 2.
+  bool estimate_if_unfiltered = 5;
 }
 message CountResponse {
   int64 count = 1;

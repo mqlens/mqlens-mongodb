@@ -266,13 +266,13 @@ mod tests {
                 .any(|id| id == "large")
             {
                 return Ok(Response::new(GetCapabilitiesResponse {
-                    procedures: vec!["x".repeat(LARGE_RESPONSE_BYTES)],
+                    server_version: "x".repeat(LARGE_RESPONSE_BYTES),
                     ..Default::default()
                 }));
             }
             Ok(Response::new(GetCapabilitiesResponse {
                 server_version: "fake-1".to_string(),
-                procedures: vec!["/mqlens.v1.CapabilityService/GetCapabilities".to_string()],
+                max_api_version: 2,
                 ..Default::default()
             }))
         }
@@ -309,10 +309,7 @@ mod tests {
             .unwrap()
             .into_inner();
         assert_eq!(resp.server_version, "fake-1");
-        assert_eq!(
-            resp.procedures,
-            ["/mqlens.v1.CapabilityService/GetCapabilities"]
-        );
+        assert_eq!(resp.max_api_version, 2);
 
         let status = client
             .get_capabilities(GetCapabilitiesRequest {
@@ -366,7 +363,7 @@ mod tests {
             .await
             .unwrap()
             .into_inner();
-        assert_eq!(resp.procedures[0].len(), LARGE_RESPONSE_BYTES);
+        assert_eq!(resp.server_version.len(), LARGE_RESPONSE_BYTES);
     }
 
     // A generated client constructed without `client!` keeps the 4 MiB default.

@@ -19,13 +19,16 @@ message GetCapabilitiesRequest {
 }
 
 message GetCapabilitiesResponse {
+  // The per-procedure and per-feature lists gave way to API versions.
+  reserved 2, 3;
+  reserved "procedures", "features";
+
   string server_version = 1;
-  // Every mounted RPC as "/package.Service/Method", sorted. A procedure being
-  // listed is the contract that the server serves it.
-  repeated string procedures = 2;
-  // Behaviour flags within procedures, sorted. An absent flag means the
-  // behaviour is unsupported.
-  repeated string features = 3;
+  // The MQLens API versions this server serves. A client speaks the highest
+  // version both sides serve, sending it in the Mqlens-Api-Version header on
+  // every request; each version is a fixed set of procedures and behaviours.
+  uint32 min_api_version = 6;
+  uint32 max_api_version = 7;
   Principal principal = 4;
   // One entry per requested connection id, in request order.
   repeated ConnectionCapabilities connections = 5;

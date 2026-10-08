@@ -61,8 +61,8 @@ use crate::server::pb::mqlens::v1::{
     DeploymentUserAck, DropCollectionRequest, DropDatabaseRequest, DropDeploymentUserRequest,
     GetCollectionOptionsRequest, ListDeploymentRolesRequest, ListDeploymentRolesResponse,
     ListDeploymentUsersRequest, ListDeploymentUsersResponse, RenameCollectionRequest,
-    RenameDatabaseRequest, RoleSpec as PbRoleSpec, SetValidatorRequest,
-    UpdateDeploymentUserRequest,
+    RenameDatabaseDetailedRequest, RenameDatabaseRequest, RenameDatabaseResult,
+    RoleSpec as PbRoleSpec, SetValidatorRequest, UpdateDeploymentUserRequest,
 };
 use crate::server::session::{unix_now, AccountSession, FileTokenStore, TokenStore};
 use mongodb::bson::{doc, Document};
@@ -110,12 +110,13 @@ pub(crate) struct FakeState {
     /// Codes the next logouts fail with, before ending the session.
     pub logout_failures: Vec<Code>,
     pub connections: Vec<ConnectionRef>,
-    /// Feature strings GetCapabilities announces.
-    pub features: Vec<String>,
+    /// The MQLens API versions GetCapabilities announces and requests may speak.
+    pub min_api_version: u32,
+    pub max_api_version: u32,
+    /// The version each authenticated request spoke, 1 when it sent none.
+    pub api_versions_seen: std::cell::RefCell<Vec<u32>>,
     /// A code MongoVersion fails with, to play an unreachable deployment.
     pub version_failure: Option<Code>,
-    /// Procedures GetCapabilities announces.
-    pub procedures: Vec<String>,
     /// What the metadata procedures answer, for any connection the caller
     /// can reach.
     pub databases: Vec<String>,
@@ -183,6 +184,18 @@ impl FakeState {
     }
 
     fn authenticate<T>(&self, request: &Request<T>) -> Result<(), Status> {
+        let version = match request.metadata().get("mqlens-api-version") {
+            None => 1,
+            Some(v) => v
+                .to_str()
+                .ok()
+                .and_then(|v| v.parse::<u32>().ok())
+                .ok_or_else(|| Status::invalid_argument("bad mqlens-api-version"))?,
+        };
+        if version < self.min_api_version || version > self.max_api_version {
+            return Err(Status::failed_precondition("API version not served"));
+        }
+        self.api_versions_seen.borrow_mut().push(version);
         let token =
             bearer(request).ok_or_else(|| Status::unauthenticated("missing bearer token"))?;
         match self.access.get(token) {
@@ -267,28 +280,10 @@ impl Fake {
                     deployment_kind: "replica_set".to_string(),
                     op_classes: vec!["read".to_string(), "write".to_string()],
                 }],
-                features: vec!["documents.raw_bson".to_string()],
+                min_api_version: 1,
+                max_api_version: 2,
+                api_versions_seen: std::cell::RefCell::new(Vec::new()),
                 version_failure: None,
-                procedures: [
-                    "MetadataService/ListDatabases",
-                    "MetadataService/ListCollections",
-                    "MetadataService/ListIndexes",
-                    "MetadataService/MongoVersion",
-                    "DataService/Find",
-                    "DataService/Aggregate",
-                    "StatsService/DbStats",
-                    "StatsService/CollStats",
-                    "StatsService/IndexStats",
-                    "MonitoringService/ServerStatus",
-                    "MonitoringService/ReplSetStatus",
-                    "MonitoringService/GetProfilingStatus",
-                    "DdlService/GetCollectionOptions",
-                    "DeploymentUserService/ListUsers",
-                    "DeploymentUserService/ListRoles",
-                ]
-                .iter()
-                .map(|p| format!("/mqlens.v1.{p}"))
-                .collect(),
                 databases: vec!["admin".to_string(), "orders".to_string()],
                 collections: [
                     ("customers", "collection"),
@@ -666,8 +661,8 @@ impl CapabilityService for Fake {
             .collect();
         Ok(Response::new(GetCapabilitiesResponse {
             server_version: "fake".to_string(),
-            procedures: state.procedures.clone(),
-            features: state.features.clone(),
+            min_api_version: state.min_api_version,
+            max_api_version: state.max_api_version,
             principal: Some(principal()),
             connections,
         }))
@@ -962,6 +957,15 @@ impl DdlService for Fake {
         _request: Request<RenameDatabaseRequest>,
     ) -> Result<Response<DdlAck>, Status> {
         Err(Status::unimplemented("RenameDatabase is not implemented"))
+    }
+
+    async fn rename_database_detailed(
+        &self,
+        _request: Request<RenameDatabaseDetailedRequest>,
+    ) -> Result<Response<RenameDatabaseResult>, Status> {
+        Err(Status::unimplemented(
+            "RenameDatabaseDetailed is not implemented",
+        ))
     }
 
     async fn get_collection_options(

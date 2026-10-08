@@ -25,10 +25,33 @@ pub(crate) struct RemoteConn {
     pub remote_id: String,
     /// What the signed-in user may do on it, as the server reported.
     pub op_classes: Vec<String>,
-    /// The feature strings the server announced.
-    pub features: Vec<String>,
-    /// The procedures the server serves, as "/package.Service/Method".
-    pub procedures: Vec<String>,
+    /// The MQLens API version agreed with the server; every request on the
+    /// connection speaks it.
+    pub api_version: u32,
+}
+
+/// The MQLens API versions this desktop speaks. 2 is the first with documents
+/// as raw BSON, which every document read needs.
+pub(crate) const API_VERSIONS: (u32, u32) = (2, 2);
+
+/// The version to speak with a server that serves `server_min` to
+/// `server_max`: the highest both serve, or why there is none.
+pub(crate) fn negotiate(server_min: u32, server_max: u32) -> Result<u32, String> {
+    let (min, max) = API_VERSIONS;
+    let version = server_max.min(max);
+    if version >= min && version >= server_min {
+        return Ok(version);
+    }
+    let speaks = format!("This MQLens Server speaks API versions {server_min} to {server_max}");
+    if server_max < min {
+        Err(format!(
+            "{speaks}, and this app needs {min} or later. Update MQLens Server."
+        ))
+    } else {
+        Err(format!(
+            "{speaks}, and this app speaks up to {max}. Update this app."
+        ))
+    }
 }
 
 /// What a command without a server adapter yet says for a remote connection.
@@ -123,9 +146,24 @@ mod tests {
             server_url: "https://mqlens.acme.test".to_string(),
             remote_id: format!("srv-{id}"),
             op_classes: vec!["read".to_string()],
-            features: Vec::new(),
-            procedures: Vec::new(),
+            api_version: 2,
         }
+    }
+
+    // The highest version both sides serve wins; with none in common, the
+    // message names which side to update. A server from before versioning
+    // reports 0 to 0.
+    #[test]
+    fn the_highest_shared_api_version_is_spoken() {
+        let (min, max) = API_VERSIONS;
+        assert_eq!(negotiate(1, max), Ok(max));
+        assert_eq!(negotiate(min, max + 5), Ok(max));
+        for (server_min, server_max) in [(1, min - 1), (0, 0)] {
+            let err = negotiate(server_min, server_max).unwrap_err();
+            assert!(err.contains("Update MQLens Server"), "{err}");
+        }
+        let err = negotiate(max + 1, max + 3).unwrap_err();
+        assert!(err.contains("Update this app"), "{err}");
     }
 
     #[tokio::test]

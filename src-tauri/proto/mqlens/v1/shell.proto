@@ -10,7 +10,12 @@ service ShellService {
 message MongoshClientMsg {
   string connection_id = 1; // set on the first message
   bytes input = 2;
+  // Set on the first message: send the shell's stderr in
+  // MongoshServerMsg.stderr instead of merged into output. API
+  // version 2.
+  bool separate_stderr = 3;
 }
 message MongoshServerMsg {
   bytes output = 1;
+  bytes stderr = 2; // only when the first client message set separate_stderr
 }

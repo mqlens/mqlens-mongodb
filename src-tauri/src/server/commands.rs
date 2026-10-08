@@ -246,6 +246,11 @@ pub(crate) async fn server_connect_impl(
             account.name
         ));
     }
+    let api_version = crate::server::remote::negotiate(
+        capabilities.min_api_version,
+        capabilities.max_api_version,
+    )?;
+    session.speak(api_version);
     let version = session
         .call(
             MongoVersionRequest {
@@ -273,8 +278,7 @@ pub(crate) async fn server_connect_impl(
         server_url: account.url.clone(),
         remote_id: remote_id.to_string(),
         op_classes: op_classes.clone(),
-        features: capabilities.features,
-        procedures: capabilities.procedures,
+        api_version,
     })?;
     Ok(ServerConnectResult {
         id,
@@ -753,12 +757,54 @@ mod tests {
             crate::server::remote::Route::Remote(conn) => {
                 assert_eq!(conn.remote_id, "c1");
                 assert_eq!(conn.account_id, env.account.id);
-                assert_eq!(conn.features, ["documents.raw_bson"]);
+                assert_eq!(conn.api_version, crate::server::remote::API_VERSIONS.1);
             }
             crate::server::remote::Route::Local(_) => panic!("routed to a driver client"),
         }
         assert_eq!(crate::connection_is_mock(&state, &connected.id), Ok(false));
         assert!(crate::require_real_client(&state, &connected.id).is_err());
+    }
+
+    // A server that speaks no API version this desktop does is not connected,
+    // and the user is told which side to update.
+    #[tokio::test]
+    async fn a_server_with_no_api_version_in_common_is_not_connected() {
+        let env = Env::new().await;
+        let state = signed_in_state(&env).await;
+        env.fake.with(|s| s.max_api_version = 1);
+
+        let err = server_connect_impl(&state, &env.path, &env.account.id, "c1")
+            .await
+            .unwrap_err();
+
+        assert!(err.contains("Update MQLens Server"), "{err}");
+        assert!(
+            state.mocks.lock().unwrap().is_empty(),
+            "something was registered"
+        );
+    }
+
+    // Once connected, every request speaks the agreed version, the ping
+    // included, as the server checks it on each one.
+    #[tokio::test]
+    async fn every_request_on_a_connection_speaks_its_api_version() {
+        let env = Env::new().await;
+        let state = signed_in_state(&env).await;
+        let connected = server_connect_impl(&state, &env.path, &env.account.id, "c1")
+            .await
+            .unwrap();
+        let ping = env
+            .fake
+            .with(|s| s.api_versions_seen.borrow().last().copied());
+        assert_eq!(ping, Some(2), "the ping");
+        env.fake.with(|s| s.api_versions_seen.borrow_mut().clear());
+
+        crate::db::metadata::list_databases_impl(&state, &connected.id)
+            .await
+            .unwrap();
+
+        let seen = env.fake.with(|s| s.api_versions_seen.borrow().clone());
+        assert!(!seen.is_empty() && seen.iter().all(|v| *v == 2), "{seen:?}");
     }
 
     // The server reports no op classes for a connection the user cannot

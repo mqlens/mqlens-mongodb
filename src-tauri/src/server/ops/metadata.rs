@@ -216,23 +216,4 @@ mod tests {
         assert!(indexes[1].unique && indexes[1].sparse);
         assert!(!indexes[0].unique && !indexes[0].sparse);
     }
-
-    // A server too old to serve a command says so, rather than failing in a
-    // way the user cannot act on.
-    #[tokio::test]
-    async fn a_server_that_does_not_offer_the_procedure_is_named() {
-        let env = Env::new().await;
-        env.fake
-            .with(|s| s.procedures.retain(|p| !p.ends_with("/ListIndexes")));
-        let (state, id) = connected(&env).await;
-
-        let err = list_indexes_impl(&state, &id, "orders", "customers")
-            .await
-            .map(|_| ())
-            .unwrap_err();
-        assert!(
-            err.contains("does not offer /mqlens.v1.MetadataService/ListIndexes"),
-            "{err}"
-        );
-    }
 }

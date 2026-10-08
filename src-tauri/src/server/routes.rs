@@ -1,6 +1,6 @@
 //! Which commands that touch a deployment run on MQLens Server, and through
 //! what. One row per command: either the server procedures it is served by,
-//! with the op class and server features it needs, or the reason it is not
+//! with the op class and MQLens API version it needs, or the reason it is not
 //! served yet.
 
 /// The server's op classes, from least to most powerful.
@@ -27,12 +27,12 @@ impl OpClass {
 #[derive(Debug)]
 pub(crate) enum Serve {
     /// Served through `procedures`, for a user with at least `class` on the
-    /// connection, by a server that announces every one of `features`.
-    /// `adapter` stays false until the desktop has a server adapter for it.
+    /// connection, on a connection speaking MQLens API version `since` or
+    /// later. `adapter` stays false until the desktop has a server adapter.
     Rpc {
         procedures: &'static [&'static str],
         class: OpClass,
-        features: &'static [&'static str],
+        since: u32,
         adapter: bool,
     },
     /// Not served on MQLens Server yet. The command refuses a remote
@@ -46,19 +46,6 @@ pub(crate) struct CommandRoute {
     pub serve: Serve,
 }
 
-/// Documents travel as raw BSON, so they reach the UI exactly as stored.
-const RAW_BSON: &str = "documents.raw_bson";
-/// Count estimates when unfiltered, as local mode does.
-const COUNT_ESTIMATE: &str = "count.estimate";
-/// Explain at the verbosity local mode uses.
-const EXPLAIN_VERBOSITY: &str = "explain.verbosity";
-/// A GridFS upload keeps its content type and metadata.
-const GRIDFS_UPLOAD_OPTIONS: &str = "gridfs.upload_options";
-/// Renaming a database reports what it moved, as local mode does.
-const RENAME_DATABASE_RESULT: &str = "ddl.rename_database_result";
-/// The shell keeps stderr apart from stdout.
-const SHELL_STDERR: &str = "shell.stderr";
-
 const TASKS: &str = "Long-running tasks are not available on MQLens Server connections yet";
 const DATABASE_TOOLS: &str =
     "The MongoDB Database Tools are not available on MQLens Server connections yet";
@@ -70,7 +57,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.MetadataService/MongoVersion"],
             class: OpClass::Read,
-            features: &[],
+            since: 1,
             adapter: true,
         },
     },
@@ -79,7 +66,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.MetadataService/ListDatabases"],
             class: OpClass::Read,
-            features: &[],
+            since: 1,
             adapter: true,
         },
     },
@@ -88,7 +75,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.MetadataService/ListCollections"],
             class: OpClass::Read,
-            features: &[],
+            since: 1,
             adapter: true,
         },
     },
@@ -97,7 +84,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.MetadataService/ListIndexes"],
             class: OpClass::Read,
-            features: &[],
+            since: 1,
             adapter: true,
         },
     },
@@ -106,7 +93,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.MetadataService/CreateIndex"],
             class: OpClass::Ddl,
-            features: &[],
+            since: 1,
             adapter: false,
         },
     },
@@ -115,7 +102,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.MetadataService/DropIndex"],
             class: OpClass::Ddl,
-            features: &[],
+            since: 1,
             adapter: false,
         },
     },
@@ -125,7 +112,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.DataService/Find"],
             class: OpClass::Read,
-            features: &[RAW_BSON],
+            since: 2,
             adapter: true,
         },
     },
@@ -134,7 +121,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.DataService/Count"],
             class: OpClass::Read,
-            features: &[COUNT_ESTIMATE],
+            since: 2,
             adapter: false,
         },
     },
@@ -143,7 +130,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.DataService/Explain"],
             class: OpClass::Read,
-            features: &[EXPLAIN_VERBOSITY],
+            since: 2,
             adapter: false,
         },
     },
@@ -152,7 +139,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.DataService/Explain"],
             class: OpClass::Read,
-            features: &[EXPLAIN_VERBOSITY],
+            since: 2,
             adapter: false,
         },
     },
@@ -161,7 +148,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.DataService/Aggregate"],
             class: OpClass::Read,
-            features: &[RAW_BSON],
+            since: 2,
             adapter: true,
         },
     },
@@ -170,7 +157,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.DataService/Aggregate"],
             class: OpClass::Read,
-            features: &[RAW_BSON],
+            since: 2,
             adapter: true,
         },
     },
@@ -179,7 +166,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.WriteService/InsertDocument"],
             class: OpClass::Write,
-            features: &[],
+            since: 1,
             adapter: false,
         },
     },
@@ -188,7 +175,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.WriteService/UpdateDocument", "/mqlens.v1.WriteService/ReplaceDocument"],
             class: OpClass::Write,
-            features: &[],
+            since: 1,
             adapter: false,
         },
     },
@@ -197,7 +184,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.WriteService/UpdateMany"],
             class: OpClass::Write,
-            features: &[],
+            since: 1,
             adapter: false,
         },
     },
@@ -206,7 +193,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.WriteService/DeleteDocument"],
             class: OpClass::Write,
-            features: &[],
+            since: 1,
             adapter: false,
         },
     },
@@ -215,7 +202,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.WriteService/DeleteMany"],
             class: OpClass::Write,
-            features: &[],
+            since: 1,
             adapter: false,
         },
     },
@@ -225,7 +212,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.DataService/Find"],
             class: OpClass::Read,
-            features: &[RAW_BSON],
+            since: 2,
             adapter: false,
         },
     },
@@ -234,7 +221,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.DataService/Find", "/mqlens.v1.DataService/Aggregate"],
             class: OpClass::Read,
-            features: &[RAW_BSON],
+            since: 2,
             adapter: false,
         },
     },
@@ -243,7 +230,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.DataService/Aggregate"],
             class: OpClass::Read,
-            features: &[RAW_BSON],
+            since: 2,
             adapter: false,
         },
     },
@@ -252,7 +239,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.DataService/Find", "/mqlens.v1.DataService/Aggregate"],
             class: OpClass::Read,
-            features: &[RAW_BSON],
+            since: 2,
             adapter: false,
         },
     },
@@ -262,7 +249,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.DdlService/GetCollectionOptions"],
             class: OpClass::Read,
-            features: &[],
+            since: 1,
             adapter: true,
         },
     },
@@ -271,7 +258,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.DdlService/CreateCollection"],
             class: OpClass::Ddl,
-            features: &[],
+            since: 1,
             adapter: false,
         },
     },
@@ -280,7 +267,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.DdlService/CreateView"],
             class: OpClass::Ddl,
-            features: &[],
+            since: 1,
             adapter: false,
         },
     },
@@ -289,7 +276,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.DdlService/DropCollection"],
             class: OpClass::Ddl,
-            features: &[],
+            since: 1,
             adapter: false,
         },
     },
@@ -298,7 +285,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.DdlService/RenameCollection"],
             class: OpClass::Ddl,
-            features: &[],
+            since: 1,
             adapter: false,
         },
     },
@@ -307,7 +294,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.DdlService/SetValidator"],
             class: OpClass::Ddl,
-            features: &[],
+            since: 1,
             adapter: false,
         },
     },
@@ -316,7 +303,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.DdlService/DropDatabase"],
             class: OpClass::Ddl,
-            features: &[],
+            since: 1,
             adapter: false,
         },
     },
@@ -325,7 +312,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.DdlService/RenameDatabase"],
             class: OpClass::Ddl,
-            features: &[RENAME_DATABASE_RESULT],
+            since: 2,
             adapter: false,
         },
     },
@@ -335,7 +322,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.StatsService/DbStats"],
             class: OpClass::Read,
-            features: &[],
+            since: 1,
             adapter: true,
         },
     },
@@ -344,7 +331,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.StatsService/CollStats"],
             class: OpClass::Read,
-            features: &[],
+            since: 1,
             adapter: true,
         },
     },
@@ -353,7 +340,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.StatsService/IndexStats"],
             class: OpClass::Read,
-            features: &[],
+            since: 1,
             adapter: true,
         },
     },
@@ -363,7 +350,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.GridFsService/ListFiles"],
             class: OpClass::Read,
-            features: &[RAW_BSON],
+            since: 2,
             adapter: false,
         },
     },
@@ -372,7 +359,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.GridFsService/DownloadFile"],
             class: OpClass::Read,
-            features: &[],
+            since: 1,
             adapter: false,
         },
     },
@@ -381,7 +368,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.GridFsService/UploadFile"],
             class: OpClass::Write,
-            features: &[GRIDFS_UPLOAD_OPTIONS],
+            since: 2,
             adapter: false,
         },
     },
@@ -390,7 +377,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.GridFsService/DeleteFile"],
             class: OpClass::Write,
-            features: &[],
+            since: 1,
             adapter: false,
         },
     },
@@ -400,7 +387,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.MonitoringService/ServerStatus"],
             class: OpClass::Read,
-            features: &[],
+            since: 1,
             adapter: true,
         },
     },
@@ -409,7 +396,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.MonitoringService/ReplSetStatus"],
             class: OpClass::Read,
-            features: &[],
+            since: 1,
             adapter: true,
         },
     },
@@ -418,7 +405,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.MonitoringService/GetProfilingStatus"],
             class: OpClass::Read,
-            features: &[],
+            since: 1,
             adapter: true,
         },
     },
@@ -427,7 +414,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.MonitoringService/CurrentOps"],
             class: OpClass::Admin,
-            features: &[],
+            since: 1,
             adapter: false,
         },
     },
@@ -436,7 +423,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.MonitoringService/KillOp"],
             class: OpClass::Admin,
-            features: &[],
+            since: 1,
             adapter: false,
         },
     },
@@ -445,7 +432,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.MonitoringService/ReadProfile"],
             class: OpClass::Admin,
-            features: &[],
+            since: 1,
             adapter: false,
         },
     },
@@ -454,7 +441,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.MonitoringService/SetProfilingLevel"],
             class: OpClass::Admin,
-            features: &[],
+            since: 1,
             adapter: false,
         },
     },
@@ -464,7 +451,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.DeploymentUserService/ListUsers"],
             class: OpClass::Admin,
-            features: &[],
+            since: 1,
             adapter: true,
         },
     },
@@ -473,7 +460,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.DeploymentUserService/ListRoles"],
             class: OpClass::Admin,
-            features: &[],
+            since: 1,
             adapter: true,
         },
     },
@@ -482,7 +469,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.DeploymentUserService/CreateUser"],
             class: OpClass::Admin,
-            features: &[],
+            since: 1,
             adapter: false,
         },
     },
@@ -491,7 +478,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.DeploymentUserService/UpdateUser"],
             class: OpClass::Admin,
-            features: &[],
+            since: 1,
             adapter: false,
         },
     },
@@ -500,7 +487,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.DeploymentUserService/DropUser"],
             class: OpClass::Admin,
-            features: &[],
+            since: 1,
             adapter: false,
         },
     },
@@ -510,7 +497,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.ShellService/MongoshSession"],
             class: OpClass::Admin,
-            features: &[SHELL_STDERR],
+            since: 2,
             adapter: false,
         },
     },
@@ -519,7 +506,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
         serve: Serve::Rpc {
             procedures: &["/mqlens.v1.ShellService/MongoshSession"],
             class: OpClass::Admin,
-            features: &[SHELL_STDERR],
+            since: 2,
             adapter: false,
         },
     },
@@ -587,8 +574,8 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
 ];
 
 /// Whether `route` can run on `conn`: served through an adapter the desktop
-/// has, by procedures and features the server announced, for a user with the
-/// op class it needs. Deferred commands never can.
+/// has, in the API version the connection speaks, for a user with the op
+/// class it needs. Deferred commands never can.
 pub(crate) fn command_available(route: &CommandRoute, conn: &RemoteConn) -> bool {
     check(route, conn).is_ok()
 }
@@ -597,27 +584,22 @@ pub(crate) fn command_available(route: &CommandRoute, conn: &RemoteConn) -> bool
 /// act on, whether that means waiting for the desktop, a newer server or a
 /// different role.
 pub(crate) fn check(route: &CommandRoute, conn: &RemoteConn) -> Result<(), String> {
-    let (procedures, class, features) = match route.serve {
+    let (since, class) = match route.serve {
         Serve::Deferred { reason } => return Err(reason.to_string()),
         Serve::Rpc { adapter: false, .. } => {
             return Err(crate::server::remote::NOT_SERVED.to_string())
         }
         Serve::Rpc {
-            procedures,
             class,
-            features,
+            since,
             adapter: true,
-        } => (procedures, class, features),
+            ..
+        } => (since, class),
     };
-    let has = |list: &[String], item: &str| list.iter().any(|x| x == item);
-    if let Some(missing) = procedures.iter().find(|p| !has(&conn.procedures, p)) {
+    if conn.api_version < since {
         return Err(format!(
-            "This MQLens Server does not offer {missing}; it may need updating"
-        ));
-    }
-    if let Some(missing) = features.iter().find(|f| !has(&conn.features, f)) {
-        return Err(format!(
-            "This MQLens Server does not support {missing} yet; it may need updating"
+            "This needs MQLens API version {since}, and this MQLens Server speaks {}. Update MQLens Server.",
+            conn.api_version
         ));
     }
     require_class(conn, class)
@@ -694,15 +676,14 @@ mod tests {
                 server_url: "https://mqlens.acme.test".to_string(),
                 remote_id: format!("srv-{id}"),
                 op_classes: vec!["read".to_string()],
-                features: Vec::new(),
-                procedures: Vec::new(),
+                api_version: 2,
             })
             .unwrap();
         state.mocks.lock().unwrap().insert(id.to_string(), false);
         state
     }
 
-    fn conn(op_classes: &[&str], features: &[&str], procedures: &[&str]) -> RemoteConn {
+    fn conn(op_classes: &[&str], api_version: u32) -> RemoteConn {
         RemoteConn {
             desktop_id: "r1".to_string(),
             account_id: "account".to_string(),
@@ -712,126 +693,80 @@ mod tests {
             server_url: "https://mqlens.acme.test".to_string(),
             remote_id: "srv-r1".to_string(),
             op_classes: op_classes.iter().map(|s| s.to_string()).collect(),
-            features: features.iter().map(|s| s.to_string()).collect(),
-            procedures: procedures.iter().map(|s| s.to_string()).collect(),
+            api_version,
         }
     }
 
+    const UPDATE_MANY: CommandRoute = CommandRoute {
+        command: "update_many",
+        serve: Serve::Rpc {
+            procedures: &["/mqlens.v1.WriteService/UpdateMany"],
+            class: OpClass::Write,
+            since: 3,
+            adapter: true,
+        },
+    };
+
     // A command runs only when every condition holds; each one alone blocks it.
     #[test]
-    fn a_command_is_available_only_with_its_adapter_procedures_features_and_class() {
-        let route = CommandRoute {
-            command: "update_many",
-            serve: Serve::Rpc {
-                procedures: &["/mqlens.v1.WriteService/UpdateMany"],
-                class: OpClass::Write,
-                features: &["writes.thing"],
-                adapter: true,
-            },
-        };
-        let all = conn(
-            &["read", "write"],
-            &["writes.thing"],
-            &["/mqlens.v1.WriteService/UpdateMany"],
-        );
-        assert!(command_available(&route, &all));
-
-        let no_class = conn(
-            &["read"],
-            &["writes.thing"],
-            &["/mqlens.v1.WriteService/UpdateMany"],
-        );
+    fn a_command_is_available_only_with_its_adapter_version_and_class() {
+        assert!(command_available(
+            &UPDATE_MANY,
+            &conn(&["read", "write"], 3)
+        ));
         assert!(
-            !command_available(&route, &no_class),
+            !command_available(&UPDATE_MANY, &conn(&["read"], 3)),
             "without the op class"
         );
-        let no_feature = conn(
-            &["read", "write"],
-            &[],
-            &["/mqlens.v1.WriteService/UpdateMany"],
-        );
         assert!(
-            !command_available(&route, &no_feature),
-            "without the feature"
+            !command_available(&UPDATE_MANY, &conn(&["read", "write"], 2)),
+            "on an older API version"
         );
-        let no_procedure = conn(&["read", "write"], &["writes.thing"], &[]);
-        assert!(
-            !command_available(&route, &no_procedure),
-            "without the procedure"
-        );
-
         let no_adapter = CommandRoute {
             command: "update_many",
             serve: Serve::Rpc {
                 procedures: &["/mqlens.v1.WriteService/UpdateMany"],
                 class: OpClass::Write,
-                features: &["writes.thing"],
+                since: 3,
                 adapter: false,
             },
         };
-        assert!(!command_available(&no_adapter, &all), "without an adapter");
+        assert!(
+            !command_available(&no_adapter, &conn(&["read", "write"], 3)),
+            "without an adapter"
+        );
         let deferred = CommandRoute {
             command: "start_import_task",
             serve: Serve::Deferred { reason: TASKS },
         };
-        assert!(!command_available(&deferred, &all), "a deferred command");
+        assert!(
+            !command_available(&deferred, &conn(&["read", "write"], 3)),
+            "a deferred command"
+        );
     }
 
     // Each condition that fails says which, so the user knows whether to ask
     // for a role or for a newer server.
     #[test]
     fn an_unavailable_command_says_why() {
-        let route = CommandRoute {
-            command: "update_many",
-            serve: Serve::Rpc {
-                procedures: &["/mqlens.v1.WriteService/UpdateMany"],
-                class: OpClass::Write,
-                features: &["writes.thing"],
-                adapter: true,
-            },
-        };
-        let all = |classes: &[&str], features: &[&str], procedures: &[&str]| {
-            check(&route, &conn(classes, features, procedures))
-        };
-        let procedure = ["/mqlens.v1.WriteService/UpdateMany"];
-
-        assert_eq!(
-            all(&["read", "write"], &["writes.thing"], &procedure),
-            Ok(())
-        );
-        let err = all(&["read", "write"], &["writes.thing"], &[]).unwrap_err();
+        assert_eq!(check(&UPDATE_MANY, &conn(&["read", "write"], 3)), Ok(()));
+        let err = check(&UPDATE_MANY, &conn(&["read", "write"], 2)).unwrap_err();
         assert!(
-            err.contains("does not offer /mqlens.v1.WriteService/UpdateMany"),
+            err.contains("API version 3") && err.contains("Update MQLens Server"),
             "{err}"
         );
-        let err = all(&["read", "write"], &[], &procedure).unwrap_err();
-        assert!(err.contains("does not support writes.thing"), "{err}");
-        let err = all(&["read"], &["writes.thing"], &procedure).unwrap_err();
+        let err = check(&UPDATE_MANY, &conn(&["read"], 3)).unwrap_err();
         assert!(err.contains("does not allow write operations"), "{err}");
     }
 
-    // A connection that has everything is blocked exactly where the desktop
-    // has no adapter yet, and for deferred commands.
+    // A connection with every role, on the newest version the desktop speaks,
+    // is blocked exactly where the desktop has no adapter yet, and for
+    // deferred commands: no route needs a version the desktop cannot speak.
     #[test]
     fn a_capable_connection_is_blocked_only_without_an_adapter() {
-        let every_procedure: Vec<&str> = ROUTES
-            .iter()
-            .flat_map(|route| match route.serve {
-                Serve::Rpc { procedures, .. } => procedures.to_vec(),
-                Serve::Deferred { .. } => Vec::new(),
-            })
-            .collect();
         let capable = conn(
             &["read", "write", "ddl", "admin"],
-            &[
-                RAW_BSON,
-                COUNT_ESTIMATE,
-                EXPLAIN_VERBOSITY,
-                GRIDFS_UPLOAD_OPTIONS,
-                RENAME_DATABASE_RESULT,
-                SHELL_STDERR,
-            ],
-            &every_procedure,
+            crate::server::remote::API_VERSIONS.1,
         );
         let without_adapter: Vec<&str> = ROUTES
             .iter()

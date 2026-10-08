@@ -268,14 +268,13 @@ pub struct GetCapabilitiesRequest {
 pub struct GetCapabilitiesResponse {
     #[prost(string, tag="1")]
     pub server_version: ::prost::alloc::string::String,
-    /// Every mounted RPC as "/package.Service/Method", sorted. A procedure being
-    /// listed is the contract that the server serves it.
-    #[prost(string, repeated, tag="2")]
-    pub procedures: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    /// Behaviour flags within procedures, sorted. An absent flag means the
-    /// behaviour is unsupported.
-    #[prost(string, repeated, tag="3")]
-    pub features: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// The MQLens API versions this server serves. A client speaks the highest
+    /// version both sides serve, sending it in the Mqlens-Api-Version header on
+    /// every request; each version is a fixed set of procedures and behaviours.
+    #[prost(uint32, tag="6")]
+    pub min_api_version: u32,
+    #[prost(uint32, tag="7")]
+    pub max_api_version: u32,
     #[prost(message, optional, tag="4")]
     pub principal: ::core::option::Option<Principal>,
     /// One entry per requested connection id, in request order.
@@ -348,7 +347,7 @@ pub struct AggregateRequest {
     #[prost(string, tag="4")]
     pub pipeline_json: ::prost::alloc::string::String,
     /// Return documents as raw BSON in FindBatch.documents_bson instead of
-    /// Extended JSON. Feature "documents.raw_bson".
+    /// Extended JSON. API version 2.
     #[prost(bool, tag="5")]
     pub raw_bson: bool,
 }
@@ -366,6 +365,10 @@ pub struct ExplainRequest {
     /// filter (find) or pipeline array (aggregate)
     #[prost(string, tag="5")]
     pub query_json: ::prost::alloc::string::String,
+    /// "queryPlanner" (the default when empty), "executionStats" or
+    /// "allPlansExecution". API version 2.
+    #[prost(string, tag="6")]
+    pub verbosity: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ExplainResponse {
@@ -393,7 +396,7 @@ pub struct FindRequest {
     #[prost(int64, tag="8")]
     pub limit: i64,
     /// Return documents as raw BSON in FindBatch.documents_bson instead of
-    /// Extended JSON. Feature "documents.raw_bson".
+    /// Extended JSON. API version 2.
     #[prost(bool, tag="9")]
     pub raw_bson: bool,
 }
@@ -419,6 +422,10 @@ pub struct CountRequest {
     pub collection: ::prost::alloc::string::String,
     #[prost(string, tag="4")]
     pub filter_json: ::prost::alloc::string::String,
+    /// With no filter, estimate from collection metadata (estimatedDocumentCount)
+    /// instead of counting every document. API version 2.
+    #[prost(bool, tag="5")]
+    pub estimate_if_unfiltered: bool,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CountResponse {
@@ -524,6 +531,24 @@ pub struct RenameDatabaseRequest {
     pub database: ::prost::alloc::string::String,
     #[prost(string, tag="3")]
     pub new_name: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RenameDatabaseDetailedRequest {
+    #[prost(string, tag="1")]
+    pub connection_id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub database: ::prost::alloc::string::String,
+    #[prost(string, tag="3")]
+    pub new_name: ::prost::alloc::string::String,
+    #[prost(bool, tag="4")]
+    pub drop_source: bool,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RenameDatabaseResult {
+    #[prost(int64, tag="1")]
+    pub collections: i64,
+    #[prost(int64, tag="2")]
+    pub documents: i64,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct DeploymentUserAck {
@@ -666,7 +691,7 @@ pub struct ListFilesRequest {
     #[prost(string, tag="3")]
     pub bucket: ::prost::alloc::string::String,
     /// Return file documents in files_bson instead of files_ejson.
-    /// Feature "documents.raw_bson".
+    /// API version 2.
     #[prost(bool, tag="4")]
     pub raw_bson: bool,
 }
@@ -711,7 +736,7 @@ pub struct UploadChunk {
     pub filename: ::prost::alloc::string::String,
     #[prost(bytes="bytes", tag="5")]
     pub data: ::prost::bytes::Bytes,
-    /// First chunk only. Feature "gridfs.upload_options".
+    /// First chunk only. API version 2.
     ///
     /// stored as the file document's contentType
     #[prost(string, tag="6")]
@@ -1092,11 +1117,19 @@ pub struct MongoshClientMsg {
     pub connection_id: ::prost::alloc::string::String,
     #[prost(bytes="bytes", tag="2")]
     pub input: ::prost::bytes::Bytes,
+    /// Set on the first message: send the shell's stderr in
+    /// MongoshServerMsg.stderr instead of merged into output. API
+    /// version 2.
+    #[prost(bool, tag="3")]
+    pub separate_stderr: bool,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct MongoshServerMsg {
     #[prost(bytes="bytes", tag="1")]
     pub output: ::prost::bytes::Bytes,
+    /// only when the first client message set separate_stderr
+    #[prost(bytes="bytes", tag="2")]
+    pub stderr: ::prost::bytes::Bytes,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct DbStatsRequest {
