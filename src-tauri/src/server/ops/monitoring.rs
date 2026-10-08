@@ -1,15 +1,17 @@
-//! Read-class monitoring: server status, replica set health and profiling
-//! status, curated by the server into the same figures local mode shows.
+//! Monitoring: server status, replica set health and profiling status, and
+//! for admins the operations in progress and the profiler, curated by the
+//! server into the same figures local mode shows.
 
 use crate::monitoring::{
-    CacheStats, Connections, Memory, Network, OpCounters, ProfilingStatus, ReplSetMember,
-    ReplSetStatus, ServerStatus,
+    cap_current_ops, CacheStats, Connections, CurrentOp, Memory, Network, OpCounters, OpId,
+    ProfileEntry, ProfilingStatus, ReplSetMember, ReplSetStatus, ServerStatus, MAX_CMD_CHARS,
 };
 use crate::server::channel::client;
 use crate::server::ops::session_for;
 use crate::server::pb::mqlens::v1::monitoring_service_client::MonitoringServiceClient;
 use crate::server::pb::mqlens::v1::{
-    GetProfilingStatusRequest, ReplSetStatusRequest, ServerStatusRequest,
+    CurrentOpsRequest, GetProfilingStatusRequest, KillOpRequest, ReadProfileRequest,
+    ReplSetStatusRequest, ServerStatusRequest, SetProfilingLevelRequest,
 };
 use crate::server::remote::RemoteConn;
 use crate::server::routes;
@@ -135,6 +137,144 @@ pub(crate) async fn profiling_status(
     })
 }
 
+/// A command as local mode prints it: the document's own display, cut to the
+/// same length. The server sends relaxed Extended JSON, already cut; a command
+/// cut short cannot be read back, and is shown as it came.
+fn command_text(json: &str) -> String {
+    match crate::server::ejson::doc_from_wire(json) {
+        Ok(doc) => {
+            let text = mongodb::bson::Bson::Document(doc).to_string();
+            if text.chars().count() <= MAX_CMD_CHARS {
+                text
+            } else {
+                format!("{}…", text.chars().take(MAX_CMD_CHARS).collect::<String>())
+            }
+        }
+        Err(_) => json.to_string(),
+    }
+}
+
+/// The operations in progress, as local mode lists them.
+pub(crate) async fn current_ops(
+    state: &AppState,
+    conn: &RemoteConn,
+) -> Result<Vec<CurrentOp>, String> {
+    routes::require("current_ops", conn)?;
+    let request = CurrentOpsRequest {
+        connection_id: conn.remote_id.clone(),
+    };
+    let response = session_for(state, conn)
+        .await?
+        .call(request, |channel, request| async move {
+            client!(MonitoringServiceClient, channel)
+                .current_ops(request)
+                .await
+        })
+        .await?;
+    let ops = response
+        .ops
+        .into_iter()
+        .map(|op| CurrentOp {
+            opid: match op.opid.parse::<i64>() {
+                Ok(n) => OpId::Num(n),
+                Err(_) => OpId::Str(op.opid),
+            },
+            op: op.op,
+            ns: op.ns,
+            secs_running: op.secs_running,
+            client: op.client,
+            desc: op.desc,
+            command: command_text(&op.command),
+        })
+        .collect();
+    Ok(cap_current_ops(ops))
+}
+
+pub(crate) async fn kill_op(
+    state: &AppState,
+    conn: &RemoteConn,
+    opid: &OpId,
+) -> Result<(), String> {
+    routes::require("kill_op", conn)?;
+    let request = KillOpRequest {
+        connection_id: conn.remote_id.clone(),
+        opid: opid.to_string(),
+    };
+    session_for(state, conn)
+        .await?
+        .call(request, |channel, request| async move {
+            client!(MonitoringServiceClient, channel)
+                .kill_op(request)
+                .await
+        })
+        .await?;
+    Ok(())
+}
+
+/// Sets the profiler and reports the level it now has.
+pub(crate) async fn set_profiling_level(
+    state: &AppState,
+    conn: &RemoteConn,
+    database: &str,
+    level: i32,
+    slow_ms: i32,
+) -> Result<ProfilingStatus, String> {
+    routes::require("set_profiling_level", conn)?;
+    let request = SetProfilingLevelRequest {
+        connection_id: conn.remote_id.clone(),
+        database: database.to_string(),
+        level,
+        slow_ms,
+    };
+    let status = session_for(state, conn)
+        .await?
+        .call(request, |channel, request| async move {
+            client!(MonitoringServiceClient, channel)
+                .set_profiling_level(request)
+                .await
+        })
+        .await?;
+    Ok(ProfilingStatus {
+        level: status.level,
+        slow_ms: status.slow_ms,
+    })
+}
+
+/// The newest profiled operations, at most as many as local mode reads.
+pub(crate) async fn read_profile(
+    state: &AppState,
+    conn: &RemoteConn,
+    database: &str,
+    limit: i64,
+) -> Result<Vec<ProfileEntry>, String> {
+    routes::require("read_profile", conn)?;
+    let request = ReadProfileRequest {
+        connection_id: conn.remote_id.clone(),
+        database: database.to_string(),
+        limit: limit.clamp(1, 500),
+    };
+    let response = session_for(state, conn)
+        .await?
+        .call(request, |channel, request| async move {
+            client!(MonitoringServiceClient, channel)
+                .read_profile(request)
+                .await
+        })
+        .await?;
+    Ok(response
+        .entries
+        .into_iter()
+        .map(|e| ProfileEntry {
+            op: e.op,
+            ns: e.ns,
+            millis: e.millis,
+            ts_ms: e.ts_ms,
+            plan_summary: e.plan_summary,
+            command: command_text(&e.command),
+        })
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use crate::monitoring::{
@@ -251,5 +391,153 @@ mod tests {
                 slow_ms: 250,
             }
         );
+    }
+
+    use crate::monitoring::{
+        current_ops_impl, kill_op_impl, read_profile_impl, set_profiling_level_impl, OpId,
+    };
+    use crate::server::fake::FakeAdmin;
+    use crate::server::pb::mqlens::v1::{CurrentOp as PbCurrentOp, ProfileEntry as PbProfileEntry};
+    use mongodb::bson::{doc, Bson};
+
+    async fn with_admin() -> (Env, crate::AppState, String) {
+        let env = Env::new().await;
+        env.fake
+            .with(|s| s.connections[0].op_classes.push("admin".to_string()));
+        let (state, id) = connected(&env).await;
+        (env, state, id)
+    }
+
+    fn op(opid: &str, secs: i64, command: &str) -> PbCurrentOp {
+        PbCurrentOp {
+            opid: opid.to_string(),
+            op: "query".to_string(),
+            ns: "orders.customers".to_string(),
+            secs_running: secs,
+            client: "10.0.0.5:51544".to_string(),
+            desc: "conn9".to_string(),
+            command: command.to_string(),
+        }
+    }
+
+    // Operations read as local mode shows them: longest-running first, a
+    // number id as a number and a sharded one as its string, the command
+    // printed as local mode prints a document (kept as sent when the server
+    // cut it short).
+    #[tokio::test]
+    async fn current_operations_read_as_local_mode_shows_them() {
+        let (env, state, id) = with_admin().await;
+        env.fake.with(|s| {
+            s.current_ops = vec![
+                op("12345", 3, r#"{"find":"orders","filter":{"n":{"$gt":5}}}"#),
+                op("shard01:77", 9, r#"{"find":"big","filter":{"note":"…"#),
+            ]
+        });
+
+        let ops = current_ops_impl(&state, &id).await.unwrap();
+
+        assert_eq!(ops[0].opid, OpId::Str("shard01:77".to_string()));
+        assert_eq!(ops[0].command, r#"{"find":"big","filter":{"note":"…"#);
+        assert_eq!(ops[1].opid, OpId::Num(12345));
+        assert_eq!(
+            ops[1].command,
+            Bson::Document(doc! { "find": "orders", "filter": { "n": { "$gt": 5 } } }).to_string()
+        );
+        assert_eq!(
+            (ops[1].secs_running, ops[1].client.as_str()),
+            (3, "10.0.0.5:51544")
+        );
+    }
+
+    // An operation is killed by the id the server reported, number or string.
+    #[tokio::test]
+    async fn an_operation_is_killed_by_its_id() {
+        let (env, state, id) = with_admin().await;
+
+        kill_op_impl(&state, &id, OpId::Num(12345)).await.unwrap();
+        kill_op_impl(&state, &id, OpId::Str("shard01:77".to_string()))
+            .await
+            .unwrap();
+
+        let sent: Vec<String> = env.fake.with(|s| {
+            s.admin_calls
+                .iter()
+                .filter_map(|c| match c {
+                    FakeAdmin::KillOp(k) => Some(k.opid.clone()),
+                    _ => None,
+                })
+                .collect()
+        });
+        assert_eq!(sent, ["12345", "shard01:77"]);
+    }
+
+    // The profiler is switched as asked and reports the level it now has; the
+    // profile is read at the limit local mode allows, its commands printed as
+    // local mode prints them.
+    #[tokio::test]
+    async fn the_profiler_is_set_and_read_on_the_server() {
+        let (env, state, id) = with_admin().await;
+        env.fake.with(|s| {
+            s.profile = vec![PbProfileEntry {
+                op: "query".to_string(),
+                ns: "orders.customers".to_string(),
+                millis: 142,
+                ts_ms: 1_749_427_200_000,
+                plan_summary: "COLLSCAN".to_string(),
+                command: r#"{"find":"customers","filter":{"region":"EU"}}"#.to_string(),
+            }]
+        });
+
+        let status = set_profiling_level_impl(&state, &id, "orders", 1, 50)
+            .await
+            .unwrap();
+        let entries = read_profile_impl(&state, &id, "orders", 1000)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            status,
+            ProfilingStatus {
+                level: 1,
+                slow_ms: 50
+            }
+        );
+        assert_eq!(entries[0].millis, 142);
+        assert_eq!(
+            entries[0].command,
+            Bson::Document(doc! { "find": "customers", "filter": { "region": "EU" } }).to_string()
+        );
+        match env.fake.with(|s| s.admin_calls.clone()).as_slice() {
+            [FakeAdmin::SetProfilingLevel(set), FakeAdmin::ReadProfile(read)] => {
+                assert_eq!(
+                    (set.database.as_str(), set.level, set.slow_ms),
+                    ("orders", 1, 50)
+                );
+                assert_eq!(read.limit, 500);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    // Without the admin role, or on a read-only connection, nothing is asked.
+    #[tokio::test]
+    async fn admin_monitoring_needs_the_admin_role_and_a_writable_connection() {
+        let env = Env::new().await;
+        let (state, id) = connected(&env).await;
+        let err = current_ops_impl(&state, &id).await.unwrap_err();
+        assert!(err.contains("does not allow admin operations"), "{err}");
+
+        let (env, state, id) = with_admin().await;
+        crate::set_connection_meta_impl(
+            &state,
+            &id,
+            "server:a:c1",
+            "Orders",
+            false,
+            crate::connections::ConnectionMode::ReadOnly,
+        )
+        .unwrap();
+        assert!(kill_op_impl(&state, &id, OpId::Num(1)).await.is_err());
+        assert!(env.fake.with(|s| s.admin_calls.is_empty()));
     }
 }

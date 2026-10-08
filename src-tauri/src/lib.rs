@@ -2430,7 +2430,11 @@ async fn repl_set_status(
 }
 
 #[tauri::command]
-async fn kill_op(state: tauri::State<'_, AppState>, id: String, opid: i64) -> Result<(), String> {
+async fn kill_op(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    opid: monitoring::OpId,
+) -> Result<(), String> {
     monitoring::kill_op_impl(&state, &id, opid).await
 }
 

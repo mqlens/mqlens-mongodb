@@ -395,7 +395,9 @@ mod tests {
             ),
             (
                 "kill_op_impl",
-                Box::pin(async move { monitoring::kill_op_impl(state, "ro", 1).await }),
+                Box::pin(async move {
+                    monitoring::kill_op_impl(state, "ro", monitoring::OpId::Num(1)).await
+                }),
             ),
             (
                 "set_profiling_level_impl",

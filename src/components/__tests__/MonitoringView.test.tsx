@@ -5,6 +5,7 @@ const mockInvoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: any[]) => mockInvoke(...a) }));
 
 import { MonitoringView } from '../MonitoringView';
+import type { CurrentOp } from '../../lib/monitoringApi';
 import { TabVisibleContext } from '../../workspace/tabVisibility';
 
 const STATUS = {
@@ -88,6 +89,19 @@ describe('MonitoringView', () => {
     fireEvent.click(killBtn);
     await waitFor(() => {
       expect(mockInvoke).toHaveBeenCalledWith('kill_op', { id: 'conn-1', opid: 42 });
+    });
+  });
+
+  // Through mongos an operation id is "shard:number"; it is shown and killed as it came.
+  it('kills an operation whose id is a string', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const sharded: CurrentOp = { opid: 'shard01:77', op: 'query', ns: 'sales_db.orders', secsRunning: 9, client: '', desc: '', command: '{}' };
+    const base = mockInvoke.getMockImplementation()!;
+    mockInvoke.mockImplementation((cmd: string, args?: unknown) => (cmd === 'current_ops' ? Promise.resolve([sharded]) : base(cmd, args)));
+    render(<MonitoringView connectionId="conn-1" />);
+    fireEvent.click(await screen.findByTestId('kill-op-shard01:77'));
+    await waitFor(() => {
+      expect(mockInvoke).toHaveBeenCalledWith('kill_op', { id: 'conn-1', opid: 'shard01:77' });
     });
   });
 

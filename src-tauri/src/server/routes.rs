@@ -415,7 +415,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
             procedures: &["/mqlens.v1.MonitoringService/CurrentOps"],
             class: OpClass::Admin,
             since: 1,
-            adapter: false,
+            adapter: true,
         },
     },
     CommandRoute {
@@ -424,7 +424,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
             procedures: &["/mqlens.v1.MonitoringService/KillOp"],
             class: OpClass::Admin,
             since: 1,
-            adapter: false,
+            adapter: true,
         },
     },
     CommandRoute {
@@ -433,7 +433,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
             procedures: &["/mqlens.v1.MonitoringService/ReadProfile"],
             class: OpClass::Admin,
             since: 1,
-            adapter: false,
+            adapter: true,
         },
     },
     CommandRoute {
@@ -442,7 +442,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
             procedures: &["/mqlens.v1.MonitoringService/SetProfilingLevel"],
             class: OpClass::Admin,
             since: 1,
-            adapter: false,
+            adapter: true,
         },
     },
     // Deployment users
