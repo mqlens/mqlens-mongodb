@@ -121,10 +121,30 @@ test.describe('Editing an account', () => {
 
     await button(page, 'Edit Work').click();
     await page.getByLabel('Email').fill('Dev@Example.com');
-    await page.getByLabel('Server URL').fill('https://mqlens.example.com/');
+    await page.getByLabel('Server URL').fill('https://MQLENS.Example.com/');
     await button(page, 'Save account').click();
 
     await expect(button(page, 'Sign out')).toBeVisible();
+  });
+
+  test('refuses what the backend would refuse, saying why', async ({ app, page }) => {
+    await app.open({ servers });
+    await openServerAccounts(page);
+    await button(page, 'Add server account').click();
+    await page.getByLabel('Name', { exact: true }).fill('Lab');
+    await page.getByLabel('Tenant').fill('lab');
+
+    for (const [url, email, why] of [
+      ['http://lab.example.com', 'me@example.com', 'must use https:// unless the server runs on this computer'],
+      ['https://lab.example.com/api', 'me@example.com', 'must not include a path'],
+      ['https://lab.example.com', 'not an email', 'Enter the email address'],
+    ]) {
+      await page.getByLabel('Server URL').fill(url);
+      await page.getByLabel('Email').fill(email);
+      await button(page, 'Save account').click();
+      await expect(page.getByRole('alert')).toContainText(why);
+    }
+    expect(await app.calls('server_account_list')).toHaveLength(1);
   });
 
   test('does not connect where the user may do nothing', async ({ app, page }) => {

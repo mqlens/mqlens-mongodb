@@ -18,16 +18,50 @@ const view = (account: ServerAccountSeed) => ({
   signedIn: account.signedIn ?? false,
 });
 
-/** The form as the backend stores it: trimmed, the URL without a trailing slash and its scheme in lower case, an empty CA as none. */
-const normalize = (a: Pick<ServerAccountSeed, 'id' | 'name' | 'url' | 'tenant' | 'email' | 'allowInsecureHttp' | 'extraCaPem'>) => ({
-  id: a.id,
-  name: a.name.trim(),
-  url: a.url.trim().replace(/\/+$/, '').replace(/^[a-z]+:/i, (scheme) => scheme.toLowerCase()),
-  tenant: a.tenant.trim(),
-  email: a.email.trim(),
-  allowInsecureHttp: a.allowInsecureHttp ?? false,
-  extraCaPem: a.extraCaPem?.trim() || null,
-});
+const isLoopback = (host: string) => {
+  const bare = host.replace(/^\[|\]$/g, '').toLowerCase();
+  return bare === 'localhost' || bare === '::1' || /^127\./.test(bare);
+};
+
+/** The server URL as channel::normalize_url accepts and stores it, with its messages. */
+function normalizeUrl(input: string, allowInsecureHttp: boolean): string {
+  const trimmed = input.trim().replace(/\/+$/, '');
+  if (!trimmed) throw 'Enter the MQLens Server URL';
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    throw 'MQLens Server URL must start with https://';
+  }
+  if (url.username || url.password) throw 'MQLens Server URL must not include a user name or password';
+  if (url.pathname !== '/' || url.search) throw 'MQLens Server URL must not include a path';
+  const scheme = url.protocol.slice(0, -1).toLowerCase();
+  if (scheme === 'http' && !allowInsecureHttp && !isLoopback(url.hostname)) {
+    throw 'MQLens Server URL must use https:// unless the server runs on this computer';
+  }
+  if (scheme !== 'https' && scheme !== 'http') throw 'MQLens Server URL must start with https://';
+  return `${scheme}://${url.host.toLowerCase()}`;
+}
+
+/** The form as ServerAccountInput::into_account validates and stores it, with its messages. */
+function normalize(a: Pick<ServerAccountSeed, 'id' | 'name' | 'url' | 'tenant' | 'email' | 'allowInsecureHttp' | 'extraCaPem'>) {
+  const name = a.name.trim();
+  if (!name) throw 'Enter a name for this MQLens Server account';
+  const allowInsecureHttp = a.allowInsecureHttp ?? false;
+  const url = normalizeUrl(a.url, allowInsecureHttp);
+  const tenant = a.tenant.trim();
+  if (!tenant) throw 'Enter the MQLens Server tenant';
+  const email = a.email.trim();
+  const [local, domain, extra] = email.split('@');
+  if (!local || !domain || extra !== undefined || /\s/.test(email)) {
+    throw 'Enter the email address you sign in to MQLens Server with';
+  }
+  const extraCaPem = a.extraCaPem?.trim() || null;
+  if (extraCaPem && !extraCaPem.includes('-----BEGIN CERTIFICATE-----')) {
+    throw 'The extra CA certificate must be PEM text starting with -----BEGIN CERTIFICATE-----';
+  }
+  return { id: a.id, name, url, tenant, email, allowInsecureHttp, extraCaPem };
+}
 
 /** Whether two accounts sign in to the same place as the same user, as ServerAccount::same_identity decides. */
 const sameIdentity = (a: ServerAccountSeed, b: ReturnType<typeof normalize>) =>
