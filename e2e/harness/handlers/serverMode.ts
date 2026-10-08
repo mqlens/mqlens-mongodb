@@ -18,8 +18,16 @@ const view = (account: ServerAccountSeed) => ({
   signedIn: account.signedIn ?? false,
 });
 
+/** What an account signs in to: changing any of it ends its session, as in the backend. */
+const IDENTITY = ['url', 'tenant', 'email', 'allowInsecureHttp', 'extraCaPem'] as const;
+
 export function registerServerModeHandlers(backend: Backend, state: E2EState): void {
   let nextAccount = 1;
+  const newId = () => {
+    let id = `acct-${nextAccount++}`;
+    while (state.serverAccounts.some((a) => a.id === id)) id = `acct-${nextAccount++}`;
+    return id;
+  };
   const account = (id: unknown) => {
     const found = state.serverAccounts.find((a) => a.id === String(id));
     if (!found) throw `MQLens Server account not found: ${String(id)}`;
@@ -32,11 +40,16 @@ export function registerServerModeHandlers(backend: Backend, state: E2EState): v
   backend.register({
     server_account_list: () => state.serverAccounts.map(view),
     server_account_save: ({ account: input }) => {
-      const fields = input as Omit<ServerAccountSeed, 'connections' | 'signedIn'>;
+      // Only what the backend's ServerAccountInput carries; the view's signedIn and warning are not input.
+      const { id, name, url, tenant, email, allowInsecureHttp, extraCaPem } = input as ServerAccountSeed;
+      const fields = { id, name, url, tenant, email, allowInsecureHttp, extraCaPem };
       const existing = fields.id ? account(fields.id) : undefined;
+      if (existing && IDENTITY.some((key) => (existing[key] ?? null) !== (fields[key] ?? null) && !(key === 'allowInsecureHttp' && !existing[key] && !fields[key]))) {
+        existing.signedIn = false;
+      }
       const saved: ServerAccountSeed = existing
         ? Object.assign(existing, fields)
-        : { ...fields, id: `acct-${nextAccount++}`, signedIn: false, connections: [] };
+        : { ...fields, id: newId(), signedIn: false, connections: [] };
       if (!existing) state.serverAccounts.push(saved);
       return { ...view(saved), warning: saved.saveWarning };
     },

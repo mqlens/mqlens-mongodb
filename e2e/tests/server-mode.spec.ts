@@ -101,6 +101,38 @@ test.describe('MQLens Server accounts', () => {
   });
 });
 
+test.describe('Editing an account', () => {
+  test('signs it out when it points somewhere else', async ({ app, page }) => {
+    await app.open({ servers, serverAccounts: [WORK({ signedIn: true })] });
+    await openServerAccounts(page);
+    await expect(button(page, 'Sign out')).toBeVisible();
+
+    await button(page, 'Edit Work').click();
+    await page.getByLabel('Server URL').fill('https://other.example.com');
+    await button(page, 'Save account').click();
+
+    await expect(button(page, 'Sign in')).toBeVisible();
+    await expect(button(page, 'Connect to Orders')).toHaveCount(0);
+  });
+
+  test('keeps a new account apart from one already stored', async ({ app, page }) => {
+    await app.open({ servers, serverAccounts: [WORK({ id: 'acct-1', name: 'Lab' })] });
+    await openServerAccounts(page);
+
+    await button(page, 'Add server account').click();
+    await page.getByLabel('Name', { exact: true }).fill('Home');
+    await page.getByLabel('Server URL').fill('https://home.example.com');
+    await page.getByLabel('Tenant').fill('home');
+    await page.getByLabel('Email').fill('me@example.com');
+    await button(page, 'Save account').click();
+    await button(page, 'Delete Home').click();
+    await page.getByTestId('dialog-confirm').click();
+
+    await expect(page.getByText('Home', { exact: true })).toHaveCount(0);
+    await expect(page.getByText('Lab', { exact: true })).toBeVisible();
+  });
+});
+
 test.describe('A server connection', () => {
   const BLOCKED = [
     'drop_database',
