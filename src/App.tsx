@@ -3241,7 +3241,7 @@ function Workspace() {
     ...(activeTab && activeTab.type === 'collection' ? [
       ...(isCommandBlocked(activeTab.connectionId, 'start_mongosh_session') ? [] : [{ id: 'open-shell', title: tShell('commandPalette.paletteActions.openShell.title'), hint: `${activeTab.db}.${activeTab.collection}`, keywords: tShell('commandPalette.paletteActions.openShell.keywords'), run: () => handleOpenShell(activeTab.connectionId, activeTab.db, activeTab.collection) }]),
       ...(isCommandBlocked(activeTab.connectionId, 'start_collection_export') || isCommandBlocked(activeTab.connectionId, 'start_filtered_export') ? [] : [{ id: 'export-collection', title: tShell('commandPalette.paletteActions.exportCollection.title'), hint: `${activeTab.db}.${activeTab.collection}`, keywords: tShell('commandPalette.paletteActions.exportCollection.keywords'), run: () => handleOpenExportTab(activeTab) }]),
-      { id: 'analyze-schema', title: tShell('commandPalette.paletteActions.analyzeSchema.title'), hint: `${activeTab.db}.${activeTab.collection}`, keywords: tShell('commandPalette.paletteActions.analyzeSchema.keywords'), run: () => handleOpenSchemaTab(activeTab.connectionId, activeTab.db, activeTab.collection) },
+      ...(isCommandBlocked(activeTab.connectionId, 'analyze_schema') ? [] : [{ id: 'analyze-schema', title: tShell('commandPalette.paletteActions.analyzeSchema.title'), hint: `${activeTab.db}.${activeTab.collection}`, keywords: tShell('commandPalette.paletteActions.analyzeSchema.keywords'), run: () => handleOpenSchemaTab(activeTab.connectionId, activeTab.db, activeTab.collection) }]),
     ] : []),
     ...(activeTabId ? [{ id: 'close-tab', title: tShell('commandPalette.paletteActions.closeTab.title'), keywords: tShell('commandPalette.paletteActions.closeTab.keywords'), run: () => closeTabById(activeTabId) }] : []),
     ...(focusedPane && focusedPane.tabIds.length > 1 ? [
@@ -3259,13 +3259,13 @@ function Workspace() {
         dispatchWorkspace({ type: 'focus_pane', paneId: panes[(i + 1) % panes.length].id });
       } },
     ] : []),
-    ...activeConnections.map(c => ({
+    ...activeConnections.filter(c => !isCommandBlocked(c.id, 'server_status')).map(c => ({
       id: `monitoring:${c.id}`,
       title: tShell('commandPalette.paletteActions.openMonitoring.title', { name: c.name }),
       keywords: tShell('commandPalette.paletteActions.openMonitoring.keywords'),
       run: () => handleOpenMonitoringTab(c.id),
     })),
-    ...activeConnections.map(c => ({
+    ...activeConnections.filter(c => !isCommandBlocked(c.id, 'list_users')).map(c => ({
       id: `users:${c.id}`,
       title: tShell('commandPalette.paletteActions.manageUsers.title', { name: c.name }),
       keywords: tShell('commandPalette.paletteActions.manageUsers.keywords'),
@@ -4679,7 +4679,7 @@ function Workspace() {
                     onEditDocument={rowsAreStoredDocuments(tab) ? (doc => handleEditDocument(tab, doc)) : undefined}
                     onDuplicateDocument={doc => handleDuplicateDocument(tab, doc)}
                     onDeleteDocument={rowsAreStoredDocuments(tab) ? (doc => handleDeleteDocument(tab, doc)) : undefined}
-                    onAnalyzeSchema={() => handleOpenSchemaTab(tab.connectionId, tab.db, tab.collection)}
+                    onAnalyzeSchema={isCommandBlocked(tab.connectionId, 'analyze_schema') ? undefined : () => handleOpenSchemaTab(tab.connectionId, tab.db, tab.collection)}
                     onUpdateMany={() => handleUpdateMany(tab)}
                     onDeleteMany={() => handleDeleteMany(tab)}
                     connectionMode={connMode}
@@ -4757,7 +4757,11 @@ function Workspace() {
           <MonitoringView connectionId={tab.connectionId} blockedCommands={serverConnections.get(tab.connectionId)?.blockedCommands} />
         )}
         {tab.type === 'users' && (
-          <UserManagementView connectionId={tab.connectionId} database={tab.db || undefined} blockedCommands={serverConnections.get(tab.connectionId)?.blockedCommands} />
+          isCommandBlocked(tab.connectionId, 'list_users') ? (
+            <div className="flex h-full items-center justify-center p-8 text-center text-xs text-muted-foreground">{t('notOnServer')}</div>
+          ) : (
+            <UserManagementView connectionId={tab.connectionId} database={tab.db || undefined} blockedCommands={serverConnections.get(tab.connectionId)?.blockedCommands} />
+          )
         )}
         {tab.type === 'export' && (() => {
           const activeConnection = activeConnections.find(c => c.id === tab.connectionId);

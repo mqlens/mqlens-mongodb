@@ -126,10 +126,13 @@ vi.mock('@tauri-apps/plugin-fs', () => ({
 
 // Mock Sidebar component
 vi.mock('../Sidebar', () => ({
-  Sidebar: ({ onSelectCollection, onSelectIndex, onCreateIndex, onDeleteIndex, onOpenSettings, onOpenDump, onOpenRestore, onEditValidation, onOpenGenerate, onDatabaseRenamed, onDatabaseDropped, onWatchCollection, activeConnections, onConnectProfile, isCommandBlocked, onOpenShell }: any) => (
+  Sidebar: ({ onSelectCollection, onSelectIndex, onCreateIndex, onDeleteIndex, onOpenSettings, onOpenDump, onOpenRestore, onEditValidation, onOpenGenerate, onDatabaseRenamed, onDatabaseDropped, onWatchCollection, activeConnections, onConnectProfile, isCommandBlocked, onOpenShell, onOpenUsers }: any) => (
     <div data-testid="mock-sidebar">
       {(activeConnections ?? []).map((c: any) => (
         <button key={c.id} data-testid={`mock-open-shell-${c.id}`} onClick={() => onOpenShell?.(c.id, 'sales_db')} />
+      ))}
+      {(activeConnections ?? []).map((c: any) => (
+        <button key={c.id} data-testid={`mock-open-users-${c.id}`} onClick={() => onOpenUsers?.(c.id)} />
       ))}
       {(activeConnections ?? []).map((c: any) =>
         isCommandBlocked?.(c.id, 'start_dump_task') ? <span key={c.id} data-testid={`mock-sidebar-dump-blocked-${c.id}`} /> : null,
@@ -419,6 +422,37 @@ describe('App Component', () => {
     fireEvent.click(await screen.findByText('Manage Users: Orders'));
 
     expect(await screen.findByTestId('create-user-btn')).toBeDisabled();
+  });
+
+  it('leaves out schema analysis, users and monitoring where their commands are blocked', async () => {
+    const server = {
+      accountId: 'a1', accountName: 'Work', serverUrl: 'https://s', remoteId: 'c1', opClasses: ['read'],
+      blockedCommands: ['analyze_schema', 'list_users', 'list_roles', 'server_status'],
+    };
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'connection_list') return Promise.resolve([{ id: 'conn-1', profileId: 'server:a1:c1', name: 'Orders', viaMcp: false, server }]);
+      if (cmd === 'execute_mql_query') return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('sidebar-conn-conn-1');
+    fireEvent.click(screen.getByTestId('select-collection-btn'));
+    expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+    expect(screen.queryByTestId('analyze-schema-btn')).not.toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: 'k', metaKey: true });
+    const input = await screen.findByTestId('command-palette-input');
+    for (const query of ['Analyze Schema', 'Manage Users: Orders', 'Open Monitoring: Orders']) {
+      fireEvent.change(input, { target: { value: query } });
+      expect(screen.queryByText(query)).not.toBeInTheDocument();
+    }
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    fireEvent.click(screen.getByTestId('mock-open-users-conn-1'));
+    expect(await screen.findByText('Not available on MQLens Server yet.')).toBeInTheDocument();
+    expect(mockInvoke).not.toHaveBeenCalledWith('list_users', expect.anything());
   });
 
   it('edits an index using its REAL spec, not specs guessed from the name (C2 regression)', async () => {

@@ -2323,3 +2323,46 @@ describe('Sidebar: validation rules and GridFS buckets on a server connection', 
     expect(onOpenGridfs).not.toHaveBeenCalled();
   });
 });
+
+describe('Sidebar: views whose main command is blocked', () => {
+  it('disables schema analysis, user management and monitoring', async () => {
+    mockInvoke.mockImplementation((cmd, args) => {
+      if (cmd === 'list_databases' && args.id === 'conn-1') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections') return Promise.resolve([{ name: 'customers', type: 'collection' }]);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+    const blocked = new Set(['analyze_schema', 'list_users', 'server_status']);
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Remote Orders', uri: '' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+        onAnalyzeSchema={() => {}}
+        onOpenUsers={() => {}}
+        onOpenMonitoring={() => {}}
+        isCommandBlocked={(id, command) => id === 'conn-1' && blocked.has(command)}
+      />
+    );
+
+    const serverNode = await screen.findByText('Remote Orders');
+    fireEvent.contextMenu(serverNode.closest('div')!);
+    expect(screen.getByRole('menuitem', { name: /Monitor/i })).toHaveAttribute('data-disabled');
+    expect(screen.getByRole('menuitem', { name: /Manage Users/i })).toHaveAttribute('data-disabled');
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+
+    const dbNode = await screen.findByText('sales_db');
+    fireEvent.contextMenu(dbNode);
+    expect(screen.getByRole('menuitem', { name: /Manage Users/i })).toHaveAttribute('data-disabled');
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+
+    fireEvent.click(dbNode);
+    fireEvent.click(await screen.findByText('Collections'));
+    fireEvent.contextMenu(await screen.findByText('customers'));
+    expect(screen.getByRole('menuitem', { name: /Analyze Schema/i })).toHaveAttribute('data-disabled');
+  });
+});

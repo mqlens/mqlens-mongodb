@@ -1614,7 +1614,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <span>{t('ctx.watchCollection')}</span>
               </ContextMenuItem>
             )}
-            <ContextMenuItem className={ctxItemClass} onClick={() => onAnalyzeSchema?.(connId, dbName, collName)}>
+            <ContextMenuItem className={ctxItemClass} onClick={() => onAnalyzeSchema?.(connId, dbName, collName)} {...gate(connId, 'analyze_schema')}>
               <Table2 />
               <span>{t('ctx.analyzeSchema')}</span>
             </ContextMenuItem>
@@ -1957,7 +1957,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <ContextMenuItem
                     className={ctxItemClass}
                     data-testid="ctx-monitor"
-                    onClick={() => onOpenMonitoring?.(conn.id)}
+                    onClick={() => onOpenMonitoring?.(conn.id)} {...gate(conn.id, 'server_status')}
                   >
                     <Activity />
                     <span>{t('ctx.monitorCluster')}</span>
@@ -1965,7 +1965,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <ContextMenuItem
                     className={ctxItemClass}
                     data-testid="ctx-users"
-                    onClick={() => onOpenUsers?.(conn.id)}
+                    onClick={() => onOpenUsers?.(conn.id)} {...gate(conn.id, 'list_users')}
                   >
                     <Users />
                     <span>{t('ctx.manageUsersConnection')}</span>
@@ -2165,7 +2165,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                             <ContextMenuItem
                               className={ctxItemClass}
                               data-testid="ctx-db-users"
-                              onClick={() => onOpenUsers?.(conn.id, dbName)}
+                              onClick={() => onOpenUsers?.(conn.id, dbName)} {...gate(conn.id, 'list_users')}
                             >
                               <Users />
                               <span>{t('ctx.manageUsersDatabase')}</span>

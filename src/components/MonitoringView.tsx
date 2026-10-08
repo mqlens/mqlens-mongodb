@@ -560,6 +560,9 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId, bl
   const blockedRef = useRef(blockedCommands);
   blockedRef.current = blockedCommands;
   const blocked = (command: string) => blockedRef.current?.includes(command) ?? false;
+  // Runs `call` unless `command` is blocked, when it fails with the reason instead.
+  const unlessBlocked = <T,>(command: string, call: () => Promise<T>) =>
+    blocked(command) ? Promise.reject(new Error(t('common:notOnServer'))) : call();
   const [status, setStatus] = useState<ServerStatus | null>(null);
   const [ops, setOps] = useState<CurrentOp[]>([]);
   const [samples, setSamples] = useState<MetricSample[]>([]);
@@ -612,9 +615,9 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId, bl
     if (!tabVisibleRef.current) return;
     if (typeof document !== 'undefined' && document.hidden) return;
     const [sRes, oRes, cRes] = await Promise.allSettled([
-      serverStatus(connectionId),
-      blocked('current_ops') ? Promise.reject(new Error(t('common:notOnServer'))) : currentOps(connectionId),
-      sectionRef.current === 'cluster' ? replSetStatus(connectionId) : Promise.resolve(null),
+      unlessBlocked('server_status', () => serverStatus(connectionId)),
+      unlessBlocked('current_ops', () => currentOps(connectionId)),
+      sectionRef.current === 'cluster' ? unlessBlocked('repl_set_status', () => replSetStatus(connectionId)) : Promise.resolve(null),
     ]);
     if (!aliveRef.current) return;
     if (sRes.status === 'fulfilled') {
@@ -675,7 +678,7 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId, bl
     if (!profilerDb) return;
     setProfileLoading(true);
     try {
-      const st = await getProfilingStatus(connectionId, profilerDb);
+      const st = await unlessBlocked('get_profiling_status', () => getProfilingStatus(connectionId, profilerDb));
       setProfiling(st);
       if (blocked('read_profile')) {
         setProfile([]);
