@@ -87,7 +87,9 @@ test.describe('MQLens Server accounts', () => {
     await expect(page.getByText("Disconnect this account's connections to change its server, tenant or email.")).toBeVisible();
     await page.getByLabel('Name', { exact: true }).fill('Work (EU)');
     await button(page, 'Save account').click();
-    await expect(page.getByText('The previous server session could not be ended.')).toBeVisible();
+    // Only the name changed, so the session stays and nothing was displaced.
+    await expect(page.getByText('Work (EU)', { exact: true })).toBeVisible();
+    await expect(page.getByText('The previous server session could not be ended.')).toHaveCount(0);
 
     await page.keyboard.press('Escape');
     await sidebar(page).getByText('Orders', { exact: true }).first().click({ button: 'right' });
@@ -103,7 +105,7 @@ test.describe('MQLens Server accounts', () => {
 
 test.describe('Editing an account', () => {
   test('signs it out when it points somewhere else', async ({ app, page }) => {
-    await app.open({ servers, serverAccounts: [WORK({ signedIn: true })] });
+    await app.open({ servers, serverAccounts: [WORK({ signedIn: true, saveWarning: 'The previous server session could not be ended.' })] });
     await openServerAccounts(page);
     await expect(button(page, 'Sign out')).toBeVisible();
 
@@ -113,6 +115,18 @@ test.describe('Editing an account', () => {
 
     await expect(button(page, 'Sign in')).toBeVisible();
     await expect(button(page, 'Connect to Orders')).toHaveCount(0);
+    await expect(page.getByText('The previous server session could not be ended.')).toBeVisible();
+  });
+
+  test('treats an explicit port as another server', async ({ app, page }) => {
+    await app.open({ servers, serverAccounts: [WORK({ signedIn: true })] });
+    await openServerAccounts(page);
+
+    await button(page, 'Edit Work').click();
+    await page.getByLabel('Server URL').fill('https://mqlens.example.com:443');
+    await button(page, 'Save account').click();
+
+    await expect(button(page, 'Sign in')).toBeVisible();
   });
 
   test('keeps it signed in when only how it is written changes', async ({ app, page }) => {
@@ -137,6 +151,7 @@ test.describe('Editing an account', () => {
     for (const [url, email, why] of [
       ['http://lab.example.com', 'me@example.com', 'must use https:// unless the server runs on this computer'],
       ['https://lab.example.com/api', 'me@example.com', 'must not include a path'],
+      ['http://127.0.0.1.example.com', 'me@example.com', 'must use https:// unless the server runs on this computer'],
       ['https://lab.example.com', 'not an email', 'Enter the email address'],
     ]) {
       await page.getByLabel('Server URL').fill(url);

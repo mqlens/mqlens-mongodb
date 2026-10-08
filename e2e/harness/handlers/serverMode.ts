@@ -20,8 +20,17 @@ const view = (account: ServerAccountSeed) => ({
 
 const isLoopback = (host: string) => {
   const bare = host.replace(/^\[|\]$/g, '').toLowerCase();
-  return bare === 'localhost' || bare === '::1' || /^127\./.test(bare);
+  // An address, as IpAddr::is_loopback takes it; a name that only starts like one is not.
+  const ipv4 = bare.split('.');
+  return (
+    bare === 'localhost' ||
+    bare === '::1' ||
+    (ipv4.length === 4 && ipv4[0] === '127' && ipv4.every((octet) => /^\d{1,3}$/.test(octet) && Number(octet) <= 255))
+  );
 };
+
+/** The URL's authority as written, which normalize_url keeps (an explicit default port included). */
+const authorityOf = (url: string) => url.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').split(/[/?#]/)[0];
 
 /** The server URL as channel::normalize_url accepts and stores it, with its messages. */
 function normalizeUrl(input: string, allowInsecureHttp: boolean): string {
@@ -40,7 +49,7 @@ function normalizeUrl(input: string, allowInsecureHttp: boolean): string {
     throw 'MQLens Server URL must use https:// unless the server runs on this computer';
   }
   if (scheme !== 'https' && scheme !== 'http') throw 'MQLens Server URL must start with https://';
-  return `${scheme}://${url.host.toLowerCase()}`;
+  return `${scheme}://${authorityOf(trimmed).toLowerCase()}`;
 }
 
 /** The form as ServerAccountInput::into_account validates and stores it, with its messages. */
@@ -94,12 +103,14 @@ export function registerServerModeHandlers(backend: Backend, state: E2EState): v
       const { id, name, url, tenant, email, allowInsecureHttp, extraCaPem } = input as ServerAccountSeed;
       const fields = normalize({ id, name, url, tenant, email, allowInsecureHttp, extraCaPem });
       const existing = fields.id ? account(fields.id) : undefined;
-      if (existing && !sameIdentity(existing, fields)) existing.signedIn = false;
+      // A new identity ends the session; only then is there one to revoke, and a warning when that fails.
+      const displaced = !!existing?.signedIn && !sameIdentity(existing, fields);
+      if (displaced) existing!.signedIn = false;
       const saved: ServerAccountSeed = existing
         ? Object.assign(existing, fields)
         : { ...fields, id: newId(), signedIn: false, connections: [] };
       if (!existing) state.serverAccounts.push(saved);
-      return { ...view(saved), warning: saved.saveWarning };
+      return { ...view(saved), warning: displaced ? saved.saveWarning : undefined };
     },
     server_account_delete: ({ id }) => {
       const found = account(id);
