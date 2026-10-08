@@ -101,6 +101,22 @@ test.describe('Sidebar actions', () => {
     expect(dropped).toMatchObject({ collection: 'products', confirmed: true });
   });
 
+  test('Escape cancels destructive prompts without writing', async ({ app, page }) => {
+    await connectStaging(app, page);
+    await expandCollections(page, 'sales_db');
+
+    await menu(page, sidebar(page).getByText('products', { exact: true }), 'Drop Collection');
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('dialog-input')).toHaveCount(0);
+    expect(await app.calls('drop_collection')).toHaveLength(0);
+
+    await dismissHoverCards(page);
+    await menu(page, databaseRow(page, 'user_analytics'), 'Drop Database');
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('dialog-input')).toHaveCount(0);
+    expect(await app.calls('drop_database')).toHaveLength(0);
+  });
+
   test('a read-only connection refuses to drop', async ({ app, page }) => {
     await connectStaging(app, page, { connection_mode: 'read_only' });
     await expandCollections(page, 'sales_db');
