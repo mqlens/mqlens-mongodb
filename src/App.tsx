@@ -3239,8 +3239,8 @@ function Workspace() {
     { id: 'density-cozy', title: tShell('commandPalette.paletteActions.densityCozy.title'), keywords: tShell('commandPalette.paletteActions.densityCozy.keywords'), run: () => setSpacingDensity('cozy') },
     { id: 'density-compact', title: tShell('commandPalette.paletteActions.densityCompact.title'), keywords: tShell('commandPalette.paletteActions.densityCompact.keywords'), run: () => setSpacingDensity('compact') },
     ...(activeTab && activeTab.type === 'collection' ? [
-      { id: 'open-shell', title: tShell('commandPalette.paletteActions.openShell.title'), hint: `${activeTab.db}.${activeTab.collection}`, keywords: tShell('commandPalette.paletteActions.openShell.keywords'), run: () => handleOpenShell(activeTab.connectionId, activeTab.db, activeTab.collection) },
-      { id: 'export-collection', title: tShell('commandPalette.paletteActions.exportCollection.title'), hint: `${activeTab.db}.${activeTab.collection}`, keywords: tShell('commandPalette.paletteActions.exportCollection.keywords'), run: () => handleOpenExportTab(activeTab) },
+      ...(isCommandBlocked(activeTab.connectionId, 'start_mongosh_session') ? [] : [{ id: 'open-shell', title: tShell('commandPalette.paletteActions.openShell.title'), hint: `${activeTab.db}.${activeTab.collection}`, keywords: tShell('commandPalette.paletteActions.openShell.keywords'), run: () => handleOpenShell(activeTab.connectionId, activeTab.db, activeTab.collection) }]),
+      ...(isCommandBlocked(activeTab.connectionId, 'start_collection_export') || isCommandBlocked(activeTab.connectionId, 'start_filtered_export') ? [] : [{ id: 'export-collection', title: tShell('commandPalette.paletteActions.exportCollection.title'), hint: `${activeTab.db}.${activeTab.collection}`, keywords: tShell('commandPalette.paletteActions.exportCollection.keywords'), run: () => handleOpenExportTab(activeTab) }]),
       { id: 'analyze-schema', title: tShell('commandPalette.paletteActions.analyzeSchema.title'), hint: `${activeTab.db}.${activeTab.collection}`, keywords: tShell('commandPalette.paletteActions.analyzeSchema.keywords'), run: () => handleOpenSchemaTab(activeTab.connectionId, activeTab.db, activeTab.collection) },
     ] : []),
     ...(activeTabId ? [{ id: 'close-tab', title: tShell('commandPalette.paletteActions.closeTab.title'), keywords: tShell('commandPalette.paletteActions.closeTab.keywords'), run: () => closeTabById(activeTabId) }] : []),
@@ -4754,10 +4754,10 @@ function Workspace() {
           />
         )}
         {tab.type === 'monitoring' && (
-          <MonitoringView connectionId={tab.connectionId} />
+          <MonitoringView connectionId={tab.connectionId} blockedCommands={serverConnections.get(tab.connectionId)?.blockedCommands} />
         )}
         {tab.type === 'users' && (
-          <UserManagementView connectionId={tab.connectionId} database={tab.db || undefined} />
+          <UserManagementView connectionId={tab.connectionId} database={tab.db || undefined} blockedCommands={serverConnections.get(tab.connectionId)?.blockedCommands} />
         )}
         {tab.type === 'export' && (() => {
           const activeConnection = activeConnections.find(c => c.id === tab.connectionId);

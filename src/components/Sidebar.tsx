@@ -1619,7 +1619,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <span>{t('ctx.analyzeSchema')}</span>
             </ContextMenuItem>
             {collType !== 'view' && collType !== 'timeseries' && !collName.startsWith('system.') && !/\.(files|chunks)$/.test(collName) && (
-              <ContextMenuItem className={ctxItemClass} onClick={() => onEditValidation?.(connId, dbName, collName)}>
+              <ContextMenuItem className={ctxItemClass} onClick={() => onEditValidation?.(connId, dbName, collName)} {...gate(connId, 'set_validator')}>
                 <ShieldCheck />
                 <span>{t('ctx.validationRules')}</span>
               </ContextMenuItem>
@@ -2325,7 +2325,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                         <div
                                           key={bucket}
                                           className={treeRowClass()}
-                                          onClick={() => onOpenGridfs?.(conn.id, dbName, bucket)}
+                                          onClick={() => {
+                                            if (!isCommandBlocked?.(conn.id, 'list_gridfs_files')) onOpenGridfs?.(conn.id, dbName, bucket);
+                                          }}
+                                          title={isCommandBlocked?.(conn.id, 'list_gridfs_files') ? t('ctx.notOnServer') : undefined}
                                         >
                                           <Archive size={11} className="ml-3.5 shrink-0 text-emerald-500" />
                                           <span className="min-w-0 truncate">

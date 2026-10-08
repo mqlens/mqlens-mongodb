@@ -54,6 +54,8 @@ import { lagText, lagClass, memberUnhealthy, memberDotClass, fmtMemberUptime } f
 
 interface MonitoringViewProps {
   connectionId: string;
+  /** Commands this connection cannot run (a server connection); they are not asked for. */
+  blockedCommands?: readonly string[];
 }
 
 const REFRESH_OPTIONS: { labelKey: string; ms: number }[] = [
@@ -338,7 +340,7 @@ const errLine = (msg: string): string => {
 const OpRow = React.memo<{
   op: CurrentOp;
   onSelect: (op: CurrentOp) => void;
-  onKill: (op: CurrentOp) => void;
+  onKill?: (op: CurrentOp) => void;
 }>(({ op, onSelect, onKill }) => {
   const { t } = useTranslation('admin');
   return (
@@ -356,17 +358,19 @@ const OpRow = React.memo<{
         {truncateCmd(op.command)}
       </td>
       <td className="px-3 py-1.5">
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7 text-destructive hover:text-destructive"
-          title={t('monitoringView.actions.killOperation')}
-          data-testid={`kill-op-${op.opid}`}
-          onClick={(e) => { e.stopPropagation(); onKill(op); }}
-        >
-          <Skull size={12} />
-        </Button>
+        {onKill && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 text-destructive hover:text-destructive"
+            title={t('monitoringView.actions.killOperation')}
+            data-testid={`kill-op-${op.opid}`}
+            onClick={(e) => { e.stopPropagation(); onKill(op); }}
+          >
+            <Skull size={12} />
+          </Button>
+        )}
       </td>
     </tr>
   );
@@ -550,8 +554,12 @@ const ProfileFilterBar: React.FC<{
   );
 };
 
-export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) => {
+export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId, blockedCommands }) => {
   const { t } = useTranslation('admin');
+  // Read through a ref so the poll and profiler callbacks keep their identity.
+  const blockedRef = useRef(blockedCommands);
+  blockedRef.current = blockedCommands;
+  const blocked = (command: string) => blockedRef.current?.includes(command) ?? false;
   const [status, setStatus] = useState<ServerStatus | null>(null);
   const [ops, setOps] = useState<CurrentOp[]>([]);
   const [samples, setSamples] = useState<MetricSample[]>([]);
@@ -605,7 +613,7 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
     if (typeof document !== 'undefined' && document.hidden) return;
     const [sRes, oRes, cRes] = await Promise.allSettled([
       serverStatus(connectionId),
-      currentOps(connectionId),
+      blocked('current_ops') ? Promise.reject(new Error(t('common:notOnServer'))) : currentOps(connectionId),
       sectionRef.current === 'cluster' ? replSetStatus(connectionId) : Promise.resolve(null),
     ]);
     if (!aliveRef.current) return;
@@ -667,12 +675,14 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
     if (!profilerDb) return;
     setProfileLoading(true);
     try {
-      const [st, entries] = await Promise.all([
-        getProfilingStatus(connectionId, profilerDb),
-        readProfile(connectionId, profilerDb, 50),
-      ]);
+      const st = await getProfilingStatus(connectionId, profilerDb);
       setProfiling(st);
-      setProfile(entries);
+      if (blocked('read_profile')) {
+        setProfile([]);
+        setProfilerErr(t('common:notOnServer'));
+        return;
+      }
+      setProfile(await readProfile(connectionId, profilerDb, 50));
       setProfilerErr(null);
     } catch (e: unknown) {
       setProfilerErr(String((e as Error)?.message || e));
@@ -955,7 +965,7 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
                         </thead>
                         <tbody>
                           {filteredOps.map((op) => (
-                            <OpRow key={op.opid} op={op} onSelect={(o) => setDetail({ kind: 'op', data: o })} onKill={handleKill} />
+                            <OpRow key={op.opid} op={op} onSelect={(o) => setDetail({ kind: 'op', data: o })} onKill={blocked('kill_op') ? undefined : handleKill} />
                           ))}
                         </tbody>
                       </table>
@@ -990,6 +1000,7 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
                     size="sm"
                     className="h-6 w-6 px-0 text-xs"
                     data-testid={`profiler-level-${lvl}`}
+                    disabled={blocked('set_profiling_level')}
                     onClick={() => handleSetLevel(lvl)}
                   >
                     {lvl}

@@ -2281,3 +2281,45 @@ describe('Sidebar: inline tree buttons for blocked commands', () => {
     expect(screen.queryByTestId('gridfs-open-bucket-conn-1-sales_db')).not.toBeInTheDocument();
   });
 });
+
+describe('Sidebar: validation rules and GridFS buckets on a server connection', () => {
+  it('disables Validation Rules and opening a bucket when their commands are blocked', async () => {
+    mockInvoke.mockImplementation((cmd, args) => {
+      if (cmd === 'list_databases' && args.id === 'conn-1') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections') {
+        return Promise.resolve([
+          { name: 'customers', type: 'collection' },
+          { name: 'fs.files', type: 'collection' },
+          { name: 'fs.chunks', type: 'collection' },
+        ]);
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+    const blocked = new Set(['set_validator', 'list_gridfs_files']);
+    const onOpenGridfs = vi.fn();
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Remote Orders', uri: '' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+        onEditValidation={() => {}}
+        onOpenGridfs={onOpenGridfs}
+        isCommandBlocked={(id, command) => id === 'conn-1' && blocked.has(command)}
+      />
+    );
+
+    fireEvent.click(await screen.findByText('sales_db'));
+    fireEvent.click(await screen.findByText('Collections'));
+    fireEvent.contextMenu(await screen.findByText('customers'));
+    expect(screen.getByRole('menuitem', { name: /Validation Rules/i })).toHaveAttribute('data-disabled');
+
+    fireEvent.click(screen.getByText('GridFS Buckets'));
+    fireEvent.click(await screen.findByText('fs'));
+    expect(onOpenGridfs).not.toHaveBeenCalled();
+  });
+});

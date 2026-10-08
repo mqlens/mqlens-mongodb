@@ -8,6 +8,7 @@
     "retry": "Retry",
     "title": "This tab ran into a problem"
   },
+  "notOnServer": "Not available on MQLens Server yet.",
   "ok": "OK",
   "passwordInput": {
     "hide": "Hide",

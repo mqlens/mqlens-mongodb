@@ -394,6 +394,33 @@ describe('App Component', () => {
     expect(screen.queryByTestId('edit-index-btn')).not.toBeInTheDocument();
   });
 
+  it('leaves blocked actions out of the command palette, and passes blocked commands to the admin views', async () => {
+    const server = {
+      accountId: 'a1', accountName: 'Work', serverUrl: 'https://s', remoteId: 'c1', opClasses: ['read'],
+      blockedCommands: ['start_collection_export', 'start_filtered_export', 'start_mongosh_session', 'create_user'],
+    };
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'connection_list') return Promise.resolve([{ id: 'conn-1', profileId: 'server:a1:c1', name: 'Orders', viaMcp: false, server }]);
+      if (cmd === 'execute_mql_query') return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+      if (cmd === 'list_users') return Promise.resolve([]);
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('sidebar-conn-conn-1');
+    fireEvent.click(screen.getByTestId('select-collection-btn'));
+    expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: 'k', metaKey: true });
+    fireEvent.change(await screen.findByTestId('command-palette-input'), { target: { value: 'Export Collection' } });
+    expect(screen.queryByText('Export Collection…')).not.toBeInTheDocument();
+    fireEvent.change(screen.getByTestId('command-palette-input'), { target: { value: 'Manage Users' } });
+    fireEvent.click(await screen.findByText('Manage Users: Orders'));
+
+    expect(await screen.findByTestId('create-user-btn')).toBeDisabled();
+  });
+
   it('edits an index using its REAL spec, not specs guessed from the name (C2 regression)', async () => {
     const calls: any[] = [];
     mockInvoke.mockImplementation((cmd, args) => {
