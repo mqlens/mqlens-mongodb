@@ -3550,3 +3550,39 @@ describe('waiting-for-browser-login UI (#430 Task 15)', () => {
     releaseConnect?.();
   });
 });
+
+describe('ConnectionManager: MQLens Server', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  it('connects through a server account as a server profile', async () => {
+    mockInvoke.mockImplementation((cmd) => {
+      switch (cmd) {
+        case 'load_connection_profiles':
+          return Promise.resolve([]);
+        case 'server_account_list':
+          return Promise.resolve([
+            { id: 'a1', name: 'Work', url: 'https://mqlens.example.com', tenant: 'acme', email: 'dev@example.com', allowInsecureHttp: false, signedIn: true },
+          ]);
+        case 'server_list_connections':
+          return Promise.resolve([{ id: 'c1', name: 'Orders', tags: [], deploymentKind: 'replica_set', opClasses: ['read'] }]);
+        case 'server_connect':
+          return Promise.resolve({ id: 'conn-9', mongoVersion: '8.0.0', opClasses: ['read'] });
+        default:
+          return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+      }
+    });
+    const onConnect = vi.fn();
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={onConnect} />);
+
+    expect(mockInvoke.mock.calls.some(([c]) => c === 'server_account_list')).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'MQLens Server' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Connect to Orders' }));
+
+    await waitFor(() =>
+      expect(onConnect).toHaveBeenCalledWith('conn-9', 'Orders', '', 'server:a1:c1', undefined, 'normal'),
+    );
+  });
+});

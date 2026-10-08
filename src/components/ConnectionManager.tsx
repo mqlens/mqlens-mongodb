@@ -12,6 +12,7 @@ import {
   type ImportParseErrorCode,
 } from '@/lib/connection';
 import { useDialogs } from './dialogs/DialogProvider';
+import { ServerAccountsPanel } from './ServerAccountsPanel';
 import { PasswordInput } from './PasswordInput';
 import { useEscapeClose } from '../lib/useEscapeClose';
 import { connectErrorText, describeConnectError, isOidcErrorKey } from '../lib/describeConnectError';
@@ -659,6 +660,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   activeConnections = [],
 }) => {
   const { confirm, prompt } = useDialogs();
+  // The MQLens Server accounts, shown in place of the profiles when on.
+  const [showServer, setShowServer] = useState(false);
   const { t } = useTranslation('connections');
   const [profiles, setProfiles] = useState<ConnectionProfile[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -1858,6 +1861,16 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
             <FolderPlus size={12} className="text-warning" />
             <span>{t('actions.newFolder')}</span>
           </Button>
+          <Button
+            variant={showServer ? 'secondary' : 'outline'}
+            size="sm"
+            className="h-8 gap-1.5 text-ui-xs"
+            aria-pressed={showServer}
+            onClick={() => setShowServer((v) => !v)}
+          >
+            <Server size={12} className="text-primary" />
+            <span>{t('serverAccounts.title')}</span>
+          </Button>
           {selectedId && (
             <>
               <div className="mx-1 h-4 w-px bg-border" />
@@ -1898,7 +1911,16 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
           </div>
         )}
 
-        {/* Content splits */}
+        {showServer ? (
+          <ScrollArea className="min-h-0 flex-1">
+            <div className="p-4">
+              <ServerAccountsPanel
+                onConnect={(id, name, profileId) => onConnect(id, name, '', profileId, undefined, 'normal')}
+              />
+            </div>
+          </ScrollArea>
+        ) : (
+        /* Content splits */
         <div className="flex min-h-0 flex-1">
           {/* Left profile explorer tree */}
           <aside className={cn(sidebarPanelClass, 'w-[min(280px,34%)]')}>
@@ -2116,6 +2138,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
             </div>
           </ScrollArea>
         </div>
+        )}
       </DraggableDialogContent>
     </Dialog>
 
