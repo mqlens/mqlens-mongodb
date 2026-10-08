@@ -129,6 +129,12 @@ pub(crate) struct FakeState {
     pub batch_delay: Duration,
     pub last_find: Option<FindRequest>,
     pub last_aggregate: Option<AggregateRequest>,
+    /// What Count answers, and the last request it got.
+    pub count_result: i64,
+    pub last_count: Option<CountRequest>,
+    /// The plan Explain answers, and the last request it got.
+    pub explain_plan: Document,
+    pub last_explain: Option<ExplainRequest>,
     pub data_calls: u32,
     /// Streams the client stopped reading before the end.
     pub streams_abandoned: u32,
@@ -336,6 +342,10 @@ impl Fake {
                 batch_delay: Duration::ZERO,
                 last_find: None,
                 last_aggregate: None,
+                count_result: 0,
+                last_count: None,
+                explain_plan: Document::new(),
+                last_explain: None,
                 data_calls: 0,
                 streams_abandoned: 0,
                 db_stats: DbStatsResponse {
@@ -814,16 +824,28 @@ impl DataService for Fake {
 
     async fn count(
         &self,
-        _request: Request<CountRequest>,
+        request: Request<CountRequest>,
     ) -> Result<Response<CountResponse>, Status> {
-        Err(Status::unimplemented("Count is not implemented"))
+        let mut state = self.state.lock().unwrap();
+        state.authorize_connection(&request, &request.get_ref().connection_id)?;
+        state.last_count = Some(request.get_ref().clone());
+        Ok(Response::new(CountResponse {
+            count: state.count_result,
+        }))
     }
 
     async fn explain(
         &self,
-        _request: Request<ExplainRequest>,
+        request: Request<ExplainRequest>,
     ) -> Result<Response<ExplainResponse>, Status> {
-        Err(Status::unimplemented("Explain is not implemented"))
+        let mut state = self.state.lock().unwrap();
+        state.authorize_connection(&request, &request.get_ref().connection_id)?;
+        state.last_explain = Some(request.get_ref().clone());
+        Ok(Response::new(ExplainResponse {
+            plan_json: mongodb::bson::Bson::Document(state.explain_plan.clone())
+                .into_canonical_extjson()
+                .to_string(),
+        }))
     }
 }
 

@@ -6,7 +6,9 @@ use crate::server::channel::client;
 use crate::server::ejson;
 use crate::server::ops::session_for;
 use crate::server::pb::mqlens::v1::data_service_client::DataServiceClient;
-use crate::server::pb::mqlens::v1::{AggregateRequest, FindBatch, FindRequest};
+use crate::server::pb::mqlens::v1::{
+    AggregateRequest, CountRequest, ExplainRequest, FindBatch, FindRequest,
+};
 use crate::server::remote::RemoteConn;
 use crate::server::routes;
 use crate::server::session::next_message;
@@ -92,6 +94,77 @@ pub(crate) async fn sample(
     run_pipeline(state, conn, database, collection, &stages, None).await
 }
 
+/// How many documents match `filter`, counted as local mode counts: the
+/// server estimates from metadata when there is no filter.
+pub(crate) async fn count(
+    state: &AppState,
+    conn: &RemoteConn,
+    database: &str,
+    collection: &str,
+    filter: &Document,
+) -> Result<u64, String> {
+    routes::require("count_documents", conn)?;
+    let request = CountRequest {
+        connection_id: conn.remote_id.clone(),
+        database: database.to_string(),
+        collection: collection.to_string(),
+        filter_json: ejson::doc_to_wire(filter),
+        estimate_if_unfiltered: true,
+    };
+    let response = session_for(state, conn)
+        .await?
+        .call(request, |channel, request| async move {
+            client!(DataServiceClient, channel).count(request).await
+        })
+        .await?;
+    u64::try_from(response.count).map_err(|_| "MQLens Server reported a negative count".to_string())
+}
+
+/// What a query is, for an explain.
+pub(crate) enum Explained<'a> {
+    Find(&'a Document),
+    Aggregate(&'a [Document]),
+}
+
+/// The query plan at the verbosity local mode explains at, printed as local
+/// mode prints it.
+pub(crate) async fn explain(
+    state: &AppState,
+    conn: &RemoteConn,
+    database: &str,
+    collection: &str,
+    query: Explained<'_>,
+) -> Result<String, String> {
+    let (command, kind, query_json) = match query {
+        Explained::Find(filter) => ("explain_mql_query", "find", ejson::doc_to_wire(filter)),
+        Explained::Aggregate(stages) => (
+            "explain_aggregate_query",
+            "aggregate",
+            Bson::Array(stages.iter().cloned().map(Bson::Document).collect())
+                .into_canonical_extjson()
+                .to_string(),
+        ),
+    };
+    routes::require(command, conn)?;
+    let request = ExplainRequest {
+        connection_id: conn.remote_id.clone(),
+        database: database.to_string(),
+        collection: collection.to_string(),
+        kind: kind.to_string(),
+        query_json,
+        verbosity: "executionStats".to_string(),
+    };
+    let response = session_for(state, conn)
+        .await?
+        .call(request, |channel, request| async move {
+            client!(DataServiceClient, channel).explain(request).await
+        })
+        .await?;
+    let plan = ejson::doc_from_wire(&response.plan_json)?;
+    let json = serde_json::to_value(&plan).map_err(|e| format!("BSON to JSON error: {e}"))?;
+    serde_json::to_string_pretty(&json).map_err(|e| format!("BSON to JSON error: {e}"))
+}
+
 async fn run_pipeline(
     state: &AppState,
     conn: &RemoteConn,
@@ -146,8 +219,8 @@ async fn collect(
 
 #[cfg(test)]
 mod tests {
-    use crate::db::aggregate::execute_aggregate_impl;
-    use crate::db::query::execute_mql_query_impl;
+    use crate::db::aggregate::{execute_aggregate_impl, explain_aggregate_query_impl};
+    use crate::db::query::{count_documents_impl, execute_mql_query_impl, explain_mql_query_impl};
     use crate::server::ejson;
     use crate::server::fake::Env;
     use crate::server::ops::connected;
@@ -395,5 +468,95 @@ mod tests {
 
         assert_eq!(found.len(), 3);
         assert_eq!(env.fake.with(|s| s.refreshes), 1);
+    }
+
+    // A count asks the server with the filter as local mode parses it, and for
+    // an estimate when there is no filter, as local mode estimates then.
+    #[tokio::test]
+    async fn counts_as_local_mode_counts() {
+        let env = Env::new().await;
+        env.fake.with(|s| s.count_result = 42);
+        let (state, id) = connected(&env).await;
+
+        let n = count_documents_impl(&state, &id, "orders", "customers", r#"{"n": 5}"#)
+            .await
+            .unwrap();
+
+        assert_eq!(n, 42);
+        let request = env.fake.with(|s| s.last_count.clone()).unwrap();
+        assert_eq!(
+            (request.database.as_str(), request.collection.as_str()),
+            ("orders", "customers")
+        );
+        assert_eq!(
+            ejson::doc_from_wire(&request.filter_json).unwrap(),
+            doc! { "n": 5_i64 }
+        );
+        assert!(request.estimate_if_unfiltered);
+    }
+
+    fn plan() -> Document {
+        doc! {
+            "queryPlanner": { "winningPlan": { "stage": "COLLSCAN" } },
+            "executionStats": { "nReturned": 3, "executionTimeMillis": 1_i64 },
+        }
+    }
+
+    /// What local mode prints for an explain: the plan as relaxed JSON, pretty.
+    fn as_local_mode_prints(plan: &Document) -> String {
+        serde_json::to_string_pretty(&serde_json::to_value(plan).unwrap()).unwrap()
+    }
+
+    // A find explain runs at the verbosity local mode uses, and its plan reads
+    // as local mode prints it, in the server's field order.
+    #[tokio::test]
+    async fn a_find_explain_reads_as_local_mode_prints_it() {
+        let env = Env::new().await;
+        env.fake.with(|s| s.explain_plan = plan());
+        let (state, id) = connected(&env).await;
+
+        let printed = explain_mql_query_impl(&state, &id, "orders", "customers", r#"{"n": 5}"#)
+            .await
+            .unwrap();
+
+        assert_eq!(printed, as_local_mode_prints(&plan()));
+        let request = env.fake.with(|s| s.last_explain.clone()).unwrap();
+        assert_eq!(request.kind, "find");
+        assert_eq!(request.verbosity, "executionStats");
+        assert_eq!(
+            ejson::doc_from_wire(&request.query_json).unwrap(),
+            doc! { "n": 5_i64 }
+        );
+    }
+
+    // An aggregate explain sends the whole pipeline.
+    #[tokio::test]
+    async fn an_aggregate_explain_sends_the_pipeline() {
+        let env = Env::new().await;
+        env.fake.with(|s| s.explain_plan = plan());
+        let (state, id) = connected(&env).await;
+
+        let printed = explain_aggregate_query_impl(
+            &state,
+            &id,
+            "orders",
+            "customers",
+            r#"[{"$match": {"n": 5}}, {"$count": "n"}]"#,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(printed, as_local_mode_prints(&plan()));
+        let request = env.fake.with(|s| s.last_explain.clone()).unwrap();
+        assert_eq!(request.kind, "aggregate");
+        assert_eq!(request.verbosity, "executionStats");
+        let sent: serde_json::Value = serde_json::from_str(&request.query_json).unwrap();
+        assert_eq!(
+            Bson::try_from(sent).unwrap(),
+            Bson::Array(vec![
+                Bson::Document(doc! { "$match": { "n": 5_i64 } }),
+                Bson::Document(doc! { "$count": "n" }),
+            ])
+        );
     }
 }

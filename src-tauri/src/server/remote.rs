@@ -291,8 +291,8 @@ mod tests {
             crate::require_real_client(&state, "r1"),
         );
         assert_not_available(
-            "count_documents",
-            crate::db::query::count_documents_impl(&state, "r1", "db", "c", "{}").await,
+            "drop_database",
+            crate::db::ddl::drop_database_impl(&state, "r1", "db", true).await,
         );
         assert_not_available(
             "resolve_conn_uri",

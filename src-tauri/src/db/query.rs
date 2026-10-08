@@ -216,7 +216,19 @@ async fn count_documents_impl_inner(
     let filter_doc = mongodb::bson::to_document(&filter_val)
         .map_err(|e| format!("BSON conversion error: {}", e))?;
 
-    let client = crate::require_real_client(state, id)?;
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            return crate::server::ops::query::count(
+                state,
+                &conn,
+                database,
+                collection,
+                &filter_doc,
+            )
+            .await
+        }
+    };
 
     let coll = client
         .database(database)
@@ -278,9 +290,6 @@ async fn explain_mql_query_impl_inner(
         return Ok(mock_db::get_mock_explain(database, collection, filter));
     }
 
-    let client = crate::require_real_client(state, id)?;
-
-    let db = client.database(database);
     let filter_val: serde_json::Value = if filter.trim().is_empty() {
         serde_json::Value::Object(serde_json::Map::new())
     } else {
@@ -289,6 +298,22 @@ async fn explain_mql_query_impl_inner(
 
     let filter_doc = mongodb::bson::to_document(&filter_val)
         .map_err(|e| format!("BSON conversion error: {}", e))?;
+
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            use crate::server::ops::query::{explain, Explained};
+            return explain(
+                state,
+                &conn,
+                database,
+                collection,
+                Explained::Find(&filter_doc),
+            )
+            .await;
+        }
+    };
+    let db = client.database(database);
 
     let command = mongodb::bson::doc! {
         "explain": {

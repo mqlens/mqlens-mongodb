@@ -209,7 +209,20 @@ async fn explain_aggregate_query_impl_inner(
         return Err("Aggregation explain is not supported on mock connections".to_string());
     }
 
-    let client = crate::require_real_client(state, id)?;
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            use crate::server::ops::query::{explain, Explained};
+            return explain(
+                state,
+                &conn,
+                database,
+                collection,
+                Explained::Aggregate(&stages),
+            )
+            .await;
+        }
+    };
 
     let db = client.database(database);
     let command = mongodb::bson::doc! {

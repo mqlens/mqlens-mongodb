@@ -122,7 +122,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
             procedures: &["/mqlens.v1.DataService/Count"],
             class: OpClass::Read,
             since: 2,
-            adapter: false,
+            adapter: true,
         },
     },
     CommandRoute {
@@ -131,7 +131,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
             procedures: &["/mqlens.v1.DataService/Explain"],
             class: OpClass::Read,
             since: 2,
-            adapter: false,
+            adapter: true,
         },
     },
     CommandRoute {
@@ -140,7 +140,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
             procedures: &["/mqlens.v1.DataService/Explain"],
             class: OpClass::Read,
             since: 2,
-            adapter: false,
+            adapter: true,
         },
     },
     CommandRoute {
