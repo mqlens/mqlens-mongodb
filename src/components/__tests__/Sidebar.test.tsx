@@ -2249,3 +2249,35 @@ describe('Sidebar: server connection badge', () => {
     expect(badges[0]).toHaveAttribute('title', 'Through the MQLens Server account Work');
   });
 });
+
+describe('Sidebar: inline tree buttons for blocked commands', () => {
+  it('disables the inline new-collection and GridFS bucket controls', async () => {
+    mockInvoke.mockImplementation((cmd, args) => {
+      if (cmd === 'list_databases' && args.id === 'conn-1') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections') return Promise.resolve([{ name: 'customers', type: 'collection' }]);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+    const blocked = new Set(['create_collection', 'list_gridfs_files']);
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Remote Orders', uri: '' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+        isCommandBlocked={(id, command) => id === 'conn-1' && blocked.has(command)}
+      />
+    );
+
+    fireEvent.click(await screen.findByText('sales_db'));
+    const newCollection = await screen.findByTestId('collections-new-conn-1-sales_db');
+    expect(newCollection).toBeDisabled();
+    expect(newCollection).toHaveAttribute('title', 'Not available on MQLens Server yet');
+    expect(screen.getByTestId('gridfs-new-bucket-conn-1-sales_db')).toBeDisabled();
+    fireEvent.click(screen.getByText('GridFS Buckets'));
+    expect(screen.queryByTestId('gridfs-open-bucket-conn-1-sales_db')).not.toBeInTheDocument();
+  });
+});

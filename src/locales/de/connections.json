@@ -294,6 +294,7 @@
     "connectTo": "Mit {{name}} verbinden",
     "deleteAccount": "{{name}} löschen",
     "deleteMessage": "Das Konto „{{name}}“ von diesem Computer entfernen und seine Sitzung beenden.",
+    "deleteNotConfirmed": "Gelöscht, aber der Server hat das Ende der Sitzung nicht bestätigt.",
     "deleteTitle": "Serverkonto löschen?",
     "editAccount": "{{name}} bearbeiten",
     "email": "E-Mail",

@@ -27,8 +27,9 @@ const REMOTES = [
   { id: 'c1', name: 'Orders', tags: ['prod'], deploymentKind: 'replica_set', opClasses: ['read', 'write'] },
 ];
 
-function backend(accounts: ServerAccountView[]) {
+function backend(accounts: ServerAccountView[], over: Record<string, unknown> = {}) {
   mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
+    if (cmd in over) return Promise.resolve(over[cmd]);
     switch (cmd) {
       case 'server_account_list':
         return Promise.resolve(accounts);
@@ -154,5 +155,36 @@ describe('ServerAccountsPanel', () => {
 
     await waitFor(() => expect(screen.queryByText('Work')).not.toBeInTheDocument());
     expect(calls('server_account_delete')[0][1]).toEqual({ id: 'a1' });
+  });
+
+  it('shows the warning a save returns', async () => {
+    backend([account()], {
+      server_account_save: { ...account(), warning: 'The previous server session could not be ended.' },
+    });
+    render(<ServerAccountsPanel onConnect={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit Work' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save account' }));
+
+    expect(await screen.findByText('The previous server session could not be ended.')).toBeInTheDocument();
+  });
+
+  it("warns when a deleted account's session could not be ended", async () => {
+    backend([account({ signedIn: true })], { server_account_delete: { deleted: true, sessionRevoked: false } });
+    render(<ServerAccountsPanel onConnect={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete Work' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
+
+    expect(
+      await screen.findByText('Deleted, but the server did not confirm the session ended.'),
+    ).toBeInTheDocument();
+  });
+
+  it('does not connect again to a server connection that is already open', async () => {
+    backend([account({ signedIn: true })]);
+    render(<ServerAccountsPanel onConnect={vi.fn()} activeProfileIds={['server:a1:c1']} />);
+
+    expect(await screen.findByRole('button', { name: 'Connect to Orders' })).toBeDisabled();
   });
 });

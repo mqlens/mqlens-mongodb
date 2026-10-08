@@ -25,12 +25,14 @@ import {
 interface Props {
   /** A server connection is open under `id`; remember it by `profileId`. */
   onConnect: (id: string, name: string, profileId: string) => void;
+  /** Profile ids already open; their server connections are not connected again. */
+  activeProfileIds?: readonly string[];
 }
 
 const EMPTY: ServerAccountInput = { name: '', url: '', tenant: '', email: '', allowInsecureHttp: false, extraCaPem: null };
 
 // MQLens Server accounts: add, sign in, and open one of a server's connections.
-export const ServerAccountsPanel: React.FC<Props> = ({ onConnect }) => {
+export const ServerAccountsPanel: React.FC<Props> = ({ onConnect, activeProfileIds = [] }) => {
   const { t } = useTranslation('connections');
   const { confirm } = useDialogs();
   const [accounts, setAccounts] = useState<ServerAccountView[]>([]);
@@ -73,7 +75,8 @@ export const ServerAccountsPanel: React.FC<Props> = ({ onConnect }) => {
   const save = () =>
     run(async () => {
       if (!form) return;
-      await saveServerAccount({ ...form, extraCaPem: form.extraCaPem?.trim() ? form.extraCaPem : null });
+      const view = await saveServerAccount({ ...form, extraCaPem: form.extraCaPem?.trim() ? form.extraCaPem : null });
+      setWarning(view.warning ?? null);
       setForm(null);
       await refresh();
     });
@@ -105,7 +108,8 @@ export const ServerAccountsPanel: React.FC<Props> = ({ onConnect }) => {
     });
     if (!ok) return;
     await run(async () => {
-      await deleteServerAccount(account.id);
+      const result = await deleteServerAccount(account.id);
+      setWarning(result.sessionRevoked === false ? t('serverAccounts.deleteNotConfirmed') : null);
       await refresh();
     });
   };
@@ -184,7 +188,9 @@ export const ServerAccountsPanel: React.FC<Props> = ({ onConnect }) => {
             )}
             {account.signedIn && (
               <ul className="mt-2 space-y-1">
-                {(remotes[account.id] ?? []).map((remote) => (
+                {(remotes[account.id] ?? []).map((remote) => {
+                  const open = activeProfileIds.includes(serverProfileId(account.id, remote.id));
+                  return (
                   <li key={remote.id} className="flex items-center justify-between gap-2 text-sm">
                     <span className="flex min-w-0 items-center gap-2">
                       <span className="truncate">{remote.name}</span>
@@ -194,14 +200,15 @@ export const ServerAccountsPanel: React.FC<Props> = ({ onConnect }) => {
                     </span>
                     <Button
                       size="sm"
-                      disabled={busy}
+                      disabled={busy || open}
                       aria-label={t('serverAccounts.connectTo', { name: remote.name })}
                       onClick={() => connect(account, remote)}
                     >
-                      {t('serverAccounts.connect')}
+                      {open ? t('actions.alreadyConnected') : t('serverAccounts.connect')}
                     </Button>
                   </li>
-                ))}
+                  );
+                })}
                 {remotes[account.id]?.length === 0 && (
                   <li className="text-xs text-muted-foreground">{t('serverAccounts.noConnections')}</li>
                 )}

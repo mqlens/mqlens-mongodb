@@ -2227,6 +2227,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                         e.stopPropagation();
                                         void handleAddCollection(conn.id, dbName);
                                       }}
+                                      {...gate(conn.id, 'create_collection')}
                                     >
                                       <Plus size={11} />
                                     </Button>
@@ -2313,6 +2314,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                         e.stopPropagation();
                                         void handleOpenGridfsBucket(conn.id, dbName);
                                       }}
+                                      {...gate(conn.id, 'list_gridfs_files')}
                                     >
                                       <Plus size={11} />
                                     </Button>
@@ -2331,14 +2333,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                           </span>
                                         </div>
                                       ))}
-                                      <div
-                                        className={cn(treeRowClass(), 'text-[10px] text-primary')}
-                                        data-testid={`gridfs-open-bucket-${conn.id}-${dbName}`}
-                                        onClick={() => void handleOpenGridfsBucket(conn.id, dbName)}
-                                      >
-                                        <Plus size={11} className="ml-3.5 shrink-0" />
-                                        <span>{t('tree.newBucketInline')}</span>
-                                      </div>
+                                      {!isCommandBlocked?.(conn.id, 'list_gridfs_files') && (
+                                        <div
+                                          className={cn(treeRowClass(), 'text-[10px] text-primary')}
+                                          data-testid={`gridfs-open-bucket-${conn.id}-${dbName}`}
+                                          onClick={() => void handleOpenGridfsBucket(conn.id, dbName)}
+                                        >
+                                          <Plus size={11} className="ml-3.5 shrink-0" />
+                                          <span>{t('tree.newBucketInline')}</span>
+                                        </div>
+                                      )}
                                     </div>
                                   )}
                                 </div>

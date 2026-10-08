@@ -292,6 +292,7 @@
     "connectTo": "连接到 {{name}}",
     "deleteAccount": "删除 {{name}}",
     "deleteMessage": "从这台电脑移除账户“{{name}}”并结束其会话。",
+    "deleteNotConfirmed": "已删除，但服务器未确认会话已结束。",
     "deleteTitle": "删除服务器账户？",
     "editAccount": "编辑 {{name}}",
     "email": "电子邮件",

@@ -231,6 +231,7 @@
     "connectTo": "Connect to {{name}}",
     "deleteAccount": "Delete {{name}}",
     "deleteMessage": "Remove the account \"{{name}}\" from this computer and end its session.",
+    "deleteNotConfirmed": "Deleted, but the server did not confirm the session ended.",
     "deleteTitle": "Delete server account?",
     "editAccount": "Edit {{name}}",
     "email": "Email",
