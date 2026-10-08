@@ -18,8 +18,24 @@ const view = (account: ServerAccountSeed) => ({
   signedIn: account.signedIn ?? false,
 });
 
-/** What an account signs in to: changing any of it ends its session, as in the backend. */
-const IDENTITY = ['url', 'tenant', 'email', 'allowInsecureHttp', 'extraCaPem'] as const;
+/** The form as the backend stores it: trimmed, the URL without a trailing slash and its scheme in lower case, an empty CA as none. */
+const normalize = (a: Pick<ServerAccountSeed, 'id' | 'name' | 'url' | 'tenant' | 'email' | 'allowInsecureHttp' | 'extraCaPem'>) => ({
+  id: a.id,
+  name: a.name.trim(),
+  url: a.url.trim().replace(/\/+$/, '').replace(/^[a-z]+:/i, (scheme) => scheme.toLowerCase()),
+  tenant: a.tenant.trim(),
+  email: a.email.trim(),
+  allowInsecureHttp: a.allowInsecureHttp ?? false,
+  extraCaPem: a.extraCaPem?.trim() || null,
+});
+
+/** Whether two accounts sign in to the same place as the same user, as ServerAccount::same_identity decides. */
+const sameIdentity = (a: ServerAccountSeed, b: ReturnType<typeof normalize>) =>
+  a.url === b.url &&
+  a.tenant === b.tenant &&
+  a.email.toLowerCase() === b.email.toLowerCase() &&
+  (a.allowInsecureHttp ?? false) === b.allowInsecureHttp &&
+  (a.extraCaPem ?? null) === b.extraCaPem;
 
 export function registerServerModeHandlers(backend: Backend, state: E2EState): void {
   let nextAccount = 1;
@@ -42,11 +58,9 @@ export function registerServerModeHandlers(backend: Backend, state: E2EState): v
     server_account_save: ({ account: input }) => {
       // Only what the backend's ServerAccountInput carries; the view's signedIn and warning are not input.
       const { id, name, url, tenant, email, allowInsecureHttp, extraCaPem } = input as ServerAccountSeed;
-      const fields = { id, name, url, tenant, email, allowInsecureHttp, extraCaPem };
+      const fields = normalize({ id, name, url, tenant, email, allowInsecureHttp, extraCaPem });
       const existing = fields.id ? account(fields.id) : undefined;
-      if (existing && IDENTITY.some((key) => (existing[key] ?? null) !== (fields[key] ?? null) && !(key === 'allowInsecureHttp' && !existing[key] && !fields[key]))) {
-        existing.signedIn = false;
-      }
+      if (existing && !sameIdentity(existing, fields)) existing.signedIn = false;
       const saved: ServerAccountSeed = existing
         ? Object.assign(existing, fields)
         : { ...fields, id: newId(), signedIn: false, connections: [] };
@@ -87,6 +101,8 @@ export function registerServerModeHandlers(backend: Backend, state: E2EState): v
       if (!remote) throw `This connection is not available to you on the MQLens Server account "${found.name}"`;
       const id = `conn-${state.nextConnectionId++}`;
       const opClasses = remote.opClasses ?? ['read'];
+      // The server reports no op classes for a connection the user cannot reach.
+      if (opClasses.length === 0) throw `This connection is not available to you on the MQLens Server account "${found.name}"`;
       state.connections[id] = {
         uri: remote.server,
         profileId: null,

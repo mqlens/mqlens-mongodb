@@ -115,6 +115,28 @@ test.describe('Editing an account', () => {
     await expect(button(page, 'Connect to Orders')).toHaveCount(0);
   });
 
+  test('keeps it signed in when only how it is written changes', async ({ app, page }) => {
+    await app.open({ servers, serverAccounts: [WORK({ signedIn: true })] });
+    await openServerAccounts(page);
+
+    await button(page, 'Edit Work').click();
+    await page.getByLabel('Email').fill('Dev@Example.com');
+    await page.getByLabel('Server URL').fill('https://mqlens.example.com/');
+    await button(page, 'Save account').click();
+
+    await expect(button(page, 'Sign out')).toBeVisible();
+  });
+
+  test('does not connect where the user may do nothing', async ({ app, page }) => {
+    await app.open({ servers, serverAccounts: [WORK({ signedIn: true, connections: [{ ...ORDERS, opClasses: [] }] })] });
+    await openServerAccounts(page);
+
+    await button(page, 'Connect to Orders').click();
+
+    await expect(page.getByRole('alert')).toContainText('not available to you');
+    expect((await app.calls('server_connect'))[0].error).toContain('not available to you');
+  });
+
   test('keeps a new account apart from one already stored', async ({ app, page }) => {
     await app.open({ servers, serverAccounts: [WORK({ id: 'acct-1', name: 'Lab' })] });
     await openServerAccounts(page);
