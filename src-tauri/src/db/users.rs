@@ -236,7 +236,13 @@ async fn create_user_inner(
     if connection_is_mock(state, id)? {
         return Ok(());
     }
-    let client = require_real_client(state, id)?;
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            use crate::server::ops::users;
+            return users::create_user(state, &conn, database, username, password, roles).await;
+        }
+    };
     client
         .database(database)
         .run_command(doc! {
@@ -299,7 +305,13 @@ async fn update_user_inner(
     if connection_is_mock(state, id)? {
         return Ok(());
     }
-    let client = require_real_client(state, id)?;
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            use crate::server::ops::users;
+            return users::update_user(state, &conn, database, username, password, roles).await;
+        }
+    };
     let mut cmd = doc! { "updateUser": username };
     if let Some(pwd) = password.filter(|p| !p.is_empty()) {
         cmd.insert("pwd", pwd);
@@ -353,7 +365,13 @@ async fn drop_user_inner(
     if connection_is_mock(state, id)? {
         return Ok(());
     }
-    let client = require_real_client(state, id)?;
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            use crate::server::ops::users;
+            return users::drop_user(state, &conn, database, username).await;
+        }
+    };
     client
         .database(database)
         .run_command(doc! { "dropUser": username })

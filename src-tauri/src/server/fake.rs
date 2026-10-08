@@ -1107,6 +1107,9 @@ pub(crate) enum FakeAdmin {
     KillOp(KillOpRequest),
     SetProfilingLevel(SetProfilingLevelRequest),
     ReadProfile(ReadProfileRequest),
+    CreateUser(CreateDeploymentUserRequest),
+    UpdateUser(UpdateDeploymentUserRequest),
+    DropUser(DropDeploymentUserRequest),
 }
 
 /// Only GetCollectionOptions; the DDL writes come with D5.
@@ -1241,23 +1244,38 @@ impl DeploymentUserService for Fake {
 
     async fn create_user(
         &self,
-        _request: Request<CreateDeploymentUserRequest>,
+        request: Request<CreateDeploymentUserRequest>,
     ) -> Result<Response<DeploymentUserAck>, Status> {
-        Err(Status::unimplemented("CreateUser is not implemented"))
+        let mut state = self.state.lock().unwrap();
+        state.authorize_connection(&request, &request.get_ref().connection_id)?;
+        state
+            .admin_calls
+            .push(FakeAdmin::CreateUser(request.into_inner()));
+        Ok(Response::new(DeploymentUserAck {}))
     }
 
     async fn update_user(
         &self,
-        _request: Request<UpdateDeploymentUserRequest>,
+        request: Request<UpdateDeploymentUserRequest>,
     ) -> Result<Response<DeploymentUserAck>, Status> {
-        Err(Status::unimplemented("UpdateUser is not implemented"))
+        let mut state = self.state.lock().unwrap();
+        state.authorize_connection(&request, &request.get_ref().connection_id)?;
+        state
+            .admin_calls
+            .push(FakeAdmin::UpdateUser(request.into_inner()));
+        Ok(Response::new(DeploymentUserAck {}))
     }
 
     async fn drop_user(
         &self,
-        _request: Request<DropDeploymentUserRequest>,
+        request: Request<DropDeploymentUserRequest>,
     ) -> Result<Response<DeploymentUserAck>, Status> {
-        Err(Status::unimplemented("DropUser is not implemented"))
+        let mut state = self.state.lock().unwrap();
+        state.authorize_connection(&request, &request.get_ref().connection_id)?;
+        state
+            .admin_calls
+            .push(FakeAdmin::DropUser(request.into_inner()));
+        Ok(Response::new(DeploymentUserAck {}))
     }
 }
 

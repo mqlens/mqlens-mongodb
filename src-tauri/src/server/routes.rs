@@ -470,7 +470,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
             procedures: &["/mqlens.v1.DeploymentUserService/CreateUser"],
             class: OpClass::Admin,
             since: 1,
-            adapter: false,
+            adapter: true,
         },
     },
     CommandRoute {
@@ -479,7 +479,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
             procedures: &["/mqlens.v1.DeploymentUserService/UpdateUser"],
             class: OpClass::Admin,
             since: 1,
-            adapter: false,
+            adapter: true,
         },
     },
     CommandRoute {
@@ -488,7 +488,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
             procedures: &["/mqlens.v1.DeploymentUserService/DropUser"],
             class: OpClass::Admin,
             since: 1,
-            adapter: false,
+            adapter: true,
         },
     },
     // The MongoDB shell
