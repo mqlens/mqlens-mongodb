@@ -174,6 +174,7 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
       name: conn.name,
       viaMcp: false,
       mode: conn.mode,
+      ...(conn.server ? { server: conn.server } : {}),
     }));
 
   // A human OIDC login (#430) that `test_connection_uri` or `connect_db` is waiting on, keyed
