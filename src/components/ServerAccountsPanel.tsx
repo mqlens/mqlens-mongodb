@@ -285,7 +285,6 @@ const AccountForm: React.FC<{
           id={`${id}-ca`}
           className="h-16 w-full rounded-md border bg-background p-2 font-mono text-xs"
           value={value.extraCaPem ?? ''}
-          placeholder="-----BEGIN CERTIFICATE-----"
           onChange={(e) => onChange({ ...value, extraCaPem: e.target.value })}
         />
       </div>

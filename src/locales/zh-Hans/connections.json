@@ -284,5 +284,29 @@
     "modeOff": "关闭（不加密，明文传输）",
     "modeSystem": "系统根 CA 证书",
     "validationWarning": "关闭证书校验会使连接面临中间人攻击风险。请仅在受信任的自签名测试服务器上启用。"
+  },
+  "serverAccounts": {
+    "add": "添加服务器账户",
+    "allowInsecureHttp": "允许明文 http://（不限于本机）",
+    "connect": "连接",
+    "connectTo": "连接到 {{name}}",
+    "deleteAccount": "删除 {{name}}",
+    "deleteMessage": "从这台电脑移除账户“{{name}}”并结束其会话。",
+    "deleteTitle": "删除服务器账户？",
+    "editAccount": "编辑 {{name}}",
+    "email": "电子邮件",
+    "empty": "还没有 MQLens Server 账户。",
+    "extraCa": "额外的 CA 证书（PEM，可选）",
+    "name": "名称",
+    "noConnections": "此服务器没有与你共享任何连接。",
+    "password": "密码",
+    "save": "保存账户",
+    "signIn": "登录",
+    "signInTo": "登录到 {{name}}",
+    "signOut": "退出登录",
+    "signOutNotConfirmed": "已在本机退出登录，但服务器未确认会话已结束。",
+    "tenant": "租户",
+    "title": "MQLens Server",
+    "url": "服务器 URL"
   }
 }

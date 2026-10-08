@@ -8,6 +8,8 @@
     "readOnlyAriaLabel": "Schreibgeschützte Verbindung",
     "readOnlyBadge": "schreibgeschützt",
     "refreshAriaLabel": "Datenbanken aktualisieren",
+    "serverBadge": "Server",
+    "serverBadgeTitle": "Über das MQLens-Server-Konto {{account}}",
     "viaMcpAriaLabel": "Verbunden über MCP",
     "viaMcpBadge": "über MCP"
   },
@@ -38,6 +40,7 @@
     "newBucket": "Neuer Bucket",
     "newCollection": "Neue Collection",
     "newConnection": "Neue Verbindung",
+    "notOnServer": "Auf MQLens Server noch nicht verfügbar",
     "open": "Öffnen",
     "openCollection": "Collection öffnen",
     "openInNewTab": "In neuem Tab öffnen",

@@ -36,6 +36,7 @@ const ALLOWED_IDENTICAL_VALUES = new Set([
   // Product / brand names
   'common:appName', // MQLens
   'settings:tools.dbToolsTitle', // MongoDB Database Tools
+  'connections:serverAccounts.title', // MQLens Server
   // Established German loanwords (identical spelling in both languages)
   'common:ok', // OK — universal loanword, never translated in German software UI
   'settings:appearance.system', // System
@@ -45,6 +46,8 @@ const ALLOWED_IDENTICAL_VALUES = new Set([
   'sidebar:footer.themeLabel', // Theme
   'settings:mcp.port', // Port
   'settings:ai.providerName', // Name — identical in German
+  'connections:serverAccounts.name', // Name — identical in German
+  'sidebar:connection.serverBadge', // Server
   'settings:updates.resultValues.offline', // Offline — established loanword, matches shell:updatePrompt.toast.offline's "offline" usage
   'settings:tools.tabLabel', // Tools
   'shell:watch.status.running', // live — the loanword German uses for a running stream too

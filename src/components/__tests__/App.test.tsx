@@ -2832,7 +2832,7 @@ describe('App Component', () => {
 
     it('(b-server) reconnecting a server profile connects through its MQLens Server account', async () => {
       const serverSnapshot = JSON.parse(
-        JSON.stringify(workspaceSnapshot).replaceAll('profile:p1', 'profile:server:a1:c1').replaceAll('"p1"', '"server:a1:c1"'),
+        JSON.stringify(workspaceSnapshot).split('profile:p1').join('profile:server:a1:c1').split('"p1"').join('"server:a1:c1"'),
       );
       const calls: any[] = [];
       mockInvoke.mockImplementation((cmd: string, args: any) => {
@@ -2859,7 +2859,7 @@ describe('App Component', () => {
 
     it('(b-server-signin) a server profile that needs a sign-in offers one, in the connection manager', async () => {
       const serverSnapshot = JSON.parse(
-        JSON.stringify(workspaceSnapshot).replaceAll('profile:p1', 'profile:server:a1:c1').replaceAll('"p1"', '"server:a1:c1"'),
+        JSON.stringify(workspaceSnapshot).split('profile:p1').join('profile:server:a1:c1').split('"p1"').join('"server:a1:c1"'),
       );
       mockInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'workspace_get') return Promise.resolve(serverSnapshot);

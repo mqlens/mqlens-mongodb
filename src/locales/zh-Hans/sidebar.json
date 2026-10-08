@@ -8,6 +8,8 @@
     "readOnlyAriaLabel": "只读连接",
     "readOnlyBadge": "只读",
     "refreshAriaLabel": "刷新数据库",
+    "serverBadge": "服务器",
+    "serverBadgeTitle": "通过 MQLens Server 账户 {{account}}",
     "viaMcpAriaLabel": "通过 MCP 连接",
     "viaMcpBadge": "通过 MCP"
   },
@@ -38,6 +40,7 @@
     "newBucket": "新建 Bucket",
     "newCollection": "新建 Collection",
     "newConnection": "新建连接",
+    "notOnServer": "MQLens Server 暂不支持",
     "open": "打开",
     "openCollection": "打开 Collection",
     "openInNewTab": "在新标签页中打开",

@@ -286,5 +286,29 @@
     "modeOff": "Aus (unsicherer Klartext)",
     "modeSystem": "Root-CA-Zertifikate des Systems",
     "validationWarning": "Das Deaktivieren der Zertifikatsvalidierung setzt die Verbindung Man-in-the-Middle-Angriffen aus. Nur für vertrauenswürdige/selbstsignierte Testserver aktivieren."
+  },
+  "serverAccounts": {
+    "add": "Serverkonto hinzufügen",
+    "allowInsecureHttp": "Unverschlüsseltes http:// erlauben (nicht nur auf diesem Computer)",
+    "connect": "Verbinden",
+    "connectTo": "Mit {{name}} verbinden",
+    "deleteAccount": "{{name}} löschen",
+    "deleteMessage": "Das Konto „{{name}}“ von diesem Computer entfernen und seine Sitzung beenden.",
+    "deleteTitle": "Serverkonto löschen?",
+    "editAccount": "{{name}} bearbeiten",
+    "email": "E-Mail",
+    "empty": "Noch keine MQLens-Server-Konten.",
+    "extraCa": "Zusätzliches CA-Zertifikat (PEM, optional)",
+    "name": "Name",
+    "noConnections": "Dieser Server teilt keine Verbindungen mit dir.",
+    "password": "Passwort",
+    "save": "Konto speichern",
+    "signIn": "Anmelden",
+    "signInTo": "Bei {{name}} anmelden",
+    "signOut": "Abmelden",
+    "signOutNotConfirmed": "Hier abgemeldet, aber der Server hat das Ende der Sitzung nicht bestätigt.",
+    "tenant": "Mandant",
+    "title": "MQLens Server",
+    "url": "Server-URL"
   }
 }
