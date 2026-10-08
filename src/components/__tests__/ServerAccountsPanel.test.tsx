@@ -187,4 +187,31 @@ describe('ServerAccountsPanel', () => {
 
     expect(await screen.findByRole('button', { name: 'Connect to Orders' })).toBeDisabled();
   });
+
+  it('does not delete an account while its connections are open', async () => {
+    backend([account({ signedIn: true })]);
+    render(<ServerAccountsPanel onConnect={vi.fn()} activeProfileIds={['server:a1:c1']} />);
+
+    const del = await screen.findByRole('button', { name: 'Delete Work' });
+    expect(del).toBeDisabled();
+    expect(del).toHaveAttribute('title', "Disconnect this account's connections first.");
+  });
+
+  it('keeps the server identity fixed while its connections are open, but not the name', async () => {
+    backend([account({ signedIn: true })]);
+    render(<ServerAccountsPanel onConnect={vi.fn()} activeProfileIds={['server:a1:c1']} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit Work' }));
+    for (const label of ['Server URL', 'Tenant', 'Email']) expect(screen.getByLabelText(label)).toBeDisabled();
+    expect(screen.getByLabelText('Name')).toBeEnabled();
+    expect(screen.getByText("Disconnect this account's connections to change its server, tenant or email.")).toBeInTheDocument();
+  });
+
+  it('leaves another account alone', async () => {
+    backend([account({ signedIn: true })]);
+    render(<ServerAccountsPanel onConnect={vi.fn()} activeProfileIds={['server:a2:c1']} />);
+
+    expect(await screen.findByRole('button', { name: 'Delete Work' })).toBeEnabled();
+  });
 });
+

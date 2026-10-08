@@ -114,6 +114,10 @@ export const ServerAccountsPanel: React.FC<Props> = ({ onConnect, activeProfileI
     });
   };
 
+  // An account with connections open keeps its identity: its connections are
+  // bound to it, and would otherwise be left open but unusable.
+  const hasOpen = (accountId: string) => activeProfileIds.some((p) => p.startsWith(serverProfileId(accountId, '')));
+
   const connect = (account: ServerAccountView, remote: RemoteConnectionView) =>
     run(async () => {
       const result = await connectToServer(account.id, remote.id);
@@ -132,7 +136,16 @@ export const ServerAccountsPanel: React.FC<Props> = ({ onConnect, activeProfileI
       </div>
       {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
       {warning && <p className="text-xs text-amber-600">{warning}</p>}
-      {form && <AccountForm value={form} busy={busy} onChange={setForm} onSave={save} onCancel={() => setForm(null)} />}
+      {form && (
+        <AccountForm
+          value={form}
+          busy={busy}
+          identityLocked={!!form.id && hasOpen(form.id)}
+          onChange={setForm}
+          onSave={save}
+          onCancel={() => setForm(null)}
+        />
+      )}
       {accounts.length === 0 && !form && (
         <p className="text-xs text-muted-foreground">{t('serverAccounts.empty')}</p>
       )}
@@ -168,7 +181,8 @@ export const ServerAccountsPanel: React.FC<Props> = ({ onConnect, activeProfileI
                 <Button
                   size="icon"
                   variant="ghost"
-                  disabled={busy}
+                  disabled={busy || hasOpen(account.id)}
+                  title={hasOpen(account.id) ? t('serverAccounts.deleteWhileOpen') : undefined}
                   aria-label={t('serverAccounts.deleteAccount', { name: account.name })}
                   onClick={() => remove(account)}
                 >
@@ -251,10 +265,12 @@ const SignInRow: React.FC<{
 const AccountForm: React.FC<{
   value: ServerAccountInput;
   busy: boolean;
+  /** The account has connections open: only its name may change. */
+  identityLocked: boolean;
   onChange: (v: ServerAccountInput) => void;
   onSave: () => void;
   onCancel: () => void;
-}> = ({ value, busy, onChange, onSave, onCancel }) => {
+}> = ({ value, busy, identityLocked, onChange, onSave, onCancel }) => {
   const { t } = useTranslation('connections');
   const id = useId();
   const field = (key: 'name' | 'url' | 'tenant' | 'email', label: string, placeholder?: string) => (
@@ -264,6 +280,7 @@ const AccountForm: React.FC<{
         id={`${id}-${key}`}
         value={value[key]}
         placeholder={placeholder}
+        disabled={identityLocked && key !== 'name'}
         onChange={(e) => onChange({ ...value, [key]: e.target.value })}
       />
     </div>
@@ -278,9 +295,11 @@ const AccountForm: React.FC<{
       {field('url', t('serverAccounts.url'), 'https://mqlens.example.com')}
       {field('tenant', t('serverAccounts.tenant'))}
       {field('email', t('serverAccounts.email'))}
+      {identityLocked && <p className="text-xs text-muted-foreground">{t('serverAccounts.identityLocked')}</p>}
       <div className="flex items-center gap-2">
         <Switch
           id={`${id}-http`}
+          disabled={identityLocked}
           checked={value.allowInsecureHttp}
           onCheckedChange={(checked) => onChange({ ...value, allowInsecureHttp: checked })}
         />
@@ -291,6 +310,7 @@ const AccountForm: React.FC<{
         <textarea
           id={`${id}-ca`}
           className="h-16 w-full rounded-md border bg-background p-2 font-mono text-xs"
+          disabled={identityLocked}
           value={value.extraCaPem ?? ''}
           onChange={(e) => onChange({ ...value, extraCaPem: e.target.value })}
         />
