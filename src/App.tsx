@@ -348,6 +348,7 @@ const buildTabQuerySpec = (tab: QueryTab): QueryCodeSpec | null => {
 /** The command a tab type cannot work without; on a connection that cannot run it, the tab is not mounted. */
 const TAB_COMMANDS: Partial<Record<string, string>> = {
   schema: 'analyze_schema',
+  'create-view': 'create_view',
   gridfs: 'list_gridfs_files',
   validation: 'set_validator',
   users: 'list_users',

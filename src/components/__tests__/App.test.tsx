@@ -126,7 +126,7 @@ vi.mock('@tauri-apps/plugin-fs', () => ({
 
 // Mock Sidebar component
 vi.mock('../Sidebar', () => ({
-  Sidebar: ({ onSelectCollection, onSelectIndex, onCreateIndex, onDeleteIndex, onOpenSettings, onOpenDump, onOpenRestore, onEditValidation, onOpenGenerate, onDatabaseRenamed, onDatabaseDropped, onWatchCollection, activeConnections, onConnectProfile, isCommandBlocked, onOpenShell, onOpenUsers, onAnalyzeSchema, onOpenGridfs }: any) => (
+  Sidebar: ({ onSelectCollection, onSelectIndex, onCreateIndex, onDeleteIndex, onOpenSettings, onOpenDump, onOpenRestore, onEditValidation, onOpenGenerate, onDatabaseRenamed, onDatabaseDropped, onWatchCollection, activeConnections, onConnectProfile, isCommandBlocked, onOpenShell, onOpenUsers, onAnalyzeSchema, onOpenGridfs, onCreateView }: any) => (
     <div data-testid="mock-sidebar">
       {(activeConnections ?? []).map((c: any) => (
         <button key={c.id} data-testid={`mock-open-shell-${c.id}`} onClick={() => onOpenShell?.(c.id, 'sales_db')} />
@@ -138,6 +138,7 @@ vi.mock('../Sidebar', () => ({
         <span key={c.id}>
           <button data-testid={`mock-open-schema-${c.id}`} onClick={() => onAnalyzeSchema?.(c.id, 'sales_db', 'customers')} />
           <button data-testid={`mock-open-gridfs-${c.id}`} onClick={() => onOpenGridfs?.(c.id, 'sales_db', 'fs')} />
+          <button data-testid={`mock-open-create-view-${c.id}`} onClick={() => onCreateView?.(c.id, 'sales_db')} />
         </span>
       ))}
       {(activeConnections ?? []).map((c: any) =>
@@ -484,7 +485,7 @@ describe('App Component', () => {
   it('shows a tab whose command is blocked as unavailable instead of running it', async () => {
     const server = {
       accountId: 'a1', accountName: 'Work', serverUrl: 'https://s', remoteId: 'c1', opClasses: ['read'],
-      blockedCommands: ['analyze_schema', 'list_gridfs_files'],
+      blockedCommands: ['analyze_schema', 'list_gridfs_files', 'create_view'],
     };
     mockInvoke.mockImplementation((cmd) => {
       if (cmd === 'connection_list') return Promise.resolve([{ id: 'conn-1', profileId: 'server:a1:c1', name: 'Orders', viaMcp: false, server }]);
@@ -496,6 +497,8 @@ describe('App Component', () => {
     fireEvent.click(await screen.findByTestId('mock-open-schema-conn-1'));
     expect(await screen.findByText('Not available on MQLens Server yet.')).toBeInTheDocument();
     fireEvent.click(screen.getByTestId('mock-open-gridfs-conn-1'));
+    fireEvent.click(screen.getByTestId('mock-open-create-view-conn-1'));
+    expect(screen.queryByTestId('create-view')).not.toBeInTheDocument();
     await new Promise((r) => setTimeout(r, 50));
 
     expect(mockInvoke).not.toHaveBeenCalledWith('analyze_schema', expect.anything());
