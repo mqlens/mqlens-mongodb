@@ -141,6 +141,8 @@ pub(crate) struct FakeState {
     pub writes: Vec<FakeWrite>,
     /// What the document writes answer.
     pub write_result: WriteResult,
+    /// What RenameDatabaseDetailed reports.
+    pub rename_result: RenameDatabaseResult,
     /// The id InsertDocument reports.
     pub inserted_id: mongodb::bson::Bson,
     /// The plan Explain answers, and the last request it got.
@@ -360,6 +362,10 @@ impl Fake {
                     modified_count: 1,
                     deleted_count: 1,
                     upserted_id_json: String::new(),
+                },
+                rename_result: RenameDatabaseResult {
+                    collections: 2,
+                    documents: 40,
                 },
                 inserted_id: mongodb::bson::Bson::ObjectId(
                     mongodb::bson::oid::ObjectId::parse_str("64b7f0c2a1b2c3d4e5f60718").unwrap(),
@@ -800,6 +806,13 @@ pub(crate) enum FakeWrite {
     DeleteMany(DeleteManyRequest),
     CreateIndex(CreateIndexRequest),
     DropIndex(DropIndexRequest),
+    CreateCollection(CreateCollectionRequest),
+    DropCollection(DropCollectionRequest),
+    RenameCollection(RenameCollectionRequest),
+    CreateView(CreateViewRequest),
+    DropDatabase(DropDatabaseRequest),
+    RenameDatabase(RenameDatabaseDetailedRequest),
+    SetValidator(SetValidatorRequest),
 }
 
 impl Fake {
@@ -1061,37 +1074,62 @@ impl MonitoringService for Fake {
 impl DdlService for Fake {
     async fn create_collection(
         &self,
-        _request: Request<CreateCollectionRequest>,
+        request: Request<CreateCollectionRequest>,
     ) -> Result<Response<DdlAck>, Status> {
-        Err(Status::unimplemented("CreateCollection is not implemented"))
+        let mut state = self.state.lock().unwrap();
+        state.authorize_connection(&request, &request.get_ref().connection_id)?;
+        state
+            .writes
+            .push(FakeWrite::CreateCollection(request.into_inner()));
+        Ok(Response::new(DdlAck {}))
     }
 
     async fn drop_collection(
         &self,
-        _request: Request<DropCollectionRequest>,
+        request: Request<DropCollectionRequest>,
     ) -> Result<Response<DdlAck>, Status> {
-        Err(Status::unimplemented("DropCollection is not implemented"))
+        let mut state = self.state.lock().unwrap();
+        state.authorize_connection(&request, &request.get_ref().connection_id)?;
+        state
+            .writes
+            .push(FakeWrite::DropCollection(request.into_inner()));
+        Ok(Response::new(DdlAck {}))
     }
 
     async fn rename_collection(
         &self,
-        _request: Request<RenameCollectionRequest>,
+        request: Request<RenameCollectionRequest>,
     ) -> Result<Response<DdlAck>, Status> {
-        Err(Status::unimplemented("RenameCollection is not implemented"))
+        let mut state = self.state.lock().unwrap();
+        state.authorize_connection(&request, &request.get_ref().connection_id)?;
+        state
+            .writes
+            .push(FakeWrite::RenameCollection(request.into_inner()));
+        Ok(Response::new(DdlAck {}))
     }
 
     async fn create_view(
         &self,
-        _request: Request<CreateViewRequest>,
+        request: Request<CreateViewRequest>,
     ) -> Result<Response<DdlAck>, Status> {
-        Err(Status::unimplemented("CreateView is not implemented"))
+        let mut state = self.state.lock().unwrap();
+        state.authorize_connection(&request, &request.get_ref().connection_id)?;
+        state
+            .writes
+            .push(FakeWrite::CreateView(request.into_inner()));
+        Ok(Response::new(DdlAck {}))
     }
 
     async fn drop_database(
         &self,
-        _request: Request<DropDatabaseRequest>,
+        request: Request<DropDatabaseRequest>,
     ) -> Result<Response<DdlAck>, Status> {
-        Err(Status::unimplemented("DropDatabase is not implemented"))
+        let mut state = self.state.lock().unwrap();
+        state.authorize_connection(&request, &request.get_ref().connection_id)?;
+        state
+            .writes
+            .push(FakeWrite::DropDatabase(request.into_inner()));
+        Ok(Response::new(DdlAck {}))
     }
 
     async fn rename_database(
@@ -1103,11 +1141,14 @@ impl DdlService for Fake {
 
     async fn rename_database_detailed(
         &self,
-        _request: Request<RenameDatabaseDetailedRequest>,
+        request: Request<RenameDatabaseDetailedRequest>,
     ) -> Result<Response<RenameDatabaseResult>, Status> {
-        Err(Status::unimplemented(
-            "RenameDatabaseDetailed is not implemented",
-        ))
+        let mut state = self.state.lock().unwrap();
+        state.authorize_connection(&request, &request.get_ref().connection_id)?;
+        state
+            .writes
+            .push(FakeWrite::RenameDatabase(request.into_inner()));
+        Ok(Response::new(state.rename_result.clone()))
     }
 
     async fn get_collection_options(
@@ -1121,9 +1162,14 @@ impl DdlService for Fake {
 
     async fn set_validator(
         &self,
-        _request: Request<SetValidatorRequest>,
+        request: Request<SetValidatorRequest>,
     ) -> Result<Response<DdlAck>, Status> {
-        Err(Status::unimplemented("SetValidator is not implemented"))
+        let mut state = self.state.lock().unwrap();
+        state.authorize_connection(&request, &request.get_ref().connection_id)?;
+        state
+            .writes
+            .push(FakeWrite::SetValidator(request.into_inner()));
+        Ok(Response::new(DdlAck {}))
     }
 }
 

@@ -259,7 +259,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
             procedures: &["/mqlens.v1.DdlService/CreateCollection"],
             class: OpClass::Ddl,
             since: 1,
-            adapter: false,
+            adapter: true,
         },
     },
     CommandRoute {
@@ -268,7 +268,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
             procedures: &["/mqlens.v1.DdlService/CreateView"],
             class: OpClass::Ddl,
             since: 1,
-            adapter: false,
+            adapter: true,
         },
     },
     CommandRoute {
@@ -277,7 +277,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
             procedures: &["/mqlens.v1.DdlService/DropCollection"],
             class: OpClass::Ddl,
             since: 1,
-            adapter: false,
+            adapter: true,
         },
     },
     CommandRoute {
@@ -286,7 +286,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
             procedures: &["/mqlens.v1.DdlService/RenameCollection"],
             class: OpClass::Ddl,
             since: 1,
-            adapter: false,
+            adapter: true,
         },
     },
     CommandRoute {
@@ -295,7 +295,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
             procedures: &["/mqlens.v1.DdlService/SetValidator"],
             class: OpClass::Ddl,
             since: 1,
-            adapter: false,
+            adapter: true,
         },
     },
     CommandRoute {
@@ -304,16 +304,16 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
             procedures: &["/mqlens.v1.DdlService/DropDatabase"],
             class: OpClass::Ddl,
             since: 1,
-            adapter: false,
+            adapter: true,
         },
     },
     CommandRoute {
         command: "rename_database",
         serve: Serve::Rpc {
-            procedures: &["/mqlens.v1.DdlService/RenameDatabase"],
+            procedures: &["/mqlens.v1.DdlService/RenameDatabaseDetailed"],
             class: OpClass::Ddl,
             since: 2,
-            adapter: false,
+            adapter: true,
         },
     },
     // Statistics

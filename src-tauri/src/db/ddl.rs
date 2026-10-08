@@ -55,7 +55,13 @@ async fn create_collection_inner(
     if connection_is_mock(state, id)? {
         return Ok(());
     }
-    let client = require_real_client(state, id)?;
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            use crate::server::ops::ddl;
+            return ddl::create_collection(state, &conn, database, collection).await;
+        }
+    };
     client
         .database(database)
         .create_collection(collection)
@@ -125,7 +131,21 @@ async fn create_view_inner(
     if connection_is_mock(state, id)? {
         return Ok(());
     }
-    let client = require_real_client(state, id)?;
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            use crate::server::ops::ddl;
+            return ddl::create_view(
+                state,
+                &conn,
+                database,
+                view_name,
+                source_collection,
+                &stages,
+            )
+            .await;
+        }
+    };
     client
         .database(database)
         .create_collection(view_name)
@@ -176,7 +196,13 @@ async fn drop_collection_inner(
     if connection_is_mock(state, id)? {
         return Ok(());
     }
-    let client = require_real_client(state, id)?;
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            use crate::server::ops::ddl;
+            return ddl::drop_collection(state, &conn, database, collection).await;
+        }
+    };
     client
         .database(database)
         .collection::<mongodb::bson::Document>(collection)
@@ -232,7 +258,13 @@ async fn rename_collection_inner(
     if connection_is_mock(state, id)? {
         return Ok(());
     }
-    let client = require_real_client(state, id)?;
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            use crate::server::ops::ddl;
+            return ddl::rename_collection(state, &conn, database, from, to).await;
+        }
+    };
     client
         .database("admin")
         .run_command(mongodb::bson::doc! {
@@ -374,11 +406,24 @@ async fn set_validator_inner(
     } else {
         Some(validation_action)
     };
-    let command = build_collmod_command(collection, validator_doc, level, action)?;
+    // The server takes the rules as they are; built here first so anything
+    // local mode refuses is refused before a request.
+    let command = build_collmod_command(collection, validator_doc.clone(), level, action)?;
     if connection_is_mock(state, id)? {
         return Ok(());
     }
-    let client = require_real_client(state, id)?;
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            use crate::server::ops::ddl;
+            let validation = ddl::Validation {
+                validator: &validator_doc,
+                level: validation_level,
+                action: validation_action,
+            };
+            return ddl::set_validator(state, &conn, database, collection, validation).await;
+        }
+    };
     client
         .database(database)
         .run_command(command)
@@ -426,7 +471,13 @@ async fn drop_database_inner(
     if connection_is_mock(state, id)? {
         return Ok(());
     }
-    let client = require_real_client(state, id)?;
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            use crate::server::ops::ddl;
+            return ddl::drop_database(state, &conn, database).await;
+        }
+    };
     client
         .database(database)
         .drop()
@@ -493,7 +544,13 @@ async fn rename_database_inner(
         });
     }
 
-    let client = require_real_client(state, id)?;
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            use crate::server::ops::ddl;
+            return ddl::rename_database(state, &conn, from, to, drop_source).await;
+        }
+    };
     let db_names = client
         .list_database_names()
         .await

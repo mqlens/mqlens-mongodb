@@ -291,8 +291,8 @@ mod tests {
             crate::require_real_client(&state, "r1"),
         );
         assert_not_available(
-            "drop_database",
-            crate::db::ddl::drop_database_impl(&state, "r1", "db", true).await,
+            "delete_gridfs_file",
+            crate::db::gridfs::delete_gridfs_file_impl(&state, "r1", "db", "fs", "{}").await,
         );
         assert_not_available(
             "resolve_conn_uri",
