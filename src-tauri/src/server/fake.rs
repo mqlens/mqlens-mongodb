@@ -196,6 +196,12 @@ impl FakeState {
             return Err(Status::failed_precondition("API version not served"));
         }
         self.api_versions_seen.borrow_mut().push(version);
+        self.authenticate_any_version(request)
+    }
+
+    /// For the calls a client makes before it has agreed a version, which the
+    /// server answers whatever version they name.
+    fn authenticate_any_version<T>(&self, request: &Request<T>) -> Result<(), Status> {
         let token =
             bearer(request).ok_or_else(|| Status::unauthenticated("missing bearer token"))?;
         match self.access.get(token) {
@@ -582,7 +588,7 @@ impl AuthService for Fake {
         let delay = self.with(|s| s.logout_delay);
         tokio::time::sleep(delay).await;
         let mut state = self.state.lock().unwrap();
-        state.authenticate(&request)?;
+        state.authenticate_any_version(&request)?;
         if !state.logout_failures.is_empty() {
             let code = state.logout_failures.remove(0);
             return Err(Status::new(code, "injected failure"));
@@ -621,7 +627,7 @@ impl ConnectionService for Fake {
         let delay = self.with(|s| s.list_delay);
         tokio::time::sleep(delay).await;
         let mut state = self.state.lock().unwrap();
-        state.authenticate(&request)?;
+        state.authenticate_any_version(&request)?;
         state.list_calls += 1;
         Ok(Response::new(ListConnectionsResponse {
             connections: state.connections.clone(),
@@ -643,7 +649,7 @@ impl CapabilityService for Fake {
         request: Request<GetCapabilitiesRequest>,
     ) -> Result<Response<GetCapabilitiesResponse>, Status> {
         let state = self.state.lock().unwrap();
-        state.authenticate(&request)?;
+        state.authenticate_any_version(&request)?;
         // Empty op classes for an id the caller cannot reach, existing or not.
         let connections = request
             .get_ref()

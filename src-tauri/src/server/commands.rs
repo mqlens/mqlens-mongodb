@@ -784,6 +784,29 @@ mod tests {
         );
     }
 
+    // A client asks which versions a server serves before it speaks any, so a
+    // server that no longer serves version 1 is still negotiated with, and one
+    // that has moved past this app says so.
+    #[tokio::test]
+    async fn the_versions_are_discovered_before_any_is_spoken() {
+        let env = Env::new().await;
+        let state = signed_in_state(&env).await;
+        env.fake.with(|s| s.min_api_version = 2);
+        let connected = server_connect_impl(&state, &env.path, &env.account.id, "c1")
+            .await
+            .unwrap();
+        assert!(crate::server::remote::route(&state, &connected.id).is_ok());
+
+        env.fake.with(|s| {
+            s.min_api_version = 3;
+            s.max_api_version = 3;
+        });
+        let err = server_connect_impl(&state, &env.path, &env.account.id, "c1")
+            .await
+            .unwrap_err();
+        assert!(err.contains("Update this app"), "{err}");
+    }
+
     // Once connected, every request speaks the agreed version, the ping
     // included, as the server checks it on each one.
     #[tokio::test]
