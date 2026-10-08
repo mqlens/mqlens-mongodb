@@ -461,6 +461,26 @@ describe('App Component', () => {
     expect(mockInvoke).not.toHaveBeenCalledWith('list_users', expect.anything());
   });
 
+  it('does not offer aggregation on a server connection that cannot run it', async () => {
+    const server = {
+      accountId: 'a1', accountName: 'Work', serverUrl: 'https://s', remoteId: 'c1', opClasses: ['read'],
+      blockedCommands: ['execute_aggregate'],
+    };
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'connection_list') return Promise.resolve([{ id: 'conn-1', profileId: 'server:a1:c1', name: 'Orders', viaMcp: false, server }]);
+      if (cmd === 'execute_mql_query') return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('sidebar-conn-conn-1');
+    fireEvent.click(screen.getByTestId('select-collection-btn'));
+    expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+
+    expect(screen.getByTestId('mode-aggregate-tab')).toBeDisabled();
+  });
+
   it('shows a tab whose command is blocked as unavailable instead of running it', async () => {
     const server = {
       accountId: 'a1', accountName: 'Work', serverUrl: 'https://s', remoteId: 'c1', opClasses: ['read'],

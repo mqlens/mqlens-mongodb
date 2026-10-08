@@ -4662,7 +4662,8 @@ function Workspace() {
               aiChatId={tabChatCache.current.get(tab.id)?.chatId}
               onAIChatIdChange={(chatId) => handleAIChatIdChange(tab.id, chatId)}
               onExecute={q => handleExecuteQuery(tab, q)}
-              onExecuteAggregate={pipeline => handleExecuteAggregate(tab, pipeline)}
+              onExecuteAggregate={isCommandBlocked(tab.connectionId, 'execute_aggregate') ? undefined : pipeline => handleExecuteAggregate(tab, pipeline)}
+              aggregateBlocked={isCommandBlocked(tab.connectionId, 'execute_aggregate')}
               onExplain={filter => handleExplainQuery(tab, filter)}
               onExplainAggregate={pipeline => handleExplainAggregate(tab, pipeline)}
               onOpenShell={isCommandBlocked(tab.connectionId, 'start_mongosh_session') ? undefined : (command) => handleOpenShell(tab.connectionId, tab.db, tab.collection, command)}

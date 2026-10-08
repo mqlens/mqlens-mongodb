@@ -227,6 +227,8 @@ interface DocumentViewerProps {
   onImport?: () => void;
   /** Explain cannot run on this connection (a server connection); the explain controls do nothing. */
   explainBlocked?: boolean;
+  /** Aggregation cannot run on this connection (a server connection); its mode is not offered. */
+  aggregateBlocked?: boolean;
   loading: boolean;
   availableFields?: string[];
   /** Restored when remounting this tab's viewer (see App tab cache). */
@@ -585,6 +587,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   onOpenExport,
   onImport,
   explainBlocked,
+  aggregateBlocked,
   loading,
   availableFields = [],
   initialBuilderState = DEFAULT_BUILDER_STATE,
@@ -1872,6 +1875,8 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
               <button
                 type="button"
                 data-testid="mode-aggregate-tab"
+                disabled={aggregateBlocked}
+                title={aggregateBlocked ? td('common:notOnServer') : undefined}
                 onClick={() => setQueryMode('aggregate')}
                 className={cn(
                   'border-b-2 px-3 py-1.5 text-[11.5px] font-semibold transition-colors',
