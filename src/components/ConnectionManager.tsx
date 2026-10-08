@@ -94,6 +94,8 @@ interface ConnectionManagerProps {
   onClose: () => void;
   onConnect: (id: string, name: string, uri: string, profileId: string, colorTag?: string | null, connectionMode?: ConnectionMode) => void;
   activeConnections?: { id: string; profileId: string; name: string; uri: string }[];
+  /** Open on the MQLens Server accounts rather than the profiles. */
+  showServerAccounts?: boolean;
 }
 
 /**
@@ -658,10 +660,14 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   onClose,
   onConnect,
   activeConnections = [],
+  showServerAccounts = false,
 }) => {
   const { confirm, prompt } = useDialogs();
   // The MQLens Server accounts, shown in place of the profiles when on.
-  const [showServer, setShowServer] = useState(false);
+  const [showServer, setShowServer] = useState(showServerAccounts);
+  useEffect(() => {
+    if (isOpen) setShowServer(showServerAccounts);
+  }, [isOpen, showServerAccounts]);
   const { t } = useTranslation('connections');
   const [profiles, setProfiles] = useState<ConnectionProfile[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);

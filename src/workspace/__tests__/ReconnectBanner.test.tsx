@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { ReconnectBanner } from '../ReconnectBanner';
 
 describe('ReconnectBanner', () => {
@@ -56,5 +56,19 @@ describe('ReconnectBanner', () => {
     } finally {
       await i18next.changeLanguage('en');
     }
+  });
+
+  it('offers a sign-in when the reconnect failed and one is possible', () => {
+    let asked = 0;
+    const { rerender } = render(
+      <ReconnectBanner profileName="Orders" namespace="" onReconnect={() => {}} busy={false} onSignIn={() => asked++} />,
+    );
+    expect(screen.queryByRole('button', { name: 'Sign in…' })).not.toBeInTheDocument();
+
+    rerender(
+      <ReconnectBanner profileName="Orders" namespace="" onReconnect={() => {}} busy={false} error="Sign in first" onSignIn={() => asked++} />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in…' }));
+    expect(asked).toBe(1);
   });
 });

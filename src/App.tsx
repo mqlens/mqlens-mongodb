@@ -18,6 +18,7 @@ import {
 } from './lib/aiChatRequest';
 import { stopChangeStream } from './lib/changeStream';
 import { describeConnectError } from './lib/describeConnectError';
+import { connectToServer, parseServerProfileId } from './lib/serverMode';
 import { startWriteRequests } from './lib/mcpWriteRequests';
 import { McpWriteConfirm } from './components/McpWriteConfirm';
 import {
@@ -808,6 +809,8 @@ function Workspace() {
   }, []);
   const [profilesRefreshKey, setProfilesRefreshKey] = useState(0);
   const [isConnectionModalOpen, setIsConnectionModalOpen] = useState(false);
+  // Whether the connection manager opens on the MQLens Server accounts.
+  const [connectionModalServer, setConnectionModalServer] = useState(false);
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTabId | undefined>();
 
   // (final fix wave, agent-connection visibility) `viaMcp` entries dedupe by
@@ -3844,8 +3847,13 @@ function Workspace() {
       // (`load_connection_profiles`) is needed to reuse it either.
       const existing = activeConnections.find((c) => c.profileId === profileId);
       let newId: string;
+      const server = parseServerProfileId(profileId);
       if (existing) {
         newId = existing.id;
+      } else if (server) {
+        newId = (await connectToServer(server.accountId, server.remoteId)).id;
+        addActiveConnection(newId, profileName, '', profileId, undefined, undefined, 'normal');
+        setConnectionMeta(newId, profileId, profileName, 'normal');
       } else {
         const profiles = await invoke<ConnectionProfile[]>('load_connection_profiles');
         const profile = profiles.find((p) => p.id === profileId);
@@ -4546,6 +4554,14 @@ function Workspace() {
           busy={!!state?.busy}
           error={state?.error ?? null}
           onReconnect={() => handleReconnectProfile(profileId, profileName)}
+          onSignIn={
+            parseServerProfileId(profileId)
+              ? () => {
+                  setConnectionModalServer(true);
+                  setIsConnectionModalOpen(true);
+                }
+              : undefined
+          }
         />
       );
     }
@@ -5089,7 +5105,8 @@ function Workspace() {
 
           <ConnectionManager
             isOpen={isConnectionModalOpen}
-            onClose={() => { setIsConnectionModalOpen(false); setProfilesRefreshKey((k) => k + 1); }}
+            onClose={() => { setIsConnectionModalOpen(false); setConnectionModalServer(false); setProfilesRefreshKey((k) => k + 1); }}
+            showServerAccounts={connectionModalServer}
             onConnect={(id, name, uri, profileId, colorTag, connectionMode) => {
               addActiveConnection(id, name, uri, profileId, colorTag ?? undefined, undefined, connectionMode ?? 'normal');
               // Announce this fresh id to every other window (Phase 3 Task 6)
@@ -5100,6 +5117,7 @@ function Workspace() {
               // doc comment.
               rebindProfileTabs(profileId, id);
               setIsConnectionModalOpen(false);
+              setConnectionModalServer(false);
               setProfilesRefreshKey((k) => k + 1);
             }}
             activeConnections={activeConnections}

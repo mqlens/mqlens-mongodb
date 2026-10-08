@@ -438,7 +438,8 @@
     "bodyWithNamespace": "{{namespace}} was restored from your last session. Reconnect to {{profile}} to load it.",
     "disconnected": "Disconnected",
     "profileMissing": "Connection profile no longer exists",
-    "reconnectButton": "Reconnect {{profile}}"
+    "reconnectButton": "Reconnect {{profile}}",
+    "signIn": "Sign in…"
   },
   "statusBar": {
     "activity": "Activity",

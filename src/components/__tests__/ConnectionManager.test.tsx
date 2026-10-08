@@ -3557,6 +3557,17 @@ describe('ConnectionManager: MQLens Server', () => {
     localStorage.clear();
   });
 
+  it('opens on the server accounts when asked to', async () => {
+    mockInvoke.mockImplementation((cmd) =>
+      cmd === 'load_connection_profiles' || cmd === 'server_account_list'
+        ? Promise.resolve([])
+        : Promise.reject(new Error(`Unhandled mock: ${cmd}`)),
+    );
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} showServerAccounts />);
+
+    expect(await screen.findByRole('button', { name: 'Add server account' })).toBeInTheDocument();
+  });
+
   it('connects through a server account as a server profile', async () => {
     mockInvoke.mockImplementation((cmd) => {
       switch (cmd) {

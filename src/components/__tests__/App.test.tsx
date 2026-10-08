@@ -246,9 +246,10 @@ vi.mock('../Sidebar', () => ({
 // 3 Task 6's set_connection_meta call) — a single button that fires it with
 // fixed args, gated on `isOpen` like the real modal.
 vi.mock('../ConnectionManager', () => ({
-  ConnectionManager: ({ isOpen, onConnect }: any) =>
+  ConnectionManager: ({ isOpen, onConnect, showServerAccounts }: any) =>
     isOpen ? (
       <div data-testid="mock-connection-manager">
+        {showServerAccounts && <span data-testid="mock-cm-server-accounts" />}
         <button
           data-testid="mock-cm-connect-btn"
           onClick={() => onConnect('cm-live-1', 'Staging Cluster', 'mongodb://staging', 'p-cm', '#fff')}
@@ -2821,6 +2822,54 @@ describe('App Component', () => {
 
       const connectCalls = calls.filter((c) => c.cmd === 'connect_db');
       expect(connectCalls).toHaveLength(1); // one connect_db for the whole profile, not per-tab
+    });
+
+    it('(b-server) reconnecting a server profile connects through its MQLens Server account', async () => {
+      const serverSnapshot = JSON.parse(
+        JSON.stringify(workspaceSnapshot).replaceAll('profile:p1', 'profile:server:a1:c1').replaceAll('"p1"', '"server:a1:c1"'),
+      );
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'workspace_get') return Promise.resolve(serverSnapshot);
+        if (cmd === 'server_connect') return Promise.resolve({ id: 'remote-conn-1', mongoVersion: '8.0.0', opClasses: ['read'] });
+        if (cmd === 'execute_mql_query') return Promise.resolve([JSON.stringify({ _id: '1', name: 'Ada' })]);
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+
+      const [firstBtn] = await screen.findAllByRole('button', { name: /Reconnect Prod Cluster/ });
+      fireEvent.click(firstBtn);
+
+      await waitFor(() => expect(screen.queryAllByTestId('reconnect-banner')).toHaveLength(0));
+      expect(calls.filter((c) => c.cmd === 'server_connect').map((c) => c.args)).toEqual([{ accountId: 'a1', remoteId: 'c1' }]);
+      expect(calls.some((c) => c.cmd === 'connect_db')).toBe(false);
+      await waitFor(() =>
+        expect(calls.filter((c) => c.cmd === 'execute_mql_query').every((c) => c.args?.id === 'remote-conn-1')).toBe(true),
+      );
+    });
+
+    it('(b-server-signin) a server profile that needs a sign-in offers one, in the connection manager', async () => {
+      const serverSnapshot = JSON.parse(
+        JSON.stringify(workspaceSnapshot).replaceAll('profile:p1', 'profile:server:a1:c1').replaceAll('"p1"', '"server:a1:c1"'),
+      );
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'workspace_get') return Promise.resolve(serverSnapshot);
+        if (cmd === 'server_connect') return Promise.reject('Sign in to the MQLens Server account "Work" first');
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+
+      const [firstBtn] = await screen.findAllByRole('button', { name: /Reconnect Prod Cluster/ });
+      fireEvent.click(firstBtn);
+      const [signIn] = await screen.findAllByRole('button', { name: 'Sign in…' });
+      fireEvent.click(signIn);
+
+      expect(await screen.findByTestId('mock-cm-server-accounts')).toBeInTheDocument();
     });
 
     it('(b2) reconnecting a profile sends its saved OIDC config to connect_db (#430)', async () => {
