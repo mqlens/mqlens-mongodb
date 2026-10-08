@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { useDialogs } from './dialogs/DialogProvider';
+import { MONITORING_READS } from '@/lib/serverMode';
 import { isNamespaceBusy, type PendingSave } from '../lib/namespaceBusy';
 import { confirmByTypedName } from '../lib/typedNameConfirm';
 import { fuzzyMatch } from '../lib/fuzzyMatch';
@@ -1957,7 +1958,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <ContextMenuItem
                     className={ctxItemClass}
                     data-testid="ctx-monitor"
-                    onClick={() => onOpenMonitoring?.(conn.id)} {...gate(conn.id, 'server_status')}
+                    onClick={() => onOpenMonitoring?.(conn.id)} {...(MONITORING_READS.every((c) => isCommandBlocked?.(conn.id, c)) ? gate(conn.id, MONITORING_READS[0]) : {})}
                   >
                     <Activity />
                     <span>{t('ctx.monitorCluster')}</span>

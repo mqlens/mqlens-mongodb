@@ -2331,7 +2331,7 @@ describe('Sidebar: views whose main command is blocked', () => {
       if (cmd === 'list_collections') return Promise.resolve([{ name: 'customers', type: 'collection' }]);
       return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
     });
-    const blocked = new Set(['analyze_schema', 'list_users', 'server_status']);
+    const blocked = new Set(['analyze_schema', 'list_users', 'server_status', 'repl_set_status', 'get_profiling_status']);
 
     render(
       <Sidebar
@@ -2364,5 +2364,32 @@ describe('Sidebar: views whose main command is blocked', () => {
     fireEvent.click(await screen.findByText('Collections'));
     fireEvent.contextMenu(await screen.findByText('customers'));
     expect(screen.getByRole('menuitem', { name: /Analyze Schema/i })).toHaveAttribute('data-disabled');
+  });
+});
+
+describe('Sidebar: monitoring with some of its reads blocked', () => {
+  it('keeps Monitor available while any monitoring read is', async () => {
+    mockInvoke.mockImplementation((cmd, args) => {
+      if (cmd === 'list_databases' && args.id === 'conn-1') return Promise.resolve([]);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Remote Orders', uri: '' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+        onOpenMonitoring={() => {}}
+        isCommandBlocked={(id, command) => id === 'conn-1' && command === 'server_status'}
+      />
+    );
+
+    const serverNode = await screen.findByText('Remote Orders');
+    fireEvent.contextMenu(serverNode.closest('div')!);
+    expect(screen.getByRole('menuitem', { name: /Monitor/i })).not.toHaveAttribute('data-disabled');
   });
 });

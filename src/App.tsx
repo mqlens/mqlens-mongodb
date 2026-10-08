@@ -18,7 +18,7 @@ import {
 } from './lib/aiChatRequest';
 import { stopChangeStream } from './lib/changeStream';
 import { describeConnectError } from './lib/describeConnectError';
-import { connectToServer, parseServerProfileId, type RemoteConnectionInfo } from './lib/serverMode';
+import { connectToServer, MONITORING_READS, parseServerProfileId, type RemoteConnectionInfo } from './lib/serverMode';
 import { startWriteRequests } from './lib/mcpWriteRequests';
 import { McpWriteConfirm } from './components/McpWriteConfirm';
 import {
@@ -3273,7 +3273,7 @@ function Workspace() {
         dispatchWorkspace({ type: 'focus_pane', paneId: panes[(i + 1) % panes.length].id });
       } },
     ] : []),
-    ...activeConnections.filter(c => !isCommandBlocked(c.id, 'server_status')).map(c => ({
+    ...activeConnections.filter(c => !MONITORING_READS.every(cmd => isCommandBlocked(c.id, cmd))).map(c => ({
       id: `monitoring:${c.id}`,
       title: tShell('commandPalette.paletteActions.openMonitoring.title', { name: c.name }),
       keywords: tShell('commandPalette.paletteActions.openMonitoring.keywords'),

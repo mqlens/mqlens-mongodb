@@ -433,7 +433,7 @@ describe('App Component', () => {
   it('leaves out schema analysis, users and monitoring where their commands are blocked', async () => {
     const server = {
       accountId: 'a1', accountName: 'Work', serverUrl: 'https://s', remoteId: 'c1', opClasses: ['read'],
-      blockedCommands: ['analyze_schema', 'list_users', 'list_roles', 'server_status'],
+      blockedCommands: ['analyze_schema', 'list_users', 'list_roles', 'server_status', 'repl_set_status', 'get_profiling_status'],
     };
     mockInvoke.mockImplementation((cmd) => {
       if (cmd === 'connection_list') return Promise.resolve([{ id: 'conn-1', profileId: 'server:a1:c1', name: 'Orders', viaMcp: false, server }]);

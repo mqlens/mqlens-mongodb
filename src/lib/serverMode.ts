@@ -101,3 +101,6 @@ export const isServerConnection = (entry: ConnectionEntry | undefined) => !!entr
 /** Whether `command` cannot run on this connection. Local connections block nothing. */
 export const isCommandBlocked = (entry: ConnectionEntry | undefined, command: string) =>
   entry?.server?.blockedCommands.includes(command) ?? false;
+
+/** The monitoring view's reads: it is worth opening while any of them can run. */
+export const MONITORING_READS = ['server_status', 'repl_set_status', 'get_profiling_status'];
