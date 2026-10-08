@@ -112,7 +112,11 @@ interface DataGridProps {
   // modal (Task 3) gates the actually-destructive ones. Undefined/'normal'
   // behaves exactly as before this feature existed.
   connectionMode?: 'normal' | 'read_only' | 'confirm_destructive';
+  /** Commands this connection cannot run (a server connection). Blocked writes make the grid read-only. */
+  blockedCommands?: readonly string[];
 }
+
+const WRITE_COMMANDS = ['insert_document', 'update_document', 'update_many', 'delete_document', 'delete_many'];
 
 export type ViewMode = 'table' | 'tree' | 'json' | 'chart';
 
@@ -603,6 +607,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   onViewModeChange,
   onCreateSuggestedIndex,
   connectionMode,
+  blockedCommands,
   chromeless = false,
 }) => {
   const { t } = useTranslation('documents');
@@ -612,7 +617,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
 
   // #188: read_only disables writes in this grid; confirm_destructive does
   // NOT (see the connectionMode doc comment on DataGridProps above).
-  const isReadOnly = connectionMode === 'read_only';
+  const isReadOnly = connectionMode === 'read_only' || WRITE_COMMANDS.some((c) => blockedCommands?.includes(c));
 
   // ESR-rule suggestion derived from the current explain plan (null unless it's a COLLSCAN).
   const indexSuggestion = useMemo(

@@ -2185,3 +2185,40 @@ describe('opening additional collection tabs (#206)', () => {
     );
   });
 });
+
+describe('Sidebar: commands a server connection cannot run', () => {
+  it('disables the menu entries for blocked commands, and only those', async () => {
+    mockInvoke.mockImplementation((cmd, args) => {
+      if (cmd === 'list_databases' && args.id === 'conn-1') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections') return Promise.resolve([{ name: 'customers', type: 'collection' }]);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+    const blocked = new Set(['start_dump_task', 'drop_database']);
+    const handleOpenDump = vi.fn();
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Remote Orders', uri: '' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+        onOpenDump={handleOpenDump}
+        onOpenGenerate={() => {}}
+        isCommandBlocked={(id, command) => id === 'conn-1' && blocked.has(command)}
+      />
+    );
+
+    const dbNode = await screen.findByText('sales_db');
+    fireEvent.contextMenu(dbNode);
+    const dump = screen.getByTestId('ctx-dump-db-conn-1-sales_db');
+    expect(dump).toHaveAttribute('data-disabled');
+    expect(dump).toHaveAttribute('title', 'Not available on MQLens Server yet');
+    expect(screen.getByRole('menuitem', { name: /Drop Database/i })).toHaveAttribute('data-disabled');
+    expect(screen.getByTestId('ctx-generate-db-conn-1-sales_db')).not.toHaveAttribute('data-disabled');
+    fireEvent.click(dump);
+    expect(handleOpenDump).not.toHaveBeenCalled();
+  });
+});

@@ -38,6 +38,7 @@
     "newBucket": "New Bucket",
     "newCollection": "New Collection",
     "newConnection": "New Connection",
+    "notOnServer": "Not available on MQLens Server yet",
     "open": "Open",
     "openCollection": "Open Collection",
     "openInNewTab": "Open in New Tab",

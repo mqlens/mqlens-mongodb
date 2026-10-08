@@ -126,8 +126,14 @@ vi.mock('@tauri-apps/plugin-fs', () => ({
 
 // Mock Sidebar component
 vi.mock('../Sidebar', () => ({
-  Sidebar: ({ onSelectCollection, onSelectIndex, onCreateIndex, onDeleteIndex, onOpenSettings, onOpenDump, onOpenRestore, onEditValidation, onOpenGenerate, onDatabaseRenamed, onDatabaseDropped, onWatchCollection, activeConnections, onConnectProfile }: any) => (
+  Sidebar: ({ onSelectCollection, onSelectIndex, onCreateIndex, onDeleteIndex, onOpenSettings, onOpenDump, onOpenRestore, onEditValidation, onOpenGenerate, onDatabaseRenamed, onDatabaseDropped, onWatchCollection, activeConnections, onConnectProfile, isCommandBlocked, onOpenShell }: any) => (
     <div data-testid="mock-sidebar">
+      {(activeConnections ?? []).map((c: any) => (
+        <button key={c.id} data-testid={`mock-open-shell-${c.id}`} onClick={() => onOpenShell?.(c.id, 'sales_db')} />
+      ))}
+      {(activeConnections ?? []).map((c: any) =>
+        isCommandBlocked?.(c.id, 'start_dump_task') ? <span key={c.id} data-testid={`mock-sidebar-dump-blocked-${c.id}`} /> : null,
+      )}
       {/* Phase 3 Task 6 (b): mirrors the real Sidebar's dependence on the
           `activeConnections` prop for its "Connections" tree — lets tests
           assert a connection landed in this window's sidebar without
@@ -2870,6 +2876,41 @@ describe('App Component', () => {
       fireEvent.click(signIn);
 
       expect(await screen.findByTestId('mock-cm-server-accounts')).toBeInTheDocument();
+    });
+
+    it('(b-server-blocked) tells the sidebar what a server connection cannot run', async () => {
+      const server = { accountId: 'a1', accountName: 'Work', serverUrl: 'https://s', remoteId: 'c1', opClasses: ['read'], blockedCommands: ['start_dump_task'] };
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'connection_list') {
+          return Promise.resolve([
+            { id: 'remote-1', profileId: 'server:a1:c1', name: 'Orders', viaMcp: false, server },
+            { id: 'local-1', profileId: 'p9', name: 'Local', viaMcp: false },
+          ]);
+        }
+        return Promise.resolve([]);
+      });
+
+      renderWithProviders(<App />);
+
+      expect(await screen.findByTestId('mock-sidebar-dump-blocked-remote-1')).toBeInTheDocument();
+      expect(screen.queryByTestId('mock-sidebar-dump-blocked-local-1')).not.toBeInTheDocument();
+    });
+
+    it('(b-server-shell) a server connection without the shell says so instead of starting one', async () => {
+      const server = { accountId: 'a1', accountName: 'Work', serverUrl: 'https://s', remoteId: 'c1', opClasses: ['read'], blockedCommands: ['start_mongosh_session'] };
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'connection_list') {
+          return Promise.resolve([{ id: 'remote-1', profileId: 'server:a1:c1', name: 'Orders', viaMcp: false, server }]);
+        }
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      fireEvent.click(await screen.findByTestId('mock-open-shell-remote-1'));
+
+      expect(await screen.findByText('The shell is not available on MQLens Server yet.')).toBeInTheDocument();
+      expect(mockInvoke).not.toHaveBeenCalledWith('start_mongosh_session', expect.anything());
     });
 
     it('(b2) reconnecting a profile sends its saved OIDC config to connect_db (#430)', async () => {

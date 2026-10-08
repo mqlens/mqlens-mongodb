@@ -18,7 +18,7 @@ import {
 } from './lib/aiChatRequest';
 import { stopChangeStream } from './lib/changeStream';
 import { describeConnectError } from './lib/describeConnectError';
-import { connectToServer, parseServerProfileId } from './lib/serverMode';
+import { connectToServer, parseServerProfileId, type RemoteConnectionInfo } from './lib/serverMode';
 import { startWriteRequests } from './lib/mcpWriteRequests';
 import { McpWriteConfirm } from './components/McpWriteConfirm';
 import {
@@ -809,6 +809,13 @@ function Workspace() {
   }, []);
   const [profilesRefreshKey, setProfilesRefreshKey] = useState(0);
   const [isConnectionModalOpen, setIsConnectionModalOpen] = useState(false);
+  // What each connection made through an MQLens Server cannot run, by
+  // connection id, from the latest connection list.
+  const [serverConnections, setServerConnections] = useState<Map<string, RemoteConnectionInfo>>(new Map());
+  const noteServerConnections = (connections: ConnectionEntry[]) =>
+    setServerConnections(new Map(connections.flatMap((c) => (c.server ? [[c.id, c.server] as const] : []))));
+  const isCommandBlocked = (connectionId: string, command: string) =>
+    serverConnections.get(connectionId)?.blockedCommands.includes(command) ?? false;
   // Whether the connection manager opens on the MQLens Server accounts.
   const [connectionModalServer, setConnectionModalServer] = useState(false);
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTabId | undefined>();
@@ -1119,6 +1126,7 @@ function Workspace() {
         try {
           const connections = await connectionList();
           if (Array.isArray(connections) && connections.length > 0) {
+            noteServerConnections(connections);
             applyConnectionsAdditions(connections);
           }
         } catch {
@@ -3723,6 +3731,7 @@ function Workspace() {
         // (the status bar's username display) degrades to '' for a
         // connection registered this way rather than crash.
         applyConnectionsAdditions(payload.connections);
+        noteServerConnections(payload.connections);
 
         // Phase 3 Task 6 (LEDGER MANDATE) considered — and deliberately does
         // NOT implement — a self-healing cleanup for "stale" backend
@@ -4673,6 +4682,7 @@ function Workspace() {
                     onUpdateMany={() => handleUpdateMany(tab)}
                     onDeleteMany={() => handleDeleteMany(tab)}
                     connectionMode={connMode}
+                    blockedCommands={serverConnections.get(tab.connectionId)?.blockedCommands}
                     totalCount={tab.totalCount}
                     estimated={tab.estimated}
                     countLoading={tab.countLoading}
@@ -4931,7 +4941,12 @@ function Workspace() {
             streamId={tab.id}
           />
         )}
-        {tab.type === 'shell' && (() => {
+        {tab.type === 'shell' && isCommandBlocked(tab.connectionId, 'start_mongosh_session') && (
+          <div className="flex h-full items-center justify-center p-8 text-center text-xs text-muted-foreground">
+            {tShell('shellNotOnServer')}
+          </div>
+        )}
+        {tab.type === 'shell' && !isCommandBlocked(tab.connectionId, 'start_mongosh_session') && (() => {
           const activeConnection = activeConnections.find(c => c.id === tab.connectionId);
           const connectionName = activeConnection ? activeConnection.name : tab.connectionId;
           return (
@@ -5025,6 +5040,7 @@ function Workspace() {
       sidebar={
         <Sidebar
           onSelectCollection={handleSelectCollection}
+          isCommandBlocked={isCommandBlocked}
           pendingSaves={pendingSaves}
           isCollectionOpen={(connectionId, db, collection) =>
             collectionTabsMatching(tabs, { connectionId, db, collection }).length > 0

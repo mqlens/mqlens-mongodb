@@ -2498,3 +2498,29 @@ describe('DataGrid — a hidden tab does not answer the clipboard (#240)', () =>
     expect(hidden).not.toHaveBeenCalled();
   });
 });
+
+describe('DataGrid — blockedCommands (a server connection without writes)', () => {
+  const writeHandlers = {
+    onInsertDocument: () => {},
+    onUpdateMany: () => {},
+    onDeleteMany: () => {},
+    onEditDocument: () => {},
+    onDuplicateDocument: () => {},
+    onDeleteDocument: () => {},
+  };
+  const WRITES = ['insert_document', 'update_document', 'update_many', 'delete_document', 'delete_many'];
+
+  it('disables the write buttons when the writes are blocked', () => {
+    render(<DataGrid documents={mockDocuments} {...writeHandlers} blockedCommands={WRITES} />);
+    for (const testId of ['insert-doc-btn', 'update-many-btn', 'delete-many-btn']) {
+      expect(screen.getByTestId(testId)).toBeDisabled();
+    }
+  });
+
+  it('leaves them alone when only other commands are blocked', () => {
+    render(<DataGrid documents={mockDocuments} {...writeHandlers} blockedCommands={['start_dump_task']} />);
+    for (const testId of ['insert-doc-btn', 'update-many-btn', 'delete-many-btn']) {
+      expect(screen.getByTestId(testId)).toBeEnabled();
+    }
+  });
+});

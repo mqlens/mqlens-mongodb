@@ -441,6 +441,7 @@
     "reconnectButton": "Reconnect {{profile}}",
     "signIn": "Sign in…"
   },
+  "shellNotOnServer": "The shell is not available on MQLens Server yet.",
   "statusBar": {
     "activity": "Activity",
     "appVersion": "MQLens {{version}}",

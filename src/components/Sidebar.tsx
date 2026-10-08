@@ -220,6 +220,8 @@ interface SidebarProps {
   onCopyToClipboard?: (connectionId: string, db: string, collections: string[]) => void;
   /** Paste the clipboard into a target (db omitted = paste onto a connection). */
   onPasteInto?: (connectionId: string, db?: string) => void;
+  /** Whether a connection cannot run `command` (a server connection); its menu entries are disabled. */
+  isCommandBlocked?: (connectionId: string, command: string) => boolean;
   /** Whether the clipboard currently holds something to paste. */
   canPaste?: boolean;
   /**
@@ -346,6 +348,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onCopyDatabase,
   onCopyToClipboard,
   onPasteInto,
+  isCommandBlocked,
   canPaste,
   refreshTarget,
   refreshTargetNonce,
@@ -354,6 +357,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const { t } = useTranslation('sidebar');
   const { toast, confirm, prompt } = useDialogs();
+  // A menu entry for a command this connection cannot run: disabled, and with
+  // no action even if clicked.
+  const gate = (connectionId: string, command: string) =>
+    isCommandBlocked?.(connectionId, command)
+      ? { disabled: true, title: t('ctx.notOnServer'), onClick: undefined }
+      : {};
 
   const helpLinks = [
     { Icon: Bug, label: t('help.reportBug'), url: `${REPO_URL}/issues/new?template=bug_report.yml` },
@@ -1585,7 +1594,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               className={ctxItemClass}
               onClick={() =>
                 onOpenShell?.(connId, dbName, collName, `db.${collName}.find({}).limit(50)`)
-              }
+              } {...gate(connId, 'start_mongosh_session')}
             >
               <Terminal />
               <span>{t('ctx.openShell')}</span>
@@ -1595,7 +1604,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             {!isMockConnection(connId) && (
               <ContextMenuItem
                 className={ctxItemClass}
-                onClick={() => onWatchCollection?.(connId, dbName, collName)}
+                onClick={() => onWatchCollection?.(connId, dbName, collName)} {...gate(connId, 'start_change_stream')}
                 data-testid="ctx-watch-collection"
               >
                 <Radio />
@@ -1622,7 +1631,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <ContextMenuItem
                 className={ctxItemClass}
                 data-testid={`ctx-generate-coll-${connId}-${dbName}-${collName}`}
-                onClick={() => onOpenGenerate?.(connId, dbName, collName)}
+                onClick={() => onOpenGenerate?.(connId, dbName, collName)} {...gate(connId, 'start_generate_task')}
               >
                 <Wand2 />
                 <span>{t('ctx.generateData')}</span>
@@ -1632,7 +1641,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <ContextMenuItem
                 className={ctxItemClass}
                 data-testid={`ctx-dump-coll-${connId}-${dbName}-${collName}`}
-                onClick={() => onOpenDump?.(connId, dbName, collName)}
+                onClick={() => onOpenDump?.(connId, dbName, collName)} {...gate(connId, 'start_dump_task')}
               >
                 <DatabaseBackup />
                 <span>{t('ctx.dump')}</span>
@@ -1647,7 +1656,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </ContextMenuItem>
             <ContextMenuItem
               className={ctxItemClass}
-              onClick={() => onCopyCollections?.(connId, dbName, selectedNamesFor(connId, dbName, collName))}
+              onClick={() => onCopyCollections?.(connId, dbName, selectedNamesFor(connId, dbName, collName))} {...gate(connId, 'start_collection_copy')}
             >
               {t('ctx.copyTo')}
             </ContextMenuItem>
@@ -1658,14 +1667,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <FolderOpen />
               <span>{t('ctx.copyCollectionName')}</span>
             </ContextMenuItem>
-            <ContextMenuItem className={ctxItemClass} onClick={() => handleRenameCollection(connId, dbName, collName)}>
+            <ContextMenuItem className={ctxItemClass} onClick={() => handleRenameCollection(connId, dbName, collName)} {...gate(connId, 'rename_collection')}>
               <Pencil />
               <span>{t('ctx.renameCollection')}</span>
             </ContextMenuItem>
             <ContextMenuSeparator />
             <ContextMenuItem
               className={cn(ctxItemClass, 'text-destructive focus:text-destructive')}
-              onClick={() => handleDropCollection(connId, dbName, collName)}
+              onClick={() => handleDropCollection(connId, dbName, collName)} {...gate(connId, 'drop_collection')}
             >
               <Trash2 />
               <span>
@@ -1705,7 +1714,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </div>
               </ContextMenuTrigger>
               <ContextMenuContent>
-                <ContextMenuItem className={ctxItemClass} onClick={() => onCreateIndex?.(connId, dbName, collName)}>
+                <ContextMenuItem className={ctxItemClass} onClick={() => onCreateIndex?.(connId, dbName, collName)} {...gate(connId, 'create_index')}>
                   <Plus />
                   <span>{t('ctx.createIndex')}</span>
                 </ContextMenuItem>
@@ -1750,7 +1759,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         <ContextMenuSeparator />
                         <ContextMenuItem
                           className={cn(ctxItemClass, 'text-destructive focus:text-destructive')}
-                          onClick={() => onDeleteIndex?.(connId, dbName, collName, indexName)}
+                          onClick={() => onDeleteIndex?.(connId, dbName, collName, indexName)} {...gate(connId, 'delete_index')}
                         >
                           <Trash2 />
                           <span>{t('ctx.deleteIndex')}</span>
@@ -1883,7 +1892,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   </div>
                 </ContextMenuTrigger>
                 <ContextMenuContent>
-                  <ContextMenuItem className={ctxItemClass} onClick={() => handleAddDatabase(conn.id)}>
+                  <ContextMenuItem className={ctxItemClass} onClick={() => handleAddDatabase(conn.id)} {...gate(conn.id, 'create_collection')}>
                     <Plus />
                     <span>{t('ctx.addDatabase')}</span>
                   </ContextMenuItem>
@@ -1892,7 +1901,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <span>{t('ctx.refreshDatabases')}</span>
                   </ContextMenuItem>
                   {canPaste && (
-                    <ContextMenuItem className={ctxItemClass} onClick={() => onPasteInto?.(conn.id)}>
+                    <ContextMenuItem className={ctxItemClass} onClick={() => onPasteInto?.(conn.id)} {...gate(conn.id, 'start_collection_copy')}>
                       <ClipboardPaste />
                       <span>{t('ctx.pasteHere')}</span>
                     </ContextMenuItem>
@@ -1952,7 +1961,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <ContextMenuItem
                       className={ctxItemClass}
                       data-testid={`ctx-dump-${conn.id}`}
-                      onClick={() => onOpenDump?.(conn.id)}
+                      onClick={() => onOpenDump?.(conn.id)} {...gate(conn.id, 'start_dump_task')}
                     >
                       <DatabaseBackup />
                       <span>{t('ctx.dump')}</span>
@@ -1962,7 +1971,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <ContextMenuItem
                       className={ctxItemClass}
                       data-testid={`ctx-restore-${conn.id}`}
-                      onClick={() => onOpenRestore?.(conn.id)}
+                      onClick={() => onOpenRestore?.(conn.id)} {...gate(conn.id, 'start_restore_task')}
                     >
                       <DatabaseZap />
                       <span>{t('ctx.restore')}</span>
@@ -1972,7 +1981,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <ContextMenuItem
                       className={ctxItemClass}
                       data-testid={`ctx-watch-deployment-${conn.id}`}
-                      onClick={() => onWatchCollection?.(conn.id)}
+                      onClick={() => onWatchCollection?.(conn.id)} {...gate(conn.id, 'start_change_stream')}
                     >
                       <Radio />
                       <span>{t('ctx.watchDeployment')}</span>
@@ -2047,7 +2056,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                             </div>
                           </ContextMenuTrigger>
                           <ContextMenuContent>
-                            <ContextMenuItem className={ctxItemClass} onClick={() => handleAddCollection(conn.id, dbName)}>
+                            <ContextMenuItem className={ctxItemClass} onClick={() => handleAddCollection(conn.id, dbName)} {...gate(conn.id, 'create_collection')}>
                               <Plus />
                               <span>{t('ctx.addCollection')}</span>
                             </ContextMenuItem>
@@ -2090,7 +2099,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                 })}
                               </span>
                             </ContextMenuItem>
-                            <ContextMenuItem className={ctxItemClass} onClick={() => onCreateView?.(conn.id, dbName)}>
+                            <ContextMenuItem className={ctxItemClass} onClick={() => onCreateView?.(conn.id, dbName)} {...gate(conn.id, 'create_view')}>
                               <Eye />
                               <span>{t('ctx.createView')}</span>
                             </ContextMenuItem>
@@ -2098,11 +2107,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                               <Copy />
                               <span>{t('ctx.copyDatabase')}</span>
                             </ContextMenuItem>
-                            <ContextMenuItem className={ctxItemClass} onClick={() => onCopyDatabase?.(conn.id, dbName)}>
+                            <ContextMenuItem className={ctxItemClass} onClick={() => onCopyDatabase?.(conn.id, dbName)} {...gate(conn.id, 'start_database_copy')}>
                               {t('ctx.copyDatabaseTo')}
                             </ContextMenuItem>
                             {canPaste && (
-                              <ContextMenuItem className={ctxItemClass} onClick={() => onPasteInto?.(conn.id, dbName)}>
+                              <ContextMenuItem className={ctxItemClass} onClick={() => onPasteInto?.(conn.id, dbName)} {...gate(conn.id, 'start_collection_copy')}>
                                 <ClipboardPaste />
                                 <span>{t('ctx.pasteHere')}</span>
                               </ContextMenuItem>
@@ -2110,7 +2119,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                             <ContextMenuItem
                               className={ctxItemClass}
                               data-testid={`ctx-add-gridfs-bucket-${conn.id}-${dbName}`}
-                              onClick={() => void handleOpenGridfsBucket(conn.id, dbName)}
+                              onClick={() => void handleOpenGridfsBucket(conn.id, dbName)} {...gate(conn.id, 'list_gridfs_files')}
                             >
                               <Archive />
                               <span>{t('ctx.newBucket')}</span>
@@ -2119,7 +2128,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                               <ContextMenuItem
                                 className={ctxItemClass}
                                 data-testid={`ctx-watch-database-${conn.id}-${dbName}`}
-                                onClick={() => onWatchCollection?.(conn.id, dbName)}
+                                onClick={() => onWatchCollection?.(conn.id, dbName)} {...gate(conn.id, 'start_change_stream')}
                               >
                                 <Radio />
                                 <span>{t('ctx.watchDatabase')}</span>
@@ -2127,7 +2136,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                             )}
                             <ContextMenuItem
                               className={ctxItemClass}
-                              onClick={() => onOpenShell?.(conn.id, dbName, undefined, 'show collections')}
+                              onClick={() => onOpenShell?.(conn.id, dbName, undefined, 'show collections')} {...gate(conn.id, 'start_mongosh_session')}
                             >
                               <Terminal />
                               <span>{t('ctx.openShell')}</span>
@@ -2136,7 +2145,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                               <RefreshCw />
                               <span>{t('ctx.refreshDatabase')}</span>
                             </ContextMenuItem>
-                            <ContextMenuItem className={ctxItemClass} onClick={() => handleRenameDatabase(conn.id, dbName)}>
+                            <ContextMenuItem className={ctxItemClass} onClick={() => handleRenameDatabase(conn.id, dbName)} {...gate(conn.id, 'rename_database')}>
                               <Pencil />
                               <span>{t('ctx.renameDatabase')}</span>
                             </ContextMenuItem>
@@ -2152,7 +2161,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                               <ContextMenuItem
                                 className={ctxItemClass}
                                 data-testid={`ctx-dump-db-${conn.id}-${dbName}`}
-                                onClick={() => onOpenDump?.(conn.id, dbName)}
+                                onClick={() => onOpenDump?.(conn.id, dbName)} {...gate(conn.id, 'start_dump_task')}
                               >
                                 <DatabaseBackup />
                                 <span>{t('ctx.dump')}</span>
@@ -2163,7 +2172,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                             <ContextMenuItem
                               className={ctxItemClass}
                               data-testid={`ctx-generate-db-${conn.id}-${dbName}`}
-                              onClick={() => onOpenGenerate?.(conn.id, dbName)}
+                              onClick={() => onOpenGenerate?.(conn.id, dbName)} {...gate(conn.id, 'start_generate_task')}
                             >
                               <Wand2 />
                               <span>{t('ctx.generateData')}</span>
@@ -2171,7 +2180,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                             <ContextMenuSeparator />
                             <ContextMenuItem
                               className={cn(ctxItemClass, 'text-destructive focus:text-destructive')}
-                              onClick={() => handleDropDatabase(conn.id, dbName)}
+                              onClick={() => handleDropDatabase(conn.id, dbName)} {...gate(conn.id, 'drop_database')}
                             >
                               <Trash2 />
                               <span>{t('ctx.dropDatabase')}</span>
@@ -2223,7 +2232,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                 <ContextMenuItem
                                   className={ctxItemClass}
                                   data-testid={`ctx-collections-new-${conn.id}-${dbName}`}
-                                  onClick={() => void handleAddCollection(conn.id, dbName)}
+                                  onClick={() => void handleAddCollection(conn.id, dbName)} {...gate(conn.id, 'create_collection')}
                                 >
                                   <Plus />
                                   <span>{t('ctx.newCollection')}</span>
@@ -2259,7 +2268,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                 <ContextMenuItem
                                   className={ctxItemClass}
                                   data-testid={`ctx-views-create-${conn.id}-${dbName}`}
-                                  onClick={() => onCreateView?.(conn.id, dbName)}
+                                  onClick={() => onCreateView?.(conn.id, dbName)} {...gate(conn.id, 'create_view')}
                                 >
                                   <Eye />
                                   <span>{t('ctx.createView')}</span>
@@ -2325,7 +2334,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                 <ContextMenuItem
                                   className={ctxItemClass}
                                   data-testid={`ctx-gridfs-new-bucket-${conn.id}-${dbName}`}
-                                  onClick={() => void handleOpenGridfsBucket(conn.id, dbName)}
+                                  onClick={() => void handleOpenGridfsBucket(conn.id, dbName)} {...gate(conn.id, 'list_gridfs_files')}
                                 >
                                   <Plus />
                                   <span>{t('ctx.newBucket')}</span>
