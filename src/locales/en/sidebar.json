@@ -8,6 +8,8 @@
     "readOnlyAriaLabel": "Read-only connection",
     "readOnlyBadge": "read-only",
     "refreshAriaLabel": "Refresh databases",
+    "serverBadge": "Server",
+    "serverBadgeTitle": "Through the MQLens Server account {{account}}",
     "viaMcpAriaLabel": "Connected via MCP",
     "viaMcpBadge": "via MCP"
   },

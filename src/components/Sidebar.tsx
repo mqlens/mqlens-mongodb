@@ -222,6 +222,8 @@ interface SidebarProps {
   onPasteInto?: (connectionId: string, db?: string) => void;
   /** Whether a connection cannot run `command` (a server connection); its menu entries are disabled. */
   isCommandBlocked?: (connectionId: string, command: string) => boolean;
+  /** The MQLens Server account a connection was made through, if any. */
+  serverAccountFor?: (connectionId: string) => string | undefined;
   /** Whether the clipboard currently holds something to paste. */
   canPaste?: boolean;
   /**
@@ -349,6 +351,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onCopyToClipboard,
   onPasteInto,
   isCommandBlocked,
+  serverAccountFor,
   canPaste,
   refreshTarget,
   refreshTargetNonce,
@@ -1839,6 +1842,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       )}
                       <Server size={12} className="shrink-0 text-primary" />
                       <span className="min-w-0 truncate font-medium">{conn.name}</span>
+                      {serverAccountFor?.(conn.id) !== undefined && (
+                        <Badge
+                          variant="secondary"
+                          className="h-4 shrink-0 px-1 text-[9px] font-normal text-muted-foreground"
+                          data-testid="connection-server-badge"
+                          title={t('connection.serverBadgeTitle', { account: serverAccountFor?.(conn.id) })}
+                        >
+                          {t('connection.serverBadge')}
+                        </Badge>
+                      )}
                       {conn.viaMcp && (
                         <Badge
                           variant="secondary"

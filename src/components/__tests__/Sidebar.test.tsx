@@ -2222,3 +2222,30 @@ describe('Sidebar: commands a server connection cannot run', () => {
     expect(handleOpenDump).not.toHaveBeenCalled();
   });
 });
+
+describe('Sidebar: server connection badge', () => {
+  it('marks a connection made through an MQLens Server, naming the account', async () => {
+    mockInvoke.mockImplementation((cmd) =>
+      cmd === 'list_databases' ? Promise.resolve([]) : Promise.reject(new Error(`Unhandled mock: ${cmd}`)),
+    );
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[
+          { id: 'conn-1', name: 'Remote Orders', uri: '' },
+          { id: 'conn-2', name: 'Local', uri: 'mongodb://localhost' },
+        ]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+        serverAccountFor={(id) => (id === 'conn-1' ? 'Work' : undefined)}
+      />
+    );
+
+    const badges = await screen.findAllByTestId('connection-server-badge');
+    expect(badges).toHaveLength(1);
+    expect(badges[0]).toHaveAttribute('title', 'Through the MQLens Server account Work');
+  });
+});

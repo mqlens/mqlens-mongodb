@@ -5041,6 +5041,7 @@ function Workspace() {
         <Sidebar
           onSelectCollection={handleSelectCollection}
           isCommandBlocked={isCommandBlocked}
+          serverAccountFor={(id) => serverConnections.get(id)?.accountName}
           pendingSaves={pendingSaves}
           isCollectionOpen={(connectionId, db, collection) =>
             collectionTabsMatching(tabs, { connectionId, db, collection }).length > 0
