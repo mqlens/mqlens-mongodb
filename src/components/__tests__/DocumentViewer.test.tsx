@@ -786,6 +786,29 @@ describe('DocumentViewer Component', () => {
     expect(mockOnExplain).toHaveBeenCalledWith('{}');
   });
 
+  it('does not explain where explain is blocked', async () => {
+    const { DataGrid } = await import('../DataGrid');
+    render(
+      <DocumentViewer
+        connectionName="test-conn"
+        databaseName="test-db"
+        collectionName="test-coll"
+        onExecute={mockOnExecute}
+        onExplain={mockOnExplain}
+        explainBlocked
+        loading={false}
+      >
+        <DataGrid documents={[]} explainResult={null} />
+      </DocumentViewer>
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('explain-plan-tab'));
+    });
+
+    expect(mockOnExplain).not.toHaveBeenCalled();
+  });
+
   it('toggles aggregation pipeline editor mode and adds/moves/deletes stages', async () => {
     render(
       <DocumentViewer

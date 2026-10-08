@@ -365,6 +365,35 @@ describe('App Component', () => {
     expect(screen.queryByText(/User-defined single field index/i)).not.toBeInTheDocument();
   });
 
+  it('hides the collection and index actions a server connection cannot run', async () => {
+    const server = {
+      accountId: 'a1', accountName: 'Work', serverUrl: 'https://s', remoteId: 'c1', opClasses: ['read'],
+      blockedCommands: ['start_collection_export', 'start_filtered_export', 'start_import_task', 'create_index', 'delete_index'],
+    };
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd, args) => {
+      calls.push({ cmd, args });
+      if (cmd === 'connection_list') return Promise.resolve([{ id: 'conn-1', profileId: 'server:a1:c1', name: 'Orders', viaMcp: false, server }]);
+      if (cmd === 'execute_mql_query') return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+      if (cmd === 'list_indexes') return Promise.resolve([{ name: 'email_1', keys: '{"city":1}', unique: false, sparse: false }]);
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('sidebar-conn-conn-1');
+
+    fireEvent.click(screen.getByTestId('select-collection-btn'));
+    expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+    expect(screen.queryByTestId('export-btn')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('import-btn')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('select-index-btn'));
+    await waitFor(() => expect(calls.some((c) => c.cmd === 'list_indexes')).toBe(true));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByTestId('edit-index-btn')).not.toBeInTheDocument();
+  });
+
   it('edits an index using its REAL spec, not specs guessed from the name (C2 regression)', async () => {
     const calls: any[] = [];
     mockInvoke.mockImplementation((cmd, args) => {

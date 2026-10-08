@@ -2524,3 +2524,10 @@ describe('DataGrid — blockedCommands (a server connection without writes)', ()
     }
   });
 });
+
+describe('DataGrid — blocked explain', () => {
+  it('disables the Explain Plan tab when explain is blocked', () => {
+    render(<DataGrid documents={mockDocuments} blockedCommands={['explain_mql_query']} />);
+    expect(screen.getByTestId('explain-plan-tab')).toBeDisabled();
+  });
+});

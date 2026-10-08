@@ -2101,6 +2101,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
             {t('dataGrid.tabs.results')}
           </button>
           <button
+            disabled={blockedCommands?.includes('explain_mql_query')}
             onClick={() => {
               setActiveTab('explain');
               if (docViewerContext && !docViewerContext.explainLoading) {

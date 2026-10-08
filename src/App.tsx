@@ -4591,7 +4591,7 @@ function Workspace() {
             databaseName={tab.db}
             collectionName={tab.collection}
             indexName={tab.indexName || ''}
-            onEditIndex={(indexName, keys, unique, sparse) =>
+            onEditIndex={isCommandBlocked(tab.connectionId, 'create_index') || isCommandBlocked(tab.connectionId, 'delete_index') ? undefined : (indexName, keys, unique, sparse) =>
               handleOpenIndexModalForEdit(
                 tab.connectionId,
                 tab.db,
@@ -4602,7 +4602,7 @@ function Workspace() {
                 sparse
               )
             }
-            onDeleteIndex={(indexName) =>
+            onDeleteIndex={isCommandBlocked(tab.connectionId, 'delete_index') ? undefined : (indexName) =>
               handleDeleteIndex(
                 tab.connectionId,
                 tab.db,
@@ -4643,9 +4643,10 @@ function Workspace() {
               onExecuteAggregate={pipeline => handleExecuteAggregate(tab, pipeline)}
               onExplain={filter => handleExplainQuery(tab, filter)}
               onExplainAggregate={pipeline => handleExplainAggregate(tab, pipeline)}
-              onOpenShell={(command) => handleOpenShell(tab.connectionId, tab.db, tab.collection, command)}
-              onOpenExport={() => handleOpenExportTab(tab)}
-              onImport={() => handleImport(tab)}
+              onOpenShell={isCommandBlocked(tab.connectionId, 'start_mongosh_session') ? undefined : (command) => handleOpenShell(tab.connectionId, tab.db, tab.collection, command)}
+              onOpenExport={isCommandBlocked(tab.connectionId, 'start_collection_export') || isCommandBlocked(tab.connectionId, 'start_filtered_export') ? undefined : () => handleOpenExportTab(tab)}
+              onImport={isCommandBlocked(tab.connectionId, 'start_import_task') ? undefined : () => handleImport(tab)}
+              explainBlocked={isCommandBlocked(tab.connectionId, 'explain_mql_query') || isCommandBlocked(tab.connectionId, 'explain_aggregate_query')}
               loading={tab.loading}
               availableFields={fieldsFromResults(tab.results)}
             >

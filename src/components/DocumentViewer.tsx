@@ -225,6 +225,8 @@ interface DocumentViewerProps {
   onOpenShell?: (command: string) => void;
   onOpenExport?: () => void;
   onImport?: () => void;
+  /** Explain cannot run on this connection (a server connection); the explain controls do nothing. */
+  explainBlocked?: boolean;
   loading: boolean;
   availableFields?: string[];
   /** Restored when remounting this tab's viewer (see App tab cache). */
@@ -582,6 +584,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   onOpenShell,
   onOpenExport,
   onImport,
+  explainBlocked,
   loading,
   availableFields = [],
   initialBuilderState = DEFAULT_BUILDER_STATE,
@@ -1418,6 +1421,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   };
 
   const handleExplain = async () => {
+    if (explainBlocked) return;
     setError(null);
     setExplainLoading(true);
     try {
@@ -1589,7 +1593,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                   <Play size={11} />
                   {td('documentViewer.actions.runQuery')}
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={handleExplain}>
+                <DropdownMenuItem onClick={handleExplain} disabled={explainBlocked}>
                   <Cpu size={11} />
                   {td('documentViewer.actions.runExplain')}
                 </DropdownMenuItem>
@@ -1743,6 +1747,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-[180px]">
               <DropdownMenuItem
+                disabled={!onOpenShell}
                 onClick={() => {
                   const shellCommand = buildShellCommand();
                   onOpenShell?.(shellCommand);
