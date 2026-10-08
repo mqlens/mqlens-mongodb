@@ -94,14 +94,15 @@ pub(crate) async fn sample(
     run_pipeline(state, conn, database, collection, &stages, None).await
 }
 
-/// How many documents match `filter`, counted as local mode counts: the
-/// server estimates from metadata when there is no filter.
+/// How many documents match `filter`, counted as local mode counts: estimated
+/// from metadata when local mode would estimate (`estimate`), exactly otherwise.
 pub(crate) async fn count(
     state: &AppState,
     conn: &RemoteConn,
     database: &str,
     collection: &str,
     filter: &Document,
+    estimate: bool,
 ) -> Result<u64, String> {
     routes::require("count_documents", conn)?;
     let request = CountRequest {
@@ -109,7 +110,7 @@ pub(crate) async fn count(
         database: database.to_string(),
         collection: collection.to_string(),
         filter_json: ejson::doc_to_wire(filter),
-        estimate_if_unfiltered: true,
+        estimate_if_unfiltered: estimate,
     };
     let response = session_for(state, conn)
         .await?
@@ -470,8 +471,8 @@ mod tests {
         assert_eq!(env.fake.with(|s| s.refreshes), 1);
     }
 
-    // A count asks the server with the filter as local mode parses it, and for
-    // an estimate when there is no filter, as local mode estimates then.
+    // A count asks the server with the filter as local mode parses it, and a
+    // filtered count is exact, as in local mode.
     #[tokio::test]
     async fn counts_as_local_mode_counts() {
         let env = Env::new().await;
@@ -492,7 +493,30 @@ mod tests {
             ejson::doc_from_wire(&request.filter_json).unwrap(),
             doc! { "n": 5_i64 }
         );
-        assert!(request.estimate_if_unfiltered);
+        assert!(!request.estimate_if_unfiltered);
+    }
+
+    // Local mode estimates only for a filter written as nothing or exactly {};
+    // one spelled with spaces is counted exactly, and so it is here.
+    #[tokio::test]
+    async fn only_the_filters_local_mode_estimates_ask_for_an_estimate() {
+        let env = Env::new().await;
+        let (state, id) = connected(&env).await;
+        for (filter, estimate) in [
+            ("", true),
+            ("{}", true),
+            ("{ }", false),
+            (
+                "{
+}", false,
+            ),
+        ] {
+            count_documents_impl(&state, &id, "orders", "customers", filter)
+                .await
+                .unwrap();
+            let request = env.fake.with(|s| s.last_count.clone()).unwrap();
+            assert_eq!(request.estimate_if_unfiltered, estimate, "{filter:?}");
+        }
     }
 
     fn plan() -> Document {

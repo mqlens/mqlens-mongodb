@@ -225,6 +225,7 @@ async fn count_documents_impl_inner(
                 database,
                 collection,
                 &filter_doc,
+                is_empty_filter,
             )
             .await
         }
