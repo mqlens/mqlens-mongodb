@@ -4977,7 +4977,7 @@ function Workspace() {
         )}
         {tab.type === 'shell' && isCommandBlocked(tab.connectionId, 'start_mongosh_session') && (
           <div className="flex h-full items-center justify-center p-8 text-center text-xs text-muted-foreground">
-            {tShell('shellNotOnServer')}
+            {isBlockedByRole(tab.connectionId, 'start_mongosh_session') ? t('notForRole') : tShell('shellNotOnServer')}
           </div>
         )}
         {tab.type === 'shell' && !isCommandBlocked(tab.connectionId, 'start_mongosh_session') && (() => {

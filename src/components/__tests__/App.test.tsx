@@ -3064,6 +3064,23 @@ describe('App Component', () => {
       expect(mockInvoke).not.toHaveBeenCalledWith('start_mongosh_session', expect.anything());
     });
 
+    it('(b-server-shell-role) a shell the role rules out says the role is why', async () => {
+      const server = { accountId: 'a1', accountName: 'Work', serverUrl: 'https://s', remoteId: 'c1', opClasses: ['read'], blockedCommands: ['start_mongosh_session'], roleBlockedCommands: ['start_mongosh_session'] };
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'connection_list') {
+          return Promise.resolve([{ id: 'remote-1', profileId: 'server:a1:c1', name: 'Orders', viaMcp: false, server }]);
+        }
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      fireEvent.click(await screen.findByTestId('mock-open-shell-remote-1'));
+
+      expect(await screen.findByText('Your role on this MQLens Server connection does not allow this.')).toBeInTheDocument();
+      expect(mockInvoke).not.toHaveBeenCalledWith('start_mongosh_session', expect.anything());
+    });
+
     it('(b2) reconnecting a profile sends its saved OIDC config to connect_db (#430)', async () => {
       const calls: any[] = [];
       mockInvoke.mockImplementation((cmd: string, args: any) => {
