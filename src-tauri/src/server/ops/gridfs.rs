@@ -156,7 +156,7 @@ struct Source {
 /// one up to 64 KiB of the file. A read that fails stops the stream without
 /// ending it, so the server never takes a truncated file for a whole one; the
 /// waiting upload hears of the failure and abandons the call.
-fn chunks(source: Source) -> impl tokio_stream::Stream<Item = UploadChunk> + Send + 'static {
+fn chunks(source: Source) -> impl futures::Stream<Item = UploadChunk> + Send + 'static {
     futures::stream::unfold(
         (source, None::<tokio::fs::File>, 0u64, true),
         |(source, file, sent, first)| async move {

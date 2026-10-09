@@ -2529,14 +2529,14 @@ describe('DataGrid — blockedCommands (a server connection without writes)', ()
 
   it('disables the write buttons when the writes are blocked', () => {
     render(<DataGrid documents={mockDocuments} {...writeHandlers} blockedCommands={WRITES} />);
-    for (const testId of ['insert-doc-btn', 'update-many-btn', 'delete-many-btn']) {
+    for (const testId of ['insert-doc-btn', 'bulk-write-menu-btn']) {
       expect(screen.getByTestId(testId)).toBeDisabled();
     }
   });
 
   it('leaves them alone when only other commands are blocked', () => {
     render(<DataGrid documents={mockDocuments} {...writeHandlers} blockedCommands={['start_dump_task']} />);
-    for (const testId of ['insert-doc-btn', 'update-many-btn', 'delete-many-btn']) {
+    for (const testId of ['insert-doc-btn', 'bulk-write-menu-btn']) {
       expect(screen.getByTestId(testId)).toBeEnabled();
     }
   });
