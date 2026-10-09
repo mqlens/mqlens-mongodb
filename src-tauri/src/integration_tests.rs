@@ -1299,4 +1299,31 @@ mod integration {
 
         cleanup(&state, &id, &db).await;
     }
+
+    // A `$`-prefixed key that no Extended JSON type uses reads back as itself,
+    // so it does not stand in the way of editing the document.
+    #[tokio::test]
+    async fn it_edits_a_document_with_a_dollar_key_that_is_no_type_wrapper() {
+        let Some((state, id, db)) = connect().await else {
+            return;
+        };
+        let stored = doc! { "_id": 1, "meta": { "$weird": 1 }, "name": "Ada" };
+        seed(&state, &id, &db, "odd", vec![stored]).await;
+
+        let modified = update_document_impl(
+            &state,
+            &id,
+            &db,
+            "odd",
+            r#"{"_id":1}"#,
+            r#"{"_id":1,"meta":{"$weird":1},"name":"Ada"}"#,
+            r#"{"_id":1,"meta":{"$weird":1},"name":"Bo"}"#,
+            Some("{}"),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(modified, 1);
+        cleanup(&state, &id, &db).await;
+    }
 }

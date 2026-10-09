@@ -317,6 +317,33 @@ mod tests {
         assert!(writes(&env).is_empty());
     }
 
+    // A `$`-prefixed key that no Extended JSON type uses does not block an
+    // edit through the server either.
+    #[tokio::test]
+    async fn an_edit_beside_a_dollar_key_that_is_no_type_wrapper_goes_through() {
+        let env = Env::new().await;
+        env.fake.with(|s| {
+            s.documents = vec![doc! { "_id": 1, "meta": { "$weird": 1 }, "name": "Ada" }]
+        });
+        let (state, id) = connected(&env).await;
+
+        let modified = update_document_impl(
+            &state,
+            &id,
+            "orders",
+            "customers",
+            r#"{"_id": 1}"#,
+            r#"{"_id": 1, "meta": {"$weird": 1}, "name": "Ada"}"#,
+            r#"{"_id": 1, "meta": {"$weird": 1}, "name": "Bo"}"#,
+            Some("{}"),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(modified, 1);
+        assert_eq!(writes(&env).len(), 1);
+    }
+
     // An edit sends the field update local mode would make, and falls back to
     // replacing the document where local mode does.
     #[tokio::test]

@@ -1190,17 +1190,43 @@ struct AppliedWrite {
 /// that type, so a save through JSON would store the type in its place.
 const WRAPPER_SHAPED_EDIT: &str = "This document has a sub-document whose field names look like an Extended JSON type ($numberLong, $date, $oid and the like). Saving it as JSON would store that type in their place, so it cannot be edited here. Use the shell to change it.";
 
-/// Whether any key of the document, at any depth, begins with `$`. Values of
-/// real BSON types are not sub-documents, so they never count.
-fn has_dollar_key(doc: &Document) -> bool {
+/// The keys the Extended JSON parser reads as a type rather than a field. Any
+/// other `$` key reads back as itself.
+const TYPE_WRAPPER_KEYS: &[&str] = &[
+    "$oid",
+    "$symbol",
+    "$numberInt",
+    "$numberLong",
+    "$numberDouble",
+    "$numberDecimal",
+    "$binary",
+    "$uuid",
+    "$type",
+    "$code",
+    "$scope",
+    "$timestamp",
+    "$regularExpression",
+    "$regex",
+    "$options",
+    "$dbPointer",
+    "$date",
+    "$minKey",
+    "$maxKey",
+    "$undefined",
+];
+
+/// Whether any key of the document, at any depth, is a type-wrapper key.
+/// Values of real BSON types are not sub-documents, so they never count.
+fn has_type_wrapper_key(doc: &Document) -> bool {
     fn value(v: &mongodb::bson::Bson) -> bool {
         match v {
-            mongodb::bson::Bson::Document(d) => has_dollar_key(d),
+            mongodb::bson::Bson::Document(d) => has_type_wrapper_key(d),
             mongodb::bson::Bson::Array(items) => items.iter().any(value),
             _ => false,
         }
     }
-    doc.iter().any(|(k, v)| k.starts_with('$') || value(v))
+    doc.iter()
+        .any(|(k, v)| TYPE_WRAPPER_KEYS.contains(&k.as_str()) || value(v))
 }
 
 /// Which Mongo write to issue for an edited document.
@@ -1317,7 +1343,7 @@ async fn update_document_inner(
                 skip: 0,
             };
             match query::find_documents(state, &conn, stored).await {
-                Ok(docs) if docs.iter().any(has_dollar_key) => {
+                Ok(docs) if docs.iter().any(has_type_wrapper_key) => {
                     rejected!(WRAPPER_SHAPED_EDIT.to_string())
                 }
                 Ok(_) => {}
@@ -1348,7 +1374,9 @@ async fn update_document_inner(
         .find_one(filter_doc.clone())
         .await;
     match stored.map(|found| found.map(crate::db::stored).transpose()) {
-        Ok(Ok(Some(doc))) if has_dollar_key(&doc) => rejected!(WRAPPER_SHAPED_EDIT.to_string()),
+        Ok(Ok(Some(doc))) if has_type_wrapper_key(&doc) => {
+            rejected!(WRAPPER_SHAPED_EDIT.to_string())
+        }
         Ok(Ok(_)) => {}
         Ok(Err(e)) => rejected!(e),
         Err(e) => rejected!(format!("Failed to read document: {}", e)),
