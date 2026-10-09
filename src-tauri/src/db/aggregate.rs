@@ -109,12 +109,15 @@ async fn execute_aggregate_inner(
         return Err("Aggregation pipelines are not supported on mock connections".to_string());
     }
 
-    let client = {
-        let connections = state.connections.lock_safe()?;
-        connections
-            .get(id)
-            .cloned()
-            .ok_or_else(|| "Connection client not found".to_string())?
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            let writes = stages_val.iter().any(stage_is_disallowed);
+            return crate::server::ops::query::aggregate(
+                state, &conn, database, collection, &stages, writes,
+            )
+            .await;
+        }
     };
 
     let coll = client
@@ -206,12 +209,19 @@ async fn explain_aggregate_query_impl_inner(
         return Err("Aggregation explain is not supported on mock connections".to_string());
     }
 
-    let client = {
-        let connections = state.connections.lock_safe()?;
-        connections
-            .get(id)
-            .cloned()
-            .ok_or_else(|| "Connection client not found".to_string())?
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            use crate::server::ops::query::{explain, Explained};
+            return explain(
+                state,
+                &conn,
+                database,
+                collection,
+                Explained::Aggregate(&stages),
+            )
+            .await;
+        }
     };
 
     let db = client.database(database);

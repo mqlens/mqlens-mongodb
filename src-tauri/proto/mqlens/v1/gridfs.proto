@@ -23,7 +23,7 @@ message ListFilesRequest {
   string database = 2;
   string bucket = 3; // empty => "fs"
   // Return file documents in files_bson instead of files_ejson.
-  // Feature "documents.raw_bson".
+  // API version 2.
   bool raw_bson = 4;
 }
 // Exactly one of the two fields is filled, as the request's raw_bson chose.
@@ -50,7 +50,7 @@ message UploadChunk {
   string bucket = 3;
   string filename = 4;
   bytes data = 5;
-  // First chunk only. Feature "gridfs.upload_options".
+  // First chunk only. API version 2.
   string content_type = 6;  // stored as the file document's contentType
   string metadata_json = 7; // Extended JSON document stored as its metadata
 }

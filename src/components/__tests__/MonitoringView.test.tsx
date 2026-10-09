@@ -5,6 +5,7 @@ const mockInvoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: any[]) => mockInvoke(...a) }));
 
 import { MonitoringView } from '../MonitoringView';
+import type { CurrentOp } from '../../lib/monitoringApi';
 import { TabVisibleContext } from '../../workspace/tabVisibility';
 
 const STATUS = {
@@ -88,6 +89,19 @@ describe('MonitoringView', () => {
     fireEvent.click(killBtn);
     await waitFor(() => {
       expect(mockInvoke).toHaveBeenCalledWith('kill_op', { id: 'conn-1', opid: 42 });
+    });
+  });
+
+  // Through mongos an operation id is "shard:number"; it is shown and killed as it came.
+  it('kills an operation whose id is a string', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const sharded: CurrentOp = { opid: 'shard01:77', op: 'query', ns: 'sales_db.orders', secsRunning: 9, client: '', desc: '', command: '{}' };
+    const base = mockInvoke.getMockImplementation()!;
+    mockInvoke.mockImplementation((cmd: string, args?: unknown) => (cmd === 'current_ops' ? Promise.resolve([sharded]) : base(cmd, args)));
+    render(<MonitoringView connectionId="conn-1" />);
+    fireEvent.click(await screen.findByTestId('kill-op-shard01:77'));
+    await waitFor(() => {
+      expect(mockInvoke).toHaveBeenCalledWith('kill_op', { id: 'conn-1', opid: 'shard01:77' });
     });
   });
 
@@ -231,5 +245,34 @@ describe('MonitoringView', () => {
     expect(await screen.findByTestId('cluster-sharded')).toBeInTheDocument();
     expect(screen.queryByTestId('cluster-not-replset')).toBeNull();
     expect(screen.queryByTestId('cluster-members-table')).toBeNull();
+  });
+});
+
+describe('MonitoringView: commands a server connection cannot run', () => {
+  const BLOCKED = ['current_ops', 'kill_op', 'read_profile', 'set_profiling_level'];
+
+  it('does not ask for them, and says why', async () => {
+    render(<MonitoringView connectionId="c1" blockedCommands={BLOCKED} />);
+
+    const ops = await screen.findByTestId('mon-panel-ops');
+    await waitFor(() => expect(ops).toHaveTextContent('Not available on MQLens Server yet'));
+    fireEvent.click(screen.getByTestId('mon-tab-profiler'));
+    expect(await screen.findByTestId('profiler-level-1')).toBeDisabled();
+    await waitFor(() => expect(screen.getByTestId('mon-panel-profiler')).toHaveTextContent('Not available on MQLens Server yet'));
+    const called = mockInvoke.mock.calls.map((c) => c[0]);
+    expect(called.filter((c) => BLOCKED.includes(c))).toEqual([]);
+  });
+});
+
+describe('MonitoringView: a server connection without the metrics', () => {
+  it('does not ask for server status, replica set status or profiling status when blocked', async () => {
+    const BLOCKED = ['server_status', 'repl_set_status', 'get_profiling_status'];
+    render(<MonitoringView connectionId="c1" blockedCommands={BLOCKED} />);
+
+    fireEvent.click(await screen.findByTestId('mon-tab-profiler'));
+    await screen.findByTestId('mon-panel-profiler');
+    await new Promise((r) => setTimeout(r, 50));
+    const called = mockInvoke.mock.calls.map((c) => c[0]);
+    expect(called.filter((c) => BLOCKED.includes(c))).toEqual([]);
   });
 });

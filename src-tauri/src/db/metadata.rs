@@ -41,12 +41,11 @@ async fn list_databases_impl_inner(state: &AppState, id: &str) -> Result<Vec<Str
         ]);
     }
 
-    let client = {
-        let connections = state.connections.lock_safe()?;
-        connections
-            .get(id)
-            .cloned()
-            .ok_or_else(|| "Connection client not found".to_string())?
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            return crate::server::ops::metadata::list_databases(state, &conn).await;
+        }
     };
 
     let dbs = client
@@ -111,12 +110,11 @@ async fn list_collections_impl_inner(
             .collect());
     }
 
-    let client = {
-        let connections = state.connections.lock_safe()?;
-        connections
-            .get(id)
-            .cloned()
-            .ok_or_else(|| "Connection client not found".to_string())?
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            return crate::server::ops::metadata::list_collections(state, &conn, db).await;
+        }
     };
 
     let database = client.database(db);
@@ -231,12 +229,11 @@ async fn list_indexes_impl_inner(
         return Ok(mock_indexes.get(&key).unwrap().clone());
     }
 
-    let client = {
-        let connections = state.connections.lock_safe()?;
-        connections
-            .get(id)
-            .cloned()
-            .ok_or_else(|| "Connection client not found".to_string())?
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            return crate::server::ops::metadata::list_indexes(state, &conn, db, collection).await;
+        }
     };
 
     let database = client.database(db);
@@ -345,21 +342,27 @@ async fn create_index_inner(
         return Ok(());
     }
 
-    let client = {
-        let connections = state.connections.lock_safe()?;
-        connections
-            .get(id)
-            .cloned()
-            .ok_or_else(|| "Connection client not found".to_string())?
-    };
-
-    let database = client.database(db);
-    let coll = database.collection::<mongodb::bson::Document>(collection);
-
     let value: serde_json::Value =
         serde_json::from_str(keys).map_err(|e| format!("Invalid JSON keys: {}", e))?;
     let keys_doc = mongodb::bson::to_document(&value)
         .map_err(|e| format!("Failed to convert keys JSON to BSON: {}", e))?;
+
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            let index = crate::server::ops::write::NewIndex {
+                name: index_name,
+                keys: &keys_doc,
+                unique,
+                sparse,
+            };
+            use crate::server::ops::write;
+            return write::create_index(state, &conn, db, collection, index).await;
+        }
+    };
+
+    let database = client.database(db);
+    let coll = database.collection::<mongodb::bson::Document>(collection);
 
     let mut options = mongodb::options::IndexOptions::builder()
         .name(index_name.to_string())
@@ -436,12 +439,12 @@ async fn delete_index_inner(
         return Ok(());
     }
 
-    let client = {
-        let connections = state.connections.lock_safe()?;
-        connections
-            .get(id)
-            .cloned()
-            .ok_or_else(|| "Connection client not found".to_string())?
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            use crate::server::ops::write;
+            return write::drop_index(state, &conn, db, collection, index_name).await;
+        }
     };
 
     let database = client.database(db);

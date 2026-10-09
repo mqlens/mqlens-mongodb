@@ -90,30 +90,27 @@ async fn execute_mql_query_inner(
         serde_json::from_str(sort).map_err(|e| format!("Invalid MQL sort JSON: {}", e))?
     };
 
-    let client = {
-        let connections = state.connections.lock_safe()?;
-        connections
-            .get(id)
-            .cloned()
-            .ok_or_else(|| "Connection client not found".to_string())?
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            let (filter_doc, sort_doc) = find_documents(&filter_val, &sort_val)?;
+            let query = crate::server::ops::query::Find {
+                database,
+                collection,
+                filter: &filter_doc,
+                sort: sort_doc.as_ref(),
+                projection: projection_doc.as_ref(),
+                limit: normalize_query_limit(limit),
+                skip,
+            };
+            return crate::server::ops::query::find(state, &conn, query).await;
+        }
     };
 
     let db = client.database(database);
     let coll = db.collection::<mongodb::bson::Document>(collection);
 
-    // Convert filter serde_json::Value to BSON Document
-    let filter_doc = mongodb::bson::to_document(&filter_val)
-        .map_err(|e| format!("BSON conversion error: {}", e))?;
-
-    // Convert sort serde_json::Value to BSON Document
-    let sort_doc: Option<mongodb::bson::Document> =
-        if sort_val.is_object() && !sort_val.as_object().unwrap().is_empty() {
-            let doc = mongodb::bson::to_document(&sort_val)
-                .map_err(|e| format!("BSON conversion error: {}", e))?;
-            Some(doc)
-        } else {
-            None
-        };
+    let (filter_doc, sort_doc) = find_documents(&filter_val, &sort_val)?;
 
     let effective_limit = normalize_query_limit(limit);
     let mut find_builder = coll.find(filter_doc);
@@ -142,6 +139,27 @@ async fn execute_mql_query_inner(
     }
 
     Ok(results)
+}
+
+/// The filter and sort a find sends, as BSON. An empty sort is none.
+fn find_documents(
+    filter_val: &serde_json::Value,
+    sort_val: &serde_json::Value,
+) -> Result<(mongodb::bson::Document, Option<mongodb::bson::Document>), String> {
+    // Convert filter serde_json::Value to BSON Document
+    let filter_doc = mongodb::bson::to_document(filter_val)
+        .map_err(|e| format!("BSON conversion error: {}", e))?;
+
+    // Convert sort serde_json::Value to BSON Document
+    let sort_doc: Option<mongodb::bson::Document> =
+        if sort_val.is_object() && !sort_val.as_object().unwrap().is_empty() {
+            let doc = mongodb::bson::to_document(sort_val)
+                .map_err(|e| format!("BSON conversion error: {}", e))?;
+            Some(doc)
+        } else {
+            None
+        };
+    Ok((filter_doc, sort_doc))
 }
 
 pub async fn count_documents_impl(
@@ -198,12 +216,19 @@ async fn count_documents_impl_inner(
     let filter_doc = mongodb::bson::to_document(&filter_val)
         .map_err(|e| format!("BSON conversion error: {}", e))?;
 
-    let client = {
-        let connections = state.connections.lock_safe()?;
-        connections
-            .get(id)
-            .cloned()
-            .ok_or_else(|| "Connection client not found".to_string())?
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            return crate::server::ops::query::count(
+                state,
+                &conn,
+                database,
+                collection,
+                &filter_doc,
+                is_empty_filter,
+            )
+            .await
+        }
     };
 
     let coll = client
@@ -266,15 +291,6 @@ async fn explain_mql_query_impl_inner(
         return Ok(mock_db::get_mock_explain(database, collection, filter));
     }
 
-    let client = {
-        let connections = state.connections.lock_safe()?;
-        connections
-            .get(id)
-            .cloned()
-            .ok_or_else(|| "Connection client not found".to_string())?
-    };
-
-    let db = client.database(database);
     let filter_val: serde_json::Value = if filter.trim().is_empty() {
         serde_json::Value::Object(serde_json::Map::new())
     } else {
@@ -283,6 +299,22 @@ async fn explain_mql_query_impl_inner(
 
     let filter_doc = mongodb::bson::to_document(&filter_val)
         .map_err(|e| format!("BSON conversion error: {}", e))?;
+
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            use crate::server::ops::query::{explain, Explained};
+            return explain(
+                state,
+                &conn,
+                database,
+                collection,
+                Explained::Find(&filter_doc),
+            )
+            .await;
+        }
+    };
+    let db = client.database(database);
 
     let command = mongodb::bson::doc! {
         "explain": {

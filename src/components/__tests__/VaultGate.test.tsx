@@ -82,6 +82,35 @@ describe('VaultGate', () => {
     expect(screen.queryByTestId('vault-biometric-btn')).not.toBeInTheDocument();
   });
 
+  it('requires confirmation before allowing a locked recovery reset', async () => {
+    (vault.getVaultStatus as any).mockResolvedValue('locked');
+    (vault.resetVault as any).mockResolvedValue(undefined);
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<VaultGate><div>WORKSPACE</div></VaultGate>);
+
+    fireEvent.click(await screen.findByTestId('vault-reset-btn'));
+
+    await waitFor(() => expect(vault.resetVault).toHaveBeenCalledWith(true));
+    confirm.mockRestore();
+  });
+
+  it('shows the reset warning and moves to setup when a session may remain active', async () => {
+    (vault.getVaultStatus as any).mockResolvedValue('locked');
+    (vault.resetVault as any).mockResolvedValue(
+      'Vault reset completed, but one MQLens Server session may still be active.',
+    );
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<VaultGate><div>WORKSPACE</div></VaultGate>);
+
+    fireEvent.click(await screen.findByTestId('vault-reset-btn'));
+
+    expect(await screen.findByTestId('vault-setup')).toBeInTheDocument();
+    expect(await screen.findByTestId('vault-error')).toHaveTextContent(
+      'one MQLens Server session may still be active',
+    );
+    confirm.mockRestore();
+  });
+
   it('unlocks when the biometric retry button is clicked', async () => {
     (vault.getVaultStatus as any).mockResolvedValue('locked');
     (vault.biometricStatus as any).mockResolvedValue({

@@ -946,6 +946,9 @@ pub async fn disconnect_db_impl(state: &AppState, id: &str) -> Result<(), String
         let mut meta = state.connection_meta.lock_safe()?;
         meta.remove(id);
     }
+    // A connection made through an MQLens Server has no driver client to
+    // drop; what makes it routable goes instead.
+    state.server.forget_remote(id)?;
     // A human disconnecting (Sidebar's onDisconnect -> this command) an
     // agent-opened connection must also drop it from the MCP server's own
     // `session_connections` bookkeeping (final whole-branch review fix
@@ -994,8 +997,17 @@ pub fn connection_list_impl(state: &AppState) -> Result<Vec<ConnectionEntry>, St
     let meta = state.connection_meta.lock_safe()?;
     let mut list: Vec<ConnectionEntry> = meta
         .iter()
-        .map(|(id, m)| ConnectionEntry { id: id.clone(), profile_id: m.profile_id.clone(), name: m.name.clone(), via_mcp: m.via_mcp, mode: m.mode })
-        .collect();
+        .map(|(id, m)| {
+            Ok(ConnectionEntry {
+                id: id.clone(),
+                profile_id: m.profile_id.clone(),
+                name: m.name.clone(),
+                via_mcp: m.via_mcp,
+                mode: m.mode,
+                server: state.server.remote(id)?.map(|conn| conn.info()),
+            })
+        })
+        .collect::<Result<_, String>>()?;
     list.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(list)
 }
@@ -1036,6 +1048,7 @@ pub async fn start_mongosh_session_impl(
     // window closes can stop the child it spawned. Empty opts out.
     window_id: &str,
 ) -> Result<MongoshSessionInfo, String> {
+    server::remote::reject_if_remote(state, connection_id, "The MongoDB shell")?;
     if write_guard::connection_mode(state, connection_id)? == connections::ConnectionMode::ReadOnly
     {
         return Err(write_guard::READ_ONLY_MSG.to_string());
@@ -1177,6 +1190,7 @@ pub async fn run_mongosh_script_impl(
     mongosh_path: &str,
     script: &str,
 ) -> Result<MongoshCommandOutput, String> {
+    server::routes::refuse_deferred(state, "run_mongosh_script", &[connection_id])?;
     if write_guard::connection_mode(state, connection_id)? == connections::ConnectionMode::ReadOnly
     {
         return Err(write_guard::READ_ONLY_MSG.to_string());
@@ -1521,6 +1535,11 @@ pub async fn stop_mongosh_session_impl(state: &AppState, session_id: &str) -> Re
 }
 
 pub(crate) fn require_real_client(state: &AppState, id: &str) -> Result<Client, String> {
+    // A connection made through an MQLens Server has no driver client: its
+    // commands run on the server through an adapter, or not at all.
+    if state.server.remote(id)?.is_some() {
+        return Err(server::remote::NOT_SERVED.to_string());
+    }
     let connections = state.connections.lock_safe()?;
     connections
         .get(id)
@@ -2411,7 +2430,11 @@ async fn repl_set_status(
 }
 
 #[tauri::command]
-async fn kill_op(state: tauri::State<'_, AppState>, id: String, opid: i64) -> Result<(), String> {
+async fn kill_op(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    opid: monitoring::OpId,
+) -> Result<(), String> {
     monitoring::kill_op_impl(&state, &id, opid).await
 }
 
@@ -3271,7 +3294,8 @@ async fn save_connection_profile_inner(
     state: &AppState,
     profile: &mut connections::ConnectionProfile,
 ) -> Result<(), String> {
-    let key = state.require_key()?;
+    let meta_path = connections::get_vault_meta_path(app_handle);
+    let (_vault_lock, key) = lock_vault_and_get_key_async(state, &meta_path).await?;
     let path = connections::get_profiles_enc_path(app_handle);
     let mut profiles = connections::load_profiles_encrypted(&path, &key)?;
     profile.uri = connections::normalize_mongodb_uri_options(&profile.uri);
@@ -3298,11 +3322,144 @@ async fn delete_connection_profile(
     state: tauri::State<'_, AppState>,
     id: String,
 ) -> Result<(), String> {
-    let key = state.require_key()?;
+    let meta_path = connections::get_vault_meta_path(&app_handle);
+    let (_vault_lock, key) = lock_vault_and_get_key_async(&state, &meta_path).await?;
     let path = connections::get_profiles_enc_path(&app_handle);
     let mut profiles = connections::load_profiles_encrypted(&path, &key)?;
     profiles.retain(|p| p.id != id);
     connections::save_profiles_encrypted(&path, &key, &profiles)
+}
+
+#[tauri::command]
+async fn server_account_list(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<server::accounts::ServerAccountView>, String> {
+    let path = connections::get_server_accounts_path(&app_handle);
+    server::commands::account_list_impl(&state, &path)
+}
+
+#[tauri::command]
+async fn server_account_save(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    account: server::accounts::ServerAccountInput,
+) -> Result<server::accounts::ServerAccountView, String> {
+    let started = Instant::now();
+    let summary = format!("save MQLens Server account {}", account.name.trim());
+    let path = connections::get_server_accounts_path(&app_handle);
+    let result = server::commands::account_save_impl(&state, &path, account).await;
+    audit::maybe_record_result(
+        &state,
+        None,
+        None,
+        None,
+        "server_account_save",
+        audit::OpClass::Write,
+        Some("ui"),
+        started,
+        &summary,
+        None,
+        &result,
+    );
+    result
+}
+
+#[tauri::command]
+async fn server_account_delete(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> Result<server::commands::AccountDeleteResult, String> {
+    let started = Instant::now();
+    let path = connections::get_server_accounts_path(&app_handle);
+    let result = server::commands::account_delete_impl(&state, &path, &id).await;
+    audit::maybe_record_result(
+        &state,
+        None,
+        None,
+        None,
+        "server_account_delete",
+        audit::OpClass::Write,
+        Some("ui"),
+        started,
+        &format!("delete MQLens Server account {id}"),
+        None,
+        &result,
+    );
+    result
+}
+
+#[tauri::command]
+async fn server_sign_in(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    account_id: String,
+    password: String,
+) -> Result<server::accounts::ServerAccountView, String> {
+    let started = Instant::now();
+    let path = connections::get_server_accounts_path(&app_handle);
+    let result = server::commands::sign_in_impl(&state, &path, &account_id, password).await;
+    audit::maybe_record_result(
+        &state,
+        None,
+        None,
+        None,
+        "server_sign_in",
+        audit::OpClass::Write,
+        Some("ui"),
+        started,
+        &format!("sign in to MQLens Server account {account_id}"),
+        None,
+        &result,
+    );
+    result
+}
+
+#[tauri::command]
+async fn server_sign_out(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    account_id: String,
+) -> Result<server::commands::SignOutResult, String> {
+    let started = Instant::now();
+    let path = connections::get_server_accounts_path(&app_handle);
+    let result = server::commands::sign_out_impl(&state, &path, &account_id).await;
+    audit::maybe_record_result(
+        &state,
+        None,
+        None,
+        None,
+        "server_sign_out",
+        audit::OpClass::Write,
+        Some("ui"),
+        started,
+        &format!("sign out of MQLens Server account {account_id}"),
+        None,
+        &result,
+    );
+    result
+}
+
+#[tauri::command]
+async fn server_list_connections(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    account_id: String,
+) -> Result<Vec<server::commands::RemoteConnectionView>, String> {
+    let path = connections::get_server_accounts_path(&app_handle);
+    server::commands::list_connections_impl(&state, &path, &account_id).await
+}
+
+#[tauri::command]
+async fn server_connect(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    account_id: String,
+    remote_id: String,
+) -> Result<server::commands::ServerConnectResult, String> {
+    let path = connections::get_server_accounts_path(&app_handle);
+    server::commands::server_connect_impl(&state, &path, &account_id, &remote_id).await
 }
 
 #[tauri::command]
@@ -3354,7 +3511,8 @@ async fn patch_app_settings(
     state: tauri::State<'_, AppState>,
     patch: serde_json::Value,
 ) -> Result<connections::AppSettings, String> {
-    let key = state.require_key()?;
+    let meta_path = connections::get_vault_meta_path(&app_handle);
+    let (_vault_lock, key) = lock_vault_and_get_key_async(&state, &meta_path).await?;
     let path = connections::get_settings_enc_path(&app_handle);
     let _guard = state.settings_write.lock().map_err(|e| e.to_string())?;
     // The in-process mutex above orders this window's writers; this orders them
@@ -3384,7 +3542,8 @@ async fn save_app_settings(
     state: tauri::State<'_, AppState>,
     settings: connections::AppSettings,
 ) -> Result<(), String> {
-    let key = state.require_key()?;
+    let meta_path = connections::get_vault_meta_path(&app_handle);
+    let (_vault_lock, key) = lock_vault_and_get_key_async(&state, &meta_path).await?;
     // Same locks as `patch_app_settings`, so a whole-object save cannot
     // interleave with a field patch — in this process or another one.
     let _guard = state.settings_write.lock().map_err(|e| e.to_string())?;
@@ -3410,6 +3569,73 @@ async fn save_app_settings(
     Ok(())
 }
 
+/// Take the process-shared vault lock and capture a key that still matches
+/// vault.json. Callers hold the returned file through their complete write.
+pub(crate) fn lock_vault_and_get_key(
+    state: &AppState,
+    meta_path: &std::path::Path,
+) -> Result<(std::fs::File, [u8; 32]), String> {
+    let lock = connections::lock_vault_for_write(meta_path)?;
+    let key = state.require_key()?;
+    let meta = connections::read_vault_meta(meta_path)?
+        .ok_or_else(|| "vault is not initialized".to_string())?;
+    if !connections::key_matches_meta(&meta, &key) {
+        return Err(
+            "The vault changed while this operation was waiting. Unlock it and try again."
+                .to_string(),
+        );
+    }
+    Ok((lock, key))
+}
+
+pub(crate) async fn lock_vault_and_get_key_async(
+    state: &AppState,
+    meta_path: &std::path::Path,
+) -> Result<(std::fs::File, [u8; 32]), String> {
+    let path = meta_path.to_path_buf();
+    // Only the blocking file-lock acquisition moves to the worker.
+    let lock = server::session::blocking(move || connections::lock_vault_for_write(&path)).await?;
+    // Re-read after acquiring the cross-process lock. A reset or rotation that
+    // won the race invalidates the copied key and must prevent the write.
+    let key = state.require_key()?;
+    let meta = connections::read_vault_meta(meta_path)?
+        .ok_or_else(|| "vault is not initialized".to_string())?;
+    if !connections::key_matches_meta(&meta, &key) {
+        return Err(
+            "The vault changed while this operation was waiting. Unlock it and try again."
+                .to_string(),
+        );
+    }
+    Ok((lock, key))
+}
+
+async fn lock_vault_operation_async(meta_path: &std::path::Path) -> Result<std::fs::File, String> {
+    let path = meta_path.to_path_buf();
+    server::session::blocking(move || connections::lock_vault_for_write(&path)).await
+}
+
+/// Install a key returned by biometric verification only if the same vault is
+/// still present after the user completes the prompt. The guards prevent a
+/// reset in this process or another process from crossing the installation.
+pub(crate) async fn install_unlocked_key<'a>(
+    state: &'a AppState,
+    meta_path: &std::path::Path,
+    key: [u8; 32],
+) -> Result<(tokio::sync::MutexGuard<'a, ()>, std::fs::File), String> {
+    let no_reset = state.vault_reset_lock.lock().await;
+    let vault_lock = lock_vault_operation_async(meta_path).await?;
+    let meta = connections::read_vault_meta(meta_path)?
+        .ok_or_else(|| "vault is not initialized".to_string())?;
+    if !connections::key_matches_meta(&meta, &key) {
+        return Err(
+            "The vault changed while biometric unlock was in progress. Unlock it again."
+                .to_string(),
+        );
+    }
+    *state.vault_key.lock_safe()? = Some(key);
+    Ok((no_reset, vault_lock))
+}
+
 #[tauri::command]
 async fn vault_status(
     app_handle: tauri::AppHandle,
@@ -3433,6 +3659,8 @@ async fn vault_initialize(
     password: String,
 ) -> Result<(), String> {
     let meta_path = connections::get_vault_meta_path(&app_handle);
+    let _no_reset = state.vault_reset_lock.lock().await;
+    let _vault_lock = lock_vault_operation_async(&meta_path).await?;
     if connections::read_vault_meta(&meta_path)?.is_some() {
         return Err("vault already initialized".to_string());
     }
@@ -3465,25 +3693,52 @@ async fn vault_unlock(
     password: String,
 ) -> Result<connections::VaultStatus, String> {
     let meta_path = connections::get_vault_meta_path(&app_handle);
-    let meta = connections::read_vault_meta(&meta_path)?
-        .ok_or_else(|| "vault is not initialized".to_string())?;
-    let key = connections::unlock_key(&meta, &password)?;
-    *state.vault_key.lock_safe()? = Some(key);
+    // The in-process reset guard stays live through audit/MCP restoration. The
+    // file lock protects metadata/key installation and audit opening, then must
+    // be released before MCP restoration, which may persist settings through
+    // the same non-reentrant lock.
+    let (key, _no_reset, _vault_lock) = unlock_vault_key(&state, &meta_path, &password).await?;
     let _ = audit::open_on_unlock(&app_handle, &state, key);
+    drop(_vault_lock);
     // The MCP server needs the key, so this is the first moment it can come
     // back up. Best-effort by design — see `restore_on_unlock` (#350).
     mcp::restore_on_unlock(&state, app_handle).await;
     Ok(connections::VaultStatus::Unlocked)
 }
 
+/// The key step of `vault_unlock`: derives the key from `password` and
+/// makes it the live vault key. Waits for a reset under way, which then leaves
+/// no vault to unlock; the returned guard keeps a new one from starting.
+async fn unlock_vault_key<'a>(
+    state: &'a AppState,
+    meta_path: &std::path::Path,
+    password: &str,
+) -> Result<([u8; 32], tokio::sync::MutexGuard<'a, ()>, std::fs::File), String> {
+    let no_reset = state.vault_reset_lock.lock().await;
+    let vault_lock = lock_vault_operation_async(meta_path).await?;
+    let meta = connections::read_vault_meta(meta_path)?
+        .ok_or_else(|| "vault is not initialized".to_string())?;
+    let key = connections::unlock_key(&meta, password)?;
+    *state.vault_key.lock_safe()? = Some(key);
+    Ok((key, no_reset, vault_lock))
+}
+
 #[tauri::command]
-async fn vault_lock(state: tauri::State<'_, AppState>) -> Result<(), String> {
+async fn vault_lock(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let meta_path = connections::get_vault_meta_path(&app_handle);
+    let _vault_lock = lock_vault_operation_async(&meta_path).await?;
     let _ = audit::close_on_lock(&state);
     *state.vault_key.lock_safe()? = None;
     // A locked vault must never leave the embedded MCP server listening —
     // it reads through `require_key`-gated seams, same precondition as
     // enabling it in the first place.
     mcp::stop_if_running(&state).await?;
+    // Same for server mode: its sessions store their tokens under the key. The
+    // stored tokens stay, so unlocking resumes them without signing in again.
+    state.server.clear().await;
     Ok(())
 }
 
@@ -3491,26 +3746,113 @@ async fn vault_lock(state: tauri::State<'_, AppState>) -> Result<(), String> {
 async fn vault_reset(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
-) -> Result<(), String> {
-    // Before any core vault file is removed: if the audit log cannot be deleted,
-    // a replacement vault would start with a log its new key cannot authenticate,
-    // so auditing would be sealed from the first unlock. Abort instead.
-    audit::reset_store(&app_handle, &state)?;
-    for p in [
-        connections::get_vault_meta_path(&app_handle),
-        connections::get_profiles_enc_path(&app_handle),
-        connections::get_settings_enc_path(&app_handle),
-    ] {
-        if p.exists() {
-            std::fs::remove_file(&p).map_err(|e| format!("remove {}: {e}", p.display()))?;
-        }
-    }
-    *state.vault_key.lock_safe()? = None;
-    // Same precondition as `vault_lock`: no key means no MCP server.
-    mcp::stop_if_running(&state).await?;
+    allow_unrevoked_server_sessions: bool,
+) -> Result<Option<String>, String> {
+    let warning = reset_vault_files_with_policy(
+        &state,
+        &connections::get_server_accounts_path(&app_handle),
+        [
+            connections::get_profiles_enc_path(&app_handle),
+            connections::get_settings_enc_path(&app_handle),
+        ],
+        allow_unrevoked_server_sessions,
+        || audit::reset_store(&app_handle, &state),
+    )
+    .await?;
     // A reset invalidates the old key; forget any biometric copy too.
     let _ = biometric::remove_stored_key(&app_handle);
-    Ok(())
+    Ok(warning)
+}
+
+/// The file part of `vault_reset`: runs `reset_audit`, drops the key, removes
+/// `files` (the vault files other than vault.json), then the MQLens Server
+/// accounts file and vault.json, all under the accounts lock, and only then
+/// ends the stored server sessions when the key is available. An explicit
+/// forgotten-password reset may discard unreadable sessions after warning the
+/// user. An unlock in this process waits for all of it.
+async fn reset_vault_files(
+    state: &AppState,
+    server_accounts_path: &std::path::Path,
+    files: [std::path::PathBuf; 2],
+    reset_audit: impl FnOnce() -> Result<(), String>,
+) -> Result<Option<String>, String> {
+    reset_vault_files_with_policy(state, server_accounts_path, files, false, reset_audit).await
+}
+
+async fn reset_vault_files_with_policy(
+    state: &AppState,
+    server_accounts_path: &std::path::Path,
+    files: [std::path::PathBuf; 2],
+    allow_unrevoked_server_sessions: bool,
+    reset_audit: impl FnOnce() -> Result<(), String>,
+) -> Result<Option<String>, String> {
+    let _no_unlock = state.vault_reset_lock.lock().await;
+    let meta_path = server::accounts::vault_meta_path(server_accounts_path);
+    // Keep the cross-process lock through file deletion and remote revocation.
+    // Initialization and every file writer take this same lock.
+    let _vault_lock = lock_vault_operation_async(&meta_path).await?;
+    // Check the copied process key before touching the audit log. Another
+    // process may have rotated the vault while this process retained its old
+    // key; a reset must not erase the new vault's audit data before rejecting
+    // that stale reset request.
+    if let Some(key) = *state.vault_key.lock_safe()? {
+        if let Ok(Some(meta)) = connections::read_vault_meta(&meta_path) {
+            if !connections::key_matches_meta(&meta, &key) {
+                return Err(
+                    "The vault password changed while the vault was being reset. Nothing was removed; reset again."
+                        .to_string(),
+                );
+            }
+        }
+    }
+    // A locked vault's encrypted account file may be the only place holding
+    // refresh tokens for live MQLens Server sessions. We cannot safely delete
+    // it until the user unlocks and lets reset revoke those sessions. Check
+    // before clearing audit data or dropping any process state.
+    if state.require_key().is_err()
+        && server_accounts_path.exists()
+        && !allow_unrevoked_server_sessions
+    {
+        return Err("Unlock the vault before resetting its MQLens Server accounts.".to_string());
+    }
+    // Before any core vault file is removed: if the audit log cannot be
+    // deleted, a replacement vault would start with a log its new key cannot
+    // authenticate, so auditing would be sealed from the first unlock. Abort
+    // instead, with nothing changed.
+    reset_audit()?;
+    // The key goes first, before anything below waits: on the accounts lock,
+    // which a refresh can hold across a server call, or on servers. No window
+    // can write under it from here on. If the reset stops short of vault.json,
+    // unlocking again works.
+    let (key, locked) = match state.vault_key.lock_safe() {
+        Ok(mut key) => (key.take(), Ok(())),
+        Err(e) => (None, Err(e)),
+    };
+    // Same precondition as `vault_lock`: no key means no MCP server.
+    let stopped = mcp::stop_if_running(state).await;
+    // Every file goes under the accounts file's cross-process lock, once the
+    // key is confirmed as the vault's: a password change in any MQLens process
+    // holds that lock through its rotation, and an account write cannot
+    // recreate the accounts file under the discarded key. vault.json goes
+    // last, so a reset that fails part way leaves a vault that still opens.
+    let sign_outs = server::commands::reset_accounts_with_policy(
+        state,
+        server_accounts_path,
+        key,
+        files.into(),
+        allow_unrevoked_server_sessions,
+    )
+    .await;
+    // Their tokens are already deleted: these sessions are ended now or never,
+    // whether or not the rest of the reset went through.
+    let finished = match sign_outs {
+        Ok(sign_outs) => sign_outs.finish().await,
+        Err(e) => Err(e),
+    };
+    let warning = finished?;
+    locked?;
+    stopped?;
+    Ok(warning)
 }
 
 #[tauri::command]
@@ -3520,10 +3862,12 @@ async fn vault_change_password(
     old_password: String,
     new_password: String,
 ) -> Result<(), String> {
+    let _no_reset = state.vault_reset_lock.lock().await;
+    let meta_path = connections::get_vault_meta_path(&app_handle);
+    let _vault_lock = lock_vault_operation_async(&meta_path).await?;
     if new_password.is_empty() {
         return Err("new master password must not be empty".to_string());
     }
-    let meta_path = connections::get_vault_meta_path(&app_handle);
     let meta = connections::read_vault_meta(&meta_path)?
         .ok_or_else(|| "vault is not initialized".to_string())?;
     let old_key = connections::unlock_key(&meta, &old_password)?;
@@ -3535,6 +3879,14 @@ async fn vault_change_password(
     let profiles_path = connections::get_profiles_enc_path(&app_handle);
     let settings_path = connections::get_settings_enc_path(&app_handle);
     let audit_log_path = connections::get_audit_log_path(&app_handle);
+    let server_accounts_path = connections::get_server_accounts_path(&app_handle);
+
+    // Held from before the accounts file is re-encrypted until the new key is
+    // live: a server session storing a refreshed token in between would write
+    // it under the old key, over the rotated file. Taken before the audit lock,
+    // whose failure paths must reopen the audit session. Waited for off the
+    // async workers: a session can hold it across a network call.
+    let server_accounts_lock = server::accounts::lock_async(&server_accounts_path).await?;
 
     // Close the audit session so the log is not being appended to while it is
     // re-encrypted, but keep its cross-process lock: releasing it would let a
@@ -3557,6 +3909,8 @@ async fn vault_change_password(
             connections::prepare_reencrypt_file(&old_key, &new_key, &profiles_path)?;
         let new_settings =
             connections::prepare_reencrypt_file(&old_key, &new_key, &settings_path)?;
+        let new_server_accounts =
+            connections::prepare_reencrypt_file(&old_key, &new_key, &server_accounts_path)?;
         // Returns the log *and* its state sidecar; both are keyed and must land
         // together or the new-key log would be checked against an old-key count.
         let new_audit_files =
@@ -3568,6 +3922,7 @@ async fn vault_change_password(
         let mut files = vec![
             (profiles_path.clone(), new_profiles),
             (settings_path.clone(), new_settings),
+            (server_accounts_path.clone(), new_server_accounts),
         ];
         files.extend(new_audit_files.into_iter().map(|(p, b)| (p, Some(b))));
         connections::commit_vault_rotation(files, &meta_path, &new_meta)
@@ -3593,6 +3948,7 @@ async fn vault_change_password(
     rotated?;
 
     *state.vault_key.lock_safe()? = Some(new_key);
+    drop(server_accounts_lock);
     // Approach A: a password change derives a new key; keep biometrics working transparently.
     biometric::restore_key_if_enrolled(&app_handle, &new_key);
     Ok(())
@@ -3738,7 +4094,7 @@ async fn mcp_regenerate_token(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<mcp::McpStatusUi, String> {
-    mcp::regenerate_token_impl(&state, Some(&app_handle))
+    mcp::regenerate_token_impl(&state, Some(&app_handle)).await
 }
 
 /// Append a frontend crash report to a log file the user can find and attach.
@@ -3949,6 +4305,13 @@ pub fn run() {
             load_connection_profiles,
             save_connection_profile,
             delete_connection_profile,
+            server_account_list,
+            server_account_save,
+            server_account_delete,
+            server_sign_in,
+            server_sign_out,
+            server_list_connections,
+            server_connect,
             connections::test_connection_uri,
             load_app_settings,
             save_app_settings,

@@ -60,8 +60,8 @@ export function getEffectiveTokens(
 }
 
 export function applyTheme(config: ThemeConfig): "dark" | "light" {
-  const key = themeConfigKey(config);
   const resolvedMode = resolveThemeMode(config);
+  const key = `${themeConfigKey(config)}|${resolvedMode}`;
   if (key === lastAppliedKey) {
     return resolvedMode;
   }

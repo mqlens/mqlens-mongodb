@@ -1,3 +1,4 @@
+import type { RemoteConnectionInfo } from '../lib/serverMode';
 // Thin invoke wrappers for the backend workspace store (see
 // src-tauri/src/workspace.rs) — mirrors the queryStore.ts idiom: async
 // wrappers for reads, fire-and-forget for writes the caller doesn't need to
@@ -196,6 +197,8 @@ export interface ConnectionEntry {
   viaMcp: boolean;
   /** Read-only / confirm-destructive production safeguard (#188), registered at connect time from the profile's `connection_mode`. */
   mode?: 'normal' | 'read_only' | 'confirm_destructive';
+  /** Set for a connection made through an MQLens Server; absent for a local one. */
+  server?: RemoteConnectionInfo;
 }
 export interface ConnectionsChangedPayload {
   connections: ConnectionEntry[];

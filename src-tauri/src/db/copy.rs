@@ -182,6 +182,10 @@ pub async fn preflight_copy_impl(
     source_collections: Vec<String>,
     targets: Vec<CopyTargetRef>,
 ) -> Result<PreflightResult, String> {
+    let ids: Vec<&str> = std::iter::once(source_id)
+        .chain(targets.iter().map(|t| t.connection_id.as_str()))
+        .collect();
+    crate::server::routes::refuse_deferred(state, "preflight_copy", &ids)?;
     let mut conflicts = Vec::new();
     let mut self_overwrite = false;
     for t in &targets {
@@ -436,6 +440,11 @@ pub async fn start_collection_copy_impl(
     include_indexes: bool,
     conflict_mode: String,
 ) -> Result<TaskInfo, String> {
+    crate::server::routes::refuse_deferred(
+        state,
+        "start_collection_copy",
+        &[source_id, target_id],
+    )?;
     let started = std::time::Instant::now();
     let audit_summary = format!(
         "copy {}.{} → {}.{}",
@@ -607,6 +616,7 @@ pub async fn start_database_copy_impl(
     include_views: bool,
     conflict_mode: String,
 ) -> Result<TaskInfo, String> {
+    crate::server::routes::refuse_deferred(state, "start_database_copy", &[source_id, target_id])?;
     let started = std::time::Instant::now();
     let audit_summary = format!("copy database {} → {}", source_db, target_db);
     let collections_arg = collections.as_ref().map(|names| names.join(","));

@@ -60,9 +60,10 @@ The CI workflow runs these on every PR.
   `main` is release-only — merges to `main` cut a versioned release.
 - Use a focused branch name, e.g. `feat/...`, `fix/...`, `docs/...`.
 - Keep PRs scoped to one change; include tests for new behavior.
-- Follow [Conventional Commits](https://www.conventionalcommits.org) for commit
-  messages (`feat:`, `fix:`, `docs:`, `chore:`, …) — the release version is
-  derived automatically from these on merge to `main`.
+- Always use Angular-style commit messages: `type(scope): imperative summary`
+  (for example, `feat(website): add server coming-soon page`). Use types such as
+  `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, or `chore`.
+  The release version is derived automatically from commit messages on merge to `main`.
 - Match the surrounding code's style and patterns; this repo favors small,
   focused files with clear responsibilities.
 

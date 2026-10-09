@@ -10,6 +10,10 @@ service DdlService {
   rpc DropDatabase(DropDatabaseRequest) returns (DdlAck);
   rpc RenameDatabase(RenameDatabaseRequest) returns (DdlAck);
   rpc GetCollectionOptions(GetCollectionOptionsRequest) returns (CollectionValidation);
+  // Copies every collection, its documents and indexes, into a new database,
+  // verifies the copy, and drops the source only when asked; reports what it
+  // copied. API version 2.
+  rpc RenameDatabaseDetailed(RenameDatabaseDetailedRequest) returns (RenameDatabaseResult);
   rpc SetValidator(SetValidatorRequest) returns (DdlAck);
 }
 
@@ -69,4 +73,14 @@ message RenameDatabaseRequest {
   string connection_id = 1;
   string database = 2;
   string new_name = 3;
+}
+message RenameDatabaseDetailedRequest {
+  string connection_id = 1;
+  string database = 2;
+  string new_name = 3;
+  bool drop_source = 4;
+}
+message RenameDatabaseResult {
+  int64 collections = 1;
+  int64 documents = 2;
 }

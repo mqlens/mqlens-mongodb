@@ -378,7 +378,8 @@
     "bodyWithNamespace": "{{namespace}} 恢复自上次会话。重新连接到 {{profile}} 即可加载。",
     "disconnected": "已断开",
     "profileMissing": "该连接配置已不存在",
-    "reconnectButton": "重新连接 {{profile}}"
+    "reconnectButton": "重新连接 {{profile}}",
+    "signIn": "登录…"
   },
   "statusBar": {
     "activity": "活动",
@@ -489,7 +490,7 @@
       "generic": "使用生物识别",
       "touchId": "使用 Touch ID"
     },
-    "confirmReset": "重置会删除所有已保存的连接和 API 密钥。是否继续？",
+    "confirmReset": "重置将删除所有已保存的连接、API 密钥和加密的 MQLens Server 会话令牌。由于保险库已锁定，无法撤销活动的服务器会话，它们可能仍然有效。是否继续？",
     "descriptions": {
       "setup": "你保存的连接和 API 密钥会用此密码加密。一旦忘记，将无法恢复。",
       "unlock": "请输入主密码以解密已保存的凭据。"
@@ -629,5 +630,6 @@
     "retentionNote": "旧事件会按保留期设置自动移除。完好的日志无法被清除。",
     "statusError": "失败",
     "statusOk": "成功"
-  }
+  },
+  "shellNotOnServer": "MQLens Server 暂不支持 Shell。"
 }

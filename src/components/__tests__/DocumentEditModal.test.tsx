@@ -257,3 +257,16 @@ describe('DocumentEditModal — reports the save state it is given (#326 review)
   });
 
 });
+
+describe('DocumentEditModal — the editor', () => {
+  // The document editor offers no language help: no suggestions, no parameter
+  // hints, no hovers. Monaco 0.57 reads only 'on' | 'off' | 'onKeyboardModifier'
+  // here and treats anything else, `false` included, as its default of 'on'.
+  it('turns off hovers in the editor', () => {
+    render(
+      <DocumentEditModal isOpen mode="insert" initialJson="{}" onClose={() => {}} onSave={() => {}} />
+    );
+    const options = lastEditorProps?.options as { hover?: { enabled?: unknown } } | undefined;
+    expect(options?.hover?.enabled).toBe('off');
+  });
+});

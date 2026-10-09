@@ -260,20 +260,36 @@ pub fn load_persisted(state: &AppState, app_handle: &tauri::AppHandle) -> McpPer
 /// Merge the MCP fields into the stored settings under the same in-process and
 /// cross-process write locks `patch_app_settings` uses, so a settings edit in
 /// another window (or another MQLens) cannot lose this write, or be lost by it.
-pub fn save_persisted(
+pub async fn save_persisted(
     state: &AppState,
     app_handle: &tauri::AppHandle,
     next: &McpPersisted,
 ) -> Result<(), String> {
-    let key = state.require_key()?;
+    let (_vault_lock, result) = save_persisted_with_vault_lock(state, app_handle, next).await?;
+    result
+}
+
+/// Persist MCP settings and return the vault-operation lock to the caller.
+/// The enable path keeps it until its server task is installed, ordering it
+/// against a concurrent lock or reset.
+async fn save_persisted_with_vault_lock(
+    state: &AppState,
+    app_handle: &tauri::AppHandle,
+    next: &McpPersisted,
+) -> Result<(std::fs::File, Result<(), String>), String> {
+    let meta_path = crate::connections::get_vault_meta_path(app_handle);
+    let (vault_lock, key) = crate::lock_vault_and_get_key_async(state, &meta_path).await?;
     let path = crate::connections::get_settings_enc_path(app_handle);
-    let _guard = state.settings_write.lock().map_err(|e| e.to_string())?;
-    let _file_lock = crate::connections::lock_settings_for_write(&path)?;
-    let mut settings = crate::connections::load_settings_encrypted(&path, &key)?;
-    settings.mcp_enabled = next.enabled;
-    settings.mcp_port = next.port;
-    settings.mcp_token = next.token.clone();
-    crate::connections::save_settings_encrypted(&path, &key, &settings)
+    let result = (|| {
+        let _guard = state.settings_write.lock().map_err(|e| e.to_string())?;
+        let _file_lock = crate::connections::lock_settings_for_write(&path)?;
+        let mut settings = crate::connections::load_settings_encrypted(&path, &key)?;
+        settings.mcp_enabled = next.enabled;
+        settings.mcp_port = next.port;
+        settings.mcp_token = next.token.clone();
+        crate::connections::save_settings_encrypted(&path, &key, &settings)
+    })();
+    Ok((vault_lock, result))
 }
 
 /// Bring the server back up after the vault is unlocked, if it was left
@@ -340,7 +356,7 @@ pub async fn set_enabled_impl(
             // `mcp_enabled = true` on disk, so the next unlock starts the server
             // again — silently undoing an explicit disable. The user has to be
             // told that one did not stick (#350 review).
-            save_persisted(state, app, &persisted)?;
+            save_persisted(state, app, &persisted).await?;
         }
         return get_status_impl(state);
     }
@@ -390,6 +406,29 @@ pub async fn set_enabled_impl(
     // Kept for the write below: `token` itself is moved into `McpControl`.
     let token_for_disk = token.clone();
     let helper_token = new_token();
+
+    // Hold the vault lock from key validation through server-handle
+    // installation. A lock/reset that wins first makes persistence fail here
+    // and this call returns without spawning; one that waits sees a fully
+    // installed handle and stops that server after acquiring the lock.
+    let _vault_lock = if let Some(app) = &app_handle {
+        // After the bind succeeded, so a failed enable never records itself as
+        // the state to restore on the next unlock — and before `app_handle` is
+        // handed to the server task below.
+        let (lock, result) = save_persisted_with_vault_lock(
+            state,
+            app,
+            &McpPersisted { enabled: true, port, token: token_for_disk },
+        )
+        .await?;
+        // Keep the pre-existing best-effort policy for settings-file write
+        // failures. Vault acquisition/key validation errors above are fatal.
+        let _ = result;
+        Some(lock)
+    } else {
+        None
+    };
+
     {
         let mut control = state.mcp.lock_safe()?;
         control.enabled = true;
@@ -397,13 +436,6 @@ pub async fn set_enabled_impl(
         control.token = token;
         // Minted with it and, like it, distinct every time the server starts.
         control.helper_token = helper_token;
-    }
-
-    if let Some(app) = &app_handle {
-        // After the bind succeeded, so a failed enable never records itself as
-        // the state to restore on the next unlock — and before `app_handle` is
-        // handed to the server task below.
-        let _ = save_persisted(state, app, &McpPersisted { enabled: true, port, token: token_for_disk });
     }
 
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
@@ -468,7 +500,7 @@ pub async fn stop_if_running(state: &AppState) -> Result<(), String> {
 /// disabled server can still have a stale token sitting in state from a
 /// previous session, and regenerating it before the next enable is a
 /// reasonable thing for a user to want.
-pub fn regenerate_token_impl(
+pub async fn regenerate_token_impl(
     state: &AppState,
     app_handle: Option<&tauri::AppHandle>,
 ) -> Result<McpStatusUi, String> {
@@ -484,7 +516,7 @@ pub fn regenerate_token_impl(
         // just replaced — which is the one the user asked to stop honouring.
         let mut persisted = load_persisted(state, app);
         persisted.token = status.token.clone();
-        save_persisted(state, app, &persisted)?;
+        save_persisted(state, app, &persisted).await?;
     }
     Ok(status)
 }
@@ -1424,12 +1456,33 @@ mod tests {
             .and_then(|s| s.split("return get_status_impl(state);").next())
             .expect("the disable branch of set_enabled_impl");
         assert!(
-            disable.contains("save_persisted(state, app, &persisted)?"),
+            disable.contains("save_persisted(state, app, &persisted).await?"),
             "the disable branch must propagate a failed persist"
         );
         assert!(
             !disable.contains("let _ = save_persisted"),
             "the disable branch discards a failed persist"
+        );
+    }
+
+    #[test]
+    fn enable_holds_the_vault_lock_until_its_server_handle_is_installed() {
+        let src = include_str!("mcp.rs");
+        let body = &src[..src.find("\n#[cfg(test)]").unwrap_or(src.len())];
+        let enable = body
+            .split("if !enabled {")
+            .nth(1)
+            .and_then(|s| s.split("/// Stop the running server task").next())
+            .expect("the enable branch of set_enabled_impl");
+        let persisted = enable.find("save_persisted_with_vault_lock").unwrap();
+        let control = enable.find("control.enabled = true").unwrap();
+        let spawn = enable.find("tauri::async_runtime::spawn(run_server").unwrap();
+        let handle = enable.find("control.server = Some(ServerHandle").unwrap();
+
+        assert!(persisted < control && control < spawn && spawn < handle);
+        assert!(
+            enable.contains("let _vault_lock"),
+            "the file guard must live through listener startup"
         );
     }
 
@@ -2048,7 +2101,7 @@ mod tests {
         let status = set_enabled_impl(&state, true, Some(0), None).await.unwrap();
         let original = status.token;
 
-        let regenerated = regenerate_token_impl(&state, None).unwrap();
+        let regenerated = regenerate_token_impl(&state, None).await.unwrap();
         assert_ne!(regenerated.token, original);
         assert!(regenerated.enabled, "regenerating must not touch enablement");
 
@@ -2061,9 +2114,9 @@ mod tests {
     #[tokio::test]
     async fn regenerate_token_works_while_disabled() {
         let state = AppState::new();
-        let first = regenerate_token_impl(&state, None).unwrap();
+        let first = regenerate_token_impl(&state, None).await.unwrap();
         assert!(!first.token.is_empty());
-        let second = regenerate_token_impl(&state, None).unwrap();
+        let second = regenerate_token_impl(&state, None).await.unwrap();
         assert_ne!(first.token, second.token);
         assert!(!second.enabled);
     }
@@ -2230,7 +2283,7 @@ mod tests {
         let mut client = TestClient::new(status.port, &old_token);
         client.initialize().await; // works with the original token
 
-        let regenerated = regenerate_token_impl(&state, None).unwrap();
+        let regenerated = regenerate_token_impl(&state, None).await.unwrap();
         assert_ne!(regenerated.token, old_token);
 
         // Same client, same (now-stale) captured token: the *next* request must 401.

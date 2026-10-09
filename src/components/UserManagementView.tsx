@@ -53,6 +53,8 @@ const ALL_DBS = '__all__';
 interface UserManagementViewProps {
   connectionId: string;
   database?: string;
+  /** Commands this connection cannot run (a server connection); their actions are disabled. */
+  blockedCommands?: readonly string[];
 }
 
 interface EditorState {
@@ -310,7 +312,8 @@ const UserEditorModal: React.FC<UserEditorModalProps> = ({
   );
 };
 
-export const UserManagementView: React.FC<UserManagementViewProps> = ({ connectionId, database }) => {
+export const UserManagementView: React.FC<UserManagementViewProps> = ({ connectionId, database, blockedCommands }) => {
+  const blocked = (command: string) => blockedCommands?.includes(command) ?? false;
   const { toast, confirm } = useDialogs();
   const { t } = useTranslation('admin');
   const [users, setUsers] = useState<MongoUser[]>([]);
@@ -417,7 +420,7 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ connecti
           <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={refresh} title={t('userManagementView.actions.refresh')} data-testid="refresh-users-btn">
             <RefreshCw size={13} />
           </Button>
-          <Button type="button" size="sm" onClick={() => setEditor({ mode: 'create' })} data-testid="create-user-btn">
+          <Button type="button" size="sm" onClick={() => setEditor({ mode: 'create' })} disabled={blocked('create_user')} data-testid="create-user-btn">
             <Plus size={12} />
             {t('userManagementView.actions.createUser')}
           </Button>
@@ -522,12 +525,14 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ connecti
                       label: t('userManagementView.actions.editUser'),
                       icon: <Pencil size={12} />,
                       onClick: () => setEditor({ mode: 'edit', user: menu.user! }),
+                      disabled: blocked('update_user'),
                     },
                     {
                       label: t('userManagementView.actions.dropUser'),
                       icon: <Trash2 size={12} />,
                       danger: true,
                       onClick: () => handleDrop(menu.user!),
+                      disabled: blocked('drop_user'),
                     },
                   ]
                 : []),
@@ -536,6 +541,7 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ connecti
                 icon: <Plus size={12} />,
                 separatorBefore: !!menu.user,
                 onClick: () => setEditor({ mode: 'create' }),
+                disabled: blocked('create_user'),
               },
               { label: t('userManagementView.actions.refresh'), icon: <RefreshCw size={12} />, onClick: refresh },
             ] as ContextMenuItem[]

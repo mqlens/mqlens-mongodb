@@ -216,6 +216,8 @@ async fn analyze_schema_impl_inner(
             out.push(doc);
         }
         out
+    } else if let Some(conn) = state.server.remote(id)? {
+        crate::server::ops::query::sample(state, &conn, database, collection, sample_size).await?
     } else {
         let client = require_real_client(state, id)?;
         let coll = client

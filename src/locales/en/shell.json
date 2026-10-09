@@ -438,8 +438,10 @@
     "bodyWithNamespace": "{{namespace}} was restored from your last session. Reconnect to {{profile}} to load it.",
     "disconnected": "Disconnected",
     "profileMissing": "Connection profile no longer exists",
-    "reconnectButton": "Reconnect {{profile}}"
+    "reconnectButton": "Reconnect {{profile}}",
+    "signIn": "Sign in…"
   },
+  "shellNotOnServer": "The shell is not available on MQLens Server yet.",
   "statusBar": {
     "activity": "Activity",
     "appVersion": "MQLens {{version}}",
@@ -555,7 +557,7 @@
       "generic": "Use biometrics",
       "touchId": "Use Touch ID"
     },
-    "confirmReset": "Reset deletes ALL saved connections and API keys. Continue?",
+    "confirmReset": "Reset deletes ALL saved connections, API keys, and encrypted MQLens Server session tokens. Because the vault is locked, active server sessions cannot be revoked and may remain active. Continue?",
     "descriptions": {
       "setup": "Your saved connections and API keys are encrypted with this password. There is no recovery if you forget it.",
       "unlock": "Enter your master password to decrypt your saved credentials."

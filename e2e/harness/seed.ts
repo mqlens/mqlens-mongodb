@@ -46,6 +46,41 @@ export interface MonitoringSeed {
   replSet?: Record<string, unknown>;
 }
 
+/** One of an MQLens Server's connections, as an account lists it. */
+export interface RemoteConnectionSeed {
+  id: string;
+  name: string;
+  tags?: string[];
+  deploymentKind?: string;
+  opClasses?: string[];
+  /** The seeded server, by URI, whose data the connection reads. */
+  server: string;
+  /**
+   * Commands the connection cannot run, as the backend reports them. The fake
+   * reports this list as given rather than deriving it from `opClasses`, so a
+   * seed keeps the two consistent: a read-only connection lists its writes.
+   */
+  blockedCommands?: string[];
+}
+
+export interface ServerAccountSeed {
+  id: string;
+  name: string;
+  url: string;
+  tenant: string;
+  email: string;
+  allowInsecureHttp?: boolean;
+  extraCaPem?: string | null;
+  signedIn?: boolean;
+  /** When set, server_sign_in rejects any other password. */
+  password?: string;
+  connections?: RemoteConnectionSeed[];
+  /** Signing out (or deleting while signed in) cannot confirm the session ended. */
+  signOutUnconfirmed?: boolean;
+  /** The warning server_account_save returns. */
+  saveWarning?: string;
+}
+
 export interface McpSeed {
   enabled?: boolean;
   port?: number;
@@ -117,6 +152,8 @@ export interface Seed {
   vaultPassword?: string;
   settings?: Record<string, unknown>;
   profiles?: ProfileSeed[];
+  /** MQLens Server accounts; none by default. */
+  serverAccounts?: ServerAccountSeed[];
   /** A `PersistedWorkspace` to restore at startup; null or absent opens Quick Start. */
   workspace?: unknown;
   /** Servers the app can connect to, keyed by connection URI. */

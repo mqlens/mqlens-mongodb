@@ -687,6 +687,7 @@ pub async fn infer_generate_template_impl(
     collection: &str,
     sample_size: Option<i64>,
 ) -> Result<String, String> {
+    crate::server::routes::refuse_deferred(state, "infer_generate_template", &[id])?;
     let report_json = crate::db::schema::analyze_schema_impl(
         state,
         id,
@@ -769,6 +770,7 @@ pub async fn start_generate_task_impl(
     count: u32,
     seed: Option<u64>,
 ) -> Result<TaskInfo, String> {
+    crate::server::routes::refuse_deferred(state, "start_generate_task", &[id])?;
     let started = std::time::Instant::now();
     let audit_summary = format!("generate {count} docs → {database}.{collection}");
     let result = start_generate_task_inner(state, id, database, collection, template, count, seed).await;

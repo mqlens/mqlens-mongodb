@@ -10,6 +10,7 @@ import type {
   MonitoringSeed,
   ProfileSeed,
   Seed,
+  ServerAccountSeed,
   ToolSeed,
   UserSeed,
   VaultState,
@@ -35,6 +36,8 @@ export interface Connection {
   profileId: string | null;
   name: string;
   mode: string;
+  /** Set for a connection made through an MQLens Server, as the connection list reports it. */
+  server?: Record<string, unknown>;
 }
 
 export interface CollectionQueries {
@@ -48,6 +51,7 @@ export interface E2EState {
   vaultPassword: string | null;
   settings: Record<string, unknown>;
   profiles: ProfileSeed[];
+  serverAccounts: ServerAccountSeed[];
   workspace: unknown;
   workspaceOps: unknown[];
   servers: Record<string, Server>;
@@ -143,6 +147,7 @@ export function createState(seed: Seed): E2EState {
     vaultPassword: seed.vaultPassword ?? null,
     settings: structuredClone(seed.settings ?? {}),
     profiles: structuredClone(seed.profiles ?? []),
+    serverAccounts: structuredClone(seed.serverAccounts ?? []),
     workspace: seed.workspace ?? null,
     workspaceOps: [],
     servers: Object.fromEntries(Object.entries(servers).map(([uri, server]) => [uri, toServer(server)])),

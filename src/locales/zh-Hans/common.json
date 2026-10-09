@@ -8,6 +8,7 @@
     "retry": "重试",
     "title": "此标签页遇到问题"
   },
+  "notOnServer": "MQLens Server 暂不支持。",
   "ok": "确定",
   "passwordInput": {
     "hide": "隐藏",

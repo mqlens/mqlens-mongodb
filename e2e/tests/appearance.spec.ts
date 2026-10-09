@@ -110,6 +110,7 @@ test.describe('An appearance that follows the system', () => {
 
     // The system turning dark turns the editors dark with it.
     await page.emulateMedia({ colorScheme: 'dark' });
+    await expect.poll(async () => (await theme(page)).mode).toBe('dark');
     await expect.poll(editorClass).toContain('vs-dark');
   });
 

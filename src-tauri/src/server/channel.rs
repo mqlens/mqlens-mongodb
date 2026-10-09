@@ -95,6 +95,19 @@ fn is_loopback_host(host: &str) -> bool {
             .unwrap_or(false)
 }
 
+/// An extra CA certificate as the user pasted it: trimmed, `None` when blank,
+/// and refused unless it is PEM.
+pub(crate) fn normalize_extra_ca(pem: Option<&str>) -> Result<Option<String>, String> {
+    match pem.map(str::trim).filter(|pem| !pem.is_empty()) {
+        None => Ok(None),
+        Some(pem) if pem.contains("-----BEGIN CERTIFICATE-----") => Ok(Some(pem.to_string())),
+        Some(_) => Err(
+            "The extra CA certificate must be PEM text starting with -----BEGIN CERTIFICATE-----"
+                .to_string(),
+        ),
+    }
+}
+
 /// A lazily connecting channel to the server. Must be called inside a tokio
 /// runtime: the channel spawns its connection task there.
 pub(crate) fn channel(config: &ChannelConfig) -> Result<Channel, String> {
@@ -113,18 +126,7 @@ pub(crate) fn channel(config: &ChannelConfig) -> Result<Channel, String> {
         let mut tls = ClientTlsConfig::new()
             .with_native_roots()
             .with_webpki_roots();
-        if let Some(pem) = config
-            .extra_ca_pem
-            .as_deref()
-            .map(str::trim)
-            .filter(|pem| !pem.is_empty())
-        {
-            if !pem.contains("-----BEGIN CERTIFICATE-----") {
-                return Err(
-                    "The extra CA certificate must be PEM text starting with -----BEGIN CERTIFICATE-----"
-                        .to_string(),
-                );
-            }
+        if let Some(pem) = normalize_extra_ca(config.extra_ca_pem.as_deref())? {
             tls = tls.ca_certificate(Certificate::from_pem(pem));
         }
         endpoint = endpoint
@@ -264,13 +266,13 @@ mod tests {
                 .any(|id| id == "large")
             {
                 return Ok(Response::new(GetCapabilitiesResponse {
-                    procedures: vec!["x".repeat(LARGE_RESPONSE_BYTES)],
+                    server_version: "x".repeat(LARGE_RESPONSE_BYTES),
                     ..Default::default()
                 }));
             }
             Ok(Response::new(GetCapabilitiesResponse {
                 server_version: "fake-1".to_string(),
-                procedures: vec!["/mqlens.v1.CapabilityService/GetCapabilities".to_string()],
+                max_api_version: 2,
                 ..Default::default()
             }))
         }
@@ -307,10 +309,7 @@ mod tests {
             .unwrap()
             .into_inner();
         assert_eq!(resp.server_version, "fake-1");
-        assert_eq!(
-            resp.procedures,
-            ["/mqlens.v1.CapabilityService/GetCapabilities"]
-        );
+        assert_eq!(resp.max_api_version, 2);
 
         let status = client
             .get_capabilities(GetCapabilitiesRequest {
@@ -364,7 +363,7 @@ mod tests {
             .await
             .unwrap()
             .into_inner();
-        assert_eq!(resp.procedures[0].len(), LARGE_RESPONSE_BYTES);
+        assert_eq!(resp.server_version.len(), LARGE_RESPONSE_BYTES);
     }
 
     // A generated client constructed without `client!` keeps the 4 MiB default.

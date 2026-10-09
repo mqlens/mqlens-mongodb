@@ -36,10 +36,19 @@ pub(crate) fn describe(status: &Status) -> String {
             "This MQLens Server does not support this operation{}",
             detail(message)
         ),
+        // tonic reports its own client-side deadline as Cancelled.
+        Code::Cancelled if deadline_expired(status) => {
+            with_detail("MQLens Server did not answer in time", "")
+        }
         Code::Cancelled => "The request to MQLens Server was cancelled".to_string(),
         code if message.is_empty() => format!("MQLens Server error: {}", code.description()),
         _ => message.to_string(),
     };
+    with_correlation(text, status)
+}
+
+/// `text`, followed by the server's correlation id when the status carries one.
+pub(crate) fn with_correlation(text: String, status: &Status) -> String {
     match correlation_id(status) {
         Some(id) => format!("{text} (MQLens Server correlation id: {id})"),
         None => text,
@@ -65,6 +74,24 @@ pub(crate) fn correlation_id(status: &Status) -> Option<String> {
 /// or its access token is no longer accepted.
 pub(crate) fn is_unauthenticated(status: &Status) -> bool {
     status.code() == Code::Unauthenticated
+}
+
+/// Whether the status is tonic reporting its own expired deadline. On a real
+/// call the TimeoutExpired sits under a transport error, so the whole source
+/// chain is searched.
+fn deadline_expired(status: &Status) -> bool {
+    let mut source = std::error::Error::source(status);
+    while let Some(error) = source {
+        if error.is::<tonic::TimeoutExpired>() {
+            return true;
+        }
+        source = error.source();
+    }
+    false
+}
+
+fn with_detail(text: &str, message: &str) -> String {
+    format!("{text}{}", detail(message))
 }
 
 fn detail(message: &str) -> String {
@@ -167,6 +194,28 @@ mod tests {
             correlation_id(&with_id(Status::not_found("gone"), &longest)),
             Some(longest)
         );
+    }
+
+    #[test]
+    fn any_message_can_carry_the_correlation_id() {
+        let status = with_id(Status::unauthenticated("invalid login"), "corr-7");
+        assert_eq!(
+            with_correlation("Sign in again.".to_string(), &status),
+            "Sign in again. (MQLens Server correlation id: corr-7)"
+        );
+        assert_eq!(
+            with_correlation("Sign in again.".to_string(), &Status::unauthenticated("")),
+            "Sign in again."
+        );
+    }
+
+    // tonic reports its own client-side deadline as Cancelled; it is a server
+    // that did not answer, not a request anyone cancelled.
+    #[test]
+    fn an_expired_deadline_reads_as_no_answer() {
+        let status = Status::from_error(Box::new(tonic::TimeoutExpired(())));
+        assert_eq!(status.code(), Code::Cancelled);
+        assert_eq!(describe(&status), "MQLens Server did not answer in time");
     }
 
     #[test]

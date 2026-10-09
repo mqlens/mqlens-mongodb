@@ -12,8 +12,11 @@ export interface ServerStatus {
   replSet?: string;
 }
 
+/** A number on a single server or replica set; "shard:number" through mongos. */
+export type OpId = number | string;
+
 export interface CurrentOp {
-  opid: number;
+  opid: OpId;
   op: string;
   ns: string;
   secsRunning: number;
@@ -38,7 +41,7 @@ export interface ProfileEntry {
 
 export const serverStatus = (id: string) => invoke<ServerStatus>('server_status', { id });
 export const currentOps = (id: string) => invoke<CurrentOp[]>('current_ops', { id });
-export const killOp = (id: string, opid: number) => invoke<void>('kill_op', { id, opid });
+export const killOp = (id: string, opid: OpId) => invoke<void>('kill_op', { id, opid });
 export const getProfilingStatus = (id: string, database: string) =>
   invoke<ProfilingStatus>('get_profiling_status', { id, database });
 export const setProfilingLevel = (id: string, database: string, level: number, slowMs: number) =>

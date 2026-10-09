@@ -2215,3 +2215,212 @@ describe('opening additional collection tabs (#206)', () => {
     );
   });
 });
+
+describe('Sidebar: commands a server connection cannot run', () => {
+  it('disables the menu entries for blocked commands, and only those', async () => {
+    mockInvoke.mockImplementation((cmd, args) => {
+      if (cmd === 'list_databases' && args.id === 'conn-1') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections') return Promise.resolve([{ name: 'customers', type: 'collection' }]);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+    const blocked = new Set(['start_dump_task', 'drop_database']);
+    const handleOpenDump = vi.fn();
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Remote Orders', uri: '' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+        onOpenDump={handleOpenDump}
+        onOpenGenerate={() => {}}
+        isCommandBlocked={(id, command) => id === 'conn-1' && blocked.has(command)}
+      />
+    );
+
+    const dbNode = await screen.findByText('sales_db');
+    fireEvent.contextMenu(dbNode);
+    const dump = screen.getByTestId('ctx-dump-db-conn-1-sales_db');
+    expect(dump).toHaveAttribute('data-disabled');
+    expect(dump).toHaveAttribute('title', 'Not available on MQLens Server yet');
+    await openManageMenu();
+    expect(await screen.findByRole('menuitem', { name: /Drop Database/i })).toHaveAttribute('data-disabled');
+    expect(screen.getByTestId('ctx-generate-db-conn-1-sales_db')).not.toHaveAttribute('data-disabled');
+    fireEvent.click(dump);
+    expect(handleOpenDump).not.toHaveBeenCalled();
+  });
+});
+
+describe('Sidebar: server connection badge', () => {
+  it('marks a connection made through an MQLens Server, naming the account', async () => {
+    mockInvoke.mockImplementation((cmd) =>
+      cmd === 'list_databases' ? Promise.resolve([]) : Promise.reject(new Error(`Unhandled mock: ${cmd}`)),
+    );
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[
+          { id: 'conn-1', name: 'Remote Orders', uri: '' },
+          { id: 'conn-2', name: 'Local', uri: 'mongodb://localhost' },
+        ]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+        serverAccountFor={(id) => (id === 'conn-1' ? 'Work' : undefined)}
+      />
+    );
+
+    const badges = await screen.findAllByTestId('connection-server-badge');
+    expect(badges).toHaveLength(1);
+    expect(badges[0]).toHaveAttribute('title', 'Through the MQLens Server account Work');
+  });
+});
+
+describe('Sidebar: inline tree buttons for blocked commands', () => {
+  it('disables the inline new-collection and GridFS bucket controls', async () => {
+    mockInvoke.mockImplementation((cmd, args) => {
+      if (cmd === 'list_databases' && args.id === 'conn-1') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections') return Promise.resolve([{ name: 'customers', type: 'collection' }]);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+    const blocked = new Set(['create_collection', 'list_gridfs_files']);
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Remote Orders', uri: '' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+        isCommandBlocked={(id, command) => id === 'conn-1' && blocked.has(command)}
+      />
+    );
+
+    fireEvent.click(await screen.findByText('sales_db'));
+    const newCollection = await screen.findByTestId('collections-new-conn-1-sales_db');
+    expect(newCollection).toBeDisabled();
+    expect(newCollection).toHaveAttribute('title', 'Not available on MQLens Server yet');
+    expect(screen.getByTestId('gridfs-new-bucket-conn-1-sales_db')).toBeDisabled();
+    fireEvent.click(screen.getByText('GridFS Buckets'));
+    expect(screen.queryByTestId('gridfs-open-bucket-conn-1-sales_db')).not.toBeInTheDocument();
+  });
+});
+
+describe('Sidebar: validation rules and GridFS buckets on a server connection', () => {
+  it('disables Validation Rules and opening a bucket when their commands are blocked', async () => {
+    mockInvoke.mockImplementation((cmd, args) => {
+      if (cmd === 'list_databases' && args.id === 'conn-1') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections') {
+        return Promise.resolve([
+          { name: 'customers', type: 'collection' },
+          { name: 'fs.files', type: 'collection' },
+          { name: 'fs.chunks', type: 'collection' },
+        ]);
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+    const blocked = new Set(['set_validator', 'list_gridfs_files']);
+    const onOpenGridfs = vi.fn();
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Remote Orders', uri: '' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+        onEditValidation={() => {}}
+        onOpenGridfs={onOpenGridfs}
+        isCommandBlocked={(id, command) => id === 'conn-1' && blocked.has(command)}
+      />
+    );
+
+    fireEvent.click(await screen.findByText('sales_db'));
+    fireEvent.click(await screen.findByText('Collections'));
+    fireEvent.contextMenu(await screen.findByText('customers'));
+    expect(screen.getByRole('menuitem', { name: /Validation Rules/i })).toHaveAttribute('data-disabled');
+
+    fireEvent.click(screen.getByText('GridFS Buckets'));
+    fireEvent.click(await screen.findByText('fs'));
+    expect(onOpenGridfs).not.toHaveBeenCalled();
+  });
+});
+
+describe('Sidebar: views whose main command is blocked', () => {
+  it('disables schema analysis, user management and monitoring', async () => {
+    mockInvoke.mockImplementation((cmd, args) => {
+      if (cmd === 'list_databases' && args.id === 'conn-1') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections') return Promise.resolve([{ name: 'customers', type: 'collection' }]);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+    const blocked = new Set(['analyze_schema', 'list_users', 'server_status', 'repl_set_status', 'get_profiling_status']);
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Remote Orders', uri: '' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+        onAnalyzeSchema={() => {}}
+        onOpenUsers={() => {}}
+        onOpenMonitoring={() => {}}
+        isCommandBlocked={(id, command) => id === 'conn-1' && blocked.has(command)}
+      />
+    );
+
+    const serverNode = await screen.findByText('Remote Orders');
+    fireEvent.contextMenu(serverNode.closest('div')!);
+    expect(screen.getByRole('menuitem', { name: /Monitor/i })).toHaveAttribute('data-disabled');
+    expect(screen.getByRole('menuitem', { name: /Manage Users/i })).toHaveAttribute('data-disabled');
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+
+    const dbNode = await screen.findByText('sales_db');
+    fireEvent.contextMenu(dbNode);
+    expect(screen.getByRole('menuitem', { name: /Manage Users/i })).toHaveAttribute('data-disabled');
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+
+    fireEvent.click(dbNode);
+    fireEvent.click(await screen.findByText('Collections'));
+    fireEvent.contextMenu(await screen.findByText('customers'));
+    expect(screen.getByRole('menuitem', { name: /Analyze Schema/i })).toHaveAttribute('data-disabled');
+  });
+});
+
+describe('Sidebar: monitoring with some of its reads blocked', () => {
+  it('keeps Monitor available while any monitoring read is', async () => {
+    mockInvoke.mockImplementation((cmd, args) => {
+      if (cmd === 'list_databases' && args.id === 'conn-1') return Promise.resolve([]);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Remote Orders', uri: '' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+        onOpenMonitoring={() => {}}
+        isCommandBlocked={(id, command) => id === 'conn-1' && command === 'server_status'}
+      />
+    );
+
+    const serverNode = await screen.findByText('Remote Orders');
+    fireEvent.contextMenu(serverNode.closest('div')!);
+    expect(screen.getByRole('menuitem', { name: /Monitor/i })).not.toHaveAttribute('data-disabled');
+  });
+});

@@ -382,7 +382,8 @@
     "bodyWithNamespace": "{{namespace}} wurde aus deiner letzten Sitzung wiederhergestellt. Verbinde dich erneut mit {{profile}}, um es zu laden.",
     "disconnected": "Getrennt",
     "profileMissing": "Verbindungsprofil existiert nicht mehr",
-    "reconnectButton": "Erneut mit {{profile}} verbinden"
+    "reconnectButton": "Erneut mit {{profile}} verbinden",
+    "signIn": "Anmelden…"
   },
   "statusBar": {
     "activity": "Aktivität",
@@ -499,7 +500,7 @@
       "generic": "Biometrie verwenden",
       "touchId": "Touch ID verwenden"
     },
-    "confirmReset": "Zurücksetzen löscht ALLE gespeicherten Verbindungen und API-Schlüssel. Fortfahren?",
+    "confirmReset": "Beim Zurücksetzen werden ALLE gespeicherten Verbindungen, API-Schlüssel und verschlüsselten MQLens-Server-Sitzungstoken gelöscht. Da der Tresor gesperrt ist, können aktive Serversitzungen nicht widerrufen werden und möglicherweise aktiv bleiben. Fortfahren?",
     "descriptions": {
       "setup": "Deine gespeicherten Verbindungen und API-Schlüssel werden mit diesem Passwort verschlüsselt. Es gibt keine Wiederherstellung, wenn du es vergisst.",
       "unlock": "Gib dein Master-Passwort ein, um deine gespeicherten Zugangsdaten zu entschlüsseln."
@@ -645,5 +646,6 @@
     "retentionNote": "Alte Ereignisse werden automatisch durch die Aufbewahrungseinstellung entfernt. Ein intaktes Protokoll kann nicht gelöscht werden.",
     "statusError": "Fehlgeschlagen",
     "statusOk": "Erfolgreich"
-  }
+  },
+  "shellNotOnServer": "Die Shell ist auf MQLens Server noch nicht verfügbar."
 }

@@ -18,6 +18,7 @@ import {
 } from './lib/aiChatRequest';
 import { stopChangeStream } from './lib/changeStream';
 import { describeConnectError } from './lib/describeConnectError';
+import { connectToServer, MONITORING_READS, parseServerProfileId, type RemoteConnectionInfo } from './lib/serverMode';
 import { startWriteRequests } from './lib/mcpWriteRequests';
 import { McpWriteConfirm } from './components/McpWriteConfirm';
 import {
@@ -342,6 +343,21 @@ const buildTabQuerySpec = (tab: QueryTab): QueryCodeSpec | null => {
     };
   }
   return null;
+};
+
+/** The command a tab type cannot work without; on a connection that cannot run it, the tab is not mounted. */
+const TAB_COMMANDS: Partial<Record<string, string>> = {
+  schema: 'analyze_schema',
+  'create-view': 'create_view',
+  gridfs: 'list_gridfs_files',
+  validation: 'set_validator',
+  users: 'list_users',
+  export: 'start_collection_export',
+  import: 'start_import_task',
+  dump: 'start_dump_task',
+  restore: 'start_restore_task',
+  generate: 'start_generate_task',
+  watch: 'start_change_stream',
 };
 
 interface ActiveConnection {
@@ -808,6 +824,15 @@ function Workspace() {
   }, []);
   const [profilesRefreshKey, setProfilesRefreshKey] = useState(0);
   const [isConnectionModalOpen, setIsConnectionModalOpen] = useState(false);
+  // What each connection made through an MQLens Server cannot run, by
+  // connection id, from the latest connection list.
+  const [serverConnections, setServerConnections] = useState<Map<string, RemoteConnectionInfo>>(new Map());
+  const noteServerConnections = (connections: ConnectionEntry[]) =>
+    setServerConnections(new Map(connections.flatMap((c) => (c.server ? [[c.id, c.server] as const] : []))));
+  const isCommandBlocked = (connectionId: string, command: string) =>
+    serverConnections.get(connectionId)?.blockedCommands.includes(command) ?? false;
+  // Whether the connection manager opens on the MQLens Server accounts.
+  const [connectionModalServer, setConnectionModalServer] = useState(false);
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTabId | undefined>();
 
   // (final fix wave, agent-connection visibility) `viaMcp` entries dedupe by
@@ -1116,6 +1141,7 @@ function Workspace() {
         try {
           const connections = await connectionList();
           if (Array.isArray(connections) && connections.length > 0) {
+            noteServerConnections(connections);
             applyConnectionsAdditions(connections);
           }
         } catch {
@@ -3235,9 +3261,9 @@ function Workspace() {
     { id: 'density-cozy', title: tShell('commandPalette.paletteActions.densityCozy.title'), keywords: tShell('commandPalette.paletteActions.densityCozy.keywords'), run: () => setSpacingDensity('cozy') },
     { id: 'density-compact', title: tShell('commandPalette.paletteActions.densityCompact.title'), keywords: tShell('commandPalette.paletteActions.densityCompact.keywords'), run: () => setSpacingDensity('compact') },
     ...(activeTab && activeTab.type === 'collection' ? [
-      { id: 'open-shell', title: tShell('commandPalette.paletteActions.openShell.title'), hint: `${activeTab.db}.${activeTab.collection}`, keywords: tShell('commandPalette.paletteActions.openShell.keywords'), run: () => handleOpenShell(activeTab.connectionId, activeTab.db, activeTab.collection) },
-      { id: 'export-collection', title: tShell('commandPalette.paletteActions.exportCollection.title'), hint: `${activeTab.db}.${activeTab.collection}`, keywords: tShell('commandPalette.paletteActions.exportCollection.keywords'), run: () => handleOpenExportTab(activeTab) },
-      { id: 'analyze-schema', title: tShell('commandPalette.paletteActions.analyzeSchema.title'), hint: `${activeTab.db}.${activeTab.collection}`, keywords: tShell('commandPalette.paletteActions.analyzeSchema.keywords'), run: () => handleOpenSchemaTab(activeTab.connectionId, activeTab.db, activeTab.collection) },
+      ...(isCommandBlocked(activeTab.connectionId, 'start_mongosh_session') ? [] : [{ id: 'open-shell', title: tShell('commandPalette.paletteActions.openShell.title'), hint: `${activeTab.db}.${activeTab.collection}`, keywords: tShell('commandPalette.paletteActions.openShell.keywords'), run: () => handleOpenShell(activeTab.connectionId, activeTab.db, activeTab.collection) }]),
+      ...(isCommandBlocked(activeTab.connectionId, 'start_collection_export') || isCommandBlocked(activeTab.connectionId, 'start_filtered_export') ? [] : [{ id: 'export-collection', title: tShell('commandPalette.paletteActions.exportCollection.title'), hint: `${activeTab.db}.${activeTab.collection}`, keywords: tShell('commandPalette.paletteActions.exportCollection.keywords'), run: () => handleOpenExportTab(activeTab) }]),
+      ...(isCommandBlocked(activeTab.connectionId, 'analyze_schema') ? [] : [{ id: 'analyze-schema', title: tShell('commandPalette.paletteActions.analyzeSchema.title'), hint: `${activeTab.db}.${activeTab.collection}`, keywords: tShell('commandPalette.paletteActions.analyzeSchema.keywords'), run: () => handleOpenSchemaTab(activeTab.connectionId, activeTab.db, activeTab.collection) }]),
     ] : []),
     ...(activeTabId ? [{ id: 'close-tab', title: tShell('commandPalette.paletteActions.closeTab.title'), keywords: tShell('commandPalette.paletteActions.closeTab.keywords'), run: () => closeTabById(activeTabId) }] : []),
     ...(focusedPane && focusedPane.tabIds.length > 1 ? [
@@ -3255,13 +3281,13 @@ function Workspace() {
         dispatchWorkspace({ type: 'focus_pane', paneId: panes[(i + 1) % panes.length].id });
       } },
     ] : []),
-    ...activeConnections.map(c => ({
+    ...activeConnections.filter(c => !MONITORING_READS.every(cmd => isCommandBlocked(c.id, cmd))).map(c => ({
       id: `monitoring:${c.id}`,
       title: tShell('commandPalette.paletteActions.openMonitoring.title', { name: c.name }),
       keywords: tShell('commandPalette.paletteActions.openMonitoring.keywords'),
       run: () => handleOpenMonitoringTab(c.id),
     })),
-    ...activeConnections.map(c => ({
+    ...activeConnections.filter(c => !isCommandBlocked(c.id, 'list_users')).map(c => ({
       id: `users:${c.id}`,
       title: tShell('commandPalette.paletteActions.manageUsers.title', { name: c.name }),
       keywords: tShell('commandPalette.paletteActions.manageUsers.keywords'),
@@ -3727,6 +3753,7 @@ function Workspace() {
         // (the status bar's username display) degrades to '' for a
         // connection registered this way rather than crash.
         applyConnectionsAdditions(payload.connections);
+        noteServerConnections(payload.connections);
 
         // Phase 3 Task 6 (LEDGER MANDATE) considered — and deliberately does
         // NOT implement — a self-healing cleanup for "stale" backend
@@ -3851,8 +3878,13 @@ function Workspace() {
       // (`load_connection_profiles`) is needed to reuse it either.
       const existing = activeConnections.find((c) => c.profileId === profileId);
       let newId: string;
+      const server = parseServerProfileId(profileId);
       if (existing) {
         newId = existing.id;
+      } else if (server) {
+        newId = (await connectToServer(server.accountId, server.remoteId)).id;
+        addActiveConnection(newId, profileName, '', profileId, undefined, undefined, 'normal');
+        setConnectionMeta(newId, profileId, profileName, 'normal');
       } else {
         const profiles = await invoke<ConnectionProfile[]>('load_connection_profiles');
         const profile = profiles.find((p) => p.id === profileId);
@@ -4553,6 +4585,14 @@ function Workspace() {
           busy={!!state?.busy}
           error={state?.error ?? null}
           onReconnect={() => handleReconnectProfile(profileId, profileName)}
+          onSignIn={
+            parseServerProfileId(profileId)
+              ? () => {
+                  setConnectionModalServer(true);
+                  setIsConnectionModalOpen(true);
+                }
+              : undefined
+          }
         />
       );
     }
@@ -4563,6 +4603,14 @@ function Workspace() {
     // content (not instead of it, unlike the ReconnectBanner above) for every
     // tab type that operates on a connection; `settings`/`quickstart`/`tasks`
     // have no connection to badge.
+    // A tab whose work a server connection cannot do (one restored from an
+    // earlier session, say) says so rather than running it.
+    const tabCommand = TAB_COMMANDS[tab.type];
+    if (tabCommand && isCommandBlocked(tab.connectionId, tabCommand)) {
+      return (
+        <div className="flex h-full items-center justify-center p-8 text-center text-xs text-muted-foreground">{t('notOnServer')}</div>
+      );
+    }
     const connMode = activeConnections.find((c) => c.id === tab.connectionId)?.mode;
     const showModeBanner = !!connMode && connMode !== 'normal' && CONNECTION_TAB_TYPES.has(tab.type);
     const body = (
@@ -4573,7 +4621,7 @@ function Workspace() {
             databaseName={tab.db}
             collectionName={tab.collection}
             indexName={tab.indexName || ''}
-            onEditIndex={(indexName, keys, unique, sparse) =>
+            onEditIndex={isCommandBlocked(tab.connectionId, 'create_index') || isCommandBlocked(tab.connectionId, 'delete_index') ? undefined : (indexName, keys, unique, sparse) =>
               handleOpenIndexModalForEdit(
                 tab.connectionId,
                 tab.db,
@@ -4584,7 +4632,7 @@ function Workspace() {
                 sparse
               )
             }
-            onDeleteIndex={(indexName) =>
+            onDeleteIndex={isCommandBlocked(tab.connectionId, 'delete_index') ? undefined : (indexName) =>
               handleDeleteIndex(
                 tab.connectionId,
                 tab.db,
@@ -4622,12 +4670,14 @@ function Workspace() {
               aiChatId={tabChatCache.current.get(tab.id)?.chatId}
               onAIChatIdChange={(chatId) => handleAIChatIdChange(tab.id, chatId)}
               onExecute={q => handleExecuteQuery(tab, q)}
-              onExecuteAggregate={pipeline => handleExecuteAggregate(tab, pipeline)}
+              onExecuteAggregate={isCommandBlocked(tab.connectionId, 'execute_aggregate') ? undefined : pipeline => handleExecuteAggregate(tab, pipeline)}
+              aggregateBlocked={isCommandBlocked(tab.connectionId, 'execute_aggregate')}
               onExplain={filter => handleExplainQuery(tab, filter)}
               onExplainAggregate={pipeline => handleExplainAggregate(tab, pipeline)}
-              onOpenShell={(command) => handleOpenShell(tab.connectionId, tab.db, tab.collection, command)}
-              onOpenExport={() => handleOpenExportTab(tab)}
-              onImport={() => handleImport(tab)}
+              onOpenShell={isCommandBlocked(tab.connectionId, 'start_mongosh_session') ? undefined : (command) => handleOpenShell(tab.connectionId, tab.db, tab.collection, command)}
+              onOpenExport={isCommandBlocked(tab.connectionId, 'start_collection_export') || isCommandBlocked(tab.connectionId, 'start_filtered_export') ? undefined : () => handleOpenExportTab(tab)}
+              onImport={isCommandBlocked(tab.connectionId, 'start_import_task') ? undefined : () => handleImport(tab)}
+              explainBlocked={isCommandBlocked(tab.connectionId, 'explain_mql_query') || isCommandBlocked(tab.connectionId, 'explain_aggregate_query')}
               loading={tab.loading}
               availableFields={fieldsFromResults(tab.results)}
             >
@@ -4660,10 +4710,11 @@ function Workspace() {
                     onEditDocument={rowsAreStoredDocuments(tab) ? (doc => handleEditDocument(tab, doc)) : undefined}
                     onDuplicateDocument={doc => handleDuplicateDocument(tab, doc)}
                     onDeleteDocument={rowsAreStoredDocuments(tab) ? (doc => handleDeleteDocument(tab, doc)) : undefined}
-                    onAnalyzeSchema={() => handleOpenSchemaTab(tab.connectionId, tab.db, tab.collection)}
+                    onAnalyzeSchema={isCommandBlocked(tab.connectionId, 'analyze_schema') ? undefined : () => handleOpenSchemaTab(tab.connectionId, tab.db, tab.collection)}
                     onUpdateMany={() => handleUpdateMany(tab)}
                     onDeleteMany={() => handleDeleteMany(tab)}
                     connectionMode={connMode}
+                    blockedCommands={serverConnections.get(tab.connectionId)?.blockedCommands}
                     totalCount={tab.totalCount}
                     estimated={tab.estimated}
                     countLoading={tab.countLoading}
@@ -4734,10 +4785,10 @@ function Workspace() {
           />
         )}
         {tab.type === 'monitoring' && (
-          <MonitoringView connectionId={tab.connectionId} />
+          <MonitoringView connectionId={tab.connectionId} blockedCommands={serverConnections.get(tab.connectionId)?.blockedCommands} />
         )}
         {tab.type === 'users' && (
-          <UserManagementView connectionId={tab.connectionId} database={tab.db || undefined} />
+          <UserManagementView connectionId={tab.connectionId} database={tab.db || undefined} blockedCommands={serverConnections.get(tab.connectionId)?.blockedCommands} />
         )}
         {tab.type === 'export' && (() => {
           const activeConnection = activeConnections.find(c => c.id === tab.connectionId);
@@ -4922,7 +4973,12 @@ function Workspace() {
             streamId={tab.id}
           />
         )}
-        {tab.type === 'shell' && (() => {
+        {tab.type === 'shell' && isCommandBlocked(tab.connectionId, 'start_mongosh_session') && (
+          <div className="flex h-full items-center justify-center p-8 text-center text-xs text-muted-foreground">
+            {tShell('shellNotOnServer')}
+          </div>
+        )}
+        {tab.type === 'shell' && !isCommandBlocked(tab.connectionId, 'start_mongosh_session') && (() => {
           const activeConnection = activeConnections.find(c => c.id === tab.connectionId);
           const connectionName = activeConnection ? activeConnection.name : tab.connectionId;
           return (
@@ -5016,6 +5072,8 @@ function Workspace() {
       sidebar={
         <Sidebar
           onSelectCollection={handleSelectCollection}
+          isCommandBlocked={isCommandBlocked}
+          serverAccountFor={(id) => serverConnections.get(id)?.accountName}
           pendingSaves={pendingSaves}
           isCollectionOpen={(connectionId, db, collection) =>
             collectionTabsMatching(tabs, { connectionId, db, collection }).length > 0
@@ -5096,7 +5154,8 @@ function Workspace() {
 
           <ConnectionManager
             isOpen={isConnectionModalOpen}
-            onClose={() => { setIsConnectionModalOpen(false); setProfilesRefreshKey((k) => k + 1); }}
+            onClose={() => { setIsConnectionModalOpen(false); setConnectionModalServer(false); setProfilesRefreshKey((k) => k + 1); }}
+            showServerAccounts={connectionModalServer}
             onConnect={(id, name, uri, profileId, colorTag, connectionMode) => {
               addActiveConnection(id, name, uri, profileId, colorTag ?? undefined, undefined, connectionMode ?? 'normal');
               // Announce this fresh id to every other window (Phase 3 Task 6)
@@ -5107,6 +5166,7 @@ function Workspace() {
               // doc comment.
               rebindProfileTabs(profileId, id);
               setIsConnectionModalOpen(false);
+              setConnectionModalServer(false);
               setProfilesRefreshKey((k) => k + 1);
             }}
             activeConnections={activeConnections}

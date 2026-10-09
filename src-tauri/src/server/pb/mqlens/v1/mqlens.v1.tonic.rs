@@ -2984,6 +2984,32 @@ pub mod ddl_service_client {
                 .insert(GrpcMethod::new("mqlens.v1.DdlService", "GetCollectionOptions"));
             self.inner.unary(req, path, codec).await
         }
+        pub async fn rename_database_detailed(
+            &mut self,
+            request: impl tonic::IntoRequest<super::RenameDatabaseDetailedRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::RenameDatabaseResult>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/mqlens.v1.DdlService/RenameDatabaseDetailed",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("mqlens.v1.DdlService", "RenameDatabaseDetailed"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
         pub async fn set_validator(
             &mut self,
             request: impl tonic::IntoRequest<super::SetValidatorRequest>,
@@ -3050,6 +3076,13 @@ pub mod ddl_service_server {
             request: tonic::Request<super::GetCollectionOptionsRequest>,
         ) -> std::result::Result<
             tonic::Response<super::CollectionValidation>,
+            tonic::Status,
+        >;
+        async fn rename_database_detailed(
+            &self,
+            request: tonic::Request<super::RenameDatabaseDetailedRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::RenameDatabaseResult>,
             tonic::Status,
         >;
         async fn set_validator(
@@ -3434,6 +3467,52 @@ pub mod ddl_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = GetCollectionOptionsSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/mqlens.v1.DdlService/RenameDatabaseDetailed" => {
+                    #[allow(non_camel_case_types)]
+                    struct RenameDatabaseDetailedSvc<T: DdlService>(pub Arc<T>);
+                    impl<
+                        T: DdlService,
+                    > tonic::server::UnaryService<super::RenameDatabaseDetailedRequest>
+                    for RenameDatabaseDetailedSvc<T> {
+                        type Response = super::RenameDatabaseResult;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::RenameDatabaseDetailedRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as DdlService>::rename_database_detailed(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = RenameDatabaseDetailedSvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

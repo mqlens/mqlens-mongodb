@@ -126,8 +126,24 @@ vi.mock('@tauri-apps/plugin-fs', () => ({
 
 // Mock Sidebar component
 vi.mock('../Sidebar', () => ({
-  Sidebar: ({ onSelectCollection, onSelectIndex, onCreateIndex, onDeleteIndex, onOpenSettings, onOpenDump, onOpenRestore, onEditValidation, onOpenGenerate, onDatabaseRenamed, onDatabaseDropped, onWatchCollection, activeConnections, onConnectProfile }: any) => (
+  Sidebar: ({ onSelectCollection, onSelectIndex, onCreateIndex, onDeleteIndex, onOpenSettings, onOpenDump, onOpenRestore, onEditValidation, onOpenGenerate, onDatabaseRenamed, onDatabaseDropped, onWatchCollection, activeConnections, onConnectProfile, isCommandBlocked, onOpenShell, onOpenUsers, onAnalyzeSchema, onOpenGridfs, onCreateView }: any) => (
     <div data-testid="mock-sidebar">
+      {(activeConnections ?? []).map((c: any) => (
+        <button key={c.id} data-testid={`mock-open-shell-${c.id}`} onClick={() => onOpenShell?.(c.id, 'sales_db')} />
+      ))}
+      {(activeConnections ?? []).map((c: any) => (
+        <button key={c.id} data-testid={`mock-open-users-${c.id}`} onClick={() => onOpenUsers?.(c.id)} />
+      ))}
+      {(activeConnections ?? []).map((c: any) => (
+        <span key={c.id}>
+          <button data-testid={`mock-open-schema-${c.id}`} onClick={() => onAnalyzeSchema?.(c.id, 'sales_db', 'customers')} />
+          <button data-testid={`mock-open-gridfs-${c.id}`} onClick={() => onOpenGridfs?.(c.id, 'sales_db', 'fs')} />
+          <button data-testid={`mock-open-create-view-${c.id}`} onClick={() => onCreateView?.(c.id, 'sales_db')} />
+        </span>
+      ))}
+      {(activeConnections ?? []).map((c: any) =>
+        isCommandBlocked?.(c.id, 'start_dump_task') ? <span key={c.id} data-testid={`mock-sidebar-dump-blocked-${c.id}`} /> : null,
+      )}
       {/* Phase 3 Task 6 (b): mirrors the real Sidebar's dependence on the
           `activeConnections` prop for its "Connections" tree — lets tests
           assert a connection landed in this window's sidebar without
@@ -246,9 +262,10 @@ vi.mock('../Sidebar', () => ({
 // 3 Task 6's set_connection_meta call) — a single button that fires it with
 // fixed args, gated on `isOpen` like the real modal.
 vi.mock('../ConnectionManager', () => ({
-  ConnectionManager: ({ isOpen, onConnect }: any) =>
+  ConnectionManager: ({ isOpen, onConnect, showServerAccounts }: any) =>
     isOpen ? (
       <div data-testid="mock-connection-manager">
+        {showServerAccounts && <span data-testid="mock-cm-server-accounts" />}
         <button
           data-testid="mock-cm-connect-btn"
           onClick={() => onConnect('cm-live-1', 'Staging Cluster', 'mongodb://staging', 'p-cm', '#fff')}
@@ -356,6 +373,136 @@ describe('App Component', () => {
     expect(screen.queryByText('Unique')).not.toBeInTheDocument();
     // The old fabricated description must be gone.
     expect(screen.queryByText(/User-defined single field index/i)).not.toBeInTheDocument();
+  });
+
+  it('hides the collection and index actions a server connection cannot run', async () => {
+    const server = {
+      accountId: 'a1', accountName: 'Work', serverUrl: 'https://s', remoteId: 'c1', opClasses: ['read'],
+      blockedCommands: ['start_collection_export', 'start_filtered_export', 'start_import_task', 'create_index', 'delete_index'],
+    };
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd, args) => {
+      calls.push({ cmd, args });
+      if (cmd === 'connection_list') return Promise.resolve([{ id: 'conn-1', profileId: 'server:a1:c1', name: 'Orders', viaMcp: false, server }]);
+      if (cmd === 'execute_mql_query') return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+      if (cmd === 'list_indexes') return Promise.resolve([{ name: 'email_1', keys: '{"city":1}', unique: false, sparse: false }]);
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('sidebar-conn-conn-1');
+
+    fireEvent.click(screen.getByTestId('select-collection-btn'));
+    expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+    expect(screen.queryByTestId('export-btn')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('import-btn')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('select-index-btn'));
+    await waitFor(() => expect(calls.some((c) => c.cmd === 'list_indexes')).toBe(true));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByTestId('edit-index-btn')).not.toBeInTheDocument();
+  });
+
+  it('leaves blocked actions out of the command palette, and passes blocked commands to the admin views', async () => {
+    const server = {
+      accountId: 'a1', accountName: 'Work', serverUrl: 'https://s', remoteId: 'c1', opClasses: ['read'],
+      blockedCommands: ['start_collection_export', 'start_filtered_export', 'start_mongosh_session', 'create_user'],
+    };
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'connection_list') return Promise.resolve([{ id: 'conn-1', profileId: 'server:a1:c1', name: 'Orders', viaMcp: false, server }]);
+      if (cmd === 'execute_mql_query') return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+      if (cmd === 'list_users') return Promise.resolve([]);
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('sidebar-conn-conn-1');
+    fireEvent.click(screen.getByTestId('select-collection-btn'));
+    expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: 'k', metaKey: true });
+    fireEvent.change(await screen.findByTestId('command-palette-input'), { target: { value: 'Export Collection' } });
+    expect(screen.queryByText('Export Collection…')).not.toBeInTheDocument();
+    fireEvent.change(screen.getByTestId('command-palette-input'), { target: { value: 'Manage Users' } });
+    fireEvent.click(await screen.findByText('Manage Users: Orders'));
+
+    expect(await screen.findByTestId('create-user-btn')).toBeDisabled();
+  });
+
+  it('leaves out schema analysis, users and monitoring where their commands are blocked', async () => {
+    const server = {
+      accountId: 'a1', accountName: 'Work', serverUrl: 'https://s', remoteId: 'c1', opClasses: ['read'],
+      blockedCommands: ['analyze_schema', 'list_users', 'list_roles', 'server_status', 'repl_set_status', 'get_profiling_status'],
+    };
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'connection_list') return Promise.resolve([{ id: 'conn-1', profileId: 'server:a1:c1', name: 'Orders', viaMcp: false, server }]);
+      if (cmd === 'execute_mql_query') return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('sidebar-conn-conn-1');
+    fireEvent.click(screen.getByTestId('select-collection-btn'));
+    expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+    expect(screen.queryByTestId('analyze-schema-btn')).not.toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: 'k', metaKey: true });
+    const input = await screen.findByTestId('command-palette-input');
+    for (const query of ['Analyze Schema', 'Manage Users: Orders', 'Open Monitoring: Orders']) {
+      fireEvent.change(input, { target: { value: query } });
+      expect(screen.queryByText(query)).not.toBeInTheDocument();
+    }
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    fireEvent.click(screen.getByTestId('mock-open-users-conn-1'));
+    expect(await screen.findByText('Not available on MQLens Server yet.')).toBeInTheDocument();
+    expect(mockInvoke).not.toHaveBeenCalledWith('list_users', expect.anything());
+  });
+
+  it('does not offer aggregation on a server connection that cannot run it', async () => {
+    const server = {
+      accountId: 'a1', accountName: 'Work', serverUrl: 'https://s', remoteId: 'c1', opClasses: ['read'],
+      blockedCommands: ['execute_aggregate'],
+    };
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'connection_list') return Promise.resolve([{ id: 'conn-1', profileId: 'server:a1:c1', name: 'Orders', viaMcp: false, server }]);
+      if (cmd === 'execute_mql_query') return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('sidebar-conn-conn-1');
+    fireEvent.click(screen.getByTestId('select-collection-btn'));
+    expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+
+    expect(screen.getByTestId('mode-aggregate-tab')).toBeDisabled();
+  });
+
+  it('shows a tab whose command is blocked as unavailable instead of running it', async () => {
+    const server = {
+      accountId: 'a1', accountName: 'Work', serverUrl: 'https://s', remoteId: 'c1', opClasses: ['read'],
+      blockedCommands: ['analyze_schema', 'list_gridfs_files', 'create_view'],
+    };
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'connection_list') return Promise.resolve([{ id: 'conn-1', profileId: 'server:a1:c1', name: 'Orders', viaMcp: false, server }]);
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    fireEvent.click(await screen.findByTestId('mock-open-schema-conn-1'));
+    expect(await screen.findByText('Not available on MQLens Server yet.')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('mock-open-gridfs-conn-1'));
+    fireEvent.click(screen.getByTestId('mock-open-create-view-conn-1'));
+    expect(screen.queryByTestId('create-view')).not.toBeInTheDocument();
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(mockInvoke).not.toHaveBeenCalledWith('analyze_schema', expect.anything());
+    expect(mockInvoke).not.toHaveBeenCalledWith('list_gridfs_files', expect.anything());
   });
 
   it('edits an index using its REAL spec, not specs guessed from the name (C2 regression)', async () => {
@@ -2832,6 +2979,89 @@ describe('App Component', () => {
 
       const connectCalls = calls.filter((c) => c.cmd === 'connect_db');
       expect(connectCalls).toHaveLength(1); // one connect_db for the whole profile, not per-tab
+    });
+
+    it('(b-server) reconnecting a server profile connects through its MQLens Server account', async () => {
+      const serverSnapshot = JSON.parse(
+        JSON.stringify(workspaceSnapshot).split('profile:p1').join('profile:server:a1:c1').split('"p1"').join('"server:a1:c1"'),
+      );
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'workspace_get') return Promise.resolve(serverSnapshot);
+        if (cmd === 'server_connect') return Promise.resolve({ id: 'remote-conn-1', mongoVersion: '8.0.0', opClasses: ['read'] });
+        if (cmd === 'execute_mql_query') return Promise.resolve([JSON.stringify({ _id: '1', name: 'Ada' })]);
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+
+      const [firstBtn] = await screen.findAllByRole('button', { name: /Reconnect Prod Cluster/ });
+      fireEvent.click(firstBtn);
+
+      await waitFor(() => expect(screen.queryAllByTestId('reconnect-banner')).toHaveLength(0));
+      expect(calls.filter((c) => c.cmd === 'server_connect').map((c) => c.args)).toEqual([{ accountId: 'a1', remoteId: 'c1' }]);
+      expect(calls.some((c) => c.cmd === 'connect_db')).toBe(false);
+      await waitFor(() =>
+        expect(calls.filter((c) => c.cmd === 'execute_mql_query').every((c) => c.args?.id === 'remote-conn-1')).toBe(true),
+      );
+    });
+
+    it('(b-server-signin) a server profile that needs a sign-in offers one, in the connection manager', async () => {
+      const serverSnapshot = JSON.parse(
+        JSON.stringify(workspaceSnapshot).split('profile:p1').join('profile:server:a1:c1').split('"p1"').join('"server:a1:c1"'),
+      );
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'workspace_get') return Promise.resolve(serverSnapshot);
+        if (cmd === 'server_connect') return Promise.reject('Sign in to the MQLens Server account "Work" first');
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+
+      const [firstBtn] = await screen.findAllByRole('button', { name: /Reconnect Prod Cluster/ });
+      fireEvent.click(firstBtn);
+      const [signIn] = await screen.findAllByRole('button', { name: 'Sign in…' });
+      fireEvent.click(signIn);
+
+      expect(await screen.findByTestId('mock-cm-server-accounts')).toBeInTheDocument();
+    });
+
+    it('(b-server-blocked) tells the sidebar what a server connection cannot run', async () => {
+      const server = { accountId: 'a1', accountName: 'Work', serverUrl: 'https://s', remoteId: 'c1', opClasses: ['read'], blockedCommands: ['start_dump_task'] };
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'connection_list') {
+          return Promise.resolve([
+            { id: 'remote-1', profileId: 'server:a1:c1', name: 'Orders', viaMcp: false, server },
+            { id: 'local-1', profileId: 'p9', name: 'Local', viaMcp: false },
+          ]);
+        }
+        return Promise.resolve([]);
+      });
+
+      renderWithProviders(<App />);
+
+      expect(await screen.findByTestId('mock-sidebar-dump-blocked-remote-1')).toBeInTheDocument();
+      expect(screen.queryByTestId('mock-sidebar-dump-blocked-local-1')).not.toBeInTheDocument();
+    });
+
+    it('(b-server-shell) a server connection without the shell says so instead of starting one', async () => {
+      const server = { accountId: 'a1', accountName: 'Work', serverUrl: 'https://s', remoteId: 'c1', opClasses: ['read'], blockedCommands: ['start_mongosh_session'] };
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'connection_list') {
+          return Promise.resolve([{ id: 'remote-1', profileId: 'server:a1:c1', name: 'Orders', viaMcp: false, server }]);
+        }
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      fireEvent.click(await screen.findByTestId('mock-open-shell-remote-1'));
+
+      expect(await screen.findByText('The shell is not available on MQLens Server yet.')).toBeInTheDocument();
+      expect(mockInvoke).not.toHaveBeenCalledWith('start_mongosh_session', expect.anything());
     });
 
     it('(b2) reconnecting a profile sends its saved OIDC config to connect_db (#430)', async () => {

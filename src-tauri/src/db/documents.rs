@@ -215,7 +215,13 @@ async fn delete_document_inner(
         return Ok(1);
     }
 
-    let client = require_real_client(state, id)?;
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            use crate::server::ops::write;
+            return write::delete_one(state, &conn, database, collection, &filter_doc).await;
+        }
+    };
     let coll = client
         .database(database)
         .collection::<mongodb::bson::Document>(collection);
@@ -266,7 +272,13 @@ async fn delete_many_inner(
     if connection_is_mock(state, id)? {
         return Ok(0); // mock connections don't persist deletes
     }
-    let client = require_real_client(state, id)?;
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            use crate::server::ops::write;
+            return write::delete_many(state, &conn, database, collection, &filter_doc).await;
+        }
+    };
     let res = client
         .database(database)
         .collection::<mongodb::bson::Document>(collection)
@@ -326,7 +338,21 @@ async fn update_many_inner(
     if connection_is_mock(state, id)? {
         return Ok(0); // mock connections don't persist updates
     }
-    let client = require_real_client(state, id)?;
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            use crate::server::ops::write;
+            return write::update_many(
+                state,
+                &conn,
+                database,
+                collection,
+                &filter_doc,
+                &update_doc,
+            )
+            .await;
+        }
+    };
     let res = client
         .database(database)
         .collection::<mongodb::bson::Document>(collection)
@@ -379,7 +405,13 @@ async fn insert_document_inner(
         return Ok("mock-inserted-id".to_string());
     }
 
-    let client = require_real_client(state, id)?;
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            use crate::server::ops::write;
+            return write::insert(state, &conn, database, collection, &doc).await;
+        }
+    };
     let coll = client
         .database(database)
         .collection::<mongodb::bson::Document>(collection);
@@ -1253,8 +1285,22 @@ async fn update_document_inner(
         }
     }
 
-    let client = match require_real_client(state, id) {
-        Ok(c) => c,
+    let client = match crate::server::remote::route(state, id) {
+        Ok(crate::server::remote::Route::Local(c)) => c,
+        Ok(crate::server::remote::Route::Remote(conn)) => {
+            use crate::server::ops::write;
+            let result = match plan {
+                WritePlan::Update(update) => {
+                    write::update_one(state, &conn, database, collection, &filter_doc, &update)
+                        .await
+                }
+                WritePlan::Replace => {
+                    write::replace_one(state, &conn, database, collection, &filter_doc, &edited_doc)
+                        .await
+                }
+            };
+            return WriteOutcome { attempted, result };
+        }
         Err(e) => {
             return WriteOutcome {
                 attempted,
