@@ -45,9 +45,14 @@ What you may do depends on your role on that connection:
 | `operator` | All of the above, plus edit documents and upload or delete GridFS files |
 | `admin`, `owner` | All of the above, plus collections, views, databases, indexes and validation; current operations and killing them; the profiler; deployment users and roles; and the shell |
 
-Actions your role does not allow are disabled, with a tooltip saying why. The
-connection's own mode (normal, confirm destructive, read-only) still applies
-on top of your role.
+Actions your role does not allow are disabled or hidden. A disabled one shows
+the tooltip *Not available on MQLens Server yet*, whether your role or the
+server is what rules it out. If you need an action you cannot run, ask your
+server administrator about your role.
+
+Server connections always open in the normal connection mode. The read-only
+and confirm-destructive modes cannot be chosen for them yet, so your role on
+the server is what limits you.
 
 ## Not available through a server yet
 

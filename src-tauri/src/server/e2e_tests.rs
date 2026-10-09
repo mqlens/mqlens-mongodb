@@ -2,8 +2,9 @@
 //! class runs once through the server and once locally against the same
 //! MongoDB, and the two must answer alike.
 //!
-//! Opt-in, like `integration_tests`: they run only when these are set, and
-//! no-op otherwise.
+//! Opt-in, like `integration_tests`: they no-op unless `MQLENS_TEST_SERVER_URL`
+//! is set. Once it is, the variables below must be set too, or the run fails
+//! naming the missing one.
 //!
 //! - `MQLENS_TEST_SERVER_URL`, `MQLENS_TEST_SERVER_TENANT`,
 //!   `MQLENS_TEST_SERVER_EMAIL`, `MQLENS_TEST_SERVER_PASSWORD`: an owner
@@ -42,6 +43,12 @@ mod e2e {
         std::env::var(name).ok().filter(|v| !v.trim().is_empty())
     }
 
+    /// A variable the run needs once `MQLENS_TEST_SERVER_URL` has opted in: a
+    /// missing one fails the run instead of skipping it unseen.
+    fn required(name: &str) -> String {
+        var(name).unwrap_or_else(|| panic!("MQLENS_TEST_SERVER_URL is set, so {name} must be too"))
+    }
+
     /// One test's world: a local connection and a server connection to the
     /// same MongoDB, and a database of its own on it.
     struct World {
@@ -57,7 +64,7 @@ mod e2e {
     impl World {
         async fn new() -> Option<World> {
             let url = var("MQLENS_TEST_SERVER_URL")?;
-            let mongo = var("MQLENS_TEST_MONGO_URI")?;
+            let mongo = required("MQLENS_TEST_MONGO_URI");
             let server_mongo = var("MQLENS_TEST_SERVER_MONGO_URI").unwrap_or_else(|| mongo.clone());
             let state = AppState::new();
             *state.vault_key.lock().unwrap() = Some(KEY);
@@ -71,8 +78,8 @@ mod e2e {
                     id: None,
                     name: "E2E".to_string(),
                     url,
-                    tenant: var("MQLENS_TEST_SERVER_TENANT")?,
-                    email: var("MQLENS_TEST_SERVER_EMAIL")?,
+                    tenant: required("MQLENS_TEST_SERVER_TENANT"),
+                    email: required("MQLENS_TEST_SERVER_EMAIL"),
                     allow_insecure_http: false,
                     extra_ca_pem: None,
                 },
@@ -82,7 +89,7 @@ mod e2e {
                 &state,
                 &path,
                 &account.id,
-                var("MQLENS_TEST_SERVER_PASSWORD")?,
+                required("MQLENS_TEST_SERVER_PASSWORD"),
             )
             .await
             .expect("sign in to MQLENS_TEST_SERVER_URL");
@@ -478,7 +485,9 @@ mod e2e {
         let local = local.unwrap();
         assert_eq!(local, remote.unwrap());
         assert!(local.iter().any(|u| u.user == "e2e_user"), "{local:?}");
-        crate::monitoring::current_ops_impl(st, &w.remote).await.unwrap();
+        crate::monitoring::current_ops_impl(st, &w.remote)
+            .await
+            .unwrap();
 
         let _ = mongo_db
             .run_command(doc! { "dropAllUsersFromDatabase": 1 })
