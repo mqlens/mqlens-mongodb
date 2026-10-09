@@ -73,6 +73,7 @@ See [installation and connection help](https://mqlens.com/docs/). The optional e
 - Read-only and destructive-operation controls complement your MongoDB permissions and backups.
 - AI is optional. Configured providers or agent clients may receive prompts, schema context, and tool results. Keeping a key in the backend does not mean AI processing stays on your device.
 - MCP is off by default, enabled per connection, and has write confirmation controls. Read the [MCP tool reference](docs/mcp-tools.md) before enabling it.
+- Teams can connect through an MQLens Server instead, so deployment URIs and credentials stay on the server. See [server mode](docs/server-mode.md).
 - Releases include verification information. See [how to verify downloads](docs/verifying-downloads.md) and the [security policy](.github/SECURITY.md).
 
 Choosing between tools? Read the [MongoDB Compass](https://mqlens.com/compare/mongodb-compass-alternative/) and [Studio 3T](https://mqlens.com/compare/studio-3t-alternative/) comparisons.

@@ -13,6 +13,7 @@
 pub(crate) mod accounts;
 pub(crate) mod channel;
 pub(crate) mod commands;
+mod e2e_tests;
 pub(crate) mod ejson;
 pub(crate) mod errors;
 #[cfg(test)]

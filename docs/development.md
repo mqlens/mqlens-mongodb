@@ -41,6 +41,42 @@ MQLENS_TEST_MONGO_URI=mongodb://localhost:27017 \
   cargo llvm-cov --manifest-path src-tauri/Cargo.toml --summary-only --ignore-filename-regex 'src-tauri/src/(lib|main)\.rs'
 ```
 
+### Server mode end to end
+
+`src-tauri/src/server/e2e_tests.rs` checks [server mode](server-mode.md) against
+a real [MQLens Server](https://github.com/mqlens/mqlens-server). Each test runs
+an op class through the server and locally against the same MongoDB, and the
+two must agree. The tests skip unless the server variables are set.
+
+Start a MongoDB and a server with an owner account from a checkout of
+`mqlens-server`. The keys and the password below are throwaway test values:
+
+```bash
+docker run -d -p 27017:27017 mongo:7
+MQLENS_LISTEN_ADDR=127.0.0.1:18443 MQLENS_DATA_DIR=/tmp/mqlens-e2e \
+MQLENS_MASTER_KEY=test-master-key MQLENS_JWT_SIGNING_KEY=test-signing-key \
+MQLENS_BOOTSTRAP_TENANT=e2e MQLENS_BOOTSTRAP_EMAIL=owner@e2e.test \
+MQLENS_BOOTSTRAP_PASSWORD=test-password \
+  go run ./cmd/mqlens-server
+```
+
+Then run the tests from this repository:
+
+```bash
+MQLENS_TEST_SERVER_URL=http://127.0.0.1:18443 MQLENS_TEST_SERVER_TENANT=e2e \
+MQLENS_TEST_SERVER_EMAIL=owner@e2e.test MQLENS_TEST_SERVER_PASSWORD=test-password \
+MQLENS_TEST_MONGO_URI=mongodb://localhost:27017 \
+  cargo test --manifest-path src-tauri/Cargo.toml server::e2e_tests
+```
+
+Each test creates its own server connection and database, and removes both.
+Optional variables:
+
+- `MQLENS_TEST_SERVER_MONGO_URI`: the MongoDB as the server reaches it, when that
+  differs from `MQLENS_TEST_MONGO_URI` (a server in a container, for example).
+- `MQLENS_TEST_SERVER_SHELL=1`: also check the shell, which needs `mongosh` on
+  the server's host.
+
 ## Build
 
 ```bash
