@@ -226,6 +226,9 @@ interface SidebarProps {
   onPasteInto?: (connectionId: string, db?: string) => void;
   /** Whether a connection cannot run `command` (a server connection); its menu entries are disabled. */
   isCommandBlocked?: (connectionId: string, command: string) => boolean;
+  /** Whether a blocked command is blocked by the user's role on the server,
+   *  not by what the server can do. */
+  isBlockedByRole?: (connectionId: string, command: string) => boolean;
   /** The MQLens Server account a connection was made through, if any. */
   serverAccountFor?: (connectionId: string) => string | undefined;
   /** Whether the clipboard currently holds something to paste. */
@@ -355,6 +358,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onCopyToClipboard,
   onPasteInto,
   isCommandBlocked,
+  isBlockedByRole,
   serverAccountFor,
   canPaste,
   refreshTarget,
@@ -368,7 +372,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // no action even if clicked.
   const gate = (connectionId: string, command: string) =>
     isCommandBlocked?.(connectionId, command)
-      ? { disabled: true, title: t('ctx.notOnServer'), onClick: undefined }
+      ? {
+          disabled: true,
+          title: isBlockedByRole?.(connectionId, command) ? t('ctx.notForRole') : t('ctx.notOnServer'),
+          onClick: undefined,
+        }
       : {};
 
   const helpLinks = [

@@ -69,6 +69,8 @@ pub struct RemoteConnectionInfo {
     pub op_classes: Vec<String>,
     /// Commands this connection cannot run; the UI disables them.
     pub blocked_commands: Vec<String>,
+    /// Those of them that only the user's role rules out.
+    pub role_blocked_commands: Vec<String>,
 }
 
 impl RemoteConn {
@@ -80,6 +82,10 @@ impl RemoteConn {
             remote_id: self.remote_id.clone(),
             op_classes: self.op_classes.clone(),
             blocked_commands: crate::server::routes::blocked_commands(self)
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+            role_blocked_commands: crate::server::routes::role_blocked_commands(self)
                 .into_iter()
                 .map(str::to_string)
                 .collect(),
@@ -227,6 +233,12 @@ mod tests {
                 remote_id: "srv-r1".to_string(),
                 op_classes: vec!["read".to_string()],
                 blocked_commands: crate::server::routes::blocked_commands(
+                    &state.server.remote("r1").unwrap().unwrap()
+                )
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+                role_blocked_commands: crate::server::routes::role_blocked_commands(
                     &state.server.remote("r1").unwrap().unwrap()
                 )
                 .into_iter()

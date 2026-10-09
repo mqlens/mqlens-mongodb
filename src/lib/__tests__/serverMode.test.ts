@@ -30,6 +30,7 @@ const remote: ConnectionEntry = {
     remoteId: 'c-9',
     opClasses: ['read'],
     blockedCommands: ['count_documents', 'insert_document'],
+    roleBlockedCommands: ['insert_document'],
   },
 };
 

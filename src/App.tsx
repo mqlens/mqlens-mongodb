@@ -831,6 +831,8 @@ function Workspace() {
     setServerConnections(new Map(connections.flatMap((c) => (c.server ? [[c.id, c.server] as const] : []))));
   const isCommandBlocked = (connectionId: string, command: string) =>
     serverConnections.get(connectionId)?.blockedCommands.includes(command) ?? false;
+  const isBlockedByRole = (connectionId: string, command: string) =>
+    serverConnections.get(connectionId)?.roleBlockedCommands?.includes(command) ?? false;
   // Whether the connection manager opens on the MQLens Server accounts.
   const [connectionModalServer, setConnectionModalServer] = useState(false);
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTabId | undefined>();
@@ -4608,7 +4610,7 @@ function Workspace() {
     const tabCommand = TAB_COMMANDS[tab.type];
     if (tabCommand && isCommandBlocked(tab.connectionId, tabCommand)) {
       return (
-        <div className="flex h-full items-center justify-center p-8 text-center text-xs text-muted-foreground">{t('notOnServer')}</div>
+        <div className="flex h-full items-center justify-center p-8 text-center text-xs text-muted-foreground">{isBlockedByRole(tab.connectionId, tabCommand) ? t('notForRole') : t('notOnServer')}</div>
       );
     }
     const connMode = activeConnections.find((c) => c.id === tab.connectionId)?.mode;
@@ -4785,7 +4787,7 @@ function Workspace() {
           />
         )}
         {tab.type === 'monitoring' && (
-          <MonitoringView connectionId={tab.connectionId} blockedCommands={serverConnections.get(tab.connectionId)?.blockedCommands} />
+          <MonitoringView connectionId={tab.connectionId} blockedCommands={serverConnections.get(tab.connectionId)?.blockedCommands} roleBlockedCommands={serverConnections.get(tab.connectionId)?.roleBlockedCommands} />
         )}
         {tab.type === 'users' && (
           <UserManagementView connectionId={tab.connectionId} database={tab.db || undefined} blockedCommands={serverConnections.get(tab.connectionId)?.blockedCommands} />
@@ -4975,7 +4977,7 @@ function Workspace() {
         )}
         {tab.type === 'shell' && isCommandBlocked(tab.connectionId, 'start_mongosh_session') && (
           <div className="flex h-full items-center justify-center p-8 text-center text-xs text-muted-foreground">
-            {tShell('shellNotOnServer')}
+            {isBlockedByRole(tab.connectionId, 'start_mongosh_session') ? t('notForRole') : tShell('shellNotOnServer')}
           </div>
         )}
         {tab.type === 'shell' && !isCommandBlocked(tab.connectionId, 'start_mongosh_session') && (() => {
@@ -5074,6 +5076,7 @@ function Workspace() {
         <Sidebar
           onSelectCollection={handleSelectCollection}
           isCommandBlocked={isCommandBlocked}
+          isBlockedByRole={isBlockedByRole}
           serverAccountFor={(id) => serverConnections.get(id)?.accountName}
           pendingSaves={pendingSaves}
           isCollectionOpen={(connectionId, db, collection) =>

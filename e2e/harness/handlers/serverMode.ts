@@ -162,6 +162,7 @@ export function registerServerModeHandlers(backend: Backend, state: E2EState): v
           remoteId: remote.id,
           opClasses,
           blockedCommands: remote.blockedCommands ?? [],
+          roleBlockedCommands: remote.roleBlockedCommands ?? [],
         },
       };
       return { id, mongoVersion: state.servers[remote.server]?.version ?? '8.0.0', opClasses };
