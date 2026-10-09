@@ -36,7 +36,11 @@ mod e2e {
         run_mongosh_command_impl, start_collection_export_impl, start_mongosh_session_impl,
         stop_mongosh_session_impl, update_document_impl, upload_gridfs_file_impl, AppState,
     };
+    use futures::FutureExt;
     use mongodb::bson::{doc, Document};
+    use std::future::Future;
+    use std::panic::AssertUnwindSafe;
+    use std::pin::Pin;
     use std::sync::Arc;
 
     fn var(name: &str) -> Option<String> {
@@ -181,10 +185,32 @@ mod e2e {
             (f(self.local.clone()).await, f(self.remote.clone()).await)
         }
 
-        async fn finish(self) {
-            let _ = self.client().database(&self.db).drop().await;
+        /// Runs a test's body, then removes its database and server connection
+        /// whether the body passed or not. The body's own failure is reported
+        /// first; failing to clean up fails the test too.
+        async fn run<F>(self, body: F)
+        where
+            F: for<'a> FnOnce(&'a World) -> Pin<Box<dyn Future<Output = ()> + 'a>>,
+        {
+            let outcome = AssertUnwindSafe(body(&self)).catch_unwind().await;
+            let cleaned = self.finish().await;
+            if let Err(panic) = outcome {
+                std::panic::resume_unwind(panic);
+            }
+            cleaned.unwrap_or_else(|e| {
+                panic!("clean up the test's database and server connection: {e}")
+            });
+        }
+
+        async fn finish(self) -> Result<(), String> {
+            let dropped = self
+                .client()
+                .database(&self.db)
+                .drop()
+                .await
+                .map_err(|e| format!("drop {}: {e}", self.db));
             let id = self.remote_id.clone();
-            let _ = self
+            let deleted = self
                 .session
                 .call(
                     DeleteConnectionRequest { id },
@@ -194,7 +220,10 @@ mod e2e {
                             .await
                     },
                 )
-                .await;
+                .await
+                .map(|_| ())
+                .map_err(|e| format!("delete server connection {}: {e}", self.remote_id));
+            dropped.and(deleted)
         }
     }
 
@@ -221,64 +250,69 @@ mod e2e {
     #[tokio::test]
     async fn reads_match_local_mode() {
         let Some(w) = World::new().await else { return };
-        w.seed("people", people()).await;
-        let db = w.db.as_str();
-        let st = &w.state;
+        w.run(|w| {
+            Box::pin(async move {
+                w.seed("people", people()).await;
+                let db = w.db.as_str();
+                let st = &w.state;
 
-        let (_, remote_dbs) = w
-            .both(|id| async move { list_databases_impl(st, &id).await })
-            .await;
-        assert!(remote_dbs.unwrap().iter().any(|d| d == db));
-        let (local, remote) = w
-            .both(|id| async move { list_collections_impl(st, &id, &db).await })
-            .await;
-        let names = |r: Result<Vec<crate::CollectionInfo>, String>| {
-            r.unwrap().into_iter().map(|c| c.name).collect::<Vec<_>>()
-        };
-        assert_eq!(names(local), names(remote));
-        let (local, remote) = w
-            .both(|id| async move {
-                execute_mql_query_impl(
-                    st,
-                    &id,
-                    &db,
-                    "people",
-                    r#"{"tier":"gold"}"#,
-                    r#"{"_id":1}"#,
-                    "",
-                    100,
-                    0,
-                )
-                .await
+                let (_, remote_dbs) = w
+                    .both(|id| async move { list_databases_impl(st, &id).await })
+                    .await;
+                assert!(remote_dbs.unwrap().iter().any(|d| d == db));
+                let (local, remote) = w
+                    .both(|id| async move { list_collections_impl(st, &id, &db).await })
+                    .await;
+                let names = |r: Result<Vec<crate::CollectionInfo>, String>| {
+                    r.unwrap().into_iter().map(|c| c.name).collect::<Vec<_>>()
+                };
+                assert_eq!(names(local), names(remote));
+                let (local, remote) = w
+                    .both(|id| async move {
+                        execute_mql_query_impl(
+                            st,
+                            &id,
+                            &db,
+                            "people",
+                            r#"{"tier":"gold"}"#,
+                            r#"{"_id":1}"#,
+                            "",
+                            100,
+                            0,
+                        )
+                        .await
+                    })
+                    .await;
+                assert_eq!(local.unwrap(), remote.unwrap());
+                let (local, remote) = w
+                    .both(|id| async move {
+                        count_documents_impl(st, &id, &db, "people", r#"{"tier":"gold"}"#).await
+                    })
+                    .await;
+                assert_eq!(local.unwrap(), remote.unwrap());
+                let pipeline = r#"[{"$group":{"_id":"$tier","n":{"$sum":1}}},{"$sort":{"_id":1}}]"#;
+                let (local, remote) = w
+                    .both(|id| async move {
+                        execute_aggregate_impl(st, &id, &db, "people", pipeline, false).await
+                    })
+                    .await;
+                assert_eq!(local.unwrap(), remote.unwrap());
+                let (local, remote) = w
+                    .both(|id| async move { list_indexes_impl(st, &id, &db, "people").await })
+                    .await;
+                assert_eq!(
+                    serde_json::to_value(local.unwrap()).unwrap(),
+                    serde_json::to_value(remote.unwrap()).unwrap()
+                );
+                let (local, remote) = w
+                    .both(
+                        |id| async move { analyze_schema_impl(st, &id, &db, "people", 100).await },
+                    )
+                    .await;
+                assert_eq!(local.unwrap(), remote.unwrap());
             })
-            .await;
-        assert_eq!(local.unwrap(), remote.unwrap());
-        let (local, remote) = w
-            .both(|id| async move {
-                count_documents_impl(st, &id, &db, "people", r#"{"tier":"gold"}"#).await
-            })
-            .await;
-        assert_eq!(local.unwrap(), remote.unwrap());
-        let pipeline = r#"[{"$group":{"_id":"$tier","n":{"$sum":1}}},{"$sort":{"_id":1}}]"#;
-        let (local, remote) = w
-            .both(|id| async move {
-                execute_aggregate_impl(st, &id, &db, "people", pipeline, false).await
-            })
-            .await;
-        assert_eq!(local.unwrap(), remote.unwrap());
-        let (local, remote) = w
-            .both(|id| async move { list_indexes_impl(st, &id, &db, "people").await })
-            .await;
-        assert_eq!(
-            serde_json::to_value(local.unwrap()).unwrap(),
-            serde_json::to_value(remote.unwrap()).unwrap()
-        );
-        let (local, remote) = w
-            .both(|id| async move { analyze_schema_impl(st, &id, &db, "people", 100).await })
-            .await;
-        assert_eq!(local.unwrap(), remote.unwrap());
-
-        w.finish().await;
+        })
+        .await;
     }
 
     // A stored sub-document whose keys look like a type wrapper reads back as
@@ -286,89 +320,103 @@ mod e2e {
     #[tokio::test]
     async fn a_wrapper_shaped_document_reads_back_as_stored() {
         let Some(w) = World::new().await else { return };
-        w.seed(
-            "odd",
-            vec![doc! { "_id": 1, "money": { "$numberLong": "7", "other": 1 } }],
-        )
+        w.run(|w| {
+            Box::pin(async move {
+                w.seed(
+                    "odd",
+                    vec![doc! { "_id": 1, "money": { "$numberLong": "7", "other": 1 } }],
+                )
+                .await;
+
+                let found =
+                    execute_mql_query_impl(&w.state, &w.remote, &w.db, "odd", "{}", "", "", 10, 0)
+                        .await
+                        .unwrap();
+
+                assert_eq!(
+                    found,
+                    [r#"{"_id":1,"money":{"$numberLong":"7","other":1}}"#]
+                );
+            })
+        })
         .await;
-
-        let found = execute_mql_query_impl(&w.state, &w.remote, &w.db, "odd", "{}", "", "", 10, 0)
-            .await
-            .unwrap();
-
-        assert_eq!(
-            found,
-            [r#"{"_id":1,"money":{"$numberLong":"7","other":1}}"#]
-        );
-        w.finish().await;
     }
 
     // Writes through the server land where local mode reads them.
     #[tokio::test]
     async fn writes_through_the_server_are_what_local_mode_reads() {
         let Some(w) = World::new().await else { return };
-        w.seed("people", people()).await;
-        let (st, db) = (&w.state, w.db.as_str());
+        w.run(|w| {
+            Box::pin(async move {
+                w.seed("people", people()).await;
+                let (st, db) = (&w.state, w.db.as_str());
 
-        insert_document_impl(
-            st,
-            &w.remote,
-            db,
-            "people",
-            r#"{"_id":4,"name":"Di","tier":"bronze"}"#,
-        )
-        .await
-        .unwrap();
-        let modified = update_document_impl(
-            st,
-            &w.remote,
-            db,
-            "people",
-            r#"{"_id":4}"#,
-            r#"{"_id":4,"name":"Di","tier":"bronze"}"#,
-            r#"{"_id":4,"name":"Di","tier":"gold"}"#,
-            Some("{}"),
-        )
-        .await
-        .unwrap();
-        assert_eq!(modified, 1);
-        let read = |id: String| async move {
-            execute_mql_query_impl(st, &id, db, "people", "{}", r#"{"_id":1}"#, "", 100, 0).await
-        };
-        let (local, remote) = w.both(read).await;
-        let local = local.unwrap();
-        assert_eq!(local, remote.unwrap());
-        assert!(local.iter().any(|d| d.contains("Di") && d.contains("gold")));
+                insert_document_impl(
+                    st,
+                    &w.remote,
+                    db,
+                    "people",
+                    r#"{"_id":4,"name":"Di","tier":"bronze"}"#,
+                )
+                .await
+                .unwrap();
+                let modified = update_document_impl(
+                    st,
+                    &w.remote,
+                    db,
+                    "people",
+                    r#"{"_id":4}"#,
+                    r#"{"_id":4,"name":"Di","tier":"bronze"}"#,
+                    r#"{"_id":4,"name":"Di","tier":"gold"}"#,
+                    Some("{}"),
+                )
+                .await
+                .unwrap();
+                assert_eq!(modified, 1);
+                let read = |id: String| async move {
+                    execute_mql_query_impl(st, &id, db, "people", "{}", r#"{"_id":1}"#, "", 100, 0)
+                        .await
+                };
+                let (local, remote) = w.both(read).await;
+                let local = local.unwrap();
+                assert_eq!(local, remote.unwrap());
+                assert!(local.iter().any(|d| d.contains("Di") && d.contains("gold")));
 
-        delete_many_impl(st, &w.remote, db, "people", r#"{"tier":"gold"}"#, true)
-            .await
-            .unwrap();
-        let (local, remote) = w
-            .both(|id| async move { count_documents_impl(st, &id, db, "people", "{}").await })
-            .await;
-        assert_eq!((local.unwrap(), remote.unwrap()), (1, 1));
-
-        w.finish().await;
+                delete_many_impl(st, &w.remote, db, "people", r#"{"tier":"gold"}"#, true)
+                    .await
+                    .unwrap();
+                let (local, remote) = w
+                    .both(
+                        |id| async move { count_documents_impl(st, &id, db, "people", "{}").await },
+                    )
+                    .await;
+                assert_eq!((local.unwrap(), remote.unwrap()), (1, 1));
+            })
+        })
+        .await;
     }
 
     // DDL through the server shows in local mode's listing, and goes again.
     #[tokio::test]
     async fn ddl_through_the_server_is_what_local_mode_lists() {
         let Some(w) = World::new().await else { return };
-        let (st, db) = (&w.state, w.db.as_str());
+        w.run(|w| {
+            Box::pin(async move {
+                let (st, db) = (&w.state, w.db.as_str());
 
-        create_collection_impl(st, &w.remote, db, "made_remotely")
-            .await
-            .unwrap();
-        let listed = list_collections_impl(st, &w.local, db).await.unwrap();
-        assert!(listed.iter().any(|c| c.name == "made_remotely"));
-        drop_collection_impl(st, &w.remote, db, "made_remotely", true)
-            .await
-            .unwrap();
-        let listed = list_collections_impl(st, &w.local, db).await.unwrap();
-        assert!(!listed.iter().any(|c| c.name == "made_remotely"));
-
-        w.finish().await;
+                create_collection_impl(st, &w.remote, db, "made_remotely")
+                    .await
+                    .unwrap();
+                let listed = list_collections_impl(st, &w.local, db).await.unwrap();
+                assert!(listed.iter().any(|c| c.name == "made_remotely"));
+                drop_collection_impl(st, &w.remote, db, "made_remotely", true)
+                    .await
+                    .unwrap();
+                let listed = list_collections_impl(st, &w.local, db).await.unwrap();
+                assert!(!listed.iter().any(|c| c.name == "made_remotely"));
+            })
+        })
+        .await;
     }
 
     // A file stored through the server lists as local mode lists it and comes
@@ -376,95 +424,101 @@ mod e2e {
     #[tokio::test]
     async fn gridfs_through_the_server_matches_local_mode() {
         let Some(w) = World::new().await else { return };
-        let (st, db) = (&w.state, w.db.as_str());
-        let dir = tempfile::tempdir().unwrap();
-        let source = dir.path().join("report.txt");
-        let bytes: Vec<u8> = (0..300_000u32).map(|i| (i % 251) as u8).collect();
-        std::fs::write(&source, &bytes).unwrap();
+        w.run(|w| {
+            Box::pin(async move {
+                let (st, db) = (&w.state, w.db.as_str());
+                let dir = tempfile::tempdir().unwrap();
+                let source = dir.path().join("report.txt");
+                let bytes: Vec<u8> = (0..300_000u32).map(|i| (i % 251) as u8).collect();
+                std::fs::write(&source, &bytes).unwrap();
 
-        upload_gridfs_file_impl(
-            st,
-            &w.remote,
-            db,
-            "fs",
-            source.to_str().unwrap(),
-            None,
-            Some(r#"{"owner":"e2e"}"#),
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-        let (local, remote) = w
-            .both(|id| async move { list_gridfs_files_impl(st, &id, db, "fs").await })
-            .await;
-        let local = local.unwrap();
-        assert_eq!(local, remote.unwrap());
-        let files: serde_json::Value = serde_json::from_str(&local).unwrap();
-        let file_id = files[0]["id"].as_str().unwrap().to_string();
-
-        let target = dir.path().join("back.txt");
-        download_gridfs_file_impl(
-            st,
-            &w.remote,
-            db,
-            "fs",
-            &file_id,
-            target.to_str().unwrap(),
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-        assert_eq!(std::fs::read(&target).unwrap(), bytes);
-        delete_gridfs_file_impl(st, &w.remote, db, "fs", &file_id)
-            .await
-            .unwrap();
-        assert_eq!(
-            list_gridfs_files_impl(st, &w.local, db, "fs")
+                upload_gridfs_file_impl(
+                    st,
+                    &w.remote,
+                    db,
+                    "fs",
+                    source.to_str().unwrap(),
+                    None,
+                    Some(r#"{"owner":"e2e"}"#),
+                    None,
+                    None,
+                )
                 .await
-                .unwrap(),
-            "[]"
-        );
+                .unwrap();
+                let (local, remote) = w
+                    .both(|id| async move { list_gridfs_files_impl(st, &id, db, "fs").await })
+                    .await;
+                let local = local.unwrap();
+                assert_eq!(local, remote.unwrap());
+                let files: serde_json::Value = serde_json::from_str(&local).unwrap();
+                let file_id = files[0]["id"].as_str().unwrap().to_string();
 
-        w.finish().await;
+                let target = dir.path().join("back.txt");
+                download_gridfs_file_impl(
+                    st,
+                    &w.remote,
+                    db,
+                    "fs",
+                    &file_id,
+                    target.to_str().unwrap(),
+                    None,
+                    None,
+                )
+                .await
+                .unwrap();
+                assert_eq!(std::fs::read(&target).unwrap(), bytes);
+                delete_gridfs_file_impl(st, &w.remote, db, "fs", &file_id)
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    list_gridfs_files_impl(st, &w.local, db, "fs")
+                        .await
+                        .unwrap(),
+                    "[]"
+                );
+            })
+        })
+        .await;
     }
 
     // An export through the server writes the very file local mode writes.
     #[tokio::test]
     async fn exports_through_the_server_are_byte_identical() {
         let Some(w) = World::new().await else { return };
-        w.seed("people", people()).await;
-        let (st, db) = (&w.state, w.db.as_str());
-        let dir = tempfile::tempdir().unwrap();
+        w.run(|w| {
+            Box::pin(async move {
+                w.seed("people", people()).await;
+                let (st, db) = (&w.state, w.db.as_str());
+                let dir = tempfile::tempdir().unwrap();
 
-        for format in ["json", "ndjson", "csv", "bson"] {
-            let mut written = Vec::new();
-            for (side, id) in [("local", &w.local), ("remote", &w.remote)] {
-                let path = dir.path().join(format!("{side}.{format}"));
-                let task = start_collection_export_impl(
-                    st,
-                    id,
-                    db,
-                    "people",
-                    format,
-                    path.to_str().unwrap(),
-                    None,
-                )
-                .await
-                .unwrap();
-                let task = finished(st, &task.id).await;
-                assert_eq!(
-                    task.status, "completed",
-                    "{side} {format}: {:?}",
-                    task.error
-                );
-                written.push(std::fs::read(&path).unwrap());
-            }
-            assert_eq!(written[0], written[1], "{format}");
-        }
-
-        w.finish().await;
+                for format in ["json", "ndjson", "csv", "bson"] {
+                    let mut written = Vec::new();
+                    for (side, id) in [("local", &w.local), ("remote", &w.remote)] {
+                        let path = dir.path().join(format!("{side}.{format}"));
+                        let task = start_collection_export_impl(
+                            st,
+                            id,
+                            db,
+                            "people",
+                            format,
+                            path.to_str().unwrap(),
+                            None,
+                        )
+                        .await
+                        .unwrap();
+                        let task = finished(st, &task.id).await;
+                        assert_eq!(
+                            task.status, "completed",
+                            "{side} {format}: {:?}",
+                            task.error
+                        );
+                        written.push(std::fs::read(&path).unwrap());
+                    }
+                    assert_eq!(written[0], written[1], "{format}");
+                }
+            })
+        })
+        .await;
     }
 
     // Admin-class reads, which need no mongosh: deployment users list as local
@@ -472,27 +526,33 @@ mod e2e {
     #[tokio::test]
     async fn admin_operations_match_local_mode() {
         let Some(w) = World::new().await else { return };
-        let (st, db) = (&w.state, w.db.as_str());
-        let mongo_db = w.client().database(db);
-        mongo_db
-            .run_command(doc! { "createUser": "e2e_user", "pwd": "e2e-test-only", "roles": [] })
-            .await
-            .unwrap();
+        w.run(|w| {
+            Box::pin(async move {
+                let (st, db) = (&w.state, w.db.as_str());
+                let mongo_db = w.client().database(db);
+                mongo_db
+                    .run_command(
+                        doc! { "createUser": "e2e_user", "pwd": "e2e-test-only", "roles": [] },
+                    )
+                    .await
+                    .unwrap();
 
-        let (local, remote) = w
-            .both(|id| async move { crate::list_users_impl(st, &id, Some(db)).await })
-            .await;
-        let local = local.unwrap();
-        assert_eq!(local, remote.unwrap());
-        assert!(local.iter().any(|u| u.user == "e2e_user"), "{local:?}");
-        crate::monitoring::current_ops_impl(st, &w.remote)
-            .await
-            .unwrap();
+                let (local, remote) = w
+                    .both(|id| async move { crate::list_users_impl(st, &id, Some(db)).await })
+                    .await;
+                let local = local.unwrap();
+                assert_eq!(local, remote.unwrap());
+                assert!(local.iter().any(|u| u.user == "e2e_user"), "{local:?}");
+                crate::monitoring::current_ops_impl(st, &w.remote)
+                    .await
+                    .unwrap();
 
-        let _ = mongo_db
-            .run_command(doc! { "dropAllUsersFromDatabase": 1 })
-            .await;
-        w.finish().await;
+                let _ = mongo_db
+                    .run_command(doc! { "dropAllUsersFromDatabase": 1 })
+                    .await;
+            })
+        })
+        .await;
     }
 
     // The shell runs on the server's mongosh, in the tab's database.
@@ -502,27 +562,30 @@ mod e2e {
             return;
         }
         let Some(w) = World::new().await else { return };
-        let st = &w.state;
+        w.run(|w| {
+            Box::pin(async move {
+                let st = &w.state;
 
-        let info = start_mongosh_session_impl(st, &w.remote, "", &w.db, "", "")
-            .await
-            .map_err(|e| e.to_string())
-            .unwrap_or_else(|e| panic!("start the server shell: {e}"));
-        let out = run_mongosh_command_impl(st, &info.session_id, "db.getName()")
-            .await
-            .map_err(|e| e.to_string())
-            .unwrap_or_else(|e| panic!("run on the server shell: {e}"));
-        assert!(
-            out.stdout
-                .iter()
-                .any(|line| line.trim_end().ends_with(&w.db)),
-            "{:?}",
-            out.stdout
-        );
-        stop_mongosh_session_impl(st, &info.session_id)
-            .await
-            .unwrap();
-
-        w.finish().await;
+                let info = start_mongosh_session_impl(st, &w.remote, "", &w.db, "", "")
+                    .await
+                    .map_err(|e| e.to_string())
+                    .unwrap_or_else(|e| panic!("start the server shell: {e}"));
+                let out = run_mongosh_command_impl(st, &info.session_id, "db.getName()")
+                    .await
+                    .map_err(|e| e.to_string())
+                    .unwrap_or_else(|e| panic!("run on the server shell: {e}"));
+                assert!(
+                    out.stdout
+                        .iter()
+                        .any(|line| line.trim_end().ends_with(&w.db)),
+                    "{:?}",
+                    out.stdout
+                );
+                stop_mongosh_session_impl(st, &info.session_id)
+                    .await
+                    .unwrap();
+            })
+        })
+        .await;
     }
 }
