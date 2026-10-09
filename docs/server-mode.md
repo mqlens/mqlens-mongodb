@@ -81,8 +81,9 @@ not as JSON. The known differences:
   is itself a document like `{"$oid": …}` cannot be told apart from the type
   it imitates.
 - **Stored documents with type-wrapper-shaped keys.** A sub-document such as
-  `{"$numberLong": "7", "other": 1}` reads back exactly as stored through a
-  server. Local mode currently reads it as the number 7, which is being fixed.
+  `{"$numberLong": "7", "other": 1}` reads back exactly as stored, through a
+  server as locally. JSON cannot show it apart from the type it imitates, so a
+  document holding one cannot be edited as JSON in either mode; use the shell.
 - **Auditing happens twice.** Your app's activity log records the operation,
   and so does the server's audit log.
 
