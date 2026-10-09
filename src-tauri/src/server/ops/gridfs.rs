@@ -19,7 +19,9 @@ use tokio::sync::mpsc;
 
 type Progress<'a> = Option<&'a (dyn Fn(GridFsTransferProgress) + Send + Sync)>;
 
-/// A file id as the server reads it: `{"_id": <id>}`.
+/// A file id as the server reads it, for download and delete alike:
+/// `{"_id": <id>}` (the download field's proto comment says the bare value,
+/// but the server takes `_id` from a document either way).
 fn id_document(id: &Bson) -> String {
     Bson::Document(doc! { "_id": id.clone() })
         .into_canonical_extjson()
@@ -243,6 +245,7 @@ pub(crate) async fn upload(
     // Bounded by progress: the call may take as long as the file needs, but
     // not a stall of STREAM_IDLE_TIMEOUT between two messages or before the
     // server's answer.
+    let stalled = || "MQLens Server stopped answering during the upload".to_string();
     let response = loop {
         tokio::select! {
             result = &mut call => break result?,
@@ -253,8 +256,14 @@ pub(crate) async fn upload(
                     }
                 }
                 Ok(Some(Sent::Failed(e))) => return Err(e),
-                Ok(None) => break (&mut call).await?,
-                Err(_) => return Err("MQLens Server stopped answering during the upload".to_string()),
+                // Every byte is sent (the last attempt's source is gone):
+                // only the answer is left to wait for.
+                Ok(None) => {
+                    break tokio::time::timeout(STREAM_IDLE_TIMEOUT, &mut call)
+                        .await
+                        .map_err(|_| stalled())??
+                }
+                Err(_) => return Err(stalled()),
             },
         }
     };
@@ -434,6 +443,43 @@ mod tests {
         );
         let seen = seen.lock().unwrap();
         assert_eq!((seen.first(), seen.last()), (Some(&0), Some(&150_000)));
+    }
+
+    // A server that takes the whole file but never answers is given up on,
+    // even when the upload had to be sent again after a refresh.
+    #[tokio::test]
+    async fn an_upload_resent_after_a_refresh_still_gives_up_on_a_silent_server() {
+        let env = Env::new().await;
+        let (state, id) = connected(&env).await;
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("a.bin");
+        std::fs::write(&source, [1u8, 2, 3]).unwrap();
+        env.fake.revoke_access_tokens();
+        env.fake
+            .with(|s| s.upload_delay = std::time::Duration::from_secs(60));
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(20),
+            upload_gridfs_file_impl(
+                &state,
+                &id,
+                "orders",
+                "fs",
+                source.to_str().unwrap(),
+                None,
+                None,
+                None,
+                None,
+            ),
+        )
+        .await
+        .expect("the upload waited on the server without a bound");
+
+        assert_eq!(
+            result.unwrap_err(),
+            "MQLens Server stopped answering during the upload"
+        );
+        assert_eq!(env.fake.with(|s| s.uploads.len()), 1);
     }
 
     #[tokio::test]

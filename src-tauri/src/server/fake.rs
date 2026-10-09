@@ -154,6 +154,8 @@ pub(crate) struct FakeState {
     pub gridfs_chunk: usize,
     /// Each upload received: its first message without data, and every byte.
     pub uploads: Vec<(UploadChunk, Vec<u8>)>,
+    /// Held after an upload's last byte, before answering it.
+    pub upload_delay: Duration,
     /// The download and delete requests received.
     pub gridfs_requests: Vec<FakeGridFs>,
     /// What RenameDatabaseDetailed reports.
@@ -387,6 +389,7 @@ impl Fake {
                 gridfs_content: Vec::new(),
                 gridfs_chunk: 4,
                 uploads: Vec::new(),
+                upload_delay: Duration::ZERO,
                 gridfs_requests: Vec::new(),
                 rename_result: RenameDatabaseResult {
                     collections: 2,
@@ -894,7 +897,12 @@ impl GridFsService for Fake {
         while let Some(chunk) = stream.message().await? {
             data.extend_from_slice(&chunk.data);
         }
-        self.state.lock().unwrap().uploads.push((first, data));
+        let delay = {
+            let mut state = self.state.lock().unwrap();
+            state.uploads.push((first, data));
+            state.upload_delay
+        };
+        tokio::time::sleep(delay).await;
         Ok(Response::new(UploadFileResponse {
             file_id_ejson: r#"{"_id":{"$oid":"64b7f0c2a1b2c3d4e5f60719"}}"#.to_string(),
         }))
