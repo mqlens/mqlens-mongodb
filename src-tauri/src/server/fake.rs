@@ -114,6 +114,14 @@ pub(crate) struct FakeState {
     pub login_delay: Duration,
     /// Held before ListConnections answers, to play a server that stalls.
     pub list_delay: Duration,
+    /// ListConnections calls from this one on (1 is the first) wait at
+    /// `list_gate` before checking their token, until a test releases them
+    /// with `notify_one`. 0 holds none. `list_held` counts the calls that
+    /// reached the gate.
+    pub list_hold_from: u32,
+    pub list_gate: Arc<tokio::sync::Notify>,
+    pub list_held: u32,
+    list_seen: u32,
     /// Held before a logout answers, to play a slow server.
     pub logout_delay: Duration,
     /// Codes the next refreshes fail with, before touching the token.
@@ -326,6 +334,10 @@ impl Fake {
                 refresh_delay: Duration::ZERO,
                 login_delay: Duration::ZERO,
                 list_delay: Duration::ZERO,
+                list_hold_from: 0,
+                list_gate: Arc::new(tokio::sync::Notify::new()),
+                list_held: 0,
+                list_seen: 0,
                 logout_delay: Duration::ZERO,
                 refresh_failures: Vec::new(),
                 refresh_starts: 0,
@@ -709,8 +721,16 @@ impl ConnectionService for Fake {
         &self,
         request: Request<ListConnectionsRequest>,
     ) -> Result<Response<ListConnectionsResponse>, Status> {
-        let delay = self.with(|s| s.list_delay);
+        let (delay, gate) = self.with(|s| {
+            s.list_seen += 1;
+            let held = s.list_hold_from > 0 && s.list_seen >= s.list_hold_from;
+            (s.list_delay, held.then(|| s.list_gate.clone()))
+        });
         tokio::time::sleep(delay).await;
+        if let Some(gate) = gate {
+            self.with(|s| s.list_held += 1);
+            gate.notified().await;
+        }
         let mut state = self.state.lock().unwrap();
         state.authenticate_any_version(&request)?;
         state.list_calls += 1;
