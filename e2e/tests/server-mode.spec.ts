@@ -222,8 +222,9 @@ test.describe('A server connection', () => {
 
     const db = sidebar(page).getByText('sales_db', { exact: true });
     await db.click({ button: 'right' });
-    await expect(page.getByRole('menuitem', { name: 'Drop Database' })).toHaveAttribute('data-disabled', '');
     await expect(page.getByRole('menuitem', { name: /Manage Users/ })).toHaveAttribute('data-disabled', '');
+    await page.getByRole('menuitem', { name: 'Manage', exact: true }).press('ArrowRight');
+    await expect(page.getByRole('menuitem', { name: 'Drop Database' })).toHaveAttribute('data-disabled', '');
     await page.keyboard.press('Escape');
 
     await db.click();
