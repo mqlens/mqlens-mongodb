@@ -20,8 +20,7 @@ use tokio::sync::mpsc;
 type Progress<'a> = Option<&'a (dyn Fn(GridFsTransferProgress) + Send + Sync)>;
 
 /// A file id as the server reads it, for download and delete alike:
-/// `{"_id": <id>}` (the download field's proto comment says the bare value,
-/// but the server takes `_id` from a document either way).
+/// `{"_id": <id>}`.
 fn id_document(id: &Bson) -> String {
     Bson::Document(doc! { "_id": id.clone() })
         .into_canonical_extjson()

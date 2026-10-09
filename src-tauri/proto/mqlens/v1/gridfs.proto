@@ -36,7 +36,7 @@ message DownloadFileRequest {
   string connection_id = 1;
   string database = 2;
   string bucket = 3;
-  string file_id_ejson = 4; // Extended JSON of the file _id value
+  string file_id_ejson = 4; // {"_id": <id>} in Extended JSON, as UploadFile returns; a ListFiles document also works
 }
 message FileChunk {
   bytes data = 1;

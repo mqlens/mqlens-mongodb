@@ -713,7 +713,7 @@ pub struct DownloadFileRequest {
     pub database: ::prost::alloc::string::String,
     #[prost(string, tag="3")]
     pub bucket: ::prost::alloc::string::String,
-    /// Extended JSON of the file _id value
+    /// {"_id": <id>} in Extended JSON, as UploadFile returns; a ListFiles document also works
     #[prost(string, tag="4")]
     pub file_id_ejson: ::prost::alloc::string::String,
 }
