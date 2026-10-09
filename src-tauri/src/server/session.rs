@@ -1102,25 +1102,34 @@ mod tests {
         let env = Env::new().await;
         let session = signed_in(&env).await;
         env.fake.revoke_access_tokens();
-        env.fake.with(|s| s.list_delay = Duration::from_millis(400));
+        env.fake.with(|s| s.list_hold_from = 2);
         let calling = {
             let session = session.clone();
             tokio::spawn(async move { list_connections(&session).await })
         };
-        // After the call's own refresh, its retry is in flight.
-        while env.fake.with(|s| s.refreshes) == 0 {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // After the call's own refresh, its retry waits at the gate.
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while env.fake.with(|s| s.list_held) == 0 {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the retry never reached the gate");
         // The retry's token is refused, and another call replaces it.
         env.fake.revoke_access_tokens();
         let current = session.tokens.lock().await.generation;
         session.access_token(Some(current)).await.unwrap();
+        env.fake.with(|s| s.list_hold_from = 0);
+        env.fake.with(|s| s.list_gate.clone()).notify_one();
 
-        let _ = calling.await.unwrap();
+        let err = calling.await.unwrap().unwrap_err();
+        // Refused by the server, not lost to the call deadline while held.
+        assert!(
+            err.starts_with("MQLens Server sign-in is required"),
+            "{err}"
+        );
         assert!(!session.is_ended(), "the newer token was thrown away");
         assert!(env.stored_token().is_some());
-        env.fake.with(|s| s.list_delay = Duration::ZERO);
         list_connections(&session).await.unwrap();
     }
 
@@ -1133,28 +1142,34 @@ mod tests {
         let env = Env::new().await;
         let session = signed_in(&env).await;
         env.fake.revoke_access_tokens();
-        env.fake.with(|s| s.list_delay = Duration::from_millis(400));
+        env.fake.with(|s| s.list_hold_from = 2);
         let calling = {
             let session = session.clone();
             tokio::spawn(async move { list_connections(&session).await })
         };
-        // After the call's own refresh, its retry is in flight.
-        while env.fake.with(|s| s.refreshes) == 0 {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // After the call's own refresh, its retry waits at the gate.
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while env.fake.with(|s| s.list_held) == 0 {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the retry never reached the gate");
         // The other process: its own session object and store, same file.
         let other = signed_in(&env).await;
         let others_token = env.stored_token();
         env.fake.revoke_access_tokens();
+        env.fake.with(|s| s.list_hold_from = 0);
+        env.fake.with(|s| s.list_gate.clone()).notify_one();
 
-        assert!(calling.await.unwrap().is_err());
+        let err = calling.await.unwrap().unwrap_err();
+        // Refused by the server, not lost to the call deadline while held.
+        assert!(err.starts_with(SESSION_ENDED), "{err}");
         assert_eq!(
             env.stored_token(),
             others_token,
             "the refused retry cleared another sign-in's token"
         );
-        env.fake.with(|s| s.list_delay = Duration::ZERO);
         list_connections(&other).await.unwrap();
     }
 
