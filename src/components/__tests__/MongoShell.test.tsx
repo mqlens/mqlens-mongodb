@@ -566,6 +566,28 @@ describe('MongoShell Component', () => {
     expect(await screen.findByText('script result')).toBeInTheDocument();
   });
 
+  it('runs a multi-line script down the live session on an MQLens Server connection', async () => {
+    // One-shot scripts need a local mongosh and a URI; a server shell has
+    // neither, but its session runs on the server and takes the script.
+    render(
+      <MongoShell connectionId="server-conn" connectionName="Orders" connectionUri="" server databaseName="orders" />
+    );
+    await screen.findByText(/mongosh session attached/);
+
+    const script = 'for (let i = 0; i < 2; i++) {\n  print(i)\n}';
+    fireEvent.change(screen.getByLabelText('mongosh editor'), { target: { value: script } });
+    fireEvent.click(screen.getByRole('button', { name: /^run$/i }));
+
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith('run_mongosh_command', expect.objectContaining({
+        sessionId: 'shell-session-1',
+        command: script,
+      }))
+    );
+    expect(mockInvoke.mock.calls.some((c) => c[0] === 'run_mongosh_script')).toBe(false);
+    expect(await screen.findByText('mongosh result')).toBeInTheDocument();
+  });
+
   it('keeps a single typed command on the warm session', async () => {
     render(
       <MongoShell

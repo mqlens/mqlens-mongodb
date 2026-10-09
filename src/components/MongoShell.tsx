@@ -1277,7 +1277,9 @@ export const MongoShell: React.FC<MongoShellProps> = ({
         setTab('console');
         return;
       }
-      const ranExternally = raw.includes('\n')
+      // A server shell has no local mongosh for a one-shot run; its session
+      // takes the script instead.
+      const ranExternally = raw.includes('\n') && !server
         ? await runMongoshScriptOnce(raw)
         : await runExternalMongoshCommand(raw);
       // Whatever follows — a driver call for a recognised command, or nothing —
