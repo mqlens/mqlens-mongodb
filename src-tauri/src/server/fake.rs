@@ -21,6 +21,7 @@ use crate::server::pb::mqlens::v1::ddl_service_server::{DdlService, DdlServiceSe
 use crate::server::pb::mqlens::v1::deployment_user_service_server::{
     DeploymentUserService, DeploymentUserServiceServer,
 };
+use crate::server::pb::mqlens::v1::grid_fs_service_server::{GridFsService, GridFsServiceServer};
 use crate::server::pb::mqlens::v1::metadata_service_server::{
     MetadataService, MetadataServiceServer,
 };
@@ -69,6 +70,10 @@ use crate::server::pb::mqlens::v1::{CurrentOp as PbCurrentOp, ProfileEntry as Pb
 use crate::server::pb::mqlens::v1::{
     DeleteDocumentRequest, DeleteManyRequest, InsertDocumentRequest, InsertDocumentResponse,
     ReplaceDocumentRequest, UpdateDocumentRequest, UpdateManyRequest, WriteResult,
+};
+use crate::server::pb::mqlens::v1::{
+    DeleteFileRequest, DeleteFileResponse, DownloadFileRequest, FileChunk, ListFilesRequest,
+    ListFilesResponse, UploadChunk, UploadFileResponse,
 };
 use crate::server::session::{unix_now, AccountSession, FileTokenStore, TokenStore};
 use mongodb::bson::{doc, Document};
@@ -142,6 +147,15 @@ pub(crate) struct FakeState {
     pub writes: Vec<FakeWrite>,
     /// What the document writes answer.
     pub write_result: WriteResult,
+    /// The file documents ListFiles returns, as stored.
+    pub gridfs_files: Vec<Document>,
+    /// The bytes DownloadFile streams, in messages of `gridfs_chunk` bytes.
+    pub gridfs_content: Vec<u8>,
+    pub gridfs_chunk: usize,
+    /// Each upload received: its first message without data, and every byte.
+    pub uploads: Vec<(UploadChunk, Vec<u8>)>,
+    /// The download and delete requests received.
+    pub gridfs_requests: Vec<FakeGridFs>,
     /// What RenameDatabaseDetailed reports.
     pub rename_result: RenameDatabaseResult,
     /// The id InsertDocument reports.
@@ -369,6 +383,11 @@ impl Fake {
                     deleted_count: 1,
                     upserted_id_json: String::new(),
                 },
+                gridfs_files: Vec::new(),
+                gridfs_content: Vec::new(),
+                gridfs_chunk: 4,
+                uploads: Vec::new(),
+                gridfs_requests: Vec::new(),
                 rename_result: RenameDatabaseResult {
                     collections: 2,
                     documents: 40,
@@ -545,6 +564,7 @@ impl Fake {
                 .add_service(MonitoringServiceServer::new(self.clone()))
                 .add_service(DdlServiceServer::new(self.clone()))
                 .add_service(WriteServiceServer::new(self.clone()))
+                .add_service(GridFsServiceServer::new(self.clone()))
                 .add_service(DeploymentUserServiceServer::new(self.clone()))
                 .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener)),
         );
@@ -801,6 +821,95 @@ impl MetadataService for Fake {
             .writes
             .push(FakeWrite::DropIndex(request.into_inner()));
         Ok(Response::new(MetadataAck {}))
+    }
+}
+
+/// A GridFS download or delete the fake received.
+#[derive(Clone, Debug)]
+pub(crate) enum FakeGridFs {
+    Download(DownloadFileRequest),
+    Delete(DeleteFileRequest),
+}
+
+type FileChunks = Pin<Box<dyn tokio_stream::Stream<Item = Result<FileChunk, Status>> + Send>>;
+
+#[tonic::async_trait]
+impl GridFsService for Fake {
+    async fn list_files(
+        &self,
+        request: Request<ListFilesRequest>,
+    ) -> Result<Response<ListFilesResponse>, Status> {
+        let state = self.state.lock().unwrap();
+        state.authorize_connection(&request, &request.get_ref().connection_id)?;
+        let mut files_bson = Vec::new();
+        for doc in &state.gridfs_files {
+            let mut bytes = Vec::new();
+            doc.to_writer(&mut bytes).unwrap();
+            files_bson.push(bytes.into());
+        }
+        Ok(Response::new(ListFilesResponse {
+            files_ejson: Vec::new(),
+            files_bson,
+        }))
+    }
+
+    type DownloadFileStream = FileChunks;
+
+    async fn download_file(
+        &self,
+        request: Request<DownloadFileRequest>,
+    ) -> Result<Response<Self::DownloadFileStream>, Status> {
+        let mut state = self.state.lock().unwrap();
+        state.authorize_connection(&request, &request.get_ref().connection_id)?;
+        state
+            .gridfs_requests
+            .push(FakeGridFs::Download(request.into_inner()));
+        let chunks: Vec<Result<FileChunk, Status>> = state
+            .gridfs_content
+            .chunks(state.gridfs_chunk.max(1))
+            .map(|data| {
+                Ok(FileChunk {
+                    data: data.to_vec().into(),
+                })
+            })
+            .collect();
+        Ok(Response::new(Box::pin(tokio_stream::iter(chunks))))
+    }
+
+    async fn upload_file(
+        &self,
+        request: Request<tonic::Streaming<UploadChunk>>,
+    ) -> Result<Response<UploadFileResponse>, Status> {
+        let (metadata, extensions, mut stream) = request.into_parts();
+        let mut first = stream
+            .message()
+            .await?
+            .ok_or_else(|| Status::invalid_argument("empty upload"))?;
+        {
+            let state = self.state.lock().unwrap();
+            let check = Request::from_parts(metadata, extensions, ());
+            state.authorize_connection(&check, &first.connection_id)?;
+        }
+        let mut data = std::mem::take(&mut first.data).to_vec();
+        while let Some(chunk) = stream.message().await? {
+            data.extend_from_slice(&chunk.data);
+        }
+        self.state.lock().unwrap().uploads.push((first, data));
+        Ok(Response::new(UploadFileResponse {
+            file_id_ejson: r#"{"_id":{"$oid":"64b7f0c2a1b2c3d4e5f60719"}}"#.to_string(),
+        }))
+    }
+
+    async fn delete_file(
+        &self,
+        request: Request<DeleteFileRequest>,
+    ) -> Result<Response<DeleteFileResponse>, Status> {
+        let mut state = self.state.lock().unwrap();
+        state.authorize_connection(&request, &request.get_ref().connection_id)?;
+        state
+            .gridfs_requests
+            .push(FakeGridFs::Delete(request.into_inner()));
+        Ok(Response::new(DeleteFileResponse {}))
     }
 }
 

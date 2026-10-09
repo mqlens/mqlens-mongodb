@@ -395,6 +395,18 @@ impl AccountSession {
         self.call_bounded(message, rpc, Bound::Opening).await
     }
 
+/// Makes one call with no deadline, refreshing and retrying once like
+    /// `call`: for a client stream as long as the file it sends, which the
+    /// caller bounds by its own progress instead.
+    pub(crate) async fn call_unbounded<M, R, F, Fut>(&self, message: M, rpc: F) -> Result<R, String>
+    where
+        M: Clone,
+        F: Fn(Channel, Request<M>) -> Fut,
+        Fut: Future<Output = Result<Response<R>, Status>>,
+    {
+        self.call_bounded(message, rpc, Bound::None).await
+    }
+
     async fn call_bounded<M, R, F, Fut>(
         &self,
         message: M,
@@ -620,6 +632,8 @@ enum Bound {
     Deadline,
     /// A limit on the wait for a stream to open; the stream itself has none.
     Opening,
+    /// No limit: the caller bounds the call by its own progress.
+    None,
 }
 
 async fn send<M, R, F, Fut>(
@@ -637,6 +651,7 @@ where
         Bound::Opening => tokio::time::timeout(STREAM_IDLE_TIMEOUT, rpc(channel, request))
             .await
             .unwrap_or_else(|_| Err(Status::deadline_exceeded(""))),
+        Bound::None => rpc(channel, request).await,
     }
 }
 

@@ -351,7 +351,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
             procedures: &["/mqlens.v1.GridFsService/ListFiles"],
             class: OpClass::Read,
             since: 2,
-            adapter: false,
+            adapter: true,
         },
     },
     CommandRoute {
@@ -360,7 +360,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
             procedures: &["/mqlens.v1.GridFsService/DownloadFile"],
             class: OpClass::Read,
             since: 1,
-            adapter: false,
+            adapter: true,
         },
     },
     CommandRoute {
@@ -369,7 +369,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
             procedures: &["/mqlens.v1.GridFsService/UploadFile"],
             class: OpClass::Write,
             since: 2,
-            adapter: false,
+            adapter: true,
         },
     },
     CommandRoute {
@@ -378,7 +378,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
             procedures: &["/mqlens.v1.GridFsService/DeleteFile"],
             class: OpClass::Write,
             since: 1,
-            adapter: false,
+            adapter: true,
         },
     },
     // Monitoring

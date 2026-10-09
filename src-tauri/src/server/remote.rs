@@ -291,8 +291,10 @@ mod tests {
             crate::require_real_client(&state, "r1"),
         );
         assert_not_available(
-            "delete_gridfs_file",
-            crate::db::gridfs::delete_gridfs_file_impl(&state, "r1", "db", "fs", "{}").await,
+            "preflight_copy",
+            crate::db::copy::preflight_copy_impl(&state, "r1", "db", Vec::new(), Vec::new())
+                .await
+                .map(|_| ()),
         );
         assert_not_available(
             "resolve_conn_uri",
