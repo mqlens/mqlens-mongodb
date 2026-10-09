@@ -17,7 +17,7 @@
 use crate::state::LockExt;
 use crate::AppState;
 use mongodb::bson::{doc, Document};
-use mongodb::change_stream::event::{ChangeStreamEvent, ResumeToken};
+use mongodb::change_stream::event::ResumeToken;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -281,44 +281,70 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-fn to_json(doc: Option<Document>) -> Option<serde_json::Value> {
+fn to_json(doc: Option<&Document>) -> Option<serde_json::Value> {
     doc.and_then(|d| serde_json::to_value(d).ok())
 }
 
-/// Flatten a driver event into the shape the viewer renders.
-pub fn flatten_event(event: ChangeStreamEvent<Document>, database: &str) -> ChangeEvent {
-    let (updated_fields, removed_fields) = match event.update_description {
-        Some(desc) => (
-            serde_json::to_value(desc.updated_fields).ok(),
-            Some(desc.removed_fields),
+/// One change event as the server sent it, flattened into the shape the
+/// viewer renders, with its resume token.
+///
+/// Read from the raw event rather than the driver's `ChangeStreamEvent`,
+/// whose serde decoding takes a sub-document such as `{"$numberLong": "7"}`
+/// for the type its keys imitate, or fails the whole event when the value does
+/// not parse (see `crate::db::stored`).
+pub fn flatten_raw(
+    raw: &mongodb::bson::RawDocumentBuf,
+    database: &str,
+) -> Result<(ResumeToken, ChangeEvent), String> {
+    let event = crate::db::stored(raw.clone())?;
+    let id = event
+        .get("_id")
+        .cloned()
+        .ok_or_else(|| "change event without a resume token".to_string())?;
+    let token: ResumeToken = mongodb::bson::from_bson(id).map_err(|e| e.to_string())?;
+    let (updated_fields, removed_fields) = match event.get_document("updateDescription") {
+        Ok(desc) => (
+            to_json(desc.get_document("updatedFields").ok()),
+            desc.get_array("removedFields").ok().map(|names| {
+                names
+                    .iter()
+                    .filter_map(|name| name.as_str().map(str::to_string))
+                    .collect()
+            }),
         ),
-        None => (None, None),
+        Err(_) => (None, None),
     };
     // The event's OWN wall time where the server sent one. `now_ms()` is when
     // this process happened to read it, which after a pause or a backlog
     // stamps every replayed change with the moment of resume.
     let at_ms = event
-        .wall_time
+        .get_datetime("wallTime")
         .map(|t| t.timestamp_millis().max(0) as u64)
-        .unwrap_or_else(now_ms);
-    let renamed_to = event.to.as_ref().map(|ns| match &ns.coll {
-        Some(coll) => format!("{}.{}", ns.db, coll),
-        None => ns.db.clone(),
+        .unwrap_or_else(|_| now_ms());
+    let namespace = |key: &str| {
+        event.get_document(key).ok().map(|ns| {
+            (
+                ns.get_str("db").unwrap_or_default().to_string(),
+                ns.get_str("coll").ok().map(str::to_string),
+            )
+        })
+    };
+    let renamed_to = namespace("to").map(|(db, coll)| match coll {
+        Some(coll) => format!("{db}.{coll}"),
+        None => db,
     });
-    let document_key = to_json(event.document_key);
-    let full_document = event.full_document.and_then(|d| serde_json::to_value(d).ok());
+    let ns = namespace("ns");
     let mut flat = ChangeEvent {
         // Assigned by `push_event`, which owns the sequence.
         seq: 0,
-        operation_type: format!("{:?}", event.operation_type).to_lowercase(),
-        database: event
-            .ns
+        operation_type: event.get_str("operationType").unwrap_or_default().to_lowercase(),
+        database: ns
             .as_ref()
-            .map(|n| n.db.clone())
+            .map(|(db, _)| db.clone())
             .unwrap_or_else(|| database.to_string()),
-        collection: event.ns.as_ref().and_then(|n| n.coll.clone()),
-        document_key,
-        full_document,
+        collection: ns.and_then(|(_, coll)| coll),
+        document_key: to_json(event.get_document("documentKey").ok()),
+        full_document: to_json(event.get_document("fullDocument").ok()),
         updated_fields,
         removed_fields,
         renamed_to,
@@ -326,7 +352,7 @@ pub fn flatten_event(event: ChangeStreamEvent<Document>, database: &str) -> Chan
         bytes: 0,
     };
     flat.bytes = measure_event(&flat);
-    flat
+    Ok((token, flat))
 }
 
 /// Roughly how much memory one event's bodies occupy, for the byte bound.
@@ -519,7 +545,7 @@ async fn read_cursor(
     };
 
     let mut stream = match started {
-        Ok(stream) => stream,
+        Ok(stream) => stream.with_type::<mongodb::bson::RawDocumentBuf>(),
         Err(err) => {
             // Opening a cursor is not instant, and a pause during it retires
             // this task while its `watch()` is still in flight. Reporting that
@@ -566,9 +592,15 @@ async fn read_cursor(
             next = stream.next() => next,
         };
         match next {
-            Some(Ok(event)) => {
-                let token = event.id.clone();
-                let flat = flatten_event(event, state_streams.database.as_deref().unwrap_or(""));
+            Some(Ok(raw)) => {
+                let database = state_streams.database.as_deref().unwrap_or("");
+                let (token, flat) = match flatten_raw(&raw, database) {
+                    Ok(event) => event,
+                    Err(err) => {
+                        fail_stream(state_streams, my_generation, &err, stream.resume_token());
+                        return;
+                    }
+                };
                 // Re-checked after the await, and checked while HOLDING the
                 // buffer lock that every retirement also takes. This task may
                 // have been retired while it was blocked, and its event
@@ -1086,4 +1118,50 @@ pub async fn stop_change_stream(
     stream_id: String,
 ) -> Result<(), String> {
     stop_change_stream_impl(&state, &stream_id)
+}
+
+#[cfg(test)]
+mod raw_event_tests {
+    use super::flatten_raw;
+    use mongodb::bson::{doc, DateTime, RawDocumentBuf};
+
+    fn raw(event: mongodb::bson::Document) -> RawDocumentBuf {
+        RawDocumentBuf::from_document(&event).unwrap()
+    }
+
+    // An event's bodies show the documents as stored: a sub-document whose
+    // keys look like a type wrapper stays a sub-document, sibling keys and all.
+    #[test]
+    fn an_event_shows_wrapper_shaped_documents_as_stored() {
+        let event = raw(doc! {
+            "_id": { "_data": "8264" },
+            "operationType": "update",
+            "ns": { "db": "shop", "coll": "orders" },
+            "documentKey": { "_id": 1 },
+            "updateDescription": {
+                "updatedFields": { "money": { "$numberLong": "7", "other": 1 } },
+                "removedFields": ["gone"],
+            },
+            "fullDocument": { "_id": 1, "when": { "$date": "not a date" } },
+            "wallTime": DateTime::from_millis(1_700_000_000_000),
+        });
+
+        let (_, flat) = flatten_raw(&event, "shop").unwrap();
+
+        assert_eq!(flat.operation_type, "update");
+        assert_eq!(
+            (flat.database.as_str(), flat.collection.as_deref()),
+            ("shop", Some("orders"))
+        );
+        assert_eq!(
+            flat.updated_fields,
+            Some(serde_json::json!({ "money": { "$numberLong": "7", "other": 1 } }))
+        );
+        assert_eq!(
+            flat.full_document,
+            Some(serde_json::json!({ "_id": 1, "when": { "$date": "not a date" } }))
+        );
+        assert_eq!(flat.removed_fields, Some(vec!["gone".to_string()]));
+        assert_eq!(flat.at_ms, 1_700_000_000_000);
+    }
 }
