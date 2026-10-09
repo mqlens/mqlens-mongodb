@@ -80,6 +80,9 @@ interface MongoShellProps {
    */
   scopeKey?: string;
   connectionUri: string;
+  /** A connection made through an MQLens Server: its shell runs there, so it
+   *  needs no URI here. */
+  server?: boolean;
   databaseName: string;
   collectionName?: string;
   initialCommand?: string;
@@ -365,6 +368,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   connectionName,
   scopeKey,
   connectionUri,
+  server = false,
   databaseName,
   collectionName,
   initialCommand,
@@ -886,7 +890,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
     // a second child for a tab that already has one.
     if (!hydrated) return;
     if (mongoshPath === null) return;
-    if (!connectionUri) {
+    if (!connectionUri && !server) {
       setSessionAttempted(true);
       return;
     }
@@ -1048,7 +1052,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
     };
     // The session is started once per shell tab. currentDb is intentionally used only as startup database.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connectionId, connectionUri, mongoshPath, retryNonce, sessionKey, hydrated]);
+  }, [connectionId, connectionUri, server, mongoshPath, retryNonce, sessionKey, hydrated]);
 
   // Pinned to the newest output. Not while the tab is hidden: a kept-alive
   // tab (#240) is `display: none`, where scrollHeight is 0 and the assignment

@@ -7,6 +7,7 @@ pub(crate) mod gridfs;
 pub(crate) mod metadata;
 pub(crate) mod monitoring;
 pub(crate) mod query;
+pub(crate) mod shell;
 pub(crate) mod stats;
 pub(crate) mod users;
 pub(crate) mod write;

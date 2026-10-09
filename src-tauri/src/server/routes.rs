@@ -498,7 +498,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
             procedures: &["/mqlens.v1.ShellService/MongoshSession"],
             class: OpClass::Admin,
             since: 2,
-            adapter: false,
+            adapter: true,
         },
     },
     CommandRoute {
@@ -507,7 +507,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
             procedures: &["/mqlens.v1.ShellService/MongoshSession"],
             class: OpClass::Admin,
             since: 2,
-            adapter: false,
+            adapter: true,
         },
     },
     CommandRoute {

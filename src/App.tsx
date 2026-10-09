@@ -4988,6 +4988,7 @@ function Workspace() {
               connectionName={connectionName}
               scopeKey={connectionQueryKeyFor(tab.connectionId)}
               connectionUri={activeConnection?.uri || ''}
+              server={serverConnections.has(tab.connectionId)}
               databaseName={tab.db}
               collectionName={tab.collection || undefined}
               initialCommand={tab.initialShellCommand}

@@ -28,6 +28,7 @@ use crate::server::pb::mqlens::v1::metadata_service_server::{
 use crate::server::pb::mqlens::v1::monitoring_service_server::{
     MonitoringService, MonitoringServiceServer,
 };
+use crate::server::pb::mqlens::v1::shell_service_server::{ShellService, ShellServiceServer};
 use crate::server::pb::mqlens::v1::stats_service_server::{StatsService, StatsServiceServer};
 use crate::server::pb::mqlens::v1::write_service_server::{WriteService, WriteServiceServer};
 use crate::server::pb::mqlens::v1::{
@@ -75,6 +76,7 @@ use crate::server::pb::mqlens::v1::{
     DeleteFileRequest, DeleteFileResponse, DownloadFileRequest, FileChunk, ListFilesRequest,
     ListFilesResponse, UploadChunk, UploadFileResponse,
 };
+use crate::server::pb::mqlens::v1::{MongoshClientMsg, MongoshServerMsg};
 use crate::server::session::{unix_now, AccountSession, FileTokenStore, TokenStore};
 use mongodb::bson::{doc, Document};
 use std::collections::{HashMap, HashSet};
@@ -158,6 +160,11 @@ pub(crate) struct FakeState {
     pub upload_delay: Duration,
     /// The download and delete requests received.
     pub gridfs_requests: Vec<FakeGridFs>,
+    /// Each shell's first message without input, every line the shells were
+    /// sent, and how many shells have ended.
+    pub shells: Vec<MongoshClientMsg>,
+    pub shell_input: Vec<String>,
+    pub shells_ended: u32,
     /// What RenameDatabaseDetailed reports.
     pub rename_result: RenameDatabaseResult,
     /// The id InsertDocument reports.
@@ -391,6 +398,9 @@ impl Fake {
                 uploads: Vec::new(),
                 upload_delay: Duration::ZERO,
                 gridfs_requests: Vec::new(),
+                shells: Vec::new(),
+                shell_input: Vec::new(),
+                shells_ended: 0,
                 rename_result: RenameDatabaseResult {
                     collections: 2,
                     documents: 40,
@@ -569,6 +579,7 @@ impl Fake {
                 .add_service(WriteServiceServer::new(self.clone()))
                 .add_service(GridFsServiceServer::new(self.clone()))
                 .add_service(DeploymentUserServiceServer::new(self.clone()))
+                .add_service(ShellServiceServer::new(self.clone()))
                 .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener)),
         );
         format!("http://{addr}")
@@ -1487,4 +1498,95 @@ pub(crate) async fn list_connections(
         })
         .await
         .map(|response| response.connections)
+}
+
+type ShellOutput =
+    Pin<Box<dyn tokio_stream::Stream<Item = Result<MongoshServerMsg, Status>> + Send>>;
+
+/// What the fake shell answers a line with.
+enum ShellReply {
+    Stdout(String),
+    Stderr(String),
+    Nothing,
+    Quit,
+}
+
+/// A REPL just big enough for the session code: a quoted string echoes
+/// bare, as mongosh echoes an expression's value; `.break` prints nothing;
+/// `throw` goes to stderr; `quit()` ends the shell; anything else is
+/// "ran" back.
+fn fake_repl(line: &str) -> ShellReply {
+    let line = line.trim();
+    if line.len() >= 2 && line.starts_with('\'') && line.ends_with('\'') {
+        ShellReply::Stdout(format!("{}\n", &line[1..line.len() - 1]))
+    } else if line.is_empty() || line == ".break" {
+        ShellReply::Nothing
+    } else if line == "quit()" {
+        ShellReply::Quit
+    } else if let Some(db) = line.strip_prefix("use ") {
+        ShellReply::Stdout(format!("switched to db {db}\n"))
+    } else if let Some(error) = line.strip_prefix("throw ") {
+        ShellReply::Stderr(format!("Uncaught {error}\n"))
+    } else {
+        ShellReply::Stdout(format!("ran {line}\n"))
+    }
+}
+
+#[tonic::async_trait]
+impl ShellService for Fake {
+    type MongoshSessionStream = ShellOutput;
+
+    async fn mongosh_session(
+        &self,
+        request: Request<tonic::Streaming<MongoshClientMsg>>,
+    ) -> Result<Response<ShellOutput>, Status> {
+        let (metadata, extensions, mut input) = request.into_parts();
+        let mut first = input
+            .message()
+            .await?
+            .ok_or_else(|| Status::invalid_argument("empty shell"))?;
+        {
+            let check = Request::from_parts(metadata, extensions, ());
+            let mut state = self.state.lock().unwrap();
+            state.authorize_connection(&check, &first.connection_id)?;
+            let mut recorded = first.clone();
+            recorded.input = Default::default();
+            state.shells.push(recorded);
+        }
+        let (tx, rx) = tokio::sync::mpsc::channel(64);
+        let fake = self.clone();
+        tokio::spawn(async move {
+            let mut pending = std::mem::take(&mut first.input).to_vec();
+            'shell: loop {
+                while let Some(end) = pending.iter().position(|b| *b == b'\n') {
+                    let line = String::from_utf8_lossy(&pending[..end]).into_owned();
+                    pending.drain(..=end);
+                    fake.with(|s| s.shell_input.push(line.clone()));
+                    let reply = match fake_repl(&line) {
+                        ShellReply::Stdout(text) => MongoshServerMsg {
+                            output: text.into_bytes().into(),
+                            ..Default::default()
+                        },
+                        ShellReply::Stderr(text) => MongoshServerMsg {
+                            stderr: text.into_bytes().into(),
+                            ..Default::default()
+                        },
+                        ShellReply::Nothing => continue,
+                        ShellReply::Quit => break 'shell,
+                    };
+                    if tx.send(Ok(reply)).await.is_err() {
+                        break 'shell;
+                    }
+                }
+                match input.message().await {
+                    Ok(Some(message)) => pending.extend_from_slice(&message.input),
+                    _ => break,
+                }
+            }
+            fake.with(|s| s.shells_ended += 1);
+        });
+        Ok(Response::new(Box::pin(
+            tokio_stream::wrappers::ReceiverStream::new(rx),
+        )))
+    }
 }

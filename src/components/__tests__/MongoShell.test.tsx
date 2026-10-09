@@ -447,6 +447,26 @@ describe('MongoShell Component', () => {
     });
   });
 
+  it('starts a shell on an MQLens Server connection, which has no URI', async () => {
+    render(
+      <MongoShell
+        connectionId="server-conn"
+        connectionName="Orders"
+        connectionUri=""
+        server
+        databaseName="orders"
+      />
+    );
+
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith('start_mongosh_session', expect.objectContaining({
+        connectionId: 'server-conn',
+        uri: '',
+        database: 'orders',
+      }))
+    );
+  });
+
   it('auto-runs initial find command and shows documents in Data Viewer', async () => {
     render(
       <MongoShell

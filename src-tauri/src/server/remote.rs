@@ -301,19 +301,6 @@ mod tests {
             crate::db::mongotools::resolve_conn_uri(&state, "r1"),
         );
         assert_not_available(
-            "start_mongosh_session",
-            crate::start_mongosh_session_impl(
-                &state,
-                "r1",
-                "mongodb://127.0.0.1:1",
-                "admin",
-                "no-such-mongosh-binary",
-                "",
-            )
-            .await
-            .map(|_| ()),
-        );
-        assert_not_available(
             "run_mongosh_script",
             crate::run_mongosh_script_impl(
                 &state,

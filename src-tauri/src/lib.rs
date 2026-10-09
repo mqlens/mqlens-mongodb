@@ -4,8 +4,8 @@ use serde_json;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
-use tokio::process::{Child, ChildStdin, Command as TokioCommand};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::process::{Child, Command as TokioCommand};
 use tokio::sync::{mpsc, Mutex as AsyncMutex};
 use uuid::Uuid;
 
@@ -192,15 +192,49 @@ struct MongoshLine {
 
 pub struct MongoshSession {
     pub connection_id: String,
-    stdin: AsyncMutex<ChildStdin>,
+    stdin: AsyncMutex<Box<dyn AsyncWrite + Send + Unpin>>,
     output: AsyncMutex<mpsc::UnboundedReceiver<MongoshLine>>,
-    child: AsyncMutex<Child>,
+    child: AsyncMutex<MongoshProcess>,
     command_lock: AsyncMutex<()>,
     /// The markers of the command before this one. A line ending in one of
     /// them is that command's echo arriving late — after its caller gave up
     /// on it — and not this command's output. Matched exactly: a script that
     /// prints something merely resembling a marker is printing output.
     stale_markers: AsyncMutex<Vec<String>>,
+}
+
+/// What a session's mongosh runs as: a child of this app, or a shell on the
+/// MQLens Server the connection goes through.
+enum MongoshProcess {
+    Local(Child),
+    Remote(server::ops::shell::RemoteShell),
+}
+
+impl MongoshSession {
+    /// A session over a shell's pipes, its output read as lines.
+    fn new<O, E>(
+        connection_id: &str,
+        stdin: Box<dyn AsyncWrite + Send + Unpin>,
+        stdout: O,
+        stderr: E,
+        process: MongoshProcess,
+    ) -> Self
+    where
+        O: AsyncRead + Unpin + Send + 'static,
+        E: AsyncRead + Unpin + Send + 'static,
+    {
+        let (sender, receiver) = mpsc::unbounded_channel();
+        spawn_mongosh_reader(stdout, MongoshStream::Stdout, sender.clone());
+        spawn_mongosh_reader(stderr, MongoshStream::Stderr, sender);
+        MongoshSession {
+            connection_id: connection_id.to_string(),
+            stdin: AsyncMutex::new(stdin),
+            output: AsyncMutex::new(receiver),
+            child: AsyncMutex::new(process),
+            command_lock: AsyncMutex::new(()),
+            stale_markers: AsyncMutex::new(Vec::new()),
+        }
+    }
 }
 
 #[derive(Serialize, Clone)]
@@ -1048,10 +1082,22 @@ pub async fn start_mongosh_session_impl(
     // window closes can stop the child it spawned. Empty opts out.
     window_id: &str,
 ) -> Result<MongoshSessionInfo, String> {
-    server::remote::reject_if_remote(state, connection_id, "The MongoDB shell")?;
     if write_guard::connection_mode(state, connection_id)? == connections::ConnectionMode::ReadOnly
     {
         return Err(write_guard::READ_ONLY_MSG.to_string());
+    }
+
+    // Through an MQLens Server, mongosh runs there; no URI or local binary.
+    if let Some(conn) = state.server.remote(connection_id)? {
+        let shell = server::ops::shell::open(state, &conn).await?;
+        let session = MongoshSession::new(
+            connection_id,
+            Box::new(shell.stdin),
+            shell.stdout,
+            shell.stderr,
+            MongoshProcess::Remote(shell.process),
+        );
+        return register_and_prime_session(state, session, database, window_id).await;
     }
 
     let is_mock = {
@@ -1091,20 +1137,26 @@ pub async fn start_mongosh_session_impl(
         .stderr
         .take()
         .ok_or_else(|| "Failed to open mongosh stderr".to_string())?;
-    let (sender, receiver) = mpsc::unbounded_channel();
+    let session = MongoshSession::new(
+        connection_id,
+        Box::new(stdin),
+        stdout,
+        stderr,
+        MongoshProcess::Local(child),
+    );
+    register_and_prime_session(state, session, database, window_id).await
+}
 
-    spawn_mongosh_reader(stdout, MongoshStream::Stdout, sender.clone());
-    spawn_mongosh_reader(stderr, MongoshStream::Stderr, sender);
-
+/// Makes a started shell this app's: registered where stopping and the close
+/// sweeps find it, then switched to the tab's database.
+async fn register_and_prime_session(
+    state: &AppState,
+    session: MongoshSession,
+    database: &str,
+    window_id: &str,
+) -> Result<MongoshSessionInfo, String> {
     let session_id = Uuid::new_v4().to_string();
-    let session = Arc::new(MongoshSession {
-        connection_id: connection_id.to_string(),
-        stdin: AsyncMutex::new(stdin),
-        output: AsyncMutex::new(receiver),
-        child: AsyncMutex::new(child),
-        command_lock: AsyncMutex::new(()),
-        stale_markers: AsyncMutex::new(Vec::new()),
-    });
+    let session = Arc::new(session);
 
     {
         let mut sessions = state.mongosh_sessions.lock_safe()?;
@@ -1526,9 +1578,13 @@ pub async fn stop_mongosh_session_impl(state: &AppState, session_id: &str) -> Re
     };
 
     if let Some(session) = session {
-        let mut child = session.child.lock().await;
-        let _ = child.kill().await;
-        let _ = child.wait().await;
+        match &mut *session.child.lock().await {
+            MongoshProcess::Local(child) => {
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+            }
+            MongoshProcess::Remote(shell) => shell.stop(),
+        }
     }
 
     Ok(())
