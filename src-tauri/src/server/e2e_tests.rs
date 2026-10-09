@@ -345,7 +345,7 @@ mod e2e {
     }
 
     // A stored sub-document whose keys look like a type wrapper reads back as
-    // stored, sibling fields and all: documents travel as raw BSON.
+    // stored, sibling fields and all, in both modes.
     #[tokio::test]
     async fn a_wrapper_shaped_document_reads_back_as_stored() {
         let Some(w) = World::new().await else { return };
@@ -357,15 +357,16 @@ mod e2e {
                 )
                 .await;
 
-                let found =
-                    execute_mql_query_impl(&w.state, &w.remote, &w.db, "odd", "{}", "", "", 10, 0)
-                        .await
-                        .unwrap();
+                let (st, db) = (&w.state, w.db.as_str());
+                let (local, remote) = w
+                    .both(|id| async move {
+                        execute_mql_query_impl(st, &id, db, "odd", "{}", "", "", 10, 0).await
+                    })
+                    .await;
 
-                assert_eq!(
-                    found,
-                    [r#"{"_id":1,"money":{"$numberLong":"7","other":1}}"#]
-                );
+                let stored = [r#"{"_id":1,"money":{"$numberLong":"7","other":1}}"#];
+                assert_eq!(local.unwrap(), stored, "local mode");
+                assert_eq!(remote.unwrap(), stored, "server mode");
             })
         })
         .await;
