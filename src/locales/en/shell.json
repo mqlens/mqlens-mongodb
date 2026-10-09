@@ -349,6 +349,7 @@
       "requiresMongosh": "MongoShell requires mongosh",
       "requiresMongoshBody": "A live mongosh session is required to run queries and scripts here.",
       "retry": "Retry",
+      "serverFailed": "The shell could not start on MQLens Server",
       "startingSession": "Starting mongosh session…",
       "useThisBinary": "Use this binary"
     },

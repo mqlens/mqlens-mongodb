@@ -293,6 +293,7 @@
       "requiresMongosh": "MongoShell benötigt mongosh",
       "requiresMongoshBody": "Für Abfragen und Skripte hier ist eine aktive mongosh-Sitzung erforderlich.",
       "retry": "Erneut versuchen",
+      "serverFailed": "Die Shell konnte auf MQLens Server nicht gestartet werden",
       "startingSession": "mongosh-Sitzung wird gestartet…",
       "useThisBinary": "Diese Binärdatei verwenden"
     },

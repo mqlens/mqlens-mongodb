@@ -290,6 +290,7 @@
       "requiresMongosh": "MongoShell 需要 mongosh",
       "requiresMongoshBody": "在此运行查询和脚本需要一个活动的 mongosh 会话。",
       "retry": "重试",
+      "serverFailed": "无法在 MQLens Server 上启动 Shell",
       "startingSession": "正在启动 mongosh 会话…",
       "useThisBinary": "使用此可执行文件"
     },

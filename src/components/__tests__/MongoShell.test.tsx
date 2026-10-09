@@ -467,6 +467,27 @@ describe('MongoShell Component', () => {
     );
   });
 
+  it('says why a shell failed to start on MQLens Server, not that mongosh is missing here', async () => {
+    const base = mockInvoke.getMockImplementation()!;
+    mockInvoke.mockImplementation((cmd, args) =>
+      cmd === 'start_mongosh_session' ? Promise.reject('MQLens Server is unavailable') : base(cmd, args)
+    );
+    render(
+      <MongoShell connectionId="server-conn" connectionName="Orders" connectionUri="" server databaseName="orders" />
+    );
+
+    const gate = await screen.findByTestId('shell-server-failed');
+    expect(gate).toHaveTextContent('MQLens Server is unavailable');
+    expect(screen.queryByText('MongoShell requires mongosh')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('shell-browse-mongosh-btn')).not.toBeInTheDocument();
+    expect(mockInvoke).not.toHaveBeenCalledWith('detect_mongosh_binary', expect.anything());
+
+    const starts = () => mockInvoke.mock.calls.filter((c) => c[0] === 'start_mongosh_session').length;
+    const before = starts();
+    fireEvent.click(screen.getByTestId('gate-retry'));
+    await waitFor(() => expect(starts()).toBe(before + 1));
+  });
+
   it('auto-runs initial find command and shows documents in Data Viewer', async () => {
     render(
       <MongoShell
