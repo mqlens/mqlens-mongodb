@@ -61,6 +61,8 @@ export interface RemoteConnectionSeed {
    * seed keeps the two consistent: a read-only connection lists its writes.
    */
   blockedCommands?: string[];
+  /** Those of them the role rules out. */
+  roleBlockedCommands?: string[];
 }
 
 export interface ServerAccountSeed {

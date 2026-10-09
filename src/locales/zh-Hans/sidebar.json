@@ -41,6 +41,7 @@
     "newBucket": "新建 Bucket",
     "newCollection": "新建 Collection",
     "newConnection": "新建连接",
+    "notForRole": "您在此 MQLens Server 连接上的角色不允许此操作",
     "notOnServer": "MQLens Server 暂不支持",
     "open": "打开",
     "openCollection": "打开 Collection",

@@ -56,6 +56,8 @@ interface MonitoringViewProps {
   connectionId: string;
   /** Commands this connection cannot run (a server connection); they are not asked for. */
   blockedCommands?: readonly string[];
+  /** Those of them that the user's role on the server rules out. */
+  roleBlockedCommands?: readonly string[];
 }
 
 const REFRESH_OPTIONS: { labelKey: string; ms: number }[] = [
@@ -554,15 +556,20 @@ const ProfileFilterBar: React.FC<{
   );
 };
 
-export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId, blockedCommands }) => {
+export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId, blockedCommands, roleBlockedCommands }) => {
   const { t } = useTranslation('admin');
   // Read through a ref so the poll and profiler callbacks keep their identity.
   const blockedRef = useRef(blockedCommands);
   blockedRef.current = blockedCommands;
   const blocked = (command: string) => blockedRef.current?.includes(command) ?? false;
+  const roleBlockedRef = useRef(roleBlockedCommands);
+  roleBlockedRef.current = roleBlockedCommands;
+  // Why `command` is blocked: the user's role, or what the server can do.
+  const blockedReason = (command: string) =>
+    roleBlockedRef.current?.includes(command) ? t('common:notForRole') : t('common:notOnServer');
   // Runs `call` unless `command` is blocked, when it fails with the reason instead.
   const unlessBlocked = <T,>(command: string, call: () => Promise<T>) =>
-    blocked(command) ? Promise.reject(new Error(t('common:notOnServer'))) : call();
+    blocked(command) ? Promise.reject(new Error(blockedReason(command))) : call();
   const [status, setStatus] = useState<ServerStatus | null>(null);
   const [ops, setOps] = useState<CurrentOp[]>([]);
   const [samples, setSamples] = useState<MetricSample[]>([]);
@@ -682,7 +689,7 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId, bl
       setProfiling(st);
       if (blocked('read_profile')) {
         setProfile([]);
-        setProfilerErr(t('common:notOnServer'));
+        setProfilerErr(blockedReason('read_profile'));
         return;
       }
       setProfile(await readProfile(connectionId, profilerDb, 50));

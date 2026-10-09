@@ -41,6 +41,7 @@
     "newBucket": "Neuer Bucket",
     "newCollection": "Neue Collection",
     "newConnection": "Neue Verbindung",
+    "notForRole": "Deine Rolle auf dieser MQLens-Server-Verbindung erlaubt das nicht",
     "notOnServer": "Auf MQLens Server noch nicht verfügbar",
     "open": "Öffnen",
     "openCollection": "Collection öffnen",

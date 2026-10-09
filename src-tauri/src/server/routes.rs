@@ -633,6 +633,24 @@ pub(crate) fn blocked_commands(conn: &RemoteConn) -> Vec<&'static str> {
         .collect()
 }
 
+/// The blocked commands the server could run but `conn`'s role does not
+/// reach: the ones a different role, not a newer server, would unblock.
+pub(crate) fn role_blocked_commands(conn: &RemoteConn) -> Vec<&'static str> {
+    ROUTES
+        .iter()
+        .filter(|route| match route.serve {
+            Serve::Rpc {
+                class,
+                since,
+                adapter: true,
+                ..
+            } => conn.api_version >= since && require_class(conn, class).is_err(),
+            _ => false,
+        })
+        .map(|route| route.command)
+        .collect()
+}
+
 /// Refuses a deferred command when any of `ids` is a remote connection,
 /// with the reason its route gives. Called first thing, before any work.
 pub(crate) fn refuse_deferred(
@@ -915,5 +933,25 @@ mod tests {
                 }
             }
         }
+    }
+
+    // A command the server serves but the role does not reach is blocked by
+    // the role. One the server cannot serve yet, or one the role reaches, is
+    // not.
+    #[test]
+    fn role_blocked_commands_are_the_ones_the_role_lacks() {
+        let blocked = role_blocked_commands(&conn(&["read"], 2));
+
+        for command in ["insert_document", "drop_database", "start_mongosh_session"] {
+            assert!(blocked.contains(&command), "{command}");
+        }
+        for command in [
+            "execute_mql_query",
+            "start_dump_task",
+            "start_change_stream",
+        ] {
+            assert!(!blocked.contains(&command), "{command}");
+        }
+        assert!(role_blocked_commands(&conn(&["read", "write", "ddl", "admin"], 2)).is_empty());
     }
 }

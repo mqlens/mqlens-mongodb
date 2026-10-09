@@ -276,3 +276,21 @@ describe('MonitoringView: a server connection without the metrics', () => {
     expect(called.filter((c) => BLOCKED.includes(c))).toEqual([]);
   });
 });
+
+describe('MonitoringView: commands the role rules out', () => {
+  it('says the role is why', async () => {
+    const BLOCKED = ['current_ops', 'kill_op', 'read_profile', 'set_profiling_level'];
+    render(<MonitoringView connectionId="c1" blockedCommands={BLOCKED} roleBlockedCommands={BLOCKED} />);
+
+    const ops = await screen.findByTestId('mon-panel-ops');
+    await waitFor(() =>
+      expect(ops).toHaveTextContent('Your role on this MQLens Server connection does not allow this.')
+    );
+    fireEvent.click(screen.getByTestId('mon-tab-profiler'));
+    await waitFor(() =>
+      expect(screen.getByTestId('mon-panel-profiler')).toHaveTextContent(
+        'Your role on this MQLens Server connection does not allow this.'
+      )
+    );
+  });
+});

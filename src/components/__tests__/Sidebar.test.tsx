@@ -2254,6 +2254,43 @@ describe('Sidebar: commands a server connection cannot run', () => {
   });
 });
 
+describe('Sidebar: an action the role rules out', () => {
+  it('says the role is why, not the server', async () => {
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections') return Promise.resolve([]);
+      return Promise.resolve([]);
+    });
+    const blocked = new Set(['start_dump_task', 'drop_database']);
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Remote Orders', uri: '' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+        onOpenDump={() => {}}
+        isCommandBlocked={(id, command) => id === 'conn-1' && blocked.has(command)}
+        isBlockedByRole={(id, command) => id === 'conn-1' && command === 'drop_database'}
+      />
+    );
+
+    fireEvent.contextMenu(await screen.findByText('sales_db'));
+    expect(screen.getByTestId('ctx-dump-db-conn-1-sales_db')).toHaveAttribute(
+      'title',
+      'Not available on MQLens Server yet'
+    );
+    await openManageMenu();
+    expect(await screen.findByRole('menuitem', { name: /Drop Database/i })).toHaveAttribute(
+      'title',
+      'Your role on this MQLens Server connection does not allow this'
+    );
+  });
+});
+
 describe('Sidebar: server connection badge', () => {
   it('marks a connection made through an MQLens Server, naming the account', async () => {
     mockInvoke.mockImplementation((cmd) =>

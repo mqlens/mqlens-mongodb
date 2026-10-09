@@ -8,6 +8,7 @@
     "retry": "重试",
     "title": "此标签页遇到问题"
   },
+  "notForRole": "您在此 MQLens Server 连接上的角色不允许此操作。",
   "notOnServer": "MQLens Server 暂不支持。",
   "ok": "确定",
   "passwordInput": {

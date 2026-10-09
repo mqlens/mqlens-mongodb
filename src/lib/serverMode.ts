@@ -63,6 +63,8 @@ export interface RemoteConnectionInfo {
   opClasses: string[];
   /** Commands the connection cannot run; the UI disables them. */
   blockedCommands: string[];
+  /** Those of them that only the user's role rules out. */
+  roleBlockedCommands: string[];
 }
 
 export const listServerAccounts = () => invoke<ServerAccountView[]>('server_account_list');

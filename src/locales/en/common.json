@@ -8,6 +8,7 @@
     "retry": "Retry",
     "title": "This tab ran into a problem"
   },
+  "notForRole": "Your role on this MQLens Server connection does not allow this.",
   "notOnServer": "Not available on MQLens Server yet.",
   "ok": "OK",
   "passwordInput": {
