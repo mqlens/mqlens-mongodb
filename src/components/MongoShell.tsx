@@ -811,12 +811,16 @@ export const MongoShell: React.FC<MongoShellProps> = ({
         mongodbResult.status === 'fulfilled' ? extractVersion(mongodbResult.value) : 'unavailable';
       const settings = settingsResult.status === 'fulfilled' ? settingsResult.value : { mongosh_path: '' };
       if (!cancelled) setMongoshPath(settings.mongosh_path || '');
-      const mongoshResult = await invoke<string>('test_mongosh_path', {
-        path: settings.mongosh_path || '',
-      }).then(
-        (value) => extractVersion(value),
-        () => 'unavailable'
-      );
+      // A server shell's mongosh is the server's, which reports no version;
+      // this machine's would be beside the point.
+      const mongoshResult = server
+        ? 'on MQLens Server'
+        : await invoke<string>('test_mongosh_path', {
+            path: settings.mongosh_path || '',
+          }).then(
+            (value) => extractVersion(value),
+            () => 'unavailable'
+          );
 
       updateStartupEntry(mongodbVersion, mongoshResult);
     };
@@ -826,7 +830,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [connectionId, connectionTarget, startupLogId, retryNonce]);
+  }, [connectionId, connectionTarget, server, startupLogId, retryNonce]);
 
   // Appends that must land even if the tab was switched away mid-command.
   // While mounted, setEntries drives the mirror effect as usual; once unmounted

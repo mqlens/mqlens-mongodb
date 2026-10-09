@@ -467,6 +467,16 @@ describe('MongoShell Component', () => {
     );
   });
 
+  it('does not report this machine’s mongosh for a shell running on MQLens Server', async () => {
+    render(
+      <MongoShell connectionId="server-conn" connectionName="Orders" connectionUri="" server databaseName="orders" />
+    );
+
+    fireEvent.click(await screen.findByRole('tab', { name: /console/i }));
+    expect(await screen.findByText(/Using MongoDB: 7.0.5\s+Using Mongosh: on MQLens Server/)).toBeInTheDocument();
+    expect(mockInvoke).not.toHaveBeenCalledWith('test_mongosh_path', expect.anything());
+  });
+
   it('says why a shell failed to start on MQLens Server, not that mongosh is missing here', async () => {
     const base = mockInvoke.getMockImplementation()!;
     mockInvoke.mockImplementation((cmd, args) =>
