@@ -460,6 +460,32 @@ mod e2e {
         w.finish().await;
     }
 
+    // Admin-class reads, which need no mongosh: deployment users list as local
+    // mode lists them, and current operations come back.
+    #[tokio::test]
+    async fn admin_operations_match_local_mode() {
+        let Some(w) = World::new().await else { return };
+        let (st, db) = (&w.state, w.db.as_str());
+        let mongo_db = w.client().database(db);
+        mongo_db
+            .run_command(doc! { "createUser": "e2e_user", "pwd": "e2e-test-only", "roles": [] })
+            .await
+            .unwrap();
+
+        let (local, remote) = w
+            .both(|id| async move { crate::list_users_impl(st, &id, Some(db)).await })
+            .await;
+        let local = local.unwrap();
+        assert_eq!(local, remote.unwrap());
+        assert!(local.iter().any(|u| u.user == "e2e_user"), "{local:?}");
+        crate::monitoring::current_ops_impl(st, &w.remote).await.unwrap();
+
+        let _ = mongo_db
+            .run_command(doc! { "dropAllUsersFromDatabase": 1 })
+            .await;
+        w.finish().await;
+    }
+
     // The shell runs on the server's mongosh, in the tab's database.
     #[tokio::test]
     async fn the_shell_runs_on_the_server() {
