@@ -235,6 +235,22 @@ impl MongoshSession {
             stale_markers: AsyncMutex::new(Vec::new()),
         }
     }
+
+    /// Why the shell ended, when it said: a server shell's stream error.
+    async fn failure(&self) -> Option<String> {
+        match &*self.child.lock().await {
+            MongoshProcess::Remote(shell) => shell.failure(),
+            MongoshProcess::Local(_) => None,
+        }
+    }
+
+    /// `error`, for a shell that has gone, with the reason it gave if any.
+    async fn closed(&self, error: String) -> String {
+        match self.failure().await {
+            Some(reason) => format!("mongosh session closed: {reason}"),
+            None => error,
+        }
+    }
 }
 
 #[derive(Serialize, Clone)]
@@ -624,14 +640,12 @@ async fn run_mongosh_command_on_session(
     script.push_str(&format!("'{marker}'\n.break\n'{recovered}'\n"));
     {
         let mut stdin = session.stdin.lock().await;
-        stdin
-            .write_all(script.as_bytes())
-            .await
-            .map_err(|e| format!("Failed to write to mongosh: {}", e))?;
-        stdin
-            .flush()
-            .await
-            .map_err(|e| format!("Failed to flush mongosh stdin: {}", e))?;
+        if let Err(e) = stdin.write_all(script.as_bytes()).await {
+            return Err(session.closed(format!("Failed to write to mongosh: {}", e)).await);
+        }
+        if let Err(e) = stdin.flush().await {
+            return Err(session.closed(format!("Failed to flush mongosh stdin: {}", e)).await);
+        }
     }
 
     // No deadline. A script takes as long as it takes — an index build, an
@@ -647,7 +661,7 @@ async fn run_mongosh_command_on_session(
     loop {
         let line = match output.recv().await {
             Some(line) => line,
-            None => return Err("mongosh session closed".to_string()),
+            None => return Err(session.closed("mongosh session closed".to_string()).await),
         };
         // Suffix, for the same reason `marker_line_kind` uses one: a prompt
         // delivered in the same read sits in front of it.
@@ -1175,6 +1189,12 @@ async fn register_and_prime_session(
     let startup = drain_mongosh_output(&session).await;
     if !database.trim().is_empty() {
         let _ = run_mongosh_command_on_session(&session, &format!("use {}", database.trim())).await;
+    }
+
+    // A server shell can fail as it starts; that is no session to hand back.
+    if let Some(reason) = session.failure().await {
+        let _ = stop_mongosh_session_impl(state, &session_id).await;
+        return Err(reason);
     }
 
     // Rechecked, because the two awaits above can take seconds (the `use` alone

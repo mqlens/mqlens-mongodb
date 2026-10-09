@@ -165,6 +165,9 @@ pub(crate) struct FakeState {
     pub shells: Vec<MongoshClientMsg>,
     pub shell_input: Vec<String>,
     pub shells_ended: u32,
+    /// Ends every new shell at once with an error, as a mongosh that cannot
+    /// start would.
+    pub shell_start_failure: bool,
     /// What RenameDatabaseDetailed reports.
     pub rename_result: RenameDatabaseResult,
     /// The id InsertDocument reports.
@@ -401,6 +404,7 @@ impl Fake {
                 shells: Vec::new(),
                 shell_input: Vec::new(),
                 shells_ended: 0,
+                shell_start_failure: false,
                 rename_result: RenameDatabaseResult {
                     collections: 2,
                     documents: 40,
@@ -1509,6 +1513,7 @@ enum ShellReply {
     Stderr(String),
     Nothing,
     Quit,
+    Fail,
 }
 
 /// A REPL just big enough for the session code: a quoted string echoes
@@ -1523,6 +1528,8 @@ fn fake_repl(line: &str) -> ShellReply {
         ShellReply::Nothing
     } else if line == "quit()" {
         ShellReply::Quit
+    } else if line == "fail()" {
+        ShellReply::Fail
     } else if let Some(db) = line.strip_prefix("use ") {
         ShellReply::Stdout(format!("switched to db {db}\n"))
     } else if let Some(error) = line.strip_prefix("throw ") {
@@ -1555,7 +1562,14 @@ impl ShellService for Fake {
         }
         let (tx, rx) = tokio::sync::mpsc::channel(64);
         let fake = self.clone();
+        let fails_at_start = self.with(|s| s.shell_start_failure);
         tokio::spawn(async move {
+            if fails_at_start {
+                let _ = tx
+                    .send(Err(Status::internal("mongosh: connection refused")))
+                    .await;
+                return;
+            }
             let mut pending = std::mem::take(&mut first.input).to_vec();
             'shell: loop {
                 while let Some(end) = pending.iter().position(|b| *b == b'\n') {
@@ -1573,6 +1587,10 @@ impl ShellService for Fake {
                         },
                         ShellReply::Nothing => continue,
                         ShellReply::Quit => break 'shell,
+                        ShellReply::Fail => {
+                            let _ = tx.send(Err(Status::internal("mongosh crashed"))).await;
+                            break 'shell;
+                        }
                     };
                     if tx.send(Ok(reply)).await.is_err() {
                         break 'shell;

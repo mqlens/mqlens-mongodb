@@ -3,6 +3,7 @@
 //! have, so everything above them is local mode's.
 
 use crate::server::channel::client;
+use crate::server::errors;
 use crate::server::ops::session_for;
 use crate::server::pb::mqlens::v1::shell_service_client::ShellServiceClient;
 use crate::server::pb::mqlens::v1::MongoshClientMsg;
@@ -10,7 +11,7 @@ use crate::server::remote::RemoteConn;
 use crate::server::routes;
 use crate::AppState;
 use futures::StreamExt;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, DuplexStream};
 
 /// What each pipe between the session code and the server's stream holds.
@@ -18,11 +19,19 @@ const PIPE: usize = 64 * 1024;
 
 /// The server's shell, held where a local session holds its child: stopping
 /// it ends the stream, and with it mongosh on the server.
-pub(crate) struct RemoteShell(tokio::task::JoinHandle<()>);
+pub(crate) struct RemoteShell {
+    pump: tokio::task::JoinHandle<()>,
+    failure: Arc<Mutex<Option<String>>>,
+}
 
 impl RemoteShell {
     pub(crate) fn stop(&self) {
-        self.0.abort();
+        self.pump.abort();
+    }
+
+    /// The server's error, when its stream ended with one.
+    pub(crate) fn failure(&self) -> Option<String> {
+        self.failure.lock().ok()?.clone()
     }
 }
 
@@ -82,10 +91,23 @@ pub(crate) async fn open(state: &AppState, conn: &RemoteConn) -> Result<Shell, S
         .await?;
     let (mut stdout_in, stdout) = tokio::io::duplex(PIPE);
     let (mut stderr_in, stderr) = tokio::io::duplex(PIPE);
+    let failure = Arc::new(Mutex::new(None));
+    let failed = failure.clone();
     // No idle limit: a shell waits on its user. When the server ends the
-    // stream, the writers drop, which the session reads as mongosh exiting.
+    // stream, the writers drop, which the session reads as mongosh exiting;
+    // an error it ended with is kept first, for the session to report.
     let pump = tokio::spawn(async move {
-        while let Ok(Some(message)) = output.message().await {
+        loop {
+            let message = match output.message().await {
+                Ok(Some(message)) => message,
+                Ok(None) => break,
+                Err(status) => {
+                    if let Ok(mut failed) = failed.lock() {
+                        *failed = Some(errors::describe(&status));
+                    }
+                    break;
+                }
+            };
             if stdout_in.write_all(&message.output).await.is_err()
                 || stderr_in.write_all(&message.stderr).await.is_err()
             {
@@ -97,7 +119,7 @@ pub(crate) async fn open(state: &AppState, conn: &RemoteConn) -> Result<Shell, S
         stdin,
         stdout,
         stderr,
-        process: RemoteShell(pump),
+        process: RemoteShell { pump, failure },
     })
 }
 
@@ -203,6 +225,45 @@ mod tests {
             .unwrap_err();
 
         assert_eq!(err, "mongosh session closed");
+    }
+
+    // A shell the server ends with an error says why, then and on every
+    // later command, instead of only that it closed.
+    #[tokio::test]
+    async fn a_shell_that_fails_on_the_server_says_why() {
+        let env = Env::new().await;
+        let (state, id) = admin(&env).await;
+        let info = start_mongosh_session_impl(&state, &id, "", "", "", "")
+            .await
+            .unwrap();
+
+        let err = run_mongosh_command_impl(&state, &info.session_id, "fail()")
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.contains("mongosh crashed"), "{err}");
+
+        let again = run_mongosh_command_impl(&state, &info.session_id, "1")
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(again.contains("mongosh crashed"), "{again}");
+    }
+
+    // A shell that fails as it starts is not reported as started.
+    #[tokio::test]
+    async fn a_shell_that_fails_to_start_on_the_server_is_not_started() {
+        let env = Env::new().await;
+        let (state, id) = admin(&env).await;
+        env.fake.with(|s| s.shell_start_failure = true);
+
+        let err = start_mongosh_session_impl(&state, &id, "", "orders", "", "")
+            .await
+            .map(|_| ())
+            .unwrap_err();
+
+        assert!(err.contains("connection refused"), "{err}");
+        assert!(state.mongosh_sessions.lock().unwrap().is_empty());
     }
 
     // No shell where local mode would refuse one or the server would: on a
