@@ -267,6 +267,34 @@ test.describe('A server connection', () => {
     for (const command of blocked) expect(await app.calls(command)).toHaveLength(0);
   });
 
+  test('says when the role, not the server, rules an action out', async ({ app, page }) => {
+    const ROLE = 'Your role on this MQLens Server connection does not allow this';
+    const blocked = ['drop_database', 'current_ops', 'kill_op', 'read_profile', 'set_profiling_level'];
+    await app.open({
+      servers,
+      serverAccounts: [
+        WORK({
+          signedIn: true,
+          connections: [{ ...ORDERS, opClasses: ['read'], blockedCommands: blocked, roleBlockedCommands: blocked }],
+        }),
+      ],
+    });
+    await openServerAccounts(page);
+    await button(page, 'Connect to Orders').click();
+
+    await sidebar(page).getByText('sales_db', { exact: true }).click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Manage', exact: true }).press('ArrowRight');
+    await expect(page.getByRole('menuitem', { name: 'Drop Database' })).toHaveAttribute('title', ROLE);
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');
+
+    await sidebar(page).getByText('Orders', { exact: true }).first().click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Monitor cluster' }).click();
+    await expect(view(page).getByTestId('mon-panel-ops')).toContainText(ROLE);
+    await view(page).getByTestId('mon-tab-profiler').click();
+    await expect(view(page).getByTestId('mon-panel-profiler')).toContainText(ROLE);
+  });
+
   test('reconnects a restored tab, offering a sign-in when it needs one', async ({ app, page }) => {
     const tab = {
       id: 'profile:server:acct-w:orders.sales_db.customers',
