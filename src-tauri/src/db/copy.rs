@@ -4,7 +4,7 @@ use crate::limits::IMPORT_BATCH_SIZE;
 use crate::state::LockExt;
 use crate::write_guard::{guard_writable, WriteOp};
 use crate::{connection_is_mock, mock_db, require_real_client, AppState, CopyFailure, CopySummary, TaskInfo};
-use mongodb::bson::Document;
+use mongodb::bson::{Document, RawDocumentBuf};
 use mongodb::Client;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -236,9 +236,9 @@ async fn copy_one_collection<F: FnMut(u64)>(
 
     let src = source
         .database(source_db)
-        .collection::<Document>(source_collection);
+        .collection::<RawDocumentBuf>(source_collection);
     let tgt_db = target.database(target_db);
-    let tgt = tgt_db.collection::<Document>(target_collection);
+    let tgt = tgt_db.collection::<RawDocumentBuf>(target_collection);
 
     // Conflict resolution against an existing target.
     let target_existed = tgt_db
@@ -265,7 +265,7 @@ async fn copy_one_collection<F: FnMut(u64)>(
         .find(filter.clone())
         .await
         .map_err(|e| format!("Source query failed: {}", e))?;
-    let mut batch: Vec<Document> = Vec::with_capacity(IMPORT_BATCH_SIZE);
+    let mut batch: Vec<RawDocumentBuf> = Vec::with_capacity(IMPORT_BATCH_SIZE);
 
     // Flush helper: attempt unordered insert_many on the batch slice; owns the
     // retry path so the caller never loses the batch on a dup-key error.
@@ -273,8 +273,8 @@ async fn copy_one_collection<F: FnMut(u64)>(
     // The merge dup-key retry path is exercised via the demo smoke test;
     // mock connections short-circuit before reaching this code.
     async fn flush(
-        tgt: &mongodb::Collection<Document>,
-        batch: &[Document],
+        tgt: &mongodb::Collection<RawDocumentBuf>,
+        batch: &[RawDocumentBuf],
         copied: &mut u64,
         skipped: &mut u64,
     ) -> Result<(), String> {
@@ -330,8 +330,8 @@ async fn copy_one_collection<F: FnMut(u64)>(
 
 /// Fallback path: insert one doc at a time, counting dup-key rows as skipped.
 async fn insert_individually(
-    tgt: &mongodb::Collection<Document>,
-    batch: &[Document],
+    tgt: &mongodb::Collection<RawDocumentBuf>,
+    batch: &[RawDocumentBuf],
     copied: &mut u64,
     skipped: &mut u64,
 ) -> Result<(), String> {

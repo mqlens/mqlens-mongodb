@@ -54,7 +54,8 @@ enum ExportSource {
 async fn open_export_cursor(
     coll: &mongodb::Collection<Document>,
     source: &ExportSource,
-) -> Result<mongodb::Cursor<Document>, String> {
+) -> Result<mongodb::Cursor<mongodb::bson::RawDocumentBuf>, String> {
+    let coll = coll.clone_with_type::<mongodb::bson::RawDocumentBuf>();
     match source {
         ExportSource::Find {
             filter,
@@ -80,6 +81,7 @@ async fn open_export_cursor(
         }
         ExportSource::Aggregate { stages } => coll
             .aggregate(stages.clone())
+            .with_type::<mongodb::bson::RawDocumentBuf>()
             .await
             .map_err(|e| format!("Aggregation failed: {}", e)),
     }
@@ -102,6 +104,7 @@ impl ExportReader {
                 let cursor = open_export_cursor(coll, source).await?;
                 Ok(Box::pin(cursor.map(|r| {
                     r.map_err(|e| format!("Cursor read error: {}", e))
+                        .and_then(crate::db::stored)
                 })))
             }
             ExportReader::Remote(from) => match source {

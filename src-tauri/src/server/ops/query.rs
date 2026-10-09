@@ -34,6 +34,15 @@ pub(crate) async fn find(
     conn: &RemoteConn,
     query: Find<'_>,
 ) -> Result<Vec<String>, String> {
+    rows(find_documents(state, conn, query).await?)
+}
+
+/// The found documents themselves, as stored.
+pub(crate) async fn find_documents(
+    state: &AppState,
+    conn: &RemoteConn,
+    query: Find<'_>,
+) -> Result<Vec<Document>, String> {
     routes::require("execute_mql_query", conn)?;
     let request = FindRequest {
         connection_id: conn.remote_id.clone(),
@@ -52,7 +61,7 @@ pub(crate) async fn find(
             client!(DataServiceClient, channel).find(request).await
         })
         .await?;
-    rows(collect(&mut stream, None).await?)
+    collect(&mut stream, None).await
 }
 
 /// Each document the pipeline returns as local mode returns it, capped as

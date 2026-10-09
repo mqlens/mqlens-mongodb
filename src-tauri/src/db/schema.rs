@@ -226,12 +226,15 @@ async fn analyze_schema_impl_inner(
         let pipeline = vec![mongodb::bson::doc! { "$sample": { "size": sample_size } }];
         let mut cursor = coll
             .aggregate(pipeline)
+            .with_type::<mongodb::bson::RawDocumentBuf>()
             .await
             .map_err(|e| format!("Sampling failed: {}", e))?;
         let mut out = Vec::new();
         use futures::stream::StreamExt;
         while let Some(result) = cursor.next().await {
-            out.push(result.map_err(|e| format!("Cursor read error: {}", e))?);
+            out.push(crate::db::stored(
+                result.map_err(|e| format!("Cursor read error: {}", e))?,
+            )?);
         }
         out
     };

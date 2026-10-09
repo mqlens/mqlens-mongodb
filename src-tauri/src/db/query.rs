@@ -108,7 +108,7 @@ async fn execute_mql_query_inner(
     };
 
     let db = client.database(database);
-    let coll = db.collection::<mongodb::bson::Document>(collection);
+    let coll = db.collection::<mongodb::bson::RawDocumentBuf>(collection);
 
     let (filter_doc, sort_doc) = find_documents(&filter_val, &sort_val)?;
 
@@ -132,7 +132,7 @@ async fn execute_mql_query_inner(
     let mut results = Vec::new();
     use futures::stream::StreamExt;
     while let Some(result) = cursor.next().await {
-        let doc = result.map_err(|e| format!("Cursor read error: {}", e))?;
+        let doc = crate::db::stored(result.map_err(|e| format!("Cursor read error: {}", e))?)?;
         let json_val: serde_json::Value =
             serde_json::to_value(&doc).map_err(|e| format!("BSON to JSON error: {}", e))?;
         results.push(serde_json::to_string(&json_val).unwrap());

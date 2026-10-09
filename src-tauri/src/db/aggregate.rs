@@ -126,6 +126,7 @@ async fn execute_aggregate_inner(
 
     let mut cursor = coll
         .aggregate(stages)
+        .with_type::<mongodb::bson::RawDocumentBuf>()
         .await
         .map_err(|e| format!("Aggregation failed: {}", e))?;
 
@@ -138,7 +139,7 @@ async fn execute_aggregate_inner(
                 MAX_AGGREGATE_RESULTS
             ));
         }
-        let doc = result.map_err(|e| format!("Cursor read error: {}", e))?;
+        let doc = crate::db::stored(result.map_err(|e| format!("Cursor read error: {}", e))?)?;
         let json_val: serde_json::Value =
             serde_json::to_value(&doc).map_err(|e| format!("BSON to JSON error: {}", e))?;
         results.push(serde_json::to_string(&json_val).unwrap());

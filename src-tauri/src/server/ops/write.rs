@@ -290,6 +290,33 @@ mod tests {
         }
     }
 
+    // An edit of a document holding a wrapper-shaped sub-document is refused
+    // through the server as locally, with nothing written.
+    #[tokio::test]
+    async fn an_edit_of_a_wrapper_shaped_document_is_refused() {
+        let env = Env::new().await;
+        env.fake.with(|s| {
+            s.documents = vec![doc! { "_id": 1, "money": { "$numberLong": "7" }, "name": "Ada" }]
+        });
+        let (state, id) = connected(&env).await;
+
+        let err = update_document_impl(
+            &state,
+            &id,
+            "orders",
+            "customers",
+            r#"{"_id": 1}"#,
+            r#"{"_id": 1, "money": {"$numberLong": "7"}, "name": "Ada"}"#,
+            r#"{"_id": 1, "money": {"$numberLong": "7"}, "name": "Bo"}"#,
+            Some("{}"),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(err.contains("Extended JSON"), "{err}");
+        assert!(writes(&env).is_empty());
+    }
+
     // An edit sends the field update local mode would make, and falls back to
     // replacing the document where local mode does.
     #[tokio::test]

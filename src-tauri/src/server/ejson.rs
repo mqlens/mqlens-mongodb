@@ -12,7 +12,8 @@
 //! `other` silently dropped. The raw conversion keeps both as stored. For every
 //! other document the two decoders agree, so server mode shows what local mode
 //! shows; `wrapper_shaped_documents_survive_only_the_faithful_decoder` pins the
-//! difference, and local mode is to move onto this decoder separately.
+//! difference. Local mode reads through the same conversion
+//! (`crate::db::stored`).
 //!
 //! Extended JSON cannot stand in for the BSON bytes either: in it those same
 //! sub-documents are indistinguishable from the types they resemble. It is

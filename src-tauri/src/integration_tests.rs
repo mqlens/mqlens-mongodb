@@ -1128,4 +1128,175 @@ mod integration {
 
         cleanup(&state, &id, &db).await;
     }
+
+    /// Stored sub-documents whose keys look like Extended JSON type wrappers:
+    /// one with a sibling key, one on its own.
+    fn wrapper_shaped() -> Vec<Document> {
+        vec![
+            doc! { "_id": 1, "money": { "$numberLong": "7", "other": 1 } },
+            doc! { "_id": 2, "when": { "$date": "not a date" } },
+        ]
+    }
+
+    const WRAPPER_SHAPED_JSON: [&str; 2] = [
+        r#"{"_id":1,"money":{"$numberLong":"7","other":1}}"#,
+        r#"{"_id":2,"when":{"$date":"not a date"}}"#,
+    ];
+
+    // Find and aggregate show such documents as stored, not as the types
+    // their keys imitate.
+    #[tokio::test]
+    async fn it_reads_wrapper_shaped_documents_as_stored() {
+        let Some((state, id, db)) = connect().await else {
+            return;
+        };
+        seed(&state, &id, &db, "odd", wrapper_shaped()).await;
+
+        let found =
+            execute_mql_query_impl(&state, &id, &db, "odd", "{}", r#"{"_id":1}"#, "", 10, 0)
+                .await
+                .unwrap();
+        assert_eq!(found, WRAPPER_SHAPED_JSON);
+        let aggregated =
+            execute_aggregate_impl(&state, &id, &db, "odd", r#"[{"$sort":{"_id":1}}]"#, false)
+                .await
+                .unwrap();
+        assert_eq!(aggregated, WRAPPER_SHAPED_JSON);
+
+        cleanup(&state, &id, &db).await;
+    }
+
+    // An export writes such documents as stored, and schema analysis sees
+    // the sub-documents they are.
+    #[tokio::test]
+    async fn it_exports_and_analyzes_wrapper_shaped_documents_as_stored() {
+        let Some((state, id, db)) = connect().await else {
+            return;
+        };
+        seed(&state, &id, &db, "odd", wrapper_shaped()).await;
+
+        let path = std::env::temp_dir().join(format!(
+            "mqlens-it-odd-{}.json",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let task = start_collection_export_impl(
+            &state,
+            &id,
+            &db,
+            "odd",
+            "json",
+            path.to_str().unwrap(),
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(wait_for_task(&state, &task.id).await.status, "completed");
+        let expected = crate::db::export::format_docs_to_string(
+            &wrapper_shaped(),
+            "json",
+            &crate::db::export::options::ExportOptions::default(),
+        )
+        .unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), expected);
+        let _ = std::fs::remove_file(&path);
+
+        let json = analyze_schema_impl(&state, &id, &db, "odd", 100)
+            .await
+            .unwrap();
+        let report: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let money = report["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["path"] == "money")
+            .unwrap();
+        assert_eq!(money["types"][0]["type"], "object");
+
+        cleanup(&state, &id, &db).await;
+    }
+
+    // A copy writes such documents to the target exactly as they are in the
+    // source, instead of the types their keys imitate.
+    #[tokio::test]
+    async fn it_copies_wrapper_shaped_documents_as_stored() {
+        let Some((state, id, db)) = connect().await else {
+            return;
+        };
+        seed(&state, &id, &db, "odd", wrapper_shaped()).await;
+
+        let task = start_collection_copy_impl(
+            &state,
+            &id,
+            &db,
+            "odd",
+            &id,
+            &db,
+            "odd_copy",
+            None,
+            false,
+            "merge".into(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(wait_for_task(&state, &task.id).await.status, "completed");
+
+        use futures::stream::TryStreamExt;
+        let copied: Vec<mongodb::bson::RawDocumentBuf> = client_of(&state, &id)
+            .database(&db)
+            .collection::<mongodb::bson::RawDocumentBuf>("odd_copy")
+            .find(doc! {})
+            .sort(doc! { "_id": 1 })
+            .await
+            .unwrap()
+            .try_collect()
+            .await
+            .unwrap();
+        let copied: Vec<Document> = copied
+            .iter()
+            .map(|raw| Document::try_from(raw.as_ref()).unwrap())
+            .collect();
+        assert_eq!(copied, wrapper_shaped());
+
+        cleanup(&state, &id, &db).await;
+    }
+
+    // Editing such a document as JSON would write the type its keys imitate,
+    // so the edit is refused and the document stays as stored.
+    #[tokio::test]
+    async fn it_refuses_to_edit_a_wrapper_shaped_document_as_json() {
+        let Some((state, id, db)) = connect().await else {
+            return;
+        };
+        seed(
+            &state,
+            &id,
+            &db,
+            "odd",
+            vec![doc! { "_id": 1, "money": { "$numberLong": "7" }, "name": "Ada" }],
+        )
+        .await;
+
+        let err = update_document_impl(
+            &state,
+            &id,
+            &db,
+            "odd",
+            r#"{"_id":1}"#,
+            r#"{"_id":1,"money":{"$numberLong":"7"},"name":"Ada"}"#,
+            r#"{"_id":1,"money":{"$numberLong":"7"},"name":"Bo"}"#,
+            Some("{}"),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("Extended JSON"), "{err}");
+        let found = execute_mql_query_impl(&state, &id, &db, "odd", "{}", "", "", 10, 0)
+            .await
+            .unwrap();
+        assert_eq!(
+            found,
+            [r#"{"_id":1,"money":{"$numberLong":"7"},"name":"Ada"}"#]
+        );
+
+        cleanup(&state, &id, &db).await;
+    }
 }

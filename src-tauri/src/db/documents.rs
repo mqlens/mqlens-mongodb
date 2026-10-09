@@ -1185,6 +1185,24 @@ struct AppliedWrite {
     payload: String,
 }
 
+/// Refused when the stored document has a sub-document whose keys look like
+/// an Extended JSON type wrapper: JSON shows it just as it shows a value of
+/// that type, so a save through JSON would store the type in its place.
+const WRAPPER_SHAPED_EDIT: &str = "This document has a sub-document whose field names look like an Extended JSON type ($numberLong, $date, $oid and the like). Saving it as JSON would store that type in their place, so it cannot be edited here. Use the shell to change it.";
+
+/// Whether any key of the document, at any depth, begins with `$`. Values of
+/// real BSON types are not sub-documents, so they never count.
+fn has_dollar_key(doc: &Document) -> bool {
+    fn value(v: &mongodb::bson::Bson) -> bool {
+        match v {
+            mongodb::bson::Bson::Document(d) => has_dollar_key(d),
+            mongodb::bson::Bson::Array(items) => items.iter().any(value),
+            _ => false,
+        }
+    }
+    doc.iter().any(|(k, v)| k.starts_with('$') || value(v))
+}
+
 /// Which Mongo write to issue for an edited document.
 enum WritePlan {
     Update(Document),
@@ -1288,7 +1306,23 @@ async fn update_document_inner(
     let client = match crate::server::remote::route(state, id) {
         Ok(crate::server::remote::Route::Local(c)) => c,
         Ok(crate::server::remote::Route::Remote(conn)) => {
-            use crate::server::ops::write;
+            use crate::server::ops::{query, write};
+            let stored = query::Find {
+                database,
+                collection,
+                filter: &filter_doc,
+                sort: None,
+                projection: None,
+                limit: 1,
+                skip: 0,
+            };
+            match query::find_documents(state, &conn, stored).await {
+                Ok(docs) if docs.iter().any(has_dollar_key) => {
+                    rejected!(WRAPPER_SHAPED_EDIT.to_string())
+                }
+                Ok(_) => {}
+                Err(e) => rejected!(e),
+            }
             let result = match plan {
                 WritePlan::Update(update) => {
                     write::update_one(state, &conn, database, collection, &filter_doc, &update)
@@ -1308,6 +1342,17 @@ async fn update_document_inner(
             }
         }
     };
+    let stored = client
+        .database(database)
+        .collection::<mongodb::bson::RawDocumentBuf>(collection)
+        .find_one(filter_doc.clone())
+        .await;
+    match stored.map(|found| found.map(crate::db::stored).transpose()) {
+        Ok(Ok(Some(doc))) if has_dollar_key(&doc) => rejected!(WRAPPER_SHAPED_EDIT.to_string()),
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) => rejected!(e),
+        Err(e) => rejected!(format!("Failed to read document: {}", e)),
+    }
     let coll = client
         .database(database)
         .collection::<Document>(collection);
