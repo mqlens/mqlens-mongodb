@@ -120,32 +120,49 @@ mod e2e {
                             .await
                     },
                 )
-                .await
-                .expect("create the server connection")
-                .id;
-            session
-                .call(
-                    GrantConnectionRequest {
-                        connection_id: remote_id.clone(),
-                        principal_type: "role".to_string(),
-                        principal_id: "owner".to_string(),
-                    },
-                    |channel, request| async move {
-                        client!(AdminServiceClient, channel)
-                            .grant_connection(request)
-                            .await
-                    },
-                )
-                .await
-                .expect("grant the server connection");
-
-            let remote = server_connect_impl(&state, &path, &account.id, &remote_id)
-                .await
-                .expect("connect through the server")
-                .id;
-            let local = connect_db_impl(&state, &mongo, None)
-                .await
-                .expect("connect to MQLENS_TEST_MONGO_URI");
+                .await;
+            let remote_id = match remote_id {
+                Ok(created) => created.id,
+                Err(e) => {
+                    let _ = sign_out(&session).await;
+                    panic!("create the server connection: {e}");
+                }
+            };
+            // From here on the connection exists, so a failure removes it again.
+            let rest = async {
+                session
+                    .call(
+                        GrantConnectionRequest {
+                            connection_id: remote_id.clone(),
+                            principal_type: "role".to_string(),
+                            principal_id: "owner".to_string(),
+                        },
+                        |channel, request| async move {
+                            client!(AdminServiceClient, channel)
+                                .grant_connection(request)
+                                .await
+                        },
+                    )
+                    .await
+                    .map_err(|e| format!("grant the server connection: {e}"))?;
+                let remote = server_connect_impl(&state, &path, &account.id, &remote_id)
+                    .await
+                    .map_err(|e| format!("connect through the server: {e}"))?
+                    .id;
+                let local = connect_db_impl(&state, &mongo, None)
+                    .await
+                    .map_err(|e| format!("connect to MQLENS_TEST_MONGO_URI: {e}"))?;
+                Ok::<_, String>((remote, local))
+            }
+            .await;
+            let (remote, local) = match rest {
+                Ok(connected) => connected,
+                Err(e) => {
+                    let _ = delete_connection(&session, &remote_id).await;
+                    let _ = sign_out(&session).await;
+                    panic!("{e}");
+                }
+            };
             Some(World {
                 state,
                 local,
@@ -209,21 +226,33 @@ mod e2e {
                 .drop()
                 .await
                 .map_err(|e| format!("drop {}: {e}", self.db));
-            let id = self.remote_id.clone();
-            let deleted = self
-                .session
-                .call(
-                    DeleteConnectionRequest { id },
-                    |channel, request| async move {
-                        client!(AdminServiceClient, channel)
-                            .delete_connection(request)
-                            .await
-                    },
-                )
-                .await
-                .map(|_| ())
-                .map_err(|e| format!("delete server connection {}: {e}", self.remote_id));
-            dropped.and(deleted)
+            let deleted = delete_connection(&self.session, &self.remote_id).await;
+            let signed_out = sign_out(&self.session).await;
+            dropped.and(deleted).and(signed_out)
+        }
+    }
+
+    async fn delete_connection(session: &AccountSession, id: &str) -> Result<(), String> {
+        session
+            .call(
+                DeleteConnectionRequest { id: id.to_string() },
+                |channel, request| async move {
+                    client!(AdminServiceClient, channel)
+                        .delete_connection(request)
+                        .await
+                },
+            )
+            .await
+            .map(|_| ())
+            .map_err(|e| format!("delete server connection {id}: {e}"))
+    }
+
+    /// Ends the test's owner session on the server, not just here.
+    async fn sign_out(session: &AccountSession) -> Result<(), String> {
+        match session.sign_out().await {
+            Ok(true) => Ok(()),
+            Ok(false) => Err("the server did not confirm the sign-out".to_string()),
+            Err(e) => Err(format!("sign out: {e}")),
         }
     }
 
