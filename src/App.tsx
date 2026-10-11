@@ -18,7 +18,7 @@ import {
 } from './lib/aiChatRequest';
 import { stopChangeStream } from './lib/changeStream';
 import { describeConnectError } from './lib/describeConnectError';
-import { connectToServer, listServerAccounts, MONITORING_READS, parseServerProfileId, serverConnectionMode, type RemoteConnectionInfo } from './lib/serverMode';
+import { connectToServer, MONITORING_READS, parseServerProfileId, type RemoteConnectionInfo } from './lib/serverMode';
 import { startWriteRequests } from './lib/mcpWriteRequests';
 import { McpWriteConfirm } from './components/McpWriteConfirm';
 import {
@@ -3884,11 +3884,11 @@ function Workspace() {
       if (existing) {
         newId = existing.id;
       } else if (server) {
-        // The mode chosen for this server connection, read before connecting
-        // so a failure to read it never leaves a connection in the wrong mode.
-        const account = (await listServerAccounts()).find((a) => a.id === server.accountId);
-        const mode = serverConnectionMode(account, server.remoteId);
-        newId = (await connectToServer(server.accountId, server.remoteId)).id;
+        // Opened in the mode the accounts file holds for it, as the connect
+        // itself reads it.
+        const connected = await connectToServer(server.accountId, server.remoteId);
+        const mode = connected.mode;
+        newId = connected.id;
         addActiveConnection(newId, profileName, '', profileId, undefined, undefined, mode);
         setConnectionMeta(newId, profileId, profileName, mode);
       } else {

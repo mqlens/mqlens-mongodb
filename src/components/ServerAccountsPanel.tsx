@@ -124,7 +124,9 @@ export const ServerAccountsPanel: React.FC<Props> = ({ onConnect, activeProfileI
   const connect = (account: ServerAccountView, remote: RemoteConnectionView) =>
     run(async () => {
       const result = await connectToServer(account.id, remote.id);
-      onConnect(result.id, remote.name, serverProfileId(account.id, remote.id), serverConnectionMode(account, remote.id));
+      // The mode as the accounts file holds it now, not as this window last
+      // loaded it: another window may have changed it since.
+      onConnect(result.id, remote.name, serverProfileId(account.id, remote.id), result.mode);
     });
 
   // Kept with the account and applied each time the connection is opened.
@@ -232,7 +234,8 @@ export const ServerAccountsPanel: React.FC<Props> = ({ onConnect, activeProfileI
                       className="h-7 rounded-md border border-input bg-background px-1.5 text-xs"
                       aria-label={t('serverAccounts.modeFor', { name: remote.name })}
                       value={serverConnectionMode(account, remote.id)}
-                      disabled={busy}
+                      // An open connection keeps the mode it opened in until reconnected.
+                      disabled={busy || open}
                       onChange={(e) => chooseMode(account, remote, e.target.value as ConnectionMode)}
                     >
                       <option value="normal">{t('connectionMode.normal.label')}</option>

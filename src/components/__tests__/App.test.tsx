@@ -3019,7 +3019,7 @@ describe('App Component', () => {
         if (cmd === 'server_account_list') {
           return Promise.resolve([{ id: 'a1', name: 'Work', url: 'https://s', tenant: 'acme', email: 'd@x.test', allowInsecureHttp: false, signedIn: true, connectionModes: { c1: 'read_only' } }]);
         }
-        if (cmd === 'server_connect') return Promise.resolve({ id: 'remote-conn-1', mongoVersion: '8.0.0', opClasses: ['read'] });
+        if (cmd === 'server_connect') return Promise.resolve({ id: 'remote-conn-1', mongoVersion: '8.0.0', opClasses: ['read'], mode: 'read_only' });
         return Promise.resolve([]);
       });
 

@@ -3580,7 +3580,7 @@ describe('ConnectionManager: MQLens Server', () => {
         case 'server_list_connections':
           return Promise.resolve([{ id: 'c1', name: 'Orders', tags: [], deploymentKind: 'replica_set', opClasses: ['read'] }]);
         case 'server_connect':
-          return Promise.resolve({ id: 'conn-9', mongoVersion: '8.0.0', opClasses: ['read'] });
+          return Promise.resolve({ id: 'conn-9', mongoVersion: '8.0.0', opClasses: ['read'], mode: 'normal' });
         default:
           return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
       }

@@ -55,6 +55,8 @@ export interface ServerConnectResult {
   id: string;
   mongoVersion: string;
   opClasses: string[];
+  /** The mode the accounts file holds for the connection: the one to open it in. */
+  mode: ConnectionMode;
 }
 
 /** What a connection-list entry carries for a connection made through a server. */

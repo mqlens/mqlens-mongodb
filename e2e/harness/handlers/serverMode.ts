@@ -174,7 +174,8 @@ export function registerServerModeHandlers(backend: Backend, state: E2EState): v
           roleBlockedCommands: remote.roleBlockedCommands ?? [],
         },
       };
-      return { id, mongoVersion: state.servers[remote.server]?.version ?? '8.0.0', opClasses };
+      const mode = found.connectionModes?.[remote.id] ?? 'normal';
+      return { id, mongoVersion: state.servers[remote.server]?.version ?? '8.0.0', opClasses, mode };
     },
   });
 }

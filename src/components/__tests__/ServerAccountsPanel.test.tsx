@@ -52,8 +52,10 @@ function backend(accounts: ServerAccountView[], over: Record<string, unknown> = 
         return Promise.resolve({ deleted: true });
       case 'server_list_connections':
         return Promise.resolve(REMOTES);
-      case 'server_connect':
-        return Promise.resolve({ id: 'conn-9', mongoVersion: '8.0.0', opClasses: ['read'] });
+      case 'server_connect': {
+        const stored = accounts.find((a) => a.id === args!.accountId)?.connectionModes?.[args!.remoteId as string];
+        return Promise.resolve({ id: 'conn-9', mongoVersion: '8.0.0', opClasses: ['read'], mode: stored ?? 'normal' });
+      }
       case 'server_connection_mode_set': {
         accounts = accounts.map((a) =>
           a.id === args!.accountId
@@ -164,6 +166,26 @@ describe('ServerAccountsPanel', () => {
       })
     );
     await waitFor(() => expect(mode).toHaveValue('confirm_destructive'));
+  });
+
+  it('connects in the mode the accounts file holds, not one this window last showed', async () => {
+    // Another window chose read-only after this one loaded the account.
+    backend([account({ signedIn: true })], {
+      server_connect: { id: 'conn-9', mongoVersion: '8.0.0', opClasses: ['read'], mode: 'read_only' },
+    });
+    const onConnect = vi.fn();
+    render(<ServerAccountsPanel onConnect={onConnect} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Connect to Orders' }));
+
+    await waitFor(() => expect(onConnect).toHaveBeenCalledWith('conn-9', 'Orders', 'server:a1:c1', 'read_only'));
+  });
+
+  it('does not change the mode of a connection that is open', async () => {
+    backend([account({ signedIn: true })]);
+    render(<ServerAccountsPanel onConnect={vi.fn()} activeProfileIds={['server:a1:c1']} />);
+
+    expect(await screen.findByRole('combobox', { name: 'Mode for Orders' })).toBeDisabled();
   });
 
   it('signs out', async () => {

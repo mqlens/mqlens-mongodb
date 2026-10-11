@@ -232,6 +232,9 @@ pub(crate) struct ServerConnectResult {
     pub id: String,
     pub mongo_version: String,
     pub op_classes: Vec<String>,
+    /// The mode chosen for the connection, as the accounts file holds it now:
+    /// what to register the connection in, whatever a window last showed.
+    pub mode: crate::connections::ConnectionMode,
 }
 
 /// Connects to one of the account's server connections: asks the server what
@@ -313,6 +316,11 @@ pub(crate) async fn server_connect_impl(
         id,
         mongo_version: version.version,
         op_classes,
+        mode: account
+            .connection_modes
+            .get(remote_id)
+            .copied()
+            .unwrap_or_default(),
     })
 }
 
@@ -804,6 +812,30 @@ mod tests {
             .await
             .unwrap();
         state
+    }
+
+    // Connecting reports the mode the accounts file holds for the connection,
+    // so a window showing an older choice still registers the current one.
+    #[tokio::test]
+    async fn connecting_reports_the_stored_mode() {
+        use crate::connections::ConnectionMode;
+        let env = Env::new().await;
+        let state = signed_in_state(&env).await;
+        connection_mode_set_impl(
+            &state,
+            &env.path,
+            &env.account.id,
+            "c1",
+            ConnectionMode::ReadOnly,
+        )
+        .await
+        .unwrap();
+
+        let connected = server_connect_impl(&state, &env.path, &env.account.id, "c1")
+            .await
+            .unwrap();
+
+        assert_eq!(connected.mode, ConnectionMode::ReadOnly);
     }
 
     // A server connection becomes a desktop connection: a new id, with what
