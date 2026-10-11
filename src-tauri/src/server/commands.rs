@@ -120,8 +120,10 @@ pub(crate) async fn connection_mode_set_impl(
     }
     let file = path.to_path_buf();
     let (account_id, remote_id) = (account_id.to_string(), remote_id.to_string());
+    // Refused if the vault locked while this waited, as account saves are.
+    let current = key_source(state.vault_key.clone());
     blocking(move || {
-        accounts::update(&file, &key, |all| {
+        accounts::update_while(&file, &key, Some(&current), |all| {
             let account = all
                 .iter_mut()
                 .find(|a| a.id == account_id)
@@ -312,6 +314,16 @@ pub(crate) async fn server_connect_impl(
         .unwrap_or_default();
     let id = uuid::Uuid::new_v4().to_string();
     state.mocks.lock_safe()?.insert(id.clone(), false);
+    // Guarded in its mode before it is routable: a write reaching it before
+    // the renderer sets its name is held to the mode all the same.
+    crate::set_connection_meta_impl(
+        state,
+        &id,
+        &format!("server:{}:{}", account.id, remote_id),
+        remote_id,
+        false,
+        mode,
+    )?;
     state.server.add_remote(RemoteConn {
         desktop_id: id.clone(),
         account_id: account.id.clone(),
@@ -846,6 +858,37 @@ mod tests {
             .unwrap();
 
         assert_eq!(connected.mode, ConnectionMode::ReadOnly);
+        // Guarded from the moment it is routable, before the renderer says anything.
+        assert_eq!(
+            crate::write_guard::connection_mode(&state, &connected.id).unwrap(),
+            ConnectionMode::ReadOnly
+        );
+    }
+
+    // A mode change still waiting when the vault locks is not written with the
+    // key the vault no longer uses.
+    #[tokio::test]
+    async fn a_mode_change_waiting_through_a_vault_lock_is_refused() {
+        use crate::connections::ConnectionMode;
+        let env = Env::new().await;
+        let state = std::sync::Arc::new(unlocked());
+        let held = state.server.modes.lock().await;
+        let setting = {
+            let state = state.clone();
+            let (path, id) = (env.path.clone(), env.account.id.clone());
+            tokio::spawn(async move {
+                connection_mode_set_impl(&state, &path, &id, "c1", ConnectionMode::ReadOnly).await
+            })
+        };
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        *state.vault_key.lock().unwrap() = None;
+        drop(held);
+
+        assert!(setting.await.unwrap().is_err());
+        assert!(accounts::find(&env.path, &KEY, &env.account.id)
+            .unwrap()
+            .connection_modes
+            .is_empty());
     }
 
     // An open connection keeps the mode it opened in: changing it is refused

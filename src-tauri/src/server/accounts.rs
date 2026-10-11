@@ -256,7 +256,7 @@ pub(crate) fn update<T>(
 /// captured key would recreate the file under a key no vault uses any more.
 /// `current` covers this process; the vault metadata covers another MQLens
 /// process resetting the vault, which removes that file under this same lock.
-fn update_while<T>(
+pub(crate) fn update_while<T>(
     path: &Path,
     key: &[u8; 32],
     current: Option<&KeySource>,
