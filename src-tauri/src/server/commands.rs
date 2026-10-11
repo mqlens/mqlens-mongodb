@@ -947,7 +947,8 @@ mod tests {
             crate::server::remote::Route::Remote(conn) => {
                 assert_eq!(conn.remote_id, "c1");
                 assert_eq!(conn.account_id, env.account.id);
-                assert_eq!(conn.api_version, crate::server::remote::API_VERSIONS.1);
+                // The newest version both speak: the fake serves up to 2.
+                assert_eq!(conn.api_version, 2);
             }
             crate::server::remote::Route::Local(_) => panic!("routed to a driver client"),
         }
@@ -988,8 +989,8 @@ mod tests {
         assert!(crate::server::remote::route(&state, &connected.id).is_ok());
 
         env.fake.with(|s| {
-            s.min_api_version = 3;
-            s.max_api_version = 3;
+            s.min_api_version = crate::server::remote::API_VERSIONS.1 + 1;
+            s.max_api_version = crate::server::remote::API_VERSIONS.1 + 1;
         });
         let err = server_connect_impl(&state, &env.path, &env.account.id, "c1")
             .await

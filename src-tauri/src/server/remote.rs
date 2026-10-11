@@ -31,8 +31,8 @@ pub(crate) struct RemoteConn {
 }
 
 /// The MQLens API versions this desktop speaks. 2 is the first with documents
-/// as raw BSON, which every document read needs.
-pub(crate) const API_VERSIONS: (u32, u32) = (2, 2);
+/// as raw BSON, which every document read needs; 4 adds change streams.
+pub(crate) const API_VERSIONS: (u32, u32) = (2, 4);
 
 /// The version to speak with a server that serves `server_min` to
 /// `server_max`: the highest both serve, or why there is none.

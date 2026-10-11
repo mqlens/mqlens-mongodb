@@ -14,11 +14,17 @@
 //!   it, when that differs (a server in a container); defaults to the above.
 //! - `MQLENS_TEST_SERVER_SHELL=1`: also run the shell check, which needs
 //!   mongosh on the server's host.
+//! - `MQLENS_TEST_SERVER_CHANGE_STREAMS=1`: also run the change stream check,
+//!   which needs the MongoDB to be a replica set.
 //!
 //! Each test makes its own server connection and database, and removes both.
 
 #[cfg(test)]
 mod e2e {
+    use crate::change_streams::{
+        poll_change_stream_impl, start_change_stream_impl, stop_change_stream_impl, StreamPoll,
+        StreamStatus,
+    };
     use crate::server::accounts::{self, ServerAccountInput};
     use crate::server::channel::client;
     use crate::server::commands::{server_connect_impl, sign_in_impl, token_store};
@@ -614,6 +620,62 @@ mod e2e {
                 stop_mongosh_session_impl(st, &info.session_id)
                     .await
                     .unwrap();
+            })
+        })
+        .await;
+    }
+
+    // A tail through the server sees what a local tail sees.
+    #[tokio::test]
+    async fn a_change_stream_matches_local_mode() {
+        if var("MQLENS_TEST_SERVER_CHANGE_STREAMS").as_deref() != Some("1") {
+            return;
+        }
+        let Some(w) = World::new().await else { return };
+        w.run(|w| {
+            Box::pin(async move {
+                let st = &w.state;
+                let poll = |tail: &'static str| poll_change_stream_impl(st, "main", tail, None);
+                async fn until(
+                    poll: impl Fn() -> Result<Option<StreamPoll>, String>,
+                    done: impl Fn(&StreamPoll) -> bool,
+                ) -> StreamPoll {
+                    for _ in 0..500 {
+                        if let Some(p) = poll().unwrap() {
+                            if done(&p) {
+                                return p;
+                            }
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                    }
+                    panic!("{:?}", poll());
+                }
+                for (tail, conn) in [("local-tail", &w.local), ("remote-tail", &w.remote)] {
+                    start_change_stream_impl(
+                        st,
+                        "main",
+                        tail.to_string(),
+                        conn.clone(),
+                        Some(w.db.clone()),
+                        Some("watched".to_string()),
+                        vec!["insert".to_string()],
+                    )
+                    .await
+                    .unwrap_or_else(|e| panic!("start {tail}: {e}"));
+                    until(|| poll(tail), |p| p.status == StreamStatus::Running).await;
+                }
+
+                w.seed(
+                    "watched",
+                    vec![doc! { "_id": 1, "v": { "$numberLong": "7", "other": 1 } }],
+                )
+                .await;
+                let local = until(|| poll("local-tail"), |p| !p.events.is_empty()).await;
+                let remote = until(|| poll("remote-tail"), |p| !p.events.is_empty()).await;
+                assert_eq!(remote.events, local.events);
+
+                stop_change_stream_impl(st, "local-tail").unwrap();
+                stop_change_stream_impl(st, "remote-tail").unwrap();
             })
         })
         .await;

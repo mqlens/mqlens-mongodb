@@ -61,7 +61,6 @@ These are disabled on server connections:
 
 - Copying collections or databases, import, and generating test data.
 - `mongodump`/`mongorestore` (the MongoDB Database Tools).
-- Watching change streams.
 - Running a multi-line script as a one-shot `mongosh --file` program. The shell
   itself works, and multi-line input goes to its live session instead.
 - AI agents over MCP: server connections are never offered to them.
@@ -93,6 +92,10 @@ not as JSON. The known differences:
 The app and the server agree on an API version when you connect. If they have
 none in common, connecting fails and tells you which side to update:
 **Update MQLens Server** or **Update this app**.
+
+Watching change streams needs a server that speaks API version 4. On an older
+server, Watch stays disabled and says to update the server. As in local mode,
+the deployment must be a replica set or a sharded cluster.
 
 ## When something fails
 

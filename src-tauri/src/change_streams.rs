@@ -443,11 +443,11 @@ pub fn fail_stream(
 /// as settled and whoever is waiting on its resume point is woken.
 async fn run_stream(
     state_streams: Arc<LiveStream>,
-    client: mongodb::Client,
+    source: Source,
     my_generation: u64,
     predecessor: u64,
 ) {
-    read_cursor(&state_streams, client, my_generation, predecessor).await;
+    read_cursor(&state_streams, source, my_generation, predecessor).await;
     state_streams
         .settled
         .fetch_max(my_generation, Ordering::SeqCst);
@@ -482,14 +482,55 @@ pub async fn await_handover(state_streams: &LiveStream, predecessor: u64, grace:
     .await;
 }
 
+/// Where a reader's cursor comes from: the driver, or an MQLens Server.
+pub(crate) enum Source {
+    Local(mongodb::Client),
+    Remote(
+        Arc<crate::server::remote::RemoteConn>,
+        Arc<crate::server::session::AccountSession>,
+    ),
+}
+
+/// What a tail on `connection_id` reads from, or why it cannot read.
+async fn source_for(state: &AppState, connection_id: &str) -> Result<Source, String> {
+    match crate::server::remote::route(state, connection_id) {
+        Ok(crate::server::remote::Route::Remote(conn)) => {
+            crate::server::ops::watch::source(state, conn).await
+        }
+        Ok(crate::server::remote::Route::Local(client)) => Ok(Source::Local(client)),
+        Err(_) => Err(format!("connection {connection_id} is not open")),
+    }
+}
+
+/// An open cursor of either kind: raw events, and its own resume token.
+enum Cursor {
+    Local(mongodb::change_stream::ChangeStream<mongodb::bson::RawDocumentBuf>),
+    Remote(crate::server::ops::watch::RemoteCursor),
+}
+
+impl Cursor {
+    async fn next(&mut self) -> Option<Result<mongodb::bson::RawDocumentBuf, String>> {
+        use futures::StreamExt;
+        match self {
+            Cursor::Local(stream) => stream.next().await.map(|r| r.map_err(|e| e.to_string())),
+            Cursor::Remote(stream) => stream.next().await,
+        }
+    }
+
+    fn resume_token(&self) -> Option<ResumeToken> {
+        match self {
+            Cursor::Local(stream) => stream.resume_token(),
+            Cursor::Remote(stream) => stream.resume_token(),
+        }
+    }
+}
+
 async fn read_cursor(
     state_streams: &Arc<LiveStream>,
-    client: mongodb::Client,
+    source: Source,
     my_generation: u64,
     predecessor: u64,
 ) {
-    use futures::StreamExt;
-
     await_handover(state_streams, predecessor, HANDOVER_GRACE).await;
 
     let pipeline = build_pipeline(&state_streams.operation_types);
@@ -498,13 +539,6 @@ async fn read_cursor(
         .lock()
         .ok()
         .and_then(|p| p.token.clone());
-    // Every reader records through this, so the rule about stragglers lives in
-    // one place.
-    let remember = |token: Option<ResumeToken>| {
-        if let Ok(mut point) = state_streams.resume_token.lock() {
-            record_resume_token(&mut point, my_generation, token);
-        }
-    };
 
     // Three levels, one cursor shape: a collection, a database, or the whole
     // deployment. The driver exposes `watch()` at each of those, so the only
@@ -514,6 +548,27 @@ async fn read_cursor(
     // it is the type that carries `resume_token()` — the cursor's own position,
     // which is the only way to learn that it has advanced past batches holding
     // nothing this stream was watching for.
+    let client = match source {
+        Source::Local(client) => client,
+        Source::Remote(conn, session) => {
+            let opened = crate::server::ops::watch::open(
+                &conn,
+                &session,
+                state_streams.database.as_deref(),
+                state_streams.collection.as_deref(),
+                &state_streams.operation_types,
+                resume,
+            )
+            .await;
+            match opened {
+                Ok(cursor) => {
+                    follow_cursor(state_streams, Cursor::Remote(cursor), my_generation).await
+                }
+                Err(err) => fail_stream(state_streams, my_generation, &err, None),
+            }
+            return;
+        }
+    };
     let started = match (&state_streams.database, &state_streams.collection) {
         (Some(database), Some(collection)) => {
             let coll = client
@@ -544,15 +599,26 @@ async fn read_cursor(
         }
     };
 
-    let mut stream = match started {
-        Ok(stream) => stream.with_type::<mongodb::bson::RawDocumentBuf>(),
-        Err(err) => {
-            // Opening a cursor is not instant, and a pause during it retires
-            // this task while its `watch()` is still in flight. Reporting that
-            // failure would put the panel in Error over a cursor nobody is
-            // reading — `publish_status` drops it for exactly that reason.
-            fail_stream(state_streams, my_generation, &err.to_string(), None);
-            return;
+    match started {
+        Ok(stream) => {
+            let stream = Cursor::Local(stream.with_type::<mongodb::bson::RawDocumentBuf>());
+            follow_cursor(state_streams, stream, my_generation).await
+        }
+        // Opening a cursor is not instant, and a pause during it retires this
+        // task while its `watch()` is still in flight. Reporting that failure
+        // would put the panel in Error over a cursor nobody is reading —
+        // `publish_status` drops it for exactly that reason.
+        Err(err) => fail_stream(state_streams, my_generation, &err.to_string(), None),
+    }
+}
+
+/// Read an open cursor until this reader is retired or the cursor ends.
+async fn follow_cursor(state_streams: &Arc<LiveStream>, mut stream: Cursor, my_generation: u64) {
+    // Every reader records through this, so the rule about stragglers lives in
+    // one place.
+    let remember = |token: Option<ResumeToken>| {
+        if let Ok(mut point) = state_streams.resume_token.lock() {
+            record_resume_token(&mut point, my_generation, token);
         }
     };
 
@@ -622,12 +688,7 @@ async fn read_cursor(
                 push_event(&mut buffer, flat, BUFFER_CAP);
             }
             Some(Err(err)) => {
-                fail_stream(
-                    state_streams,
-                    my_generation,
-                    &err.to_string(),
-                    stream.resume_token(),
-                );
+                fail_stream(state_streams, my_generation, &err, stream.resume_token());
                 return;
             }
             // The cursor ended on its own: an invalidate after the watched
@@ -715,17 +776,14 @@ pub fn retire_reader(stream: &LiveStream) -> u64 {
     claimed
 }
 
-fn spawn_reader(state: &AppState, stream: Arc<LiveStream>) -> Result<(), String> {
-    let client = crate::require_real_client(state, &stream.connection_id)
-        .map_err(|_| format!("connection {} is not open", stream.connection_id))?;
+fn spawn_reader(stream: Arc<LiveStream>, source: Source) {
     let my_generation = retire_reader(&stream);
     // Whoever was reading before is the one whose final resume point this
     // reader has to wait for. Recorded here rather than derived from the
     // generation: retirement and spawning both bump it, so the arithmetic
     // would be a guess.
     let predecessor = stream.spawned.swap(my_generation, Ordering::SeqCst);
-    tauri::async_runtime::spawn(run_stream(stream, client, my_generation, predecessor));
-    Ok(())
+    tauri::async_runtime::spawn(run_stream(stream, source, my_generation, predecessor));
 }
 
 /// Begin watching. `collection` omitted watches the whole database.
@@ -739,7 +797,27 @@ pub async fn start_change_stream(
     collection: Option<String>,
     operation_types: Vec<String>,
 ) -> Result<(), String> {
-    crate::server::routes::refuse_deferred(&state, "start_change_stream", &[&connection_id])?;
+    start_change_stream_impl(
+        &state,
+        window.label(),
+        stream_id,
+        connection_id,
+        database,
+        collection,
+        operation_types,
+    )
+    .await
+}
+
+pub(crate) async fn start_change_stream_impl(
+    state: &AppState,
+    window: &str,
+    stream_id: String,
+    connection_id: String,
+    database: Option<String>,
+    collection: Option<String>,
+    operation_types: Vec<String>,
+) -> Result<(), String> {
     let database = database.filter(|d| !d.trim().is_empty());
     let collection = collection.filter(|c| !c.trim().is_empty());
 
@@ -747,7 +825,7 @@ pub async fn start_change_stream(
     // renderer that would have stopped this, and a start still in flight when
     // the sweep ran would otherwise install a tail nobody can ever reach — the
     // same reason `start_mongosh_session` consults this set.
-    if crate::window_is_closed(&state, window.label())? {
+    if crate::window_is_closed(state, window)? {
         return Ok(());
     }
 
@@ -804,16 +882,23 @@ pub async fn start_change_stream(
         .as_ref()
         .and_then(|e| e.status.lock().ok().map(|s| s.clone()));
 
-    let _ = stop_change_stream_impl(&state, &stream_id);
-
     // A filter change on a paused tail stays paused. Rebuilding the cursor is
     // unavoidable — the `$match` is server-side — but it must not resume the
     // watch behind the user's back, and with the token inherited above nothing
     // buffered during the pause is lost when they do resume.
     let was_paused = inherited_status == Some(StreamStatus::Paused);
+    // Found before the old stream is stopped. A local connection answers at
+    // once; a server connection first needs its session.
+    let source = if was_paused {
+        None
+    } else {
+        Some(source_for(state, &connection_id).await)
+    };
+
+    let _ = stop_change_stream_impl(state, &stream_id);
 
     let stream = Arc::new(LiveStream {
-        window: Mutex::new(window.label().to_string()),
+        window: Mutex::new(window.to_string()),
         buffer: Mutex::new(StreamBuffer::default()),
         status: Mutex::new(if was_paused {
             StreamStatus::Paused
@@ -835,22 +920,15 @@ pub async fn start_change_stream(
     // close sweep. No reader while paused: it starts when the user resumes,
     // from the token carried over above.
     let mut spawn_failed = None;
-    let installed = install_stream_with(
-        &state,
-        &stream_id,
-        stream.clone(),
-        window.label(),
-        |stream| {
-            if was_paused {
-                return Ok(());
-            }
-            if let Err(err) = spawn_reader(&state, stream) {
-                // Reported below, once the map lock is out of the way.
-                spawn_failed = Some(err);
-            }
-            Ok(())
-        },
-    )?;
+    let installed = install_stream_with(state, &stream_id, stream.clone(), window, |stream| {
+        match source {
+            Some(Ok(source)) => spawn_reader(stream, source),
+            // Reported below, once the map lock is out of the way.
+            Some(Err(err)) => spawn_failed = Some(err),
+            None => {}
+        }
+        Ok(())
+    })?;
     if !installed {
         return Ok(());
     }
@@ -877,6 +955,15 @@ pub async fn poll_change_stream(
     stream_id: String,
     after_seq: Option<u64>,
 ) -> Result<Option<StreamPoll>, String> {
+    poll_change_stream_impl(&state, window.label(), &stream_id, after_seq)
+}
+
+pub(crate) fn poll_change_stream_impl(
+    state: &AppState,
+    window: &str,
+    stream_id: &str,
+    after_seq: Option<u64>,
+) -> Result<Option<StreamPoll>, String> {
     // Absent rather than an error: nothing is watching under this id, which a
     // caller can act on. Closing a tab and immediately reopening the same
     // target can land the old stop after the new start, and a panel that could
@@ -884,7 +971,7 @@ pub async fn poll_change_stream(
     // Whoever is polling is the window that is really watching this, and the
     // lookup and the claim happen together so the close sweep cannot land
     // between them.
-    let Some(stream) = find_and_claim(&state, &stream_id, window.label())? else {
+    let Some(stream) = find_and_claim(state, stream_id, window)? else {
         return Ok(None);
     };
     let (events, dropped, last_seq) = {
@@ -953,7 +1040,11 @@ pub async fn pause_change_stream(
     state: tauri::State<'_, AppState>,
     stream_id: String,
 ) -> Result<(), String> {
-    let stream = get_stream(&state, &stream_id)?;
+    pause_change_stream_impl(&state, &stream_id)
+}
+
+pub(crate) fn pause_change_stream_impl(state: &AppState, stream_id: &str) -> Result<(), String> {
+    let stream = get_stream(state, stream_id)?;
     // Retires the reader. It may be blocked in `next().await` and only notice
     // when the next event arrives — which is fine, because it checks the
     // generation before pushing anything.
@@ -971,14 +1062,23 @@ pub async fn resume_change_stream(
     state: tauri::State<'_, AppState>,
     stream_id: String,
 ) -> Result<(), String> {
-    let stream = get_stream(&state, &stream_id)?;
+    resume_change_stream_impl(&state, &stream_id).await
+}
+
+pub(crate) async fn resume_change_stream_impl(
+    state: &AppState,
+    stream_id: &str,
+) -> Result<(), String> {
+    let stream = get_stream(state, stream_id)?;
     if let Ok(mut s) = stream.status.lock() {
         *s = StreamStatus::Starting;
     }
     if let Ok(mut e) = stream.error.lock() {
         *e = None;
     }
-    spawn_reader(&state, stream)
+    let source = source_for(state, &stream.connection_id).await?;
+    spawn_reader(stream, source);
+    Ok(())
 }
 
 /// Look a stream up and note that this window is the one watching it.
@@ -1102,6 +1202,39 @@ pub fn stop_change_streams_for_window(
     }
     stopped.sort();
     Ok(stopped)
+}
+
+/// Stop every tail on an MQLens Server connection: the vault is locking, and a
+/// server watch, once open, would go on streaming without the key.
+pub fn stop_server_streams(state: &AppState) -> Result<(), String> {
+    stop_streams_where(state, |stream| {
+        matches!(state.server.remote(&stream.connection_id), Ok(Some(_)))
+    })
+}
+
+/// Stop the tails on one connection, which is going away.
+pub fn stop_streams_on(state: &AppState, connection_id: &str) -> Result<(), String> {
+    stop_streams_where(state, |stream| stream.connection_id == connection_id)
+}
+
+fn stop_streams_where(
+    state: &AppState,
+    doomed: impl Fn(&LiveStream) -> bool,
+) -> Result<(), String> {
+    let stopped: Vec<Arc<LiveStream>> = {
+        let mut streams = state.change_streams.lock_safe()?;
+        let ids: Vec<String> = streams
+            .iter()
+            .filter(|(_, stream)| doomed(stream))
+            .map(|(id, _)| id.clone())
+            .collect();
+        ids.iter().filter_map(|id| streams.remove(id)).collect()
+    };
+    // Outside the map lock, as in `stop_change_streams_for_window`.
+    for stream in &stopped {
+        retire_reader(stream);
+    }
+    Ok(())
 }
 
 pub fn stop_change_stream_impl(state: &AppState, stream_id: &str) -> Result<(), String> {

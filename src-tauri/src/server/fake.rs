@@ -12,6 +12,9 @@ use crate::server::pb::mqlens::v1::auth_service_server::{AuthService, AuthServic
 use crate::server::pb::mqlens::v1::capability_service_server::{
     CapabilityService, CapabilityServiceServer,
 };
+use crate::server::pb::mqlens::v1::change_stream_service_server::{
+    ChangeStreamService, ChangeStreamServiceServer,
+};
 use crate::server::pb::mqlens::v1::connection_service_client::ConnectionServiceClient;
 use crate::server::pb::mqlens::v1::connection_service_server::{
     ConnectionService, ConnectionServiceServer,
@@ -36,6 +39,7 @@ use crate::server::pb::mqlens::v1::{
     ListConnectionsResponse, LoginRequest, LoginResponse, LogoutRequest, LogoutResponse, Principal,
     RefreshRequest, WhoAmIRequest, WhoAmIResponse,
 };
+use crate::server::pb::mqlens::v1::{watch_response, WatchRequest, WatchResponse};
 use crate::server::pb::mqlens::v1::{
     AggregateRequest, CountRequest, CountResponse, ExplainRequest, ExplainResponse, FindBatch,
     FindRequest,
@@ -176,6 +180,14 @@ pub(crate) struct FakeState {
     /// Ends every new shell at once with an error, as a mongosh that cannot
     /// start would.
     pub shell_start_failure: bool,
+    /// Each Watch received, and how many have ended because the client let
+    /// go. A watch opens with `watch_opening` as its resume token, then sends
+    /// `watch_messages` and stays open; `watch_failure` refuses it instead.
+    pub watches: Vec<WatchRequest>,
+    pub watches_ended: u32,
+    pub watch_opening: Vec<u8>,
+    pub watch_messages: Vec<WatchResponse>,
+    pub watch_failure: Option<Status>,
     /// What RenameDatabaseDetailed reports.
     pub rename_result: RenameDatabaseResult,
     /// The id InsertDocument reports.
@@ -417,6 +429,12 @@ impl Fake {
                 shell_input: Vec::new(),
                 shells_ended: 0,
                 shell_start_failure: false,
+                watches: Vec::new(),
+                watches_ended: 0,
+                watch_opening: mongodb::bson::to_vec(&mongodb::bson::doc! { "_data": "opened" })
+                    .unwrap(),
+                watch_messages: Vec::new(),
+                watch_failure: None,
                 rename_result: RenameDatabaseResult {
                     collections: 2,
                     documents: 40,
@@ -596,6 +614,7 @@ impl Fake {
                 .add_service(GridFsServiceServer::new(self.clone()))
                 .add_service(DeploymentUserServiceServer::new(self.clone()))
                 .add_service(ShellServiceServer::new(self.clone()))
+                .add_service(ChangeStreamServiceServer::new(self.clone()))
                 .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener)),
         );
         format!("http://{addr}")
@@ -1622,6 +1641,44 @@ impl ShellService for Fake {
                 }
             }
             fake.with(|s| s.shells_ended += 1);
+        });
+        Ok(Response::new(Box::pin(
+            tokio_stream::wrappers::ReceiverStream::new(rx),
+        )))
+    }
+}
+
+type WatchStream = Pin<Box<dyn tokio_stream::Stream<Item = Result<WatchResponse, Status>> + Send>>;
+
+#[tonic::async_trait]
+impl ChangeStreamService for Fake {
+    type WatchStream = WatchStream;
+
+    async fn watch(&self, request: Request<WatchRequest>) -> Result<Response<WatchStream>, Status> {
+        let (opening, messages) = {
+            let mut state = self.state.lock().unwrap();
+            state.authorize_connection(&request, &request.get_ref().connection_id)?;
+            state.watches.push(request.get_ref().clone());
+            if let Some(failure) = state.watch_failure.clone() {
+                return Err(failure);
+            }
+            (state.watch_opening.clone(), state.watch_messages.clone())
+        };
+        let (tx, rx) = tokio::sync::mpsc::channel(64);
+        let fake = self.clone();
+        tokio::spawn(async move {
+            let opened = WatchResponse {
+                kind: Some(watch_response::Kind::ResumeToken(opening.into())),
+            };
+            if tx.send(Ok(opened)).await.is_ok() {
+                for message in messages {
+                    if tx.send(Ok(message)).await.is_err() {
+                        break;
+                    }
+                }
+                tx.closed().await;
+            }
+            fake.with(|s| s.watches_ended += 1);
         });
         Ok(Response::new(Box::pin(
             tokio_stream::wrappers::ReceiverStream::new(rx),

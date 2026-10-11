@@ -10,6 +10,7 @@ pub(crate) mod query;
 pub(crate) mod shell;
 pub(crate) mod stats;
 pub(crate) mod users;
+pub(crate) mod watch;
 pub(crate) mod write;
 
 use crate::server::accounts;

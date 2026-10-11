@@ -995,7 +995,11 @@ pub async fn disconnect_db_impl(state: &AppState, id: &str) -> Result<(), String
         meta.remove(id);
     }
     // A connection made through an MQLens Server has no driver client to
-    // drop; what makes it routable goes instead.
+    // drop; what makes it routable goes instead, and its tails with it: a
+    // server watch, once open, streams on its own.
+    if state.server.remote(id)?.is_some() {
+        change_streams::stop_streams_on(state, id)?;
+    }
     state.server.forget_remote(id)?;
     // A human disconnecting (Sidebar's onDisconnect -> this command) an
     // agent-opened connection must also drop it from the MCP server's own
@@ -3844,6 +3848,7 @@ async fn vault_lock(
     // Same for server mode: its sessions store their tokens under the key. The
     // stored tokens stay, so unlocking resumes them without signing in again.
     state.server.clear().await;
+    change_streams::stop_server_streams(&state)?;
     Ok(())
 }
 

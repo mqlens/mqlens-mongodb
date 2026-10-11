@@ -516,13 +516,16 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
             reason: "One-shot mongosh scripts are not available on MQLens Server connections; use the shell",
         },
     },
-    // Not served yet
     CommandRoute {
         command: "start_change_stream",
-        serve: Serve::Deferred {
-            reason: "Change streams are not available on MQLens Server connections yet",
+        serve: Serve::Rpc {
+            procedures: &["/mqlens.v1.ChangeStreamService/Watch"],
+            class: OpClass::Read,
+            since: 4,
+            adapter: true,
         },
     },
+    // Not served yet
     CommandRoute {
         command: "start_dump_task",
         serve: Serve::Deferred {
@@ -802,8 +805,8 @@ mod tests {
             Err(TASKS.to_string())
         );
         assert_eq!(
-            refuse_deferred(&state, "start_change_stream", &["r1"]),
-            Err("Change streams are not available on MQLens Server connections yet".to_string())
+            refuse_deferred(&state, "start_dump_task", &["r1"]),
+            Err(DATABASE_TOOLS.to_string())
         );
         assert_eq!(
             refuse_deferred(&state, "start_collection_copy", &["local"]),

@@ -76,6 +76,8 @@ Optional variables:
   differs from `MQLENS_TEST_MONGO_URI` (a server in a container, for example).
 - `MQLENS_TEST_SERVER_SHELL=1`: also check the shell, which needs `mongosh` on
   the server's host.
+- `MQLENS_TEST_SERVER_CHANGE_STREAMS=1`: also check change streams, which need
+  the MongoDB to be a replica set.
 
 ## Build
 

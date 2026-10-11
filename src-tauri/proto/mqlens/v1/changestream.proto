@@ -1,0 +1,37 @@
+syntax = "proto3";
+package mqlens.v1;
+option go_package = "github.com/mqlens/mqlens-server/gen/mqlens/v1;mqlensv1";
+
+// ChangeStreamService tails a deployment's changes. API version 4.
+service ChangeStreamService {
+  // Streams until the client cancels or the cursor ends (an invalidate, such
+  // as the watched collection being dropped). Needs a replica set or a
+  // sharded cluster; a standalone refuses with MongoDB's own message.
+  rpc Watch(WatchRequest) returns (stream WatchResponse);
+}
+
+message WatchRequest {
+  string connection_id = 1;
+  // Empty watches every database the connection can read.
+  string database = 2;
+  // Empty watches the whole database.
+  string collection = 3;
+  // Keep only these operation types (insert, update, ...); empty keeps all.
+  repeated string operation_types = 4;
+  // Resume after this resume token, as BSON. Empty starts from now.
+  bytes resume_after = 5;
+}
+
+// Exactly one field is set. The first message is always a resume_token, sent
+// once the cursor is open: changes made after it are seen.
+message WatchResponse {
+  oneof kind {
+    // A change event's BSON exactly as MongoDB sent it. Its _id is its resume
+    // token.
+    bytes event = 1;
+    // The cursor's resume token, sent when the cursor moved without an
+    // event: a filtered stream mostly moves that way, and a client that only
+    // kept event tokens would resume further and further behind.
+    bytes resume_token = 2;
+  }
+}
