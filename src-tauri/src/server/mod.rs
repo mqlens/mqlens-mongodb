@@ -39,6 +39,10 @@ pub(crate) struct ServerRuntime {
     /// Remote connections by desktop connection id. A std mutex: routing is
     /// synchronous, like the local client lookup it sits beside.
     remotes: Mutex<HashMap<String, Arc<remote::RemoteConn>>>,
+    /// Held while a connection reads its mode and is registered, and while a
+    /// mode changes: a change either lands before the connection reads it, or
+    /// finds the connection open and is refused.
+    pub(crate) modes: tokio::sync::Mutex<()>,
 }
 
 impl ServerRuntime {
@@ -102,6 +106,17 @@ impl ServerRuntime {
     }
 
     /// The remote connection behind a desktop id, if it is one.
+    /// Whether one of `account_id`'s server connections is open as `remote_id`.
+    pub(crate) fn is_open(&self, account_id: &str, remote_id: &str) -> Result<bool, String> {
+        let remotes = self
+            .remotes
+            .lock()
+            .map_err(|_| "internal state lock poisoned".to_string())?;
+        Ok(remotes
+            .values()
+            .any(|r| r.account_id == account_id && r.remote_id == remote_id))
+    }
+
     pub(crate) fn remote(&self, id: &str) -> Result<Option<Arc<remote::RemoteConn>>, String> {
         let remotes = self
             .remotes

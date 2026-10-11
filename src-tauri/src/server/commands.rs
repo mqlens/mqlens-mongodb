@@ -112,6 +112,12 @@ pub(crate) async fn connection_mode_set_impl(
     mode: crate::connections::ConnectionMode,
 ) -> Result<ServerAccountView, String> {
     let key = state.require_key()?;
+    let _modes = state.server.modes.lock().await;
+    if state.server.is_open(account_id, remote_id)? {
+        return Err(
+            "Disconnect this MQLens Server connection before changing its mode".to_string(),
+        );
+    }
     let file = path.to_path_buf();
     let (account_id, remote_id) = (account_id.to_string(), remote_id.to_string());
     blocking(move || {
@@ -296,6 +302,14 @@ pub(crate) async fn server_connect_impl(
         )
         .await?;
 
+    // The mode is read, and the connection registered, under the lock a mode
+    // change takes, so no change can slip in between them.
+    let _modes = state.server.modes.lock().await;
+    let mode = accounts::find(path, &key, account_id)?
+        .connection_modes
+        .get(remote_id)
+        .copied()
+        .unwrap_or_default();
     let id = uuid::Uuid::new_v4().to_string();
     state.mocks.lock_safe()?.insert(id.clone(), false);
     state.server.add_remote(RemoteConn {
@@ -316,11 +330,7 @@ pub(crate) async fn server_connect_impl(
         id,
         mongo_version: version.version,
         op_classes,
-        mode: account
-            .connection_modes
-            .get(remote_id)
-            .copied()
-            .unwrap_or_default(),
+        mode,
     })
 }
 
@@ -836,6 +846,43 @@ mod tests {
             .unwrap();
 
         assert_eq!(connected.mode, ConnectionMode::ReadOnly);
+    }
+
+    // An open connection keeps the mode it opened in: changing it is refused
+    // until the connection closes, so a change can never be saved while an
+    // open connection runs in the old mode.
+    #[tokio::test]
+    async fn the_mode_of_an_open_connection_cannot_change() {
+        use crate::connections::ConnectionMode;
+        let env = Env::new().await;
+        let state = signed_in_state(&env).await;
+        let connected = server_connect_impl(&state, &env.path, &env.account.id, "c1")
+            .await
+            .unwrap();
+
+        let err = connection_mode_set_impl(
+            &state,
+            &env.path,
+            &env.account.id,
+            "c1",
+            ConnectionMode::ReadOnly,
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("Disconnect"), "{err}");
+
+        crate::disconnect_db_impl(&state, &connected.id)
+            .await
+            .unwrap();
+        connection_mode_set_impl(
+            &state,
+            &env.path,
+            &env.account.id,
+            "c1",
+            ConnectionMode::ReadOnly,
+        )
+        .await
+        .unwrap();
     }
 
     // A server connection becomes a desktop connection: a new id, with what
