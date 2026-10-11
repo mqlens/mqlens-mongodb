@@ -102,6 +102,35 @@ pub(crate) async fn account_save_impl(
     Ok(view)
 }
 
+/// Chooses the connection mode for one of the account's server connections,
+/// applied each time it is connected. `Normal` clears the choice.
+pub(crate) async fn connection_mode_set_impl(
+    state: &AppState,
+    path: &Path,
+    account_id: &str,
+    remote_id: &str,
+    mode: crate::connections::ConnectionMode,
+) -> Result<ServerAccountView, String> {
+    let key = state.require_key()?;
+    let file = path.to_path_buf();
+    let (account_id, remote_id) = (account_id.to_string(), remote_id.to_string());
+    blocking(move || {
+        accounts::update(&file, &key, |all| {
+            let account = all
+                .iter_mut()
+                .find(|a| a.id == account_id)
+                .ok_or_else(|| "MQLens Server account not found".to_string())?;
+            if mode == crate::connections::ConnectionMode::Normal {
+                account.connection_modes.remove(&remote_id);
+            } else {
+                account.connection_modes.insert(remote_id, mode);
+            }
+            Ok(account.view())
+        })
+    })
+    .await
+}
+
 pub(crate) async fn account_delete_impl(
     state: &AppState,
     path: &Path,
@@ -519,6 +548,45 @@ mod tests {
             allow_insecure_http: false,
             extra_ca_pem: None,
         }
+    }
+
+    // A server connection's mode is kept with its account, survives an edit
+    // of the account, and choosing normal clears it.
+    #[tokio::test]
+    async fn a_connection_mode_is_kept_with_its_account() {
+        use crate::connections::ConnectionMode;
+        let env = Env::new().await;
+        let state = unlocked();
+        let id = env.account.id.clone();
+
+        let view = connection_mode_set_impl(&state, &env.path, &id, "c1", ConnectionMode::ReadOnly)
+            .await
+            .unwrap();
+        assert_eq!(
+            view.connection_modes.get("c1"),
+            Some(&ConnectionMode::ReadOnly)
+        );
+        let edited = account_save_impl(&state, &env.path, form(&env))
+            .await
+            .unwrap();
+        assert_eq!(
+            edited.connection_modes.get("c1"),
+            Some(&ConnectionMode::ReadOnly)
+        );
+
+        let view = connection_mode_set_impl(&state, &env.path, &id, "c1", ConnectionMode::Normal)
+            .await
+            .unwrap();
+        assert!(view.connection_modes.is_empty());
+        assert!(connection_mode_set_impl(
+            &state,
+            &env.path,
+            "nope",
+            "c1",
+            ConnectionMode::ReadOnly
+        )
+        .await
+        .is_err());
     }
 
     #[tokio::test]

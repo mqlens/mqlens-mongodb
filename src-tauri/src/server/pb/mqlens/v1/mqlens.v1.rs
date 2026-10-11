@@ -124,11 +124,18 @@ pub struct AuditEvent {
     pub duration_ms: i64,
     #[prost(string, tag="11")]
     pub status: ::prost::alloc::string::String,
+    /// The request that produced the event, as its error reports it to the
+    /// client: "(MQLens Server correlation id: ...)".
+    #[prost(string, tag="12")]
+    pub correlation_id: ::prost::alloc::string::String,
 }
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ListAuditEventsRequest {
     #[prost(int64, tag="1")]
     pub limit: i64,
+    /// Only the events of the request with this correlation id, when set.
+    #[prost(string, tag="2")]
+    pub correlation_id: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ListAuditEventsResponse {

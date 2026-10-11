@@ -302,6 +302,7 @@
     "empty": "Noch keine MQLens-Server-Konten.",
     "extraCa": "Zusätzliches CA-Zertifikat (PEM, optional)",
     "identityLocked": "Trenne die Verbindungen dieses Kontos, um Server, Mandant oder E-Mail zu ändern.",
+    "modeFor": "Modus für {{name}}",
     "name": "Name",
     "noConnections": "Dieser Server teilt keine Verbindungen mit dir.",
     "password": "Passwort",

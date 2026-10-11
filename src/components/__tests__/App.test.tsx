@@ -3008,6 +3008,32 @@ describe('App Component', () => {
       );
     });
 
+    it('(b-server-mode) reconnecting a server profile restores the mode chosen for it', async () => {
+      const serverSnapshot = JSON.parse(
+        JSON.stringify(workspaceSnapshot).split('profile:p1').join('profile:server:a1:c1').split('"p1"').join('"server:a1:c1"'),
+      );
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'workspace_get') return Promise.resolve(serverSnapshot);
+        if (cmd === 'server_account_list') {
+          return Promise.resolve([{ id: 'a1', name: 'Work', url: 'https://s', tenant: 'acme', email: 'd@x.test', allowInsecureHttp: false, signedIn: true, connectionModes: { c1: 'read_only' } }]);
+        }
+        if (cmd === 'server_connect') return Promise.resolve({ id: 'remote-conn-1', mongoVersion: '8.0.0', opClasses: ['read'] });
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+
+      const [firstBtn] = await screen.findAllByRole('button', { name: /Reconnect Prod Cluster/ });
+      fireEvent.click(firstBtn);
+
+      await waitFor(() =>
+        expect(calls.find((c) => c.cmd === 'set_connection_meta' && c.args?.id === 'remote-conn-1')?.args?.mode).toBe('read_only'),
+      );
+    });
+
     it('(b-server-signin) a server profile that needs a sign-in offers one, in the connection manager', async () => {
       const serverSnapshot = JSON.parse(
         JSON.stringify(workspaceSnapshot).split('profile:p1').join('profile:server:a1:c1').split('"p1"').join('"server:a1:c1"'),

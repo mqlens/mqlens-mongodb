@@ -7,9 +7,11 @@
 //! and `ServerAccountView`, the only shape the webview receives, leaves it out.
 //! The account password is used once to sign in and never stored.
 
+use crate::connections::ConnectionMode;
 use crate::server::channel;
 use crate::server::session::KeySource;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
@@ -51,6 +53,10 @@ pub(crate) struct ServerAccount {
     /// The stored session, while signed in.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refresh_token: Option<String>,
+    /// The connection mode chosen for each of the account's server
+    /// connections, by their id on the server. Absent means normal.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub connection_modes: BTreeMap<String, ConnectionMode>,
 }
 
 // Written by hand so a logged or panicking account never prints its token.
@@ -69,6 +75,7 @@ impl std::fmt::Debug for ServerAccount {
                 "refresh_token",
                 &self.refresh_token.as_ref().map(|_| "<redacted>"),
             )
+            .field("connection_modes", &self.connection_modes)
             .finish()
     }
 }
@@ -105,6 +112,7 @@ impl ServerAccount {
             allow_insecure_http: self.allow_insecure_http,
             extra_ca_pem: self.extra_ca_pem.clone(),
             signed_in: self.refresh_token.is_some(),
+            connection_modes: self.connection_modes.clone(),
             warning: None,
         }
     }
@@ -122,6 +130,7 @@ pub(crate) struct ServerAccountView {
     pub allow_insecure_http: bool,
     pub extra_ca_pem: Option<String>,
     pub signed_in: bool,
+    pub connection_modes: BTreeMap<String, ConnectionMode>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub warning: Option<String>,
 }
@@ -174,6 +183,7 @@ impl ServerAccountInput {
             allow_insecure_http: self.allow_insecure_http,
             extra_ca_pem,
             refresh_token: None,
+            connection_modes: BTreeMap::new(),
         })
     }
 }
@@ -303,6 +313,9 @@ pub(crate) fn save_account_while(
                 if previous.same_identity(&account) {
                     account.refresh_token = previous.refresh_token.clone();
                 }
+                // Kept even across a change of server or user: a mode only
+                // ever restricts, so keeping one is never less safe.
+                account.connection_modes = previous.connection_modes.clone();
                 *existing = account.clone();
                 Ok((account, Some(previous)))
             }

@@ -239,6 +239,7 @@
     "empty": "No MQLens Server accounts yet.",
     "extraCa": "Extra CA certificate (PEM, optional)",
     "identityLocked": "Disconnect this account's connections to change its server, tenant or email.",
+    "modeFor": "Mode for {{name}}",
     "name": "Name",
     "noConnections": "This server shares no connections with you.",
     "password": "Password",

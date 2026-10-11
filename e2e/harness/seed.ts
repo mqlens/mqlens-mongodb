@@ -81,6 +81,8 @@ export interface ServerAccountSeed {
   signOutUnconfirmed?: boolean;
   /** The warning server_account_save returns. */
   saveWarning?: string;
+  /** The mode chosen for each server connection, by id; absent is normal. */
+  connectionModes?: Record<string, string>;
 }
 
 export interface McpSeed {

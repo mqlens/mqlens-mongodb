@@ -93,9 +93,14 @@ message AuditEvent {
   int64 doc_count = 9;
   int64 duration_ms = 10;
   string status = 11;
+  // The request that produced the event, as its error reports it to the
+  // client: "(MQLens Server correlation id: ...)".
+  string correlation_id = 12;
 }
 message ListAuditEventsRequest {
   int64 limit = 1;
+  // Only the events of the request with this correlation id, when set.
+  string correlation_id = 2;
 }
 message ListAuditEventsResponse {
   repeated AuditEvent events = 1;

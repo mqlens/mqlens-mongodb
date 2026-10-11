@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useId, useState } from 'react';
+import type { ConnectionMode } from '@/lib/connection';
 import { useTranslation } from 'react-i18next';
 import { LogIn, LogOut, Pencil, Plus, Server, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -14,7 +15,9 @@ import {
   listServerAccounts,
   listServerConnections,
   saveServerAccount,
+  serverConnectionMode,
   serverProfileId,
+  setServerConnectionMode,
   signInToServer,
   signOutOfServer,
   type RemoteConnectionView,
@@ -23,8 +26,8 @@ import {
 } from '@/lib/serverMode';
 
 interface Props {
-  /** A server connection is open under `id`; remember it by `profileId`. */
-  onConnect: (id: string, name: string, profileId: string) => void;
+  /** A server connection is open under `id`, in `mode`; remember it by `profileId`. */
+  onConnect: (id: string, name: string, profileId: string, mode: ConnectionMode) => void;
   /** Profile ids already open; their server connections are not connected again. */
   activeProfileIds?: readonly string[];
 }
@@ -121,7 +124,14 @@ export const ServerAccountsPanel: React.FC<Props> = ({ onConnect, activeProfileI
   const connect = (account: ServerAccountView, remote: RemoteConnectionView) =>
     run(async () => {
       const result = await connectToServer(account.id, remote.id);
-      onConnect(result.id, remote.name, serverProfileId(account.id, remote.id));
+      onConnect(result.id, remote.name, serverProfileId(account.id, remote.id), serverConnectionMode(account, remote.id));
+    });
+
+  // Kept with the account and applied each time the connection is opened.
+  const chooseMode = (account: ServerAccountView, remote: RemoteConnectionView, mode: ConnectionMode) =>
+    run(async () => {
+      const view = await setServerConnectionMode(account.id, remote.id, mode);
+      setAccounts((prev) => prev.map((a) => (a.id === view.id ? view : a)));
     });
 
   return (
@@ -218,6 +228,17 @@ export const ServerAccountsPanel: React.FC<Props> = ({ onConnect, activeProfileI
                         <Badge key={c} variant="secondary" className="text-[10px]">{c}</Badge>
                       ))}
                     </span>
+                    <select
+                      className="h-7 rounded-md border border-input bg-background px-1.5 text-xs"
+                      aria-label={t('serverAccounts.modeFor', { name: remote.name })}
+                      value={serverConnectionMode(account, remote.id)}
+                      disabled={busy}
+                      onChange={(e) => chooseMode(account, remote, e.target.value as ConnectionMode)}
+                    >
+                      <option value="normal">{t('connectionMode.normal.label')}</option>
+                      <option value="confirm_destructive">{t('connectionMode.confirmDestructive.label')}</option>
+                      <option value="read_only">{t('connectionMode.readOnly.label')}</option>
+                    </select>
                     <Button
                       size="sm"
                       disabled={busy || open}

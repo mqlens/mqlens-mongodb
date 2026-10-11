@@ -4,4 +4,4 @@ in the server repository, then refresh this copy and the generated client with
 scripts/refresh-server-protos.sh.
 
 repository: https://github.com/mqlens/mqlens-server
-commit: bae8c62573ef9ed6b5b061af54c611175df67a66
+commit: 795977a40375d6e061da4981b6b93f401f94392d

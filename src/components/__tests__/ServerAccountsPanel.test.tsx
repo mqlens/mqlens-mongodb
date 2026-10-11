@@ -4,6 +4,7 @@ import type { ReactElement } from 'react';
 import { DialogProvider } from '../dialogs/DialogProvider';
 import { ServerAccountsPanel } from '../ServerAccountsPanel';
 import type { ServerAccountView } from '@/lib/serverMode';
+import type { ConnectionMode } from '@/lib/connection';
 
 const mockInvoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({
@@ -53,6 +54,14 @@ function backend(accounts: ServerAccountView[], over: Record<string, unknown> = 
         return Promise.resolve(REMOTES);
       case 'server_connect':
         return Promise.resolve({ id: 'conn-9', mongoVersion: '8.0.0', opClasses: ['read'] });
+      case 'server_connection_mode_set': {
+        accounts = accounts.map((a) =>
+          a.id === args!.accountId
+            ? { ...a, connectionModes: { ...a.connectionModes, [args!.remoteId as string]: args!.mode as ConnectionMode } }
+            : a
+        );
+        return Promise.resolve(accounts.find((a) => a.id === args!.accountId));
+      }
       default:
         return Promise.resolve(null);
     }
@@ -132,8 +141,29 @@ describe('ServerAccountsPanel', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'Connect to Orders' }));
 
-    await waitFor(() => expect(onConnect).toHaveBeenCalledWith('conn-9', 'Orders', 'server:a1:c1'));
+    await waitFor(() => expect(onConnect).toHaveBeenCalledWith('conn-9', 'Orders', 'server:a1:c1', 'normal'));
     expect(calls('server_connect')[0][1]).toEqual({ accountId: 'a1', remoteId: 'c1' });
+  });
+
+  it('connects in the mode chosen for the connection, and remembers a new choice', async () => {
+    backend([account({ signedIn: true, connectionModes: { c1: 'read_only' } })]);
+    const onConnect = vi.fn();
+    render(<ServerAccountsPanel onConnect={onConnect} />);
+
+    const mode = await screen.findByRole('combobox', { name: 'Mode for Orders' });
+    expect(mode).toHaveValue('read_only');
+    fireEvent.click(screen.getByRole('button', { name: 'Connect to Orders' }));
+    await waitFor(() => expect(onConnect).toHaveBeenCalledWith('conn-9', 'Orders', 'server:a1:c1', 'read_only'));
+
+    fireEvent.change(mode, { target: { value: 'confirm_destructive' } });
+    await waitFor(() =>
+      expect(calls('server_connection_mode_set')[0]?.[1]).toEqual({
+        accountId: 'a1',
+        remoteId: 'c1',
+        mode: 'confirm_destructive',
+      })
+    );
+    await waitFor(() => expect(mode).toHaveValue('confirm_destructive'));
   });
 
   it('signs out', async () => {

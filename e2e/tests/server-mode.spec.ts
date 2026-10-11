@@ -267,6 +267,25 @@ test.describe('A server connection', () => {
     for (const command of blocked) expect(await app.calls(command)).toHaveLength(0);
   });
 
+  test('opens a server connection in the mode chosen for it', async ({ app, page }) => {
+    await app.open({ servers, serverAccounts: [WORK({ signedIn: true, connections: [ORDERS] })] });
+    await openServerAccounts(page);
+
+    await page.getByRole('combobox', { name: 'Mode for Orders' }).selectOption('read_only');
+    await expect(page.getByRole('combobox', { name: 'Mode for Orders' })).toHaveValue('read_only');
+    await button(page, 'Connect to Orders').click();
+
+    await sidebar(page).getByText('sales_db', { exact: true }).click();
+    await dismissHoverCards(page);
+    await sidebar(page).getByText('Collections', { exact: true }).first().click();
+    await dismissHoverCards(page);
+    await sidebar(page).getByText('customers', { exact: true }).click();
+    await dismissHoverCards(page);
+    await expect(view(page)).toContainText('Alice Smith');
+    await expect(view(page).getByTestId('insert-doc-btn')).toBeDisabled();
+    expect(await app.calls('server_connection_mode_set')).toHaveLength(1);
+  });
+
   test('says when the role, not the server, rules an action out', async ({ app, page }) => {
     const ROLE = 'Your role on this MQLens Server connection does not allow this';
     const blocked = ['drop_database', 'current_ops', 'kill_op', 'read_profile', 'set_profiling_level'];

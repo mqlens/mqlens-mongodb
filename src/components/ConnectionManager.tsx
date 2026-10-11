@@ -1921,7 +1921,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
           <ScrollArea className="min-h-0 flex-1">
             <div className="p-4">
               <ServerAccountsPanel
-                onConnect={(id, name, profileId) => onConnect(id, name, '', profileId, undefined, 'normal')}
+                onConnect={(id, name, profileId, mode) => onConnect(id, name, '', profileId, undefined, mode)}
                 activeProfileIds={activeConnections.map((c) => c.profileId)}
               />
             </div>

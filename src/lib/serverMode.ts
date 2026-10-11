@@ -1,6 +1,7 @@
 // Server mode: MQLens Server accounts, sign-in, and connections made through a
 // server rather than straight to MongoDB.
 import { invoke } from '@tauri-apps/api/core';
+import type { ConnectionMode } from './connection';
 import type { ConnectionEntry } from '../workspace/workspaceStore';
 
 /** An MQLens Server account as the backend shows it: never a token. */
@@ -13,6 +14,8 @@ export interface ServerAccountView {
   allowInsecureHttp: boolean;
   extraCaPem?: string | null;
   signedIn: boolean;
+  /** The mode chosen for each of the account's server connections, by id; absent is normal. */
+  connectionModes?: Record<string, ConnectionMode>;
   /** Set when an action half-succeeded, e.g. a session could not be ended on its server. */
   warning?: string;
 }
@@ -80,6 +83,11 @@ export const listServerConnections = (accountId: string) =>
   invoke<RemoteConnectionView[]>('server_list_connections', { accountId });
 export const connectToServer = (accountId: string, remoteId: string) =>
   invoke<ServerConnectResult>('server_connect', { accountId, remoteId });
+export const setServerConnectionMode = (accountId: string, remoteId: string, mode: ConnectionMode) =>
+  invoke<ServerAccountView>('server_connection_mode_set', { accountId, remoteId, mode });
+/** The mode `account` keeps for one of its server connections. */
+export const serverConnectionMode = (account: ServerAccountView | undefined, remoteId: string): ConnectionMode =>
+  account?.connectionModes?.[remoteId] ?? 'normal';
 
 const PREFIX = 'server:';
 

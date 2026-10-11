@@ -3493,6 +3493,35 @@ async fn server_sign_in(
 }
 
 #[tauri::command]
+async fn server_connection_mode_set(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    account_id: String,
+    remote_id: String,
+    mode: connections::ConnectionMode,
+) -> Result<server::accounts::ServerAccountView, String> {
+    let started = Instant::now();
+    let path = connections::get_server_accounts_path(&app_handle);
+    let result =
+        server::commands::connection_mode_set_impl(&state, &path, &account_id, &remote_id, mode)
+            .await;
+    audit::maybe_record_result(
+        &state,
+        None,
+        None,
+        None,
+        "server_connection_mode_set",
+        audit::OpClass::Write,
+        Some("ui"),
+        started,
+        &format!("set the mode of MQLens Server connection {remote_id} to {mode:?}"),
+        None,
+        &result,
+    );
+    result
+}
+
+#[tauri::command]
 async fn server_sign_out(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
@@ -4386,6 +4415,7 @@ pub fn run() {
             server_account_delete,
             server_sign_in,
             server_sign_out,
+            server_connection_mode_set,
             server_list_connections,
             server_connect,
             connections::test_connection_uri,

@@ -50,9 +50,10 @@ why: *Your role on this MQLens Server connection does not allow this* when a
 different role would allow it (ask your server administrator), or *Not
 available on MQLens Server yet* when no role would.
 
-Server connections always open in the normal connection mode. The read-only
-and confirm-destructive modes cannot be chosen for them yet, so your role on
-the server is what limits you.
+Each server connection also has a connection mode, chosen beside **Connect**:
+normal, confirm destructive or read-only, as for a local connection. The
+choice is kept with the account and applies every time the connection opens,
+on top of what your role allows.
 
 ## Not available through a server yet
 
