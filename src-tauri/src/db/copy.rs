@@ -90,12 +90,7 @@ impl CopySide {
                     .documents(db, collection, filter)
                     .await
                     .map_err(|e| format!("Source query failed: {}", e))?
-                    .map(|r| {
-                        r.map_err(|e| format!("Cursor read error: {}", e))
-                            .and_then(|d| {
-                                RawDocumentBuf::from_document(&d).map_err(|e| e.to_string())
-                            })
-                    }),
+                    .map(|r| r.map_err(|e| format!("Cursor read error: {}", e))),
             ),
         })
     }
@@ -120,7 +115,7 @@ impl CopySide {
                 .estimated_document_count()
                 .await
                 .ok(),
-            CopySide::Remote(remote) => remote.count(db, collection, &Document::new()).await.ok(),
+            CopySide::Remote(remote) => remote.estimated_count(db, collection).await.ok(),
         }
     }
 }

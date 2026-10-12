@@ -288,4 +288,35 @@ mod tests {
         let err = import(&state, &id, "[]", "skip").await.unwrap_err();
         assert!(err.contains("does not allow write"), "{err}");
     }
+
+    // An import of large documents goes to the server in requests of
+    // bounded size, as a copy does.
+    #[tokio::test]
+    async fn large_imported_documents_are_sent_in_bounded_requests() {
+        let env = Env::new().await;
+        let (state, id) = writing(&env).await;
+        let pad = "x".repeat(1_500_000);
+        let text = format!(
+            "[{}]",
+            (100..106)
+                .map(|i| format!(r#"{{"_id": {i}, "pad": "{pad}"}}"#))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+
+        let done = finished(&state, &import(&state, &id, &text, "skip").await.unwrap()).await;
+
+        assert_eq!(done.status, "completed", "{:?}", done.error);
+        let sizes: Vec<usize> = env
+            .fake
+            .with(|s| s.writes.clone())
+            .into_iter()
+            .filter_map(|w| match w {
+                FakeWrite::InsertMany(r) => Some(r.documents_bson.iter().map(|d| d.len()).sum()),
+                _ => None,
+            })
+            .collect();
+        assert!(sizes.len() > 1, "{sizes:?}");
+        assert!(sizes.iter().all(|n| *n <= 4 << 20), "{sizes:?}");
+    }
 }
