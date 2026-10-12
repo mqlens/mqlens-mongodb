@@ -378,6 +378,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
           onClick: undefined,
         }
       : {};
+  // A paste destination is written to: closed when the connection cannot
+  // copy at all, or when its role cannot write (a viewer can still copy from
+  // it, which is why copying alone is read-only).
+  const pasteGate = (connectionId: string) =>
+    gate(connectionId, isCommandBlocked?.(connectionId, 'start_collection_copy') ? 'start_collection_copy' : 'insert_document');
 
   const helpLinks = [
     { Icon: Bug, label: t('help.reportBug'), url: `${REPO_URL}/issues/new?template=bug_report.yml` },
@@ -1926,7 +1931,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <span>{t('ctx.refreshDatabases')}</span>
                   </ContextMenuItem>
                   {canPaste && (
-                    <ContextMenuItem className={ctxItemClass} onClick={() => onPasteInto?.(conn.id)} {...gate(conn.id, 'start_collection_copy')}>
+                    <ContextMenuItem className={ctxItemClass} onClick={() => onPasteInto?.(conn.id)} {...pasteGate(conn.id)}>
                       <ClipboardPaste />
                       <span>{t('ctx.pasteHere')}</span>
                     </ContextMenuItem>
@@ -2136,7 +2141,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                               {t('ctx.copyDatabaseTo')}
                             </ContextMenuItem>
                             {canPaste && (
-                              <ContextMenuItem className={ctxItemClass} onClick={() => onPasteInto?.(conn.id, dbName)} {...gate(conn.id, 'start_collection_copy')}>
+                              <ContextMenuItem className={ctxItemClass} onClick={() => onPasteInto?.(conn.id, dbName)} {...pasteGate(conn.id)}>
                                 <ClipboardPaste />
                                 <span>{t('ctx.pasteHere')}</span>
                               </ContextMenuItem>
