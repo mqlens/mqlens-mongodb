@@ -981,19 +981,25 @@ pub(crate) async fn start_change_stream_from(
         return Ok(());
     }
     if let Some(err) = spawn_failed {
-        // The panel polls for status, so a failure to start has to land THERE
-        // rather than only in a rejected promise the caller drops. A mock
-        // connection has no client at all, and would otherwise show "starting"
-        // for ever.
-        if let Ok(mut s) = stream.status.lock() {
-            *s = StreamStatus::Unsupported;
-        }
-        if let Ok(mut e) = stream.error.lock() {
-            *e = Some(err.clone());
-        }
-        return Err(err);
+        return Err(cannot_start(&stream, err));
     }
     Ok(())
+}
+
+/// Records why a stream could not start, and returns it.
+///
+/// The panel polls for status, so a failure to start has to land THERE rather
+/// than only in a rejected promise the caller drops. A mock connection has no
+/// client at all, and a server account can be gone; either would otherwise
+/// show "starting" for ever.
+fn cannot_start(stream: &LiveStream, err: String) -> String {
+    if let Ok(mut s) = stream.status.lock() {
+        *s = StreamStatus::Unsupported;
+    }
+    if let Ok(mut e) = stream.error.lock() {
+        *e = Some(err.clone());
+    }
+    err
 }
 
 #[tauri::command]
@@ -1124,7 +1130,10 @@ pub(crate) async fn resume_change_stream_impl(
     if let Ok(mut e) = stream.error.lock() {
         *e = None;
     }
-    let source = source_for(state, &stream.connection_id).await?;
+    let source = match source_for(state, &stream.connection_id).await {
+        Ok(source) => source,
+        Err(err) => return Err(cannot_start(&stream, err)),
+    };
     spawn_if_installed(state, stream_id, stream, source)
 }
 
@@ -1151,7 +1160,11 @@ pub(crate) fn spawn_if_installed(
         .lock()
         .map(|status| *status == StreamStatus::Starting)
         .unwrap_or(false);
-    if installed && starting && still_open(state, &source) {
+    if installed && starting {
+        if !still_open(state, &source) {
+            let err = format!("connection {} is not open", stream.connection_id);
+            return Err(cannot_start(&stream, err));
+        }
         spawn_reader(stream, source);
     }
     Ok(())

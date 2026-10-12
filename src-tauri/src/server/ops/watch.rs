@@ -3,7 +3,6 @@
 
 use crate::change_streams::Source;
 use crate::server::channel::client;
-use crate::server::errors;
 use crate::server::ops::session_for;
 use crate::server::pb::mqlens::v1::change_stream_service_client::ChangeStreamServiceClient;
 use crate::server::pb::mqlens::v1::{watch_response, WatchRequest, WatchResponse};
@@ -78,10 +77,12 @@ impl RemoteCursor {
     /// the token is only written between awaits.
     pub(crate) async fn next(&mut self) -> Option<Result<RawDocumentBuf, String>> {
         loop {
-            let kind = match self.stream.message().await {
+            // Bounded: the server sends at least a moving resume token while
+            // nothing changes, so a long silence is a stall.
+            let kind = match next_message(&mut self.stream).await {
                 Ok(Some(message)) => message.kind,
                 Ok(None) => return None,
-                Err(status) => return Some(Err(errors::describe(&status))),
+                Err(err) => return Some(Err(err)),
             };
             match kind {
                 Some(watch_response::Kind::Event(bytes)) => {
@@ -517,5 +518,38 @@ mod tests {
         let poll = poll_until(&state, |p| p.status != StreamStatus::Starting).await;
 
         assert_eq!(poll.status, StreamStatus::Error);
+    }
+    // An open watch that stops hearing from the server says so: a server
+    // watch hears at least a moving resume token while nothing changes.
+    #[tokio::test]
+    async fn a_watch_that_falls_silent_gives_up() {
+        let env = Env::new().await;
+        let (state, id) = watching(&env).await;
+
+        start(&state, &id).await.unwrap();
+        poll_until(&state, |p| p.status == StreamStatus::Running).await;
+        let poll = poll_until(&state, |p| p.status != StreamStatus::Running).await;
+
+        assert_eq!(poll.status, StreamStatus::Error);
+    }
+
+    // A resume that cannot find its server source says why on the stream:
+    // the panel polls for status, not for the rejected resume.
+    #[tokio::test]
+    async fn a_resume_that_cannot_reach_its_account_says_why() {
+        let env = Env::new().await;
+        let (state, id) = watching(&env).await;
+        start(&state, &id).await.unwrap();
+        poll_until(&state, |p| p.status == StreamStatus::Running).await;
+        pause_change_stream_impl(&state, "s1").unwrap();
+
+        *state.vault_key.lock().unwrap() = None;
+        assert!(resume_change_stream_impl(&state, "s1").await.is_err());
+
+        let poll = poll_change_stream_impl(&state, "main", "s1", None)
+            .unwrap()
+            .unwrap();
+        assert_ne!(poll.status, StreamStatus::Starting);
+        assert!(poll.error.is_some());
     }
 }
