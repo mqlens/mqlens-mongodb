@@ -997,10 +997,13 @@ pub async fn disconnect_db_impl(state: &AppState, id: &str) -> Result<(), String
     // A connection made through an MQLens Server has no driver client to
     // drop; what makes it routable goes instead, and its tails with it: a
     // server watch, once open, streams on its own.
-    if state.server.remote(id)?.is_some() {
+    // Forgotten first: a tail starting meanwhile then finds the connection
+    // gone, or is installed in time for the sweep.
+    let remote = state.server.remote(id)?.is_some();
+    state.server.forget_remote(id)?;
+    if remote {
         change_streams::stop_streams_on(state, id)?;
     }
-    state.server.forget_remote(id)?;
     // A human disconnecting (Sidebar's onDisconnect -> this command) an
     // agent-opened connection must also drop it from the MCP server's own
     // `session_connections` bookkeeping (final whole-branch review fix

@@ -188,6 +188,9 @@ pub(crate) struct FakeState {
     pub watch_opening: Vec<u8>,
     pub watch_messages: Vec<WatchResponse>,
     pub watch_failure: Option<Status>,
+    /// Answers a watch but never sends its opening message, as a server that
+    /// stalls after its headers would.
+    pub watch_stall_opening: bool,
     /// What RenameDatabaseDetailed reports.
     pub rename_result: RenameDatabaseResult,
     /// The id InsertDocument reports.
@@ -435,6 +438,7 @@ impl Fake {
                     .unwrap(),
                 watch_messages: Vec::new(),
                 watch_failure: None,
+                watch_stall_opening: false,
                 rename_result: RenameDatabaseResult {
                     collections: 2,
                     documents: 40,
@@ -1655,14 +1659,18 @@ impl ChangeStreamService for Fake {
     type WatchStream = WatchStream;
 
     async fn watch(&self, request: Request<WatchRequest>) -> Result<Response<WatchStream>, Status> {
-        let (opening, messages) = {
+        let (opening, messages, stall) = {
             let mut state = self.state.lock().unwrap();
             state.authorize_connection(&request, &request.get_ref().connection_id)?;
             state.watches.push(request.get_ref().clone());
             if let Some(failure) = state.watch_failure.clone() {
                 return Err(failure);
             }
-            (state.watch_opening.clone(), state.watch_messages.clone())
+            (
+                state.watch_opening.clone(),
+                state.watch_messages.clone(),
+                state.watch_stall_opening,
+            )
         };
         let (tx, rx) = tokio::sync::mpsc::channel(64);
         let fake = self.clone();
@@ -1670,7 +1678,9 @@ impl ChangeStreamService for Fake {
             let opened = WatchResponse {
                 kind: Some(watch_response::Kind::ResumeToken(opening.into())),
             };
-            if tx.send(Ok(opened)).await.is_ok() {
+            if stall {
+                tx.closed().await;
+            } else if tx.send(Ok(opened)).await.is_ok() {
                 for message in messages {
                     if tx.send(Ok(message)).await.is_err() {
                         break;

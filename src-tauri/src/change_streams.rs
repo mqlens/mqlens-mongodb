@@ -502,6 +502,29 @@ async fn source_for(state: &AppState, connection_id: &str) -> Result<Source, Str
     }
 }
 
+/// Whether `source` can still be read. Finding a server connection's source
+/// awaits its session, and a disconnect, vault lock or reset can finish in
+/// the meantime; their sweeps would never see a stream installed after them.
+/// Asked under the stream map lock, which those sweeps take after letting go
+/// of the connection or the key.
+fn still_open(state: &AppState, source: &Source) -> bool {
+    match source {
+        Source::Local(_) => true,
+        Source::Remote(conn, _) => {
+            let unlocked = state
+                .vault_key
+                .lock()
+                .map(|key| key.is_some())
+                .unwrap_or(false);
+            let connected = matches!(
+                state.server.remote(&conn.desktop_id),
+                Ok(Some(current)) if Arc::ptr_eq(&current, conn)
+            );
+            unlocked && connected
+        }
+    }
+}
+
 /// An open cursor of either kind: raw events, and its own resume token.
 enum Cursor {
     Local(mongodb::change_stream::ChangeStream<mongodb::bson::RawDocumentBuf>),
@@ -818,6 +841,32 @@ pub(crate) async fn start_change_stream_impl(
     collection: Option<String>,
     operation_types: Vec<String>,
 ) -> Result<(), String> {
+    let id = connection_id.clone();
+    start_change_stream_from(
+        state,
+        window,
+        stream_id,
+        connection_id,
+        database,
+        collection,
+        operation_types,
+        source_for(state, &id),
+    )
+    .await
+}
+
+/// Starts watching, reading from what `source` finds when it is needed.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn start_change_stream_from(
+    state: &AppState,
+    window: &str,
+    stream_id: String,
+    connection_id: String,
+    database: Option<String>,
+    collection: Option<String>,
+    operation_types: Vec<String>,
+    source: impl std::future::Future<Output = Result<Source, String>>,
+) -> Result<(), String> {
     let database = database.filter(|d| !d.trim().is_empty());
     let collection = collection.filter(|c| !c.trim().is_empty());
 
@@ -889,11 +938,7 @@ pub(crate) async fn start_change_stream_impl(
     let was_paused = inherited_status == Some(StreamStatus::Paused);
     // Found before the old stream is stopped. A local connection answers at
     // once; a server connection first needs its session.
-    let source = if was_paused {
-        None
-    } else {
-        Some(source_for(state, &connection_id).await)
-    };
+    let source = if was_paused { None } else { Some(source.await) };
 
     let _ = stop_change_stream_impl(state, &stream_id);
 
@@ -922,7 +967,10 @@ pub(crate) async fn start_change_stream_impl(
     let mut spawn_failed = None;
     let installed = install_stream_with(state, &stream_id, stream.clone(), window, |stream| {
         match source {
-            Some(Ok(source)) => spawn_reader(stream, source),
+            Some(Ok(source)) if still_open(state, &source) => spawn_reader(stream, source),
+            Some(Ok(_)) => {
+                spawn_failed = Some(format!("connection {} is not open", stream.connection_id))
+            }
             // Reported below, once the map lock is out of the way.
             Some(Err(err)) => spawn_failed = Some(err),
             None => {}
@@ -1103,7 +1151,7 @@ pub(crate) fn spawn_if_installed(
         .lock()
         .map(|status| *status == StreamStatus::Starting)
         .unwrap_or(false);
-    if installed && starting {
+    if installed && starting && still_open(state, &source) {
         spawn_reader(stream, source);
     }
     Ok(())

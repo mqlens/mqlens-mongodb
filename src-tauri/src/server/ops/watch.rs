@@ -9,7 +9,7 @@ use crate::server::pb::mqlens::v1::change_stream_service_client::ChangeStreamSer
 use crate::server::pb::mqlens::v1::{watch_response, WatchRequest, WatchResponse};
 use crate::server::remote::RemoteConn;
 use crate::server::routes;
-use crate::server::session::Speaking;
+use crate::server::session::{next_message, Speaking};
 use crate::AppState;
 use mongodb::bson::{Bson, RawDocumentBuf};
 use mongodb::change_stream::event::ResumeToken;
@@ -61,15 +61,15 @@ pub(crate) async fn open(
         stream,
         token: None,
     };
-    match cursor.stream.message().await {
-        Ok(Some(WatchResponse {
+    // Bounded: a server can answer and then never say the cursor is open.
+    match next_message(&mut cursor.stream).await? {
+        Some(WatchResponse {
             kind: Some(watch_response::Kind::ResumeToken(token)),
-        })) => {
+        }) => {
             cursor.token = token_from(&token)?;
             Ok(cursor)
         }
-        Ok(_) => Err("MQLens Server ended the change stream before it opened".to_string()),
-        Err(status) => Err(errors::describe(&status)),
+        _ => Err("MQLens Server ended the change stream before it opened".to_string()),
     }
 }
 
@@ -446,5 +446,76 @@ mod tests {
             env.fake.with(|s| s.api_versions_seen.borrow().clone()),
             vec![4]
         );
+    }
+    /// Starts with a source found before `teardown` ran, as a start whose
+    /// source lookup overlapped it would.
+    async fn start_after(
+        state: &AppState,
+        id: &str,
+        teardown: impl std::future::Future<Output = ()>,
+    ) -> Result<(), String> {
+        let conn = state.server.remote(id).unwrap().unwrap();
+        let found = super::source(state, conn).await.unwrap();
+        teardown.await;
+        crate::change_streams::start_change_stream_from(
+            state,
+            "main",
+            "s1".to_string(),
+            id.to_string(),
+            Some("orders".to_string()),
+            Some("items".to_string()),
+            Vec::new(),
+            async { Ok(found) },
+        )
+        .await
+    }
+
+    // A start that found its server connection just before it was closed
+    // opens no watch on it: nothing would be left to stop it.
+    #[tokio::test]
+    async fn a_start_overlapping_a_disconnect_opens_no_watch() {
+        let env = Env::new().await;
+        let (state, id) = watching(&env).await;
+
+        let started = start_after(&state, &id, async {
+            crate::disconnect_db_impl(&state, &id).await.unwrap();
+        })
+        .await;
+
+        assert!(started.is_err());
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(env.fake.with(|s| s.watches.is_empty()));
+    }
+
+    // Nor one that overlapped the vault locking.
+    #[tokio::test]
+    async fn a_start_overlapping_a_vault_lock_opens_no_watch() {
+        let env = Env::new().await;
+        let (state, id) = watching(&env).await;
+
+        let started = start_after(&state, &id, async {
+            *state.vault_key.lock().unwrap() = None;
+            state.server.clear().await;
+            stop_server_streams(&state).unwrap();
+        })
+        .await;
+
+        assert!(started.is_err());
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(env.fake.with(|s| s.watches.is_empty()));
+    }
+
+    // A server that answers a watch but never says its cursor is open does
+    // not leave the tab starting for ever.
+    #[tokio::test]
+    async fn a_watch_that_never_opens_gives_up() {
+        let env = Env::new().await;
+        env.fake.with(|s| s.watch_stall_opening = true);
+        let (state, id) = watching(&env).await;
+
+        start(&state, &id).await.unwrap();
+        let poll = poll_until(&state, |p| p.status != StreamStatus::Starting).await;
+
+        assert_eq!(poll.status, StreamStatus::Error);
     }
 }
