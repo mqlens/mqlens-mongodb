@@ -6,8 +6,10 @@ use crate::server::ops::copy::RemoteSide;
 use mongodb::bson::Document;
 
 /// `documents::write_imported_docs` on a server connection, mode for mode.
-/// Imported documents are parsed from Extended JSON first, so a replacement
-/// carries no key a type wrapper could be mistaken for.
+/// Every import format is parsed into documents first (JSON and CSV as
+/// Extended JSON, BSON through `Document::from_reader`), and each reads a
+/// sub-document shaped like a type wrapper as that type, as local mode does;
+/// so a replacement sent as Extended JSON carries no such key to misread.
 pub(crate) async fn write_imported_docs(
     remote: &RemoteSide,
     database: &str,
