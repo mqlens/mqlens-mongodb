@@ -9,7 +9,7 @@ use crate::server::pb::mqlens::v1::change_stream_service_client::ChangeStreamSer
 use crate::server::pb::mqlens::v1::{watch_response, WatchRequest, WatchResponse};
 use crate::server::remote::RemoteConn;
 use crate::server::routes;
-use crate::server::session::AccountSession;
+use crate::server::session::Speaking;
 use crate::AppState;
 use mongodb::bson::{Bson, RawDocumentBuf};
 use mongodb::change_stream::event::ResumeToken;
@@ -34,7 +34,7 @@ pub(crate) struct RemoteCursor {
 /// Opens a watch, returning once the server says its cursor is open.
 pub(crate) async fn open(
     conn: &RemoteConn,
-    session: &AccountSession,
+    session: &Speaking,
     database: Option<&str>,
     collection: Option<&str>,
     operation_types: &[String],
@@ -338,5 +338,113 @@ mod tests {
         assert!(poll_change_stream_impl(&state, "main", "s1", None)
             .unwrap()
             .is_none());
+    }
+    // A vault reset ends every server watch too: the account and its session
+    // are gone, but an open watch would go on streaming.
+    #[tokio::test]
+    async fn resetting_the_vault_ends_every_server_watch() {
+        let env = Env::new().await;
+        let (state, id) = watching(&env).await;
+        start(&state, &id).await.unwrap();
+        poll_until(&state, |p| p.status == StreamStatus::Running).await;
+
+        crate::server::commands::reset_accounts_with_policy(
+            &state,
+            &env.path,
+            Some(crate::server::fake::KEY),
+            Vec::new(),
+            true,
+        )
+        .await
+        .unwrap()
+        .finish()
+        .await
+        .unwrap();
+
+        eventually(|| env.fake.with(|s| s.watches_ended) == 1).await;
+        assert!(poll_change_stream_impl(&state, "main", "s1", None)
+            .unwrap()
+            .is_none());
+    }
+
+    // Resuming a server watch waits for its session, and the tab can close in
+    // the meantime: a stream stopped by then gets no reader nobody could stop.
+    #[tokio::test]
+    async fn a_stream_stopped_while_resuming_is_not_restarted() {
+        let env = Env::new().await;
+        let (state, id) = watching(&env).await;
+        start(&state, &id).await.unwrap();
+        poll_until(&state, |p| p.status == StreamStatus::Running).await;
+        pause_change_stream_impl(&state, "s1").unwrap();
+        eventually(|| env.fake.with(|s| s.watches_ended) == 1).await;
+
+        // What resuming holds once its source is found...
+        let stream = state
+            .change_streams
+            .lock()
+            .unwrap()
+            .get("s1")
+            .cloned()
+            .unwrap();
+        let conn = state.server.remote(&id).unwrap().unwrap();
+        let source = super::source(&state, conn).await.unwrap();
+        // ...after the tab closed.
+        crate::change_streams::stop_change_stream_impl(&state, "s1").unwrap();
+        crate::change_streams::spawn_if_installed(&state, "s1", stream, source).unwrap();
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(env.fake.with(|s| s.watches.len()), 1);
+    }
+
+    // Each connection speaks the API version it agreed, even when another
+    // connection on the same account agreed another: one made before the
+    // server was upgraded, one after.
+    #[tokio::test]
+    async fn each_connection_speaks_its_own_api_version() {
+        use crate::server::channel::client;
+        use crate::server::pb::mqlens::v1::metadata_service_client::MetadataServiceClient;
+        use crate::server::pb::mqlens::v1::MongoVersionRequest;
+        let env = Env::new().await;
+        let (state, older) = connected(&env).await;
+        env.fake.with(|s| {
+            s.max_api_version = 4;
+            let mut second = s.connections[0].clone();
+            second.id = "c2".to_string();
+            s.connections.push(second);
+        });
+        let newer =
+            crate::server::commands::server_connect_impl(&state, &env.path, &env.account.id, "c2")
+                .await
+                .unwrap()
+                .id;
+        let newer = state.server.remote(&newer).unwrap().unwrap();
+        let older = state.server.remote(&older).unwrap().unwrap();
+        assert_eq!((older.api_version, newer.api_version), (2, 4));
+
+        let speaking = crate::server::ops::session_for(&state, &newer)
+            .await
+            .unwrap();
+        crate::server::ops::session_for(&state, &older)
+            .await
+            .unwrap();
+        env.fake.with(|s| s.api_versions_seen.borrow_mut().clear());
+        speaking
+            .call(
+                MongoVersionRequest {
+                    connection_id: "c2".to_string(),
+                },
+                |channel, request| async move {
+                    client!(MetadataServiceClient, channel)
+                        .mongo_version(request)
+                        .await
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            env.fake.with(|s| s.api_versions_seen.borrow().clone()),
+            vec![4]
+        );
     }
 }

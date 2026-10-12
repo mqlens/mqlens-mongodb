@@ -15,9 +15,8 @@ pub(crate) mod write;
 
 use crate::server::accounts;
 use crate::server::remote::RemoteConn;
-use crate::server::session::AccountSession;
+use crate::server::session::Speaking;
 use crate::AppState;
-use std::sync::Arc;
 
 /// Signed in to the fake's account and connected to its connection "c1";
 /// returns the state and the desktop connection id.
@@ -48,7 +47,7 @@ const ACCOUNT_REPOINTED: &str = "This connection's MQLens Server account now sig
 pub(crate) async fn session_for(
     state: &AppState,
     conn: &RemoteConn,
-) -> Result<Arc<AccountSession>, String> {
+) -> Result<Speaking, String> {
     let key = state.require_key()?;
     let account = accounts::find(&conn.accounts_path, &key, &conn.account_id)?;
     // Repointed at another server or user since the connection was made: its
@@ -63,7 +62,5 @@ pub(crate) async fn session_for(
             crate::server::commands::token_store(state, &conn.accounts_path),
         )
         .await?;
-    // A session resumed since the connection was made has agreed nothing yet.
-    session.speak(conn.api_version);
-    Ok(session)
+    Ok(Speaking::new(session, conn.api_version))
 }

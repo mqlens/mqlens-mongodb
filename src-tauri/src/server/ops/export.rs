@@ -8,7 +8,7 @@ use crate::server::pb::mqlens::v1::data_service_client::DataServiceClient;
 use crate::server::pb::mqlens::v1::{AggregateRequest, CountRequest, FindBatch, FindRequest};
 use crate::server::remote::RemoteConn;
 use crate::server::routes;
-use crate::server::session::{next_message, AccountSession};
+use crate::server::session::{next_message, Speaking};
 use crate::AppState;
 use mongodb::bson::{Bson, Document};
 use std::collections::VecDeque;
@@ -23,7 +23,7 @@ pub(crate) type Documents = Pin<Box<dyn futures::Stream<Item = Result<Document, 
 /// running as a background task needs nothing else.
 #[derive(Clone)]
 pub(crate) struct ExportFrom {
-    session: Arc<AccountSession>,
+    session: Speaking,
     conn: Arc<RemoteConn>,
     database: String,
     collection: String,

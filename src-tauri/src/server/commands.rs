@@ -290,8 +290,7 @@ pub(crate) async fn server_connect_impl(
         capabilities.min_api_version,
         capabilities.max_api_version,
     )?;
-    session.speak(api_version);
-    let version = session
+    let version = crate::server::session::Speaking::new(session.clone(), api_version)
         .call(
             MongoVersionRequest {
                 connection_id: remote_id.to_string(),
@@ -483,6 +482,8 @@ async fn reset_accounts_within(
     limit: Duration,
 ) -> Result<PendingSignOuts, String> {
     state.server.clear().await;
+    // An open server watch streams on its own, session or not.
+    crate::change_streams::stop_server_streams(state)?;
     // One locked step checks the key, takes every stored token and removes the
     // vault's other files, the accounts file and then the vault metadata, last,
     // so a failure part way leaves a vault that still opens. A password change

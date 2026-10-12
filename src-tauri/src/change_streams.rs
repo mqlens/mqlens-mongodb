@@ -487,7 +487,7 @@ pub(crate) enum Source {
     Local(mongodb::Client),
     Remote(
         Arc<crate::server::remote::RemoteConn>,
-        Arc<crate::server::session::AccountSession>,
+        crate::server::session::Speaking,
     ),
 }
 
@@ -1077,7 +1077,35 @@ pub(crate) async fn resume_change_stream_impl(
         *e = None;
     }
     let source = source_for(state, &stream.connection_id).await?;
-    spawn_reader(stream, source);
+    spawn_if_installed(state, stream_id, stream, source)
+}
+
+/// Starts a reader for `stream` if it is still the one watching under
+/// `stream_id`, and still meant to run.
+///
+/// Finding a server connection's source awaits its session, and in the
+/// meantime the tab can close, the connection go or the vault lock, any of
+/// which removes the stream; or the user can pause it again. A reader started
+/// on a removed stream would hold a server cursor nothing can reach to stop.
+/// Checked under the map lock, as the close sweep and installs are.
+pub(crate) fn spawn_if_installed(
+    state: &AppState,
+    stream_id: &str,
+    stream: Arc<LiveStream>,
+    source: Source,
+) -> Result<(), String> {
+    let streams = state.change_streams.lock_safe()?;
+    let installed = streams
+        .get(stream_id)
+        .is_some_and(|current| Arc::ptr_eq(current, &stream));
+    let starting = stream
+        .status
+        .lock()
+        .map(|status| *status == StreamStatus::Starting)
+        .unwrap_or(false);
+    if installed && starting {
+        spawn_reader(stream, source);
+    }
     Ok(())
 }
 
