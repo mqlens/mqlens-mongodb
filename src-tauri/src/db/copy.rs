@@ -797,6 +797,19 @@ async fn start_collection_copy_inner(
             .await?,
         ))
     };
+    // Two desktop connections can reach one server connection; the guard
+    // above, by id, cannot see that.
+    if let Some((CopySide::Remote(s), CopySide::Remote(t))) = &sides {
+        if s.same_connection(t)
+            && source_db == target_db
+            && source_collection == target_collection
+        {
+            return Err(
+                "Source and target are the same collection — copy would overwrite itself"
+                    .to_string(),
+            );
+        }
+    }
 
     let task_id = Uuid::new_v4().to_string();
     let task = TaskInfo {
@@ -1002,6 +1015,13 @@ async fn start_database_copy_inner(
             .await?,
         ))
     };
+    if let Some((CopySide::Remote(s), CopySide::Remote(t))) = &sides {
+        if s.same_connection(t) && source_db == target_db {
+            return Err(
+                "Source and target database are the same — copy would overwrite itself".to_string(),
+            );
+        }
+    }
 
     let task_id = Uuid::new_v4().to_string();
     let task = TaskInfo {

@@ -100,6 +100,14 @@ impl RemoteSide {
         Ok(Self { conn, session })
     }
 
+    /// Whether two sides reach the same server connection, and so the same
+    /// deployment, through whichever accounts or desktop connections.
+    pub(crate) fn same_connection(&self, other: &RemoteSide) -> bool {
+        self.conn.identity.url == other.conn.identity.url
+            && self.conn.identity.tenant == other.conn.identity.tenant
+            && self.conn.remote_id == other.conn.remote_id
+    }
+
     fn reader(&self, database: &str, collection: &str) -> ExportFrom {
         ExportFrom::with(
             self.session.clone(),
@@ -769,5 +777,59 @@ mod tests {
             .flatten()
             .collect();
         assert_eq!(sent, vec![repeated]);
+    }
+
+    // Two desktop connections to the same server connection are one
+    // deployment: copying a collection onto itself through them, which
+    // overwrite would drop before reading, is refused like any self-copy.
+    #[tokio::test]
+    async fn a_copy_onto_itself_through_two_connections_is_refused() {
+        let env = Env::new().await;
+        env.fake.with(|s| {
+            s.collections = vec![CollectionInfo {
+                name: "items".into(),
+                r#type: "collection".into(),
+            }]
+        });
+        let (state, first) = copying(&env).await;
+        let second =
+            crate::server::commands::server_connect_impl(&state, &env.path, &env.account.id, "c1")
+                .await
+                .unwrap()
+                .id;
+
+        let collection = start_collection_copy_impl(
+            &state,
+            &first,
+            "orders",
+            "items",
+            &second,
+            "orders",
+            "items",
+            None,
+            false,
+            "overwrite".to_string(),
+        )
+        .await
+        .unwrap_err();
+        let database = start_database_copy_impl(
+            &state,
+            &first,
+            "orders",
+            &second,
+            "orders",
+            None,
+            false,
+            false,
+            "overwrite".to_string(),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(collection.contains("same collection"), "{collection}");
+        assert!(database.contains("same"), "{database}");
+        assert!(!writes(&env)
+            .iter()
+            .any(|w| matches!(w, FakeWrite::DropCollection(_))));
     }
 }
