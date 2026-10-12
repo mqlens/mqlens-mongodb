@@ -2,24 +2,76 @@
 //! copy, read with Find and written with InsertMany, as a desktop task.
 
 use crate::server::channel::client;
-use crate::server::ops::export::{Documents, ExportFrom};
+use crate::server::ops::export::ExportFrom;
 use crate::server::ops::session_for;
+use crate::server::pb::mqlens::v1::data_service_client::DataServiceClient;
 use crate::server::pb::mqlens::v1::ddl_service_client::DdlServiceClient;
 use crate::server::pb::mqlens::v1::metadata_service_client::MetadataServiceClient;
 use crate::server::pb::mqlens::v1::write_service_client::WriteServiceClient;
 use crate::server::pb::mqlens::v1::{
-    CreateIndexRequest, CreateViewRequest, DropCollectionRequest, GetCollectionOptionsRequest,
-    InsertManyRequest, ListCollectionsRequest, ListIndexesRequest,
+    CountRequest, CreateIndexRequest, CreateViewRequest, DropCollectionRequest, FindBatch,
+    FindRequest, GetCollectionOptionsRequest, InsertManyRequest, InsertManyResponse,
+    ListCollectionsRequest, ListIndexesRequest,
 };
 use crate::server::remote::RemoteConn;
 use crate::server::routes::{self, OpClass};
-use crate::server::session::Speaking;
+use crate::server::session::{next_message, Speaking};
 use crate::AppState;
 use mongodb::bson::{Bson, Document, RawDocumentBuf};
 use std::sync::Arc;
 
 /// MongoDB's code for a duplicate key, which a copy counts as skipped.
 const DUPLICATE_KEY: i32 = 11000;
+
+/// The most document bytes one InsertMany carries, as the server's own Find
+/// batches are bounded: a batch of large documents goes in several requests.
+const MAX_REQUEST_BYTES: usize = 4 << 20;
+
+/// `batch` in runs of at most `MAX_REQUEST_BYTES`; a document larger than
+/// that goes alone.
+fn by_size(batch: &[RawDocumentBuf]) -> Vec<&[RawDocumentBuf]> {
+    let mut runs = Vec::new();
+    let (mut start, mut bytes) = (0, 0);
+    for (i, doc) in batch.iter().enumerate() {
+        let n = doc.as_bytes().len();
+        if i > start && bytes + n > MAX_REQUEST_BYTES {
+            runs.push(&batch[start..i]);
+            (start, bytes) = (i, 0);
+        }
+        bytes += n;
+    }
+    if start < batch.len() {
+        runs.push(&batch[start..]);
+    }
+    runs
+}
+
+/// Each document a Find streams, as the BSON the server sent, so what is
+/// copied is exactly what is stored, even BSON a Document cannot hold.
+pub(crate) type RawDocuments =
+    std::pin::Pin<Box<dyn futures::Stream<Item = Result<RawDocumentBuf, String>> + Send>>;
+
+fn raw_documents(stream: tonic::Streaming<FindBatch>) -> RawDocuments {
+    Box::pin(futures::stream::unfold(
+        (
+            stream,
+            std::collections::VecDeque::<prost::bytes::Bytes>::new(),
+        ),
+        |(mut stream, mut pending)| async move {
+            loop {
+                if let Some(bytes) = pending.pop_front() {
+                    let doc = RawDocumentBuf::from_bytes(bytes.to_vec()).map_err(|e| e.to_string());
+                    return Some((doc, (stream, pending)));
+                }
+                match next_message(&mut stream).await {
+                    Ok(Some(batch)) => pending.extend(batch.documents_bson),
+                    Ok(None) => return None,
+                    Err(e) => return Some((Err(e), (stream, pending))),
+                }
+            }
+        },
+    ))
+}
 
 /// A server connection as one side of a copy, with its session.
 #[derive(Clone)]
@@ -105,10 +157,46 @@ impl RemoteSide {
         database: &str,
         collection: &str,
         filter: &Document,
-    ) -> Result<Documents, String> {
-        self.reader(database, collection)
-            .find(filter, None, None, None, None)
-            .await
+    ) -> Result<RawDocuments, String> {
+        let request = FindRequest {
+            connection_id: self.conn.remote_id.clone(),
+            database: database.to_string(),
+            collection: collection.to_string(),
+            filter_json: crate::server::ejson::doc_to_wire(filter),
+            raw_bson: true,
+            ..Default::default()
+        };
+        let stream = self
+            .session
+            .open_stream(request, |channel, request| async move {
+                client!(DataServiceClient, channel).find(request).await
+            })
+            .await?;
+        Ok(raw_documents(stream))
+    }
+
+    /// How many documents a collection holds, estimated where MongoDB can,
+    /// as local mode estimates a database copy's total.
+    pub(crate) async fn estimated_count(
+        &self,
+        database: &str,
+        collection: &str,
+    ) -> Result<u64, String> {
+        let request = CountRequest {
+            connection_id: self.conn.remote_id.clone(),
+            database: database.to_string(),
+            collection: collection.to_string(),
+            filter_json: "{}".to_string(),
+            estimate_if_unfiltered: true,
+        };
+        let response = self
+            .session
+            .call(request, |channel, request| async move {
+                client!(DataServiceClient, channel).count(request).await
+            })
+            .await?;
+        u64::try_from(response.count)
+            .map_err(|_| "MQLens Server reported a negative count".to_string())
     }
 
     /// Stores a batch, unordered: `(copied, skipped)`, a duplicate key
@@ -119,31 +207,40 @@ impl RemoteSide {
         collection: &str,
         batch: &[RawDocumentBuf],
     ) -> Result<(u64, u64), String> {
-        if batch.is_empty() {
-            return Ok((0, 0));
+        let (mut copied, mut skipped) = (0, 0);
+        for run in by_size(batch) {
+            let response = self
+                .insert_many(database, collection, run)
+                .await
+                .map_err(|e| format!("Insert into target failed: {e}"))?;
+            if let Some(refused) = response.refused.iter().find(|r| r.code != DUPLICATE_KEY) {
+                return Err(format!("Insert into target failed: {}", refused.message));
+            }
+            copied += u64::try_from(response.inserted_count).unwrap_or(0);
+            skipped += response.refused.len() as u64;
         }
+        Ok((copied, skipped))
+    }
+
+    async fn insert_many(
+        &self,
+        database: &str,
+        collection: &str,
+        batch: &[RawDocumentBuf],
+    ) -> Result<InsertManyResponse, String> {
         let request = InsertManyRequest {
             connection_id: self.conn.remote_id.clone(),
             database: database.to_string(),
             collection: collection.to_string(),
             documents_bson: batch.iter().map(|d| d.as_bytes().to_vec().into()).collect(),
         };
-        let response = self
-            .session
+        self.session
             .call(request, |channel, request| async move {
                 client!(WriteServiceClient, channel)
                     .insert_many(request)
                     .await
             })
             .await
-            .map_err(|e| format!("Insert into target failed: {e}"))?;
-        if let Some(refused) = response.refused.iter().find(|r| r.code != DUPLICATE_KEY) {
-            return Err(format!("Insert into target failed: {}", refused.message));
-        }
-        Ok((
-            u64::try_from(response.inserted_count).unwrap_or(0),
-            response.refused.len() as u64,
-        ))
     }
 
     /// Each index with every option it has, as MongoDB lists it.
@@ -570,5 +667,107 @@ mod tests {
             "{}",
             view.pipeline_json
         );
+    }
+
+    // A copy of large documents goes to the server in requests of bounded
+    // size, not one request per 500 documents however large they are.
+    #[tokio::test]
+    async fn large_documents_are_sent_in_bounded_requests() {
+        let env = Env::new().await;
+        let big = "x".repeat(1_500_000);
+        env.fake.with(|s| {
+            s.documents = (0..6)
+                .map(|i| doc! { "_id": i, "pad": big.clone() })
+                .collect();
+        });
+        let (state, id) = copying(&env).await;
+
+        let done = finished(&state, &copy(&state, &id, "merge", false).await.unwrap()).await;
+
+        assert_eq!(done.status, "completed", "{:?}", done.error);
+        let sizes: Vec<usize> = writes(&env)
+            .into_iter()
+            .filter_map(|w| match w {
+                FakeWrite::InsertMany(r) => Some(r.documents_bson.iter().map(|d| d.len()).sum()),
+                _ => None,
+            })
+            .collect();
+        assert!(sizes.len() > 1, "{sizes:?}");
+        assert!(sizes.iter().all(|n| *n <= 4 << 20), "{sizes:?}");
+        assert_eq!(inserted(&env).len(), 6);
+    }
+
+    // A database copy's progress total is estimated, as local mode estimates
+    // it, not counted collection by collection before anything is copied.
+    #[tokio::test]
+    async fn a_database_copy_estimates_its_total() {
+        let env = Env::new().await;
+        env.fake.with(|s| {
+            s.collections = vec![CollectionInfo {
+                name: "items".into(),
+                r#type: "collection".into(),
+            }];
+        });
+        let (state, id) = copying(&env).await;
+
+        let task = start_database_copy_impl(
+            &state,
+            &id,
+            "orders",
+            &id,
+            "backup",
+            None,
+            false,
+            false,
+            "merge".to_string(),
+        )
+        .await
+        .unwrap();
+        finished(&state, &task).await;
+
+        let count = env
+            .fake
+            .with(|s| s.last_count.clone())
+            .expect("no count was asked for");
+        assert!(count.estimate_if_unfiltered);
+    }
+
+    // What a server source holds is copied byte for byte, even BSON a
+    // Document cannot hold, such as a key that repeats.
+    #[tokio::test]
+    async fn a_server_source_is_copied_byte_for_byte() {
+        let env = Env::new().await;
+        // { _id: 1, a: 1, a: 2 }
+        let mut repeated: Vec<u8> = Vec::new();
+        let body: Vec<u8> = [
+            &[0x10][..],
+            b"_id\0",
+            &1i32.to_le_bytes(),
+            &[0x10][..],
+            b"a\0",
+            &1i32.to_le_bytes(),
+            &[0x10][..],
+            b"a\0",
+            &2i32.to_le_bytes(),
+        ]
+        .concat();
+        repeated.extend_from_slice(&((body.len() + 5) as i32).to_le_bytes());
+        repeated.extend_from_slice(&body);
+        repeated.push(0);
+        env.fake.with(|s| s.raw_documents = vec![repeated.clone()]);
+        let (state, id) = copying(&env).await;
+
+        let done = finished(&state, &copy(&state, &id, "merge", false).await.unwrap()).await;
+
+        assert_eq!(done.status, "completed", "{:?}", done.error);
+        let sent: Vec<Vec<u8>> = writes(&env)
+            .into_iter()
+            .filter_map(|w| match w {
+                FakeWrite::InsertMany(r) => Some(r.documents_bson.into_iter().map(|d| d.to_vec())),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        assert_eq!(sent, vec![repeated]);
     }
 }

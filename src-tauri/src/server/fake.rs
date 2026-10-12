@@ -194,6 +194,9 @@ pub(crate) struct FakeState {
     pub watch_stall_opening: bool,
     /// What InsertMany refuses, by index in its batch; the rest are stored.
     pub insert_refusals: Vec<InsertRefusal>,
+    /// When set, Find and Aggregate stream these bytes instead of
+    /// `documents`: BSON a Document cannot hold, such as a repeated key.
+    pub raw_documents: Vec<Vec<u8>>,
     /// What RenameDatabaseDetailed reports.
     pub rename_result: RenameDatabaseResult,
     /// The id InsertDocument reports.
@@ -452,6 +455,7 @@ impl Fake {
                 watch_failure: None,
                 watch_stall_opening: false,
                 insert_refusals: Vec::new(),
+                raw_documents: Vec::new(),
                 rename_result: RenameDatabaseResult {
                     collections: 2,
                     documents: 40,
@@ -628,7 +632,11 @@ impl Fake {
                 .add_service(StatsServiceServer::new(self.clone()))
                 .add_service(MonitoringServiceServer::new(self.clone()))
                 .add_service(DdlServiceServer::new(self.clone()))
-                .add_service(WriteServiceServer::new(self.clone()))
+                // As large as the real server takes, so a test sees what the
+                // desktop sends rather than this server's own limit.
+                .add_service(
+                    WriteServiceServer::new(self.clone()).max_decoding_message_size(64 << 20),
+                )
                 .add_service(GridFsServiceServer::new(self.clone()))
                 .add_service(DeploymentUserServiceServer::new(self.clone()))
                 .add_service(ShellServiceServer::new(self.clone()))
@@ -1117,8 +1125,20 @@ impl Fake {
     /// `batch_delay`. Counts a stream the client drops before the end.
     /// The stored documents in batches, at most `limit` of them (0: all).
     fn batches(&self, limit: usize) -> Batches {
-        let (mut documents, size, delay) =
-            self.with(|s| (s.documents.clone(), s.batch_size.max(1), s.batch_delay));
+        let (raw, size, delay) =
+            self.with(|s| (s.raw_documents.clone(), s.batch_size.max(1), s.batch_delay));
+        let mut documents: Vec<Vec<u8>> = if raw.is_empty() {
+            self.with(|s| s.documents.clone())
+                .iter()
+                .map(|d| {
+                    let mut bytes = Vec::new();
+                    d.to_writer(&mut bytes).unwrap();
+                    bytes
+                })
+                .collect()
+        } else {
+            raw
+        };
         if limit > 0 {
             documents.truncate(limit);
         }
@@ -1129,14 +1149,7 @@ impl Fake {
                 tokio::time::sleep(delay).await;
                 let batch = FindBatch {
                     documents_ejson: Vec::new(),
-                    documents_bson: chunk
-                        .iter()
-                        .map(|d| {
-                            let mut bytes = Vec::new();
-                            d.to_writer(&mut bytes).unwrap();
-                            bytes.into()
-                        })
-                        .collect(),
+                    documents_bson: chunk.iter().map(|d| d.clone().into()).collect(),
                 };
                 if tx.send(Ok(batch)).await.is_err() {
                     state.lock().unwrap().streams_abandoned += 1;
