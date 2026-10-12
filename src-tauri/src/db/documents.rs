@@ -1529,6 +1529,28 @@ pub(crate) async fn insert_many_batched(
     Ok(())
 }
 
+/// Where an import or a generation writes: a driver client, exactly as
+/// before, or a connection through MQLens Server.
+pub(crate) enum WriteTarget {
+    Local(mongodb::Client),
+    Remote(crate::server::ops::copy::RemoteSide),
+}
+
+/// The write target of connection `id` for `command`. A local connection
+/// gets exactly the client, and the error, it always has.
+pub(crate) async fn write_target(
+    state: &crate::AppState,
+    id: &str,
+    command: &str,
+) -> Result<WriteTarget, String> {
+    match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => Ok(WriteTarget::Local(client)),
+        crate::server::remote::Route::Remote(conn) => Ok(WriteTarget::Remote(
+            crate::server::ops::copy::RemoteSide::new(state, conn, command, Some(false)).await?,
+        )),
+    }
+}
+
 /// Write already-converted BSON documents to a live collection under the
 /// duplicate-handling mode. Shared by the JSON-value and file import paths.
 pub(crate) async fn write_imported_docs(

@@ -59,7 +59,6 @@ on top of what your role allows.
 
 These are disabled on server connections:
 
-- Import and generating test data.
 - `mongodump`/`mongorestore` (the MongoDB Database Tools).
 - Running a multi-line script as a one-shot `mongosh --file` program. The shell
   itself works, and multi-line input goes to its live session instead.
@@ -103,6 +102,11 @@ version 5. The documents pass through this app, as a local copy does, and a
 server target needs a role that can write to it, and change its structure when
 the copy overwrites, copies indexes or recreates views. Indexes keep every
 option they have.
+
+Importing a file and generating test data work on a server connection too,
+with a role that can write and a server that speaks API version 5. The file is
+read by this app and its documents are written through the server; the skip,
+update and abort modes behave as they do locally.
 
 ## When something fails
 

@@ -687,7 +687,6 @@ pub async fn infer_generate_template_impl(
     collection: &str,
     sample_size: Option<i64>,
 ) -> Result<String, String> {
-    crate::server::routes::refuse_deferred(state, "infer_generate_template", &[id])?;
     let report_json = crate::db::schema::analyze_schema_impl(
         state,
         id,
@@ -770,7 +769,6 @@ pub async fn start_generate_task_impl(
     count: u32,
     seed: Option<u64>,
 ) -> Result<TaskInfo, String> {
-    crate::server::routes::refuse_deferred(state, "start_generate_task", &[id])?;
     let started = std::time::Instant::now();
     let audit_summary = format!("generate {count} docs → {database}.{collection}");
     let result = start_generate_task_inner(state, id, database, collection, template, count, seed).await;
@@ -819,7 +817,7 @@ async fn start_generate_task_inner(
         }
         None
     } else {
-        Some(crate::require_real_client(state, id)?)
+        Some(crate::db::documents::write_target(state, id, "start_generate_task").await?)
     };
 
     let task_id = Uuid::new_v4().to_string();
@@ -899,14 +897,23 @@ async fn start_generate_task_inner(
             rng = next_rng;
             let n = batch.len() as u64;
 
-            if let Some(client) = &client {
-                let coll = client
-                    .database(&database)
-                    .collection::<Document>(&collection);
-                if let Err(e) = crate::db::documents::insert_many_batched(&coll, batch, "insert").await {
-                    run_error = Some(e);
-                    break;
+            let written = match &client {
+                Some(crate::db::documents::WriteTarget::Local(client)) => {
+                    let coll = client
+                        .database(&database)
+                        .collection::<Document>(&collection);
+                    crate::db::documents::insert_many_batched(&coll, batch, "insert").await
                 }
+                Some(crate::db::documents::WriteTarget::Remote(remote)) => {
+                    remote
+                        .insert_all(&database, &collection, batch, "insert")
+                        .await
+                }
+                None => Ok(()),
+            };
+            if let Err(e) = written {
+                run_error = Some(e);
+                break;
             }
             // Mock: validate-only, mirroring run_import's mock branch — the
             // batch is generated and dropped, nothing is persisted.

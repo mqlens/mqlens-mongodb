@@ -9,7 +9,8 @@ use crate::server::pb::mqlens::v1::metadata_service_client::MetadataServiceClien
 use crate::server::pb::mqlens::v1::write_service_client::WriteServiceClient;
 use crate::server::pb::mqlens::v1::{
     CreateIndexRequest, CreateViewRequest, DropCollectionRequest, GetCollectionOptionsRequest,
-    InsertManyRequest, ListCollectionsRequest, ListIndexesRequest,
+    InsertManyRequest, InsertManyResponse, ListCollectionsRequest, ListIndexesRequest,
+    ReplaceDocumentRequest,
 };
 use crate::server::remote::RemoteConn;
 use crate::server::routes::{self, OpClass};
@@ -111,6 +112,27 @@ impl RemoteSide {
             .await
     }
 
+    async fn insert_many(
+        &self,
+        database: &str,
+        collection: &str,
+        batch: &[RawDocumentBuf],
+    ) -> Result<InsertManyResponse, String> {
+        let request = InsertManyRequest {
+            connection_id: self.conn.remote_id.clone(),
+            database: database.to_string(),
+            collection: collection.to_string(),
+            documents_bson: batch.iter().map(|d| d.as_bytes().to_vec().into()).collect(),
+        };
+        self.session
+            .call(request, |channel, request| async move {
+                client!(WriteServiceClient, channel)
+                    .insert_many(request)
+                    .await
+            })
+            .await
+    }
+
     /// Stores a batch, unordered: `(copied, skipped)`, a duplicate key
     /// skipped and any other refusal failing the copy, as local mode does.
     pub(crate) async fn insert(
@@ -122,19 +144,8 @@ impl RemoteSide {
         if batch.is_empty() {
             return Ok((0, 0));
         }
-        let request = InsertManyRequest {
-            connection_id: self.conn.remote_id.clone(),
-            database: database.to_string(),
-            collection: collection.to_string(),
-            documents_bson: batch.iter().map(|d| d.as_bytes().to_vec().into()).collect(),
-        };
         let response = self
-            .session
-            .call(request, |channel, request| async move {
-                client!(WriteServiceClient, channel)
-                    .insert_many(request)
-                    .await
-            })
+            .insert_many(database, collection, batch)
             .await
             .map_err(|e| format!("Insert into target failed: {e}"))?;
         if let Some(refused) = response.refused.iter().find(|r| r.code != DUPLICATE_KEY) {
@@ -144,6 +155,89 @@ impl RemoteSide {
             u64::try_from(response.inserted_count).unwrap_or(0),
             response.refused.len() as u64,
         ))
+    }
+
+    /// Stores every document, in batches as local mode does: any refusal, a
+    /// duplicate key included, fails the write with `Failed to {label}`.
+    pub(crate) async fn insert_all(
+        &self,
+        database: &str,
+        collection: &str,
+        docs: Vec<Document>,
+        label: &str,
+    ) -> Result<(), String> {
+        for chunk in docs.chunks(crate::limits::IMPORT_BATCH_SIZE) {
+            let batch = chunk
+                .iter()
+                .map(RawDocumentBuf::from_document)
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| format!("Failed to {label}: {e}"))?;
+            let response = self
+                .insert_many(database, collection, &batch)
+                .await
+                .map_err(|e| format!("Failed to {label}: {e}"))?;
+            if let Some(refused) = response.refused.first() {
+                return Err(format!("Failed to {label}: {}", refused.message));
+            }
+        }
+        Ok(())
+    }
+
+    /// Which of these documents' `_id`s the collection already holds, each
+    /// rendered as local mode renders it.
+    pub(crate) async fn existing_ids(
+        &self,
+        database: &str,
+        collection: &str,
+        docs: &[Document],
+    ) -> Result<std::collections::HashSet<String>, String> {
+        use futures::stream::StreamExt;
+        let ids: Vec<Bson> = docs.iter().filter_map(|d| d.get("_id").cloned()).collect();
+        let mut found = std::collections::HashSet::new();
+        for chunk in ids.chunks(crate::limits::IMPORT_BATCH_SIZE) {
+            let filter = mongodb::bson::doc! { "_id": { "$in": chunk } };
+            let projection = mongodb::bson::doc! { "_id": 1 };
+            let mut stream = self
+                .reader(database, collection)
+                .find(&filter, None, Some(&projection), None, None)
+                .await
+                .map_err(|e| format!("Failed to check existing documents: {e}"))?;
+            while let Some(doc) = stream.next().await {
+                let doc = doc.map_err(|e| format!("Cursor read error: {e}"))?;
+                if let Some(id) = doc.get("_id") {
+                    found.insert(id.to_string());
+                }
+            }
+        }
+        Ok(found)
+    }
+
+    /// Replaces the document with this `_id`; returns how many changed.
+    pub(crate) async fn replace(
+        &self,
+        database: &str,
+        collection: &str,
+        id: &Bson,
+        replacement: &Document,
+    ) -> Result<u64, String> {
+        let request = ReplaceDocumentRequest {
+            connection_id: self.conn.remote_id.clone(),
+            database: database.to_string(),
+            collection: collection.to_string(),
+            filter_json: crate::server::ejson::doc_to_wire(
+                &mongodb::bson::doc! { "_id": id.clone() },
+            ),
+            replacement_json: crate::server::ejson::doc_to_wire(replacement),
+        };
+        let result = self
+            .session
+            .call(request, |channel, request| async move {
+                client!(WriteServiceClient, channel)
+                    .replace_document(request)
+                    .await
+            })
+            .await?;
+        Ok(u64::try_from(result.modified_count).unwrap_or(0))
     }
 
     /// Each index with every option it has, as MongoDB lists it.

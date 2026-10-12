@@ -540,8 +540,15 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
     },
     CommandRoute {
         command: "start_import_task",
-        serve: Serve::Deferred {
-            reason: TASKS,
+        serve: Serve::Rpc {
+            procedures: &[
+                "/mqlens.v1.DataService/Find",
+                "/mqlens.v1.WriteService/InsertMany",
+                "/mqlens.v1.WriteService/ReplaceDocument",
+            ],
+            class: OpClass::Write,
+            since: 5,
+            adapter: true,
         },
     },
     // A copy reads its source; the target is checked for write (and ddl)
@@ -597,14 +604,20 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
     },
     CommandRoute {
         command: "infer_generate_template",
-        serve: Serve::Deferred {
-            reason: TASKS,
+        serve: Serve::Rpc {
+            procedures: &["/mqlens.v1.DataService/Aggregate"],
+            class: OpClass::Read,
+            since: 2,
+            adapter: true,
         },
     },
     CommandRoute {
         command: "start_generate_task",
-        serve: Serve::Deferred {
-            reason: TASKS,
+        serve: Serve::Rpc {
+            procedures: &["/mqlens.v1.WriteService/InsertMany"],
+            class: OpClass::Write,
+            since: 5,
+            adapter: true,
         },
     },
 ];
@@ -834,8 +847,8 @@ mod tests {
     fn a_deferred_command_refuses_any_remote_connection_with_its_reason() {
         let state = with_remote("r1");
         assert_eq!(
-            refuse_deferred(&state, "start_import_task", &["local", "r1"]),
-            Err(TASKS.to_string())
+            refuse_deferred(&state, "start_restore_task", &["local", "r1"]),
+            Err(DATABASE_TOOLS.to_string())
         );
         assert_eq!(
             refuse_deferred(&state, "start_dump_task", &["r1"]),
@@ -845,15 +858,6 @@ mod tests {
             refuse_deferred(&state, "start_collection_copy", &["local"]),
             Ok(())
         );
-    }
-
-    #[tokio::test]
-    async fn deferred_commands_refuse_a_remote_connection_before_any_work() {
-        let state = with_remote("r1");
-        let err = crate::db::generate::infer_generate_template_impl(&state, "r1", "db", "c", None)
-            .await
-            .unwrap_err();
-        assert_eq!(err, TASKS);
     }
 
     // Every deferred command refuses a remote connection itself, by name, so

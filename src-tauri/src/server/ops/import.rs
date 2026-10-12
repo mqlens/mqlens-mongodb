@@ -1,0 +1,291 @@
+//! Import and document generation on a server connection: the same desktop
+//! tasks, writing through InsertMany and ReplaceDocument.
+
+use crate::db::documents::ImportResult;
+use crate::server::ops::copy::RemoteSide;
+use mongodb::bson::Document;
+
+/// `documents::write_imported_docs` on a server connection, mode for mode.
+/// Imported documents are parsed from Extended JSON first, so a replacement
+/// carries no key a type wrapper could be mistaken for.
+pub(crate) async fn write_imported_docs(
+    remote: &RemoteSide,
+    database: &str,
+    collection: &str,
+    docs: Vec<Document>,
+    mode: &str,
+) -> Result<ImportResult, String> {
+    match mode {
+        "update" => {
+            let existing = remote.existing_ids(database, collection, &docs).await?;
+            let (mut inserted, mut updated) = (0u64, 0u64);
+            let mut fresh = Vec::new();
+            for doc in docs {
+                match doc.get("_id").cloned() {
+                    Some(id) if existing.contains(&id.to_string()) => {
+                        updated += remote
+                            .replace(database, collection, &id, &doc)
+                            .await
+                            .map_err(|e| format!("Failed to import (update): {}", e))?;
+                    }
+                    _ => {
+                        inserted += 1;
+                        fresh.push(doc);
+                    }
+                }
+            }
+            remote
+                .insert_all(database, collection, fresh, "import (insert)")
+                .await?;
+            Ok(ImportResult {
+                inserted,
+                updated,
+                skipped: 0,
+            })
+        }
+        "abort" => {
+            let existing = remote.existing_ids(database, collection, &docs).await?;
+            if !existing.is_empty() {
+                return Err(format!(
+                    "Import aborted: {} document(s) already exist",
+                    existing.len()
+                ));
+            }
+            let total = docs.len() as u64;
+            remote
+                .insert_all(database, collection, docs, "import")
+                .await?;
+            Ok(ImportResult {
+                inserted: total,
+                updated: 0,
+                skipped: 0,
+            })
+        }
+        _ => {
+            let existing = remote.existing_ids(database, collection, &docs).await?;
+            let total = docs.len() as u64;
+            let to_insert: Vec<Document> = docs
+                .into_iter()
+                .filter(|d| match d.get("_id") {
+                    Some(id) => !existing.contains(&id.to_string()),
+                    None => true,
+                })
+                .collect();
+            let inserted = to_insert.len() as u64;
+            remote
+                .insert_all(database, collection, to_insert, "import")
+                .await?;
+            Ok(ImportResult {
+                inserted,
+                updated: 0,
+                skipped: total - inserted,
+            })
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::db::generate::{infer_generate_template_impl, start_generate_task_impl};
+    use crate::db::import::{start_import_task_impl, ImportSourceArg};
+    use crate::server::fake::{Env, FakeWrite};
+    use crate::server::ops::connected;
+    use crate::{AppState, TaskInfo};
+    use mongodb::bson::Document;
+    use std::time::Duration;
+
+    /// Connected over API version 5 as an operator.
+    async fn writing(env: &Env) -> (AppState, String) {
+        env.fake.with(|s| {
+            s.max_api_version = 5;
+            s.connections[0].op_classes = ["read", "write"].map(String::from).to_vec();
+        });
+        connected(env).await
+    }
+
+    async fn finished(state: &AppState, task: &TaskInfo) -> TaskInfo {
+        for _ in 0..250 {
+            let now = state.tasks.lock().unwrap().get(&task.id).cloned().unwrap();
+            if now.status != "running" {
+                return now;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!("the task never finished");
+    }
+
+    async fn import(
+        state: &AppState,
+        id: &str,
+        text: &str,
+        mode: &str,
+    ) -> Result<TaskInfo, String> {
+        start_import_task_impl(
+            state,
+            id,
+            "orders",
+            "items",
+            ImportSourceArg {
+                path: None,
+                text: Some(text.to_string()),
+            },
+            "json",
+            None,
+            mode,
+        )
+        .await
+    }
+
+    fn inserted(env: &Env) -> Vec<Document> {
+        env.fake
+            .with(|s| s.writes.clone())
+            .into_iter()
+            .filter_map(|w| match w {
+                FakeWrite::InsertMany(r) => Some(
+                    r.documents_bson
+                        .into_iter()
+                        .map(|d| mongodb::bson::from_slice::<Document>(&d).unwrap()),
+                ),
+                _ => None,
+            })
+            .flatten()
+            .collect()
+    }
+
+    fn replaced(env: &Env) -> Vec<String> {
+        env.fake
+            .with(|s| s.writes.clone())
+            .into_iter()
+            .filter_map(|w| match w {
+                FakeWrite::Replace(r) => Some(r.filter_json),
+                _ => None,
+            })
+            .collect()
+    }
+
+    // The fake's collection already holds _id 1 (its Find answers with its
+    // documents whatever the filter), so skip writes only the new one.
+    #[tokio::test]
+    async fn an_import_skips_documents_already_on_the_server() {
+        let env = Env::new().await;
+        let (state, id) = writing(&env).await;
+
+        let task = import(
+            &state,
+            &id,
+            r#"[{"_id": 1, "x": 1}, {"_id": 99, "x": 2}]"#,
+            "skip",
+        )
+        .await
+        .unwrap();
+        let done = finished(&state, &task).await;
+
+        assert_eq!(done.status, "completed", "{:?}", done.error);
+        assert!(
+            done.message.contains("1 inserted, 0 updated, 1 skipped"),
+            "{}",
+            done.message
+        );
+        let written = inserted(&env);
+        assert_eq!(written.len(), 1);
+        assert_eq!(written[0].get_i32("_id"), Ok(99));
+    }
+
+    #[tokio::test]
+    async fn an_import_aborts_when_a_document_is_already_there() {
+        let env = Env::new().await;
+        let (state, id) = writing(&env).await;
+
+        let done = finished(
+            &state,
+            &import(&state, &id, r#"[{"_id": 1}]"#, "abort")
+                .await
+                .unwrap(),
+        )
+        .await;
+
+        assert_eq!(done.status, "failed");
+        assert!(done.error.unwrap().contains("already exist"));
+        assert!(inserted(&env).is_empty());
+    }
+
+    // Update replaces what is there and inserts the rest.
+    #[tokio::test]
+    async fn an_import_updates_documents_already_on_the_server() {
+        let env = Env::new().await;
+        let (state, id) = writing(&env).await;
+
+        let task = import(
+            &state,
+            &id,
+            r#"[{"_id": 1, "x": 1}, {"_id": 99, "x": 2}]"#,
+            "update",
+        )
+        .await
+        .unwrap();
+        let done = finished(&state, &task).await;
+
+        assert_eq!(done.status, "completed", "{:?}", done.error);
+        assert_eq!(replaced(&env).len(), 1, "{:?}", replaced(&env));
+        assert!(replaced(&env)[0].contains("\"_id\""));
+        assert_eq!(inserted(&env).len(), 1);
+    }
+
+    // Generated documents are written to the server in batches.
+    #[tokio::test]
+    async fn documents_are_generated_on_the_server() {
+        let env = Env::new().await;
+        let (state, id) = writing(&env).await;
+
+        let task = start_generate_task_impl(
+            &state,
+            &id,
+            "orders",
+            "items",
+            r#"{"a": "$name", "n": {"$int": {"min": 0, "max": 10}}}"#,
+            7,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        let done = finished(&state, &task).await;
+
+        assert_eq!(done.status, "completed", "{:?}", done.error);
+        let written = inserted(&env);
+        assert_eq!(written.len(), 7);
+        assert!(written
+            .iter()
+            .all(|d| d.contains_key("a") && d.contains_key("n")));
+    }
+
+    // A template is inferred from the server's sample of the collection.
+    #[tokio::test]
+    async fn a_template_is_inferred_through_the_server() {
+        let env = Env::new().await;
+        let (state, id) = writing(&env).await;
+
+        let template = infer_generate_template_impl(&state, &id, "orders", "items", None)
+            .await
+            .unwrap();
+
+        assert!(template.contains("name"), "{template}");
+    }
+
+    // Writing needs the write role, and a server that takes bulk inserts.
+    #[tokio::test]
+    async fn an_import_needs_write_and_version_five() {
+        let env = Env::new().await;
+        let (state, id) = connected(&env).await;
+        let err = import(&state, &id, "[]", "skip").await.unwrap_err();
+        assert!(err.contains("API version 5"), "{err}");
+
+        let env = Env::new().await;
+        env.fake.with(|s| {
+            s.max_api_version = 5;
+            s.connections[0].op_classes = vec!["read".to_string()];
+        });
+        let (state, id) = connected(&env).await;
+        let err = import(&state, &id, "[]", "skip").await.unwrap_err();
+        assert!(err.contains("does not allow write"), "{err}");
+    }
+}

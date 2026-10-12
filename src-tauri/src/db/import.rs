@@ -283,7 +283,7 @@ pub async fn preview_import_impl(
 async fn run_import(
     tasks: Arc<Mutex<HashMap<String, TaskInfo>>>,
     task_id: String,
-    client: Option<mongodb::Client>,
+    client: Option<crate::db::documents::WriteTarget>,
     database: String,
     collection: String,
     source: ImportSourceArg,
@@ -346,11 +346,25 @@ async fn run_import(
                     totals.inserted += n;
                 }
             }
-            Some(client) => {
-                let coll = client
-                    .database(&database)
-                    .collection::<Document>(&collection);
-                let res = crate::db::documents::write_imported_docs(&coll, batch, &mode).await?;
+            Some(target) => {
+                let res = match target {
+                    crate::db::documents::WriteTarget::Local(client) => {
+                        let coll = client
+                            .database(&database)
+                            .collection::<Document>(&collection);
+                        crate::db::documents::write_imported_docs(&coll, batch, &mode).await?
+                    }
+                    crate::db::documents::WriteTarget::Remote(remote) => {
+                        crate::server::ops::import::write_imported_docs(
+                            remote,
+                            &database,
+                            &collection,
+                            batch,
+                            &mode,
+                        )
+                        .await?
+                    }
+                };
                 totals.inserted += res.inserted;
                 totals.updated += res.updated;
                 totals.skipped += res.skipped;
@@ -376,7 +390,6 @@ pub async fn start_import_task_impl(
     csv_options: Option<CsvImportOptions>,
     mode: &str,
 ) -> Result<TaskInfo, String> {
-    crate::server::routes::refuse_deferred(state, "start_import_task", &[id])?;
     let started = std::time::Instant::now();
     let audit_summary = format!("import {database}.{collection} ({format}, {mode})");
     let result = start_import_task_inner(
@@ -433,7 +446,7 @@ async fn start_import_task_inner(
     let client = if is_mock {
         None
     } else {
-        Some(crate::require_real_client(state, id)?)
+        Some(crate::db::documents::write_target(state, id, "start_import_task").await?)
     };
 
     let source_label = source
