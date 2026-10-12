@@ -2291,6 +2291,42 @@ describe('Sidebar: an action the role rules out', () => {
   });
 });
 
+describe('Sidebar: a copy destination the role cannot write to', () => {
+  // A viewer can copy from a server connection but not into it, so its paste
+  // targets are closed, saying the role is why.
+  it('closes paste on a connection whose role cannot write', async () => {
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections') return Promise.resolve([]);
+      return Promise.resolve([]);
+    });
+    const handlePaste = vi.fn();
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Remote Orders', uri: '' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+        canPaste
+        onPasteInto={handlePaste}
+        isCommandBlocked={(id, command) => id === 'conn-1' && command === 'insert_document'}
+        isBlockedByRole={(id, command) => id === 'conn-1' && command === 'insert_document'}
+      />
+    );
+
+    fireEvent.contextMenu(await screen.findByText('sales_db'));
+    const paste = await screen.findByRole('menuitem', { name: /Paste here/i });
+    expect(paste).toHaveAttribute('data-disabled');
+    expect(paste).toHaveAttribute('title', 'Your role on this MQLens Server connection does not allow this');
+    fireEvent.click(paste);
+    expect(handlePaste).not.toHaveBeenCalled();
+  });
+});
+
 describe('Sidebar: server connection badge', () => {
   it('marks a connection made through an MQLens Server, naming the account', async () => {
     mockInvoke.mockImplementation((cmd) =>
