@@ -80,6 +80,7 @@ use crate::server::pb::mqlens::v1::{
     DeleteFileRequest, DeleteFileResponse, DownloadFileRequest, FileChunk, ListFilesRequest,
     ListFilesResponse, UploadChunk, UploadFileResponse,
 };
+use crate::server::pb::mqlens::v1::{InsertManyRequest, InsertManyResponse, InsertRefusal};
 use crate::server::pb::mqlens::v1::{MongoshClientMsg, MongoshServerMsg};
 use crate::server::session::{unix_now, AccountSession, FileTokenStore, TokenStore};
 use mongodb::bson::{doc, Document};
@@ -191,6 +192,8 @@ pub(crate) struct FakeState {
     /// Answers a watch but never sends its opening message, as a server that
     /// stalls after its headers would.
     pub watch_stall_opening: bool,
+    /// What InsertMany refuses, by index in its batch; the rest are stored.
+    pub insert_refusals: Vec<InsertRefusal>,
     /// What RenameDatabaseDetailed reports.
     pub rename_result: RenameDatabaseResult,
     /// The id InsertDocument reports.
@@ -388,6 +391,7 @@ impl Fake {
                         keys_json: r#"{"_id":{"$numberInt":"1"}}"#.to_string(),
                         unique: false,
                         sparse: false,
+                        spec_bson: index_spec(doc! { "v": 2, "key": { "_id": 1 }, "name": "_id_" }),
                     },
                     PbIndexInfo {
                         name: "z_1_a_-1".to_string(),
@@ -395,12 +399,20 @@ impl Fake {
                             .to_string(),
                         unique: true,
                         sparse: true,
+                        spec_bson: index_spec(doc! {
+                            "v": 2, "key": { "z": 1, "a": -1 }, "name": "z_1_a_-1",
+                            "unique": true, "sparse": true,
+                        }),
                     },
                     PbIndexInfo {
                         name: "loc_2dsphere".to_string(),
                         keys_json: r#"{"loc":"2dsphere"}"#.to_string(),
                         unique: false,
                         sparse: false,
+                        spec_bson: index_spec(doc! {
+                            "v": 2, "key": { "loc": "2dsphere" }, "name": "loc_2dsphere",
+                            "2dsphereIndexVersion": 3,
+                        }),
                     },
                 ],
                 documents: vec![
@@ -439,6 +451,7 @@ impl Fake {
                 watch_messages: Vec::new(),
                 watch_failure: None,
                 watch_stall_opening: false,
+                insert_refusals: Vec::new(),
                 rename_result: RenameDatabaseResult {
                     collections: 2,
                     documents: 40,
@@ -546,6 +559,7 @@ impl Fake {
                         .to_string(),
                     validation_level: "strict".to_string(),
                     validation_action: "error".to_string(),
+                    options_bson: Default::default(),
                 },
                 users: vec![DeploymentUser {
                     user: "app".to_string(),
@@ -980,6 +994,11 @@ impl GridFsService for Fake {
 }
 
 /// A write or index change the fake received.
+/// An index as ListIndexes lists it, as BSON.
+fn index_spec(spec: Document) -> prost::bytes::Bytes {
+    mongodb::bson::to_vec(&spec).unwrap().into()
+}
+
 #[derive(Clone, Debug)]
 pub(crate) enum FakeWrite {
     Insert(InsertDocumentRequest),
@@ -994,6 +1013,7 @@ pub(crate) enum FakeWrite {
     DropCollection(DropCollectionRequest),
     RenameCollection(RenameCollectionRequest),
     CreateView(CreateViewRequest),
+    InsertMany(InsertManyRequest),
     DropDatabase(DropDatabaseRequest),
     RenameDatabase(RenameDatabaseDetailedRequest),
     SetValidator(SetValidatorRequest),
@@ -1016,6 +1036,28 @@ impl Fake {
 
 #[tonic::async_trait]
 impl WriteService for Fake {
+    async fn insert_many(
+        &self,
+        request: Request<InsertManyRequest>,
+    ) -> Result<Response<InsertManyResponse>, Status> {
+        let mut state = self.state.lock().unwrap();
+        state.authorize_connection(&request, &request.get_ref().connection_id)?;
+        let sent = request.get_ref().documents_bson.len();
+        let refused: Vec<InsertRefusal> = state
+            .insert_refusals
+            .iter()
+            .filter(|r| (r.index as usize) < sent)
+            .cloned()
+            .collect();
+        state
+            .writes
+            .push(FakeWrite::InsertMany(request.into_inner()));
+        Ok(Response::new(InsertManyResponse {
+            inserted_count: (sent - refused.len()) as i64,
+            refused,
+        }))
+    }
+
     async fn insert_document(
         &self,
         request: Request<InsertDocumentRequest>,

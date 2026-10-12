@@ -59,7 +59,7 @@ on top of what your role allows.
 
 These are disabled on server connections:
 
-- Copying collections or databases, import, and generating test data.
+- Import and generating test data.
 - `mongodump`/`mongorestore` (the MongoDB Database Tools).
 - Running a multi-line script as a one-shot `mongosh --file` program. The shell
   itself works, and multi-line input goes to its live session instead.
@@ -96,6 +96,13 @@ none in common, connecting fails and tells you which side to update:
 Watching change streams needs a server that speaks API version 4. On an older
 server, Watch stays disabled and says to update the server. As in local mode,
 the deployment must be a replica set or a sharded cluster.
+
+Copying a collection or a database works between any two connections, local or
+through a server, in either direction. It needs a server that speaks API
+version 5. The documents pass through this app, as a local copy does, and a
+server target needs a role that can write to it, and change its structure when
+the copy overwrites, copies indexes or recreates views. Indexes keep every
+option they have.
 
 ## When something fails
 

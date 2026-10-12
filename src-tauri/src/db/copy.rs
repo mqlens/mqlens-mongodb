@@ -3,7 +3,7 @@
 use crate::limits::IMPORT_BATCH_SIZE;
 use crate::state::LockExt;
 use crate::write_guard::{guard_writable, WriteOp};
-use crate::{connection_is_mock, mock_db, require_real_client, AppState, CopyFailure, CopySummary, TaskInfo};
+use crate::{connection_is_mock, mock_db, AppState, CopyFailure, CopySummary, TaskInfo};
 use mongodb::bson::{Document, RawDocumentBuf};
 use mongodb::Client;
 use std::collections::HashMap;
@@ -11,6 +11,119 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
+
+use crate::server::ops::copy::RemoteSide;
+use futures::stream::{Stream, StreamExt};
+use std::pin::Pin;
+
+/// One side of a copy: a driver client, or a connection through MQLens
+/// Server. Copying between two local connections runs exactly as it always
+/// has; a server connection on either side reads with Find and writes with
+/// InsertMany through its session.
+#[derive(Clone)]
+enum CopySide {
+    Local(Client),
+    Remote(RemoteSide),
+}
+
+/// The side a copy reads from (`target` None) or writes to (`target`
+/// Some(whether it drops, indexes or makes views)) on connection `id`. A
+/// local connection gets exactly the client, and the error, it always has.
+async fn copy_side(
+    state: &AppState,
+    id: &str,
+    command: &str,
+    target: Option<bool>,
+) -> Result<CopySide, String> {
+    match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => Ok(CopySide::Local(client)),
+        crate::server::remote::Route::Remote(conn) => Ok(CopySide::Remote(
+            RemoteSide::new(state, conn, command, target).await?,
+        )),
+    }
+}
+
+type RawDocuments = Pin<Box<dyn Stream<Item = Result<RawDocumentBuf, String>> + Send>>;
+
+impl CopySide {
+    async fn collection_names(&self, db: &str) -> Result<Vec<String>, String> {
+        match self {
+            CopySide::Local(client) => client
+                .database(db)
+                .list_collection_names()
+                .await
+                .map_err(|e| format!("Failed to inspect target: {}", e)),
+            CopySide::Remote(remote) => remote.collection_names(db).await,
+        }
+    }
+
+    async fn drop_collection(&self, db: &str, collection: &str) -> Result<(), String> {
+        match self {
+            CopySide::Local(client) => client
+                .database(db)
+                .collection::<RawDocumentBuf>(collection)
+                .drop()
+                .await
+                .map_err(|e| format!("Failed to drop target: {}", e)),
+            CopySide::Remote(remote) => remote.drop(db, collection).await,
+        }
+    }
+
+    async fn documents(
+        &self,
+        db: &str,
+        collection: &str,
+        filter: &Document,
+    ) -> Result<RawDocuments, String> {
+        Ok(match self {
+            CopySide::Local(client) => Box::pin(
+                client
+                    .database(db)
+                    .collection::<RawDocumentBuf>(collection)
+                    .find(filter.clone())
+                    .await
+                    .map_err(|e| format!("Source query failed: {}", e))?
+                    .map(|r| r.map_err(|e| format!("Cursor read error: {}", e))),
+            ),
+            CopySide::Remote(remote) => Box::pin(
+                remote
+                    .documents(db, collection, filter)
+                    .await
+                    .map_err(|e| format!("Source query failed: {}", e))?
+                    .map(|r| {
+                        r.map_err(|e| format!("Cursor read error: {}", e))
+                            .and_then(|d| {
+                                RawDocumentBuf::from_document(&d).map_err(|e| e.to_string())
+                            })
+                    }),
+            ),
+        })
+    }
+
+    async fn count(&self, db: &str, collection: &str, filter: &Document) -> Option<u64> {
+        match self {
+            CopySide::Local(client) => client
+                .database(db)
+                .collection::<Document>(collection)
+                .count_documents(filter.clone())
+                .await
+                .ok(),
+            CopySide::Remote(remote) => remote.count(db, collection, filter).await.ok(),
+        }
+    }
+
+    async fn estimated_count(&self, db: &str, collection: &str) -> Option<u64> {
+        match self {
+            CopySide::Local(client) => client
+                .database(db)
+                .collection::<Document>(collection)
+                .estimated_document_count()
+                .await
+                .ok(),
+            CopySide::Remote(remote) => remote.count(db, collection, &Document::new()).await.ok(),
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConflictMode {
@@ -168,7 +281,20 @@ async fn target_doc_count(state: &AppState, id: &str, db: &str, collection: &str
     if connection_is_mock(state, id)? {
         return mock_db::count_mock_documents(db, collection, "{}").or(Ok(0));
     }
-    let client = require_real_client(state, id)?;
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            return crate::server::ops::query::count(
+                state,
+                &conn,
+                db,
+                collection,
+                &Document::new(),
+                false,
+            )
+            .await;
+        }
+    };
     let coll = client.database(db).collection::<Document>(collection);
     coll.count_documents(Document::new())
         .await
@@ -182,10 +308,6 @@ pub async fn preflight_copy_impl(
     source_collections: Vec<String>,
     targets: Vec<CopyTargetRef>,
 ) -> Result<PreflightResult, String> {
-    let ids: Vec<&str> = std::iter::once(source_id)
-        .chain(targets.iter().map(|t| t.connection_id.as_str()))
-        .collect();
-    crate::server::routes::refuse_deferred(state, "preflight_copy", &ids)?;
     let mut conflicts = Vec::new();
     let mut self_overwrite = false;
     for t in &targets {
@@ -220,8 +342,8 @@ pub async fn preflight_copy_impl(
 /// `update_progress(copied)` is called every batch with the running per-collection count.
 #[allow(clippy::too_many_arguments)]
 async fn copy_one_collection<F: FnMut(u64)>(
-    source: &Client,
-    target: &Client,
+    source: &CopySide,
+    target: &CopySide,
     source_db: &str,
     source_collection: &str,
     target_db: &str,
@@ -232,19 +354,10 @@ async fn copy_one_collection<F: FnMut(u64)>(
     cancel: &Arc<AtomicBool>,
     mut update_progress: F,
 ) -> Result<CollectionCopyOutcome, String> {
-    use futures::stream::StreamExt;
-
-    let src = source
-        .database(source_db)
-        .collection::<RawDocumentBuf>(source_collection);
-    let tgt_db = target.database(target_db);
-    let tgt = tgt_db.collection::<RawDocumentBuf>(target_collection);
-
     // Conflict resolution against an existing target.
-    let target_existed = tgt_db
-        .list_collection_names()
-        .await
-        .map_err(|e| format!("Failed to inspect target: {}", e))?
+    let target_existed = target
+        .collection_names(target_db)
+        .await?
         .iter()
         .any(|n| n == target_collection);
     if target_existed {
@@ -253,7 +366,7 @@ async fn copy_one_collection<F: FnMut(u64)>(
                 return Ok(CollectionCopyOutcome { was_skipped: true, ..Default::default() });
             }
             ConflictMode::Overwrite => {
-                tgt.drop().await.map_err(|e| format!("Failed to drop target: {}", e))?;
+                target.drop_collection(target_db, target_collection).await?;
             }
             ConflictMode::Merge => { /* keep existing; tolerate dup-key on insert */ }
         }
@@ -261,10 +374,9 @@ async fn copy_one_collection<F: FnMut(u64)>(
 
     let mut copied = 0u64;
     let mut skipped = 0u64;
-    let mut cursor = src
-        .find(filter.clone())
-        .await
-        .map_err(|e| format!("Source query failed: {}", e))?;
+    let mut cursor = source
+        .documents(source_db, source_collection, filter)
+        .await?;
     let mut batch: Vec<RawDocumentBuf> = Vec::with_capacity(IMPORT_BATCH_SIZE);
 
     // Flush helper: attempt unordered insert_many on the batch slice; owns the
@@ -303,26 +415,90 @@ async fn copy_one_collection<F: FnMut(u64)>(
         Ok(())
     }
 
+    // Written as local mode writes, or through the server in one call per batch.
+    async fn flush_to(
+        target: &CopySide,
+        target_db: &str,
+        target_collection: &str,
+        batch: &[RawDocumentBuf],
+        copied: &mut u64,
+        skipped: &mut u64,
+    ) -> Result<(), String> {
+        match target {
+            CopySide::Local(client) => {
+                let tgt = client
+                    .database(target_db)
+                    .collection::<RawDocumentBuf>(target_collection);
+                flush(&tgt, batch, copied, skipped).await
+            }
+            CopySide::Remote(remote) => {
+                let (c, s) = remote.insert(target_db, target_collection, batch).await?;
+                *copied += c;
+                *skipped += s;
+                Ok(())
+            }
+        }
+    }
+
     while let Some(result) = cursor.next().await {
         if cancel.load(Ordering::SeqCst) {
             return Ok(CollectionCopyOutcome { copied, skipped, indexes: 0, was_skipped: false });
         }
-        let doc = result.map_err(|e| format!("Cursor read error: {}", e))?;
+        let doc = result?;
         batch.push(doc);
         if batch.len() >= IMPORT_BATCH_SIZE {
-            flush(&tgt, &batch, &mut copied, &mut skipped).await?;
+            flush_to(
+                target,
+                target_db,
+                target_collection,
+                &batch,
+                &mut copied,
+                &mut skipped,
+            )
+            .await?;
             batch.clear();
             update_progress(copied);
         }
     }
     // Final partial batch.
-    flush(&tgt, &batch, &mut copied, &mut skipped).await?;
+    flush_to(
+        target,
+        target_db,
+        target_collection,
+        &batch,
+        &mut copied,
+        &mut skipped,
+    )
+    .await?;
     batch.clear();
     update_progress(copied);
 
     let mut indexes = 0u64;
     if include_indexes {
-        indexes = copy_indexes(source, source_db, source_collection, target, target_db, target_collection).await?;
+        indexes = match (source, target) {
+            (CopySide::Local(source), CopySide::Local(target)) => {
+                copy_indexes(
+                    source,
+                    source_db,
+                    source_collection,
+                    target,
+                    target_db,
+                    target_collection,
+                )
+                .await?
+            }
+            _ => {
+                copy_index_specs(
+                    source,
+                    source_db,
+                    source_collection,
+                    target,
+                    target_db,
+                    target_collection,
+                )
+                .await?
+            }
+        };
     }
 
     Ok(CollectionCopyOutcome { copied, skipped, indexes, was_skipped: false })
@@ -427,6 +603,116 @@ async fn copy_indexes(
     Ok(created)
 }
 
+/// Copy non-default indexes where a server connection is on either side, by
+/// their whole spec so every option goes with them. Returns count created.
+async fn copy_index_specs(
+    source: &CopySide,
+    source_db: &str,
+    source_collection: &str,
+    target: &CopySide,
+    target_db: &str,
+    target_collection: &str,
+) -> Result<u64, String> {
+    let specs: Vec<Document> = match source {
+        CopySide::Local(client) => {
+            let mut cursor = client
+                .database(source_db)
+                .collection::<Document>(source_collection)
+                .list_indexes()
+                .await
+                .map_err(|e| format!("Failed to list source indexes: {}", e))?;
+            let mut specs = Vec::new();
+            while let Some(result) = cursor.next().await {
+                let model = result.map_err(|e| format!("Index read error: {}", e))?;
+                specs.push(mongodb::bson::to_document(&model).map_err(|e| e.to_string())?);
+            }
+            specs
+        }
+        CopySide::Remote(remote) => remote.index_specs(source_db, source_collection).await?,
+    };
+    let mut created = 0u64;
+    for spec in specs {
+        let name = spec.get_str("name").unwrap_or_default();
+        if name.is_empty() || name == "_id_" {
+            continue; // default index / unnamed index - skip
+        }
+        let made = match target {
+            CopySide::Local(client) => {
+                let model: mongodb::IndexModel =
+                    mongodb::bson::from_document(spec.clone()).map_err(|e| e.to_string())?;
+                client
+                    .database(target_db)
+                    .collection::<Document>(target_collection)
+                    .create_index(model)
+                    .await
+                    .map(|_| ())
+                    .map_err(|e| e.to_string())
+            }
+            CopySide::Remote(remote) => {
+                remote
+                    .create_index(target_db, target_collection, &spec)
+                    .await
+            }
+        };
+        match made {
+            Ok(()) => created += 1,
+            // As local mode: an equivalent index already on the target is no failure.
+            Err(msg)
+                if msg.contains("already exists")
+                    || msg.contains("IndexOptionsConflict")
+                    || msg.contains("IndexKeySpecsConflict") => {}
+            Err(msg) => return Err(format!("Failed to create index on target: {}", msg)),
+        }
+    }
+    Ok(created)
+}
+
+/// Recreate a view on the target where a server connection is on either side.
+async fn copy_view_between(
+    source: &CopySide,
+    source_db: &str,
+    view_name: &str,
+    target: &CopySide,
+    target_db: &str,
+) -> Result<(), String> {
+    let (view_on, pipeline) = match source {
+        CopySide::Local(client) => {
+            let filter = mongodb::bson::doc! { "name": view_name };
+            let mut cursor = client
+                .database(source_db)
+                .list_collections()
+                .filter(filter)
+                .await
+                .map_err(|e| format!("Failed to read view definition: {}", e))?;
+            let spec = cursor
+                .next()
+                .await
+                .ok_or_else(|| format!("View {} not found", view_name))?
+                .map_err(|e| format!("View read error: {}", e))?;
+            let opts = spec.options;
+            let view_on = opts
+                .view_on
+                .ok_or_else(|| "View has no viewOn".to_string())?;
+            (view_on, opts.pipeline.unwrap_or_default())
+        }
+        CopySide::Remote(remote) => remote.view_definition(source_db, view_name).await?,
+    };
+    match target {
+        CopySide::Local(client) => client
+            .database(target_db)
+            .create_collection(view_name)
+            .view_on(view_on)
+            .pipeline(pipeline)
+            .await
+            .map_err(|e| format!("Failed to create view on target: {}", e)),
+        CopySide::Remote(remote) => {
+            remote
+                .create_view(target_db, view_name, &view_on, &pipeline)
+                .await
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn start_collection_copy_impl(
     state: &AppState,
@@ -440,11 +726,6 @@ pub async fn start_collection_copy_impl(
     include_indexes: bool,
     conflict_mode: String,
 ) -> Result<TaskInfo, String> {
-    crate::server::routes::refuse_deferred(
-        state,
-        "start_collection_copy",
-        &[source_id, target_id],
-    )?;
     let started = std::time::Instant::now();
     let audit_summary = format!(
         "copy {}.{} → {}.{}",
@@ -504,6 +785,23 @@ async fn start_collection_copy_inner(
 
     let source_is_mock = connection_is_mock(state, source_id)?;
     let target_is_mock = connection_is_mock(state, target_id)?;
+    // Found before the task exists, so a connection that cannot take part
+    // refuses the copy outright rather than failing a task.
+    let sides = if source_is_mock || target_is_mock {
+        None
+    } else {
+        let drops_or_indexes = include_indexes || mode == ConflictMode::Overwrite;
+        Some((
+            copy_side(state, source_id, "start_collection_copy", None).await?,
+            copy_side(
+                state,
+                target_id,
+                "start_collection_copy",
+                Some(drops_or_indexes),
+            )
+            .await?,
+        ))
+    };
 
     let task_id = Uuid::new_v4().to_string();
     let task = TaskInfo {
@@ -540,8 +838,9 @@ async fn start_collection_copy_inner(
         return Ok(task);
     }
 
-    let source = require_real_client(state, source_id)?;
-    let target = require_real_client(state, target_id)?;
+    let Some((source, target)) = sides else {
+        return Err("internal: copy sides were not resolved".to_string());
+    };
     let tasks = state.tasks.clone();
     let cancels = state.cancels.clone(); // Arc<Mutex<..>> — clone the Arc
     let audit_ctx = crate::audit::TaskAuditContext::capture(
@@ -562,9 +861,7 @@ async fn start_collection_copy_inner(
 
     tokio::spawn(async move {
         // Count total for progress (best-effort).
-        if let Ok(total) = source.database(&sdb).collection::<Document>(&scoll)
-            .count_documents(filter_doc.clone()).await
-        {
+        if let Some(total) = source.count(&sdb, &scoll, &filter_doc).await {
             update_task(&tasks, &task_id2, |t| t.total = Some(total));
         }
         update_task(&tasks, &task_id2, |t| t.message = "Copying documents".to_string());
@@ -616,7 +913,6 @@ pub async fn start_database_copy_impl(
     include_views: bool,
     conflict_mode: String,
 ) -> Result<TaskInfo, String> {
-    crate::server::routes::refuse_deferred(state, "start_database_copy", &[source_id, target_id])?;
     let started = std::time::Instant::now();
     let audit_summary = format!("copy database {} → {}", source_db, target_db);
     let collections_arg = collections.as_ref().map(|names| names.join(","));
@@ -695,6 +991,23 @@ async fn start_database_copy_inner(
         ));
     }
 
+    let sides = if connection_is_mock(state, source_id)? || connection_is_mock(state, target_id)? {
+        None
+    } else {
+        let drops_indexes_or_views =
+            include_indexes || include_views || mode == ConflictMode::Overwrite;
+        Some((
+            copy_side(state, source_id, "start_database_copy", None).await?,
+            copy_side(
+                state,
+                target_id,
+                "start_database_copy",
+                Some(drops_indexes_or_views),
+            )
+            .await?,
+        ))
+    };
+
     let task_id = Uuid::new_v4().to_string();
     let task = TaskInfo {
         id: task_id.clone(),
@@ -730,8 +1043,9 @@ async fn start_database_copy_inner(
         return Ok(task);
     }
 
-    let source = require_real_client(state, source_id)?;
-    let target = require_real_client(state, target_id)?;
+    let Some((source, target)) = sides else {
+        return Err("internal: copy sides were not resolved".to_string());
+    };
     let tasks = state.tasks.clone();
     let cancels = state.cancels.clone();
     let audit_ctx = crate::audit::TaskAuditContext::capture(
@@ -758,12 +1072,7 @@ async fn start_database_copy_inner(
             if c.collection_type == "view" || c.collection_type == "timeseries" {
                 continue;
             }
-            if let Ok(n) = source
-                .database(&sdb)
-                .collection::<Document>(&c.name)
-                .estimated_document_count()
-                .await
-            {
+            if let Some(n) = source.estimated_count(&sdb, &c.name).await {
                 grand_total += n;
             }
         }
@@ -782,7 +1091,13 @@ async fn start_database_copy_inner(
 
             if c.collection_type == "view" {
                 if include_views {
-                    match copy_view(&source, &sdb, &c.name, &target, &tdb).await {
+                    let made = match (&source, &target) {
+                        (CopySide::Local(s), CopySide::Local(t)) => {
+                            copy_view(s, &sdb, &c.name, t, &tdb).await
+                        }
+                        _ => copy_view_between(&source, &sdb, &c.name, &target, &tdb).await,
+                    };
+                    match made {
                         Ok(()) => summary.collections_copied += 1,
                         Err(e) => summary.failed.push(CopyFailure { collection: c.name.clone(), error: e }),
                     }

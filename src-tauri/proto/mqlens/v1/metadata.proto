@@ -44,6 +44,9 @@ message IndexInfo {
   string keys_json = 2; // canonical Extended JSON of the key pattern
   bool unique = 3;
   bool sparse = 4;
+  // The index document as MongoDB lists it, every option included (a TTL, a
+  // partial filter, a collation): what CreateIndexRequest.spec_bson takes.
+  bytes spec_bson = 5;
 }
 message ListIndexesRequest {
   string connection_id = 1;
@@ -61,6 +64,10 @@ message CreateIndexRequest {
   bool unique = 5;
   bool sparse = 6;
   string name = 7; // optional
+  // An index as IndexInfo.spec_bson lists it. When set, the index is created
+  // from it with every option it holds, and keys_json, unique, sparse and
+  // name are ignored. API version 5.
+  bytes spec_bson = 8;
 }
 message DropIndexRequest {
   string connection_id = 1;

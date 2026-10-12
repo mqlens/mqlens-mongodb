@@ -31,8 +31,9 @@ pub(crate) struct RemoteConn {
 }
 
 /// The MQLens API versions this desktop speaks. 2 is the first with documents
-/// as raw BSON, which every document read needs; 4 adds change streams.
-pub(crate) const API_VERSIONS: (u32, u32) = (2, 4);
+/// as raw BSON, which every document read needs; 4 adds change streams; 5 bulk
+/// inserts, index specs and collection options, for copies.
+pub(crate) const API_VERSIONS: (u32, u32) = (2, 5);
 
 /// The version to speak with a server that serves `server_min` to
 /// `server_max`: the highest both serve, or why there is none.
@@ -301,12 +302,6 @@ mod tests {
         assert_not_available(
             "require_real_client",
             crate::require_real_client(&state, "r1"),
-        );
-        assert_not_available(
-            "preflight_copy",
-            crate::db::copy::preflight_copy_impl(&state, "r1", "db", Vec::new(), Vec::new())
-                .await
-                .map(|_| ()),
         );
         assert_not_available(
             "resolve_conn_uri",

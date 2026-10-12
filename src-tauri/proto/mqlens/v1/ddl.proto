@@ -28,6 +28,9 @@ message CollectionValidation {
   string validator = 1;         // relaxed Extended JSON, "{}" when no validator is set
   string validation_level = 2;  // "off" | "moderate" | "strict" | "" when unset
   string validation_action = 3; // "error" | "warn" | "" when unset
+  // The collection's options as stored, as BSON: a view's viewOn and
+  // pipeline, a time series' settings. Empty when it has none.
+  bytes options_bson = 4;
 }
 
 // validator is Extended JSON, so a value written by GetCollectionOptions can be

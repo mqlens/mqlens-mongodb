@@ -9,6 +9,9 @@ service WriteService {
   rpc DeleteDocument(DeleteDocumentRequest) returns (WriteResult);
   rpc UpdateMany(UpdateManyRequest) returns (WriteResult);
   rpc DeleteMany(DeleteManyRequest) returns (WriteResult);
+  // Stores each document's BSON exactly as given, unordered: a document the
+  // deployment refuses does not stop the rest. API version 5.
+  rpc InsertMany(InsertManyRequest) returns (InsertManyResponse);
 }
 
 message WriteResult {
@@ -60,4 +63,22 @@ message DeleteManyRequest {
   string database = 2;
   string collection = 3;
   string filter_json = 4;
+}
+
+message InsertManyRequest {
+  string connection_id = 1;
+  string database = 2;
+  string collection = 3;
+  repeated bytes documents_bson = 4;
+}
+message InsertManyResponse {
+  int64 inserted_count = 1;
+  // The documents not stored, by their index in the request. A duplicate key
+  // is code 11000.
+  repeated InsertRefusal refused = 2;
+}
+message InsertRefusal {
+  int32 index = 1;
+  int32 code = 2;
+  string message = 3;
 }

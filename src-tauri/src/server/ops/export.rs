@@ -48,6 +48,21 @@ impl ExportFrom {
         })
     }
 
+    /// One collection read through a session already resolved for it.
+    pub(crate) fn with(
+        session: Speaking,
+        conn: Arc<RemoteConn>,
+        database: &str,
+        collection: &str,
+    ) -> Self {
+        Self {
+            session,
+            conn,
+            database: database.to_string(),
+            collection: collection.to_string(),
+        }
+    }
+
     /// How many documents match `filter`, counted exactly, as local mode
     /// counts for an export's progress.
     pub(crate) async fn count(&self, filter: &Document) -> Result<u64, String> {

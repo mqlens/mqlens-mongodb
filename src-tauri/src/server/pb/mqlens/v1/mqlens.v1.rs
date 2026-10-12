@@ -501,6 +501,10 @@ pub struct CollectionValidation {
     /// "error" | "warn" | "" when unset
     #[prost(string, tag="3")]
     pub validation_action: ::prost::alloc::string::String,
+    /// The collection's options as stored, as BSON: a view's viewOn and
+    /// pipeline, a time series' settings. Empty when it has none.
+    #[prost(bytes="bytes", tag="4")]
+    pub options_bson: ::prost::bytes::Bytes,
 }
 /// validator is Extended JSON, so a value written by GetCollectionOptions can be
 /// sent straight back. An empty validator clears validation. An empty level or
@@ -850,6 +854,10 @@ pub struct IndexInfo {
     pub unique: bool,
     #[prost(bool, tag="4")]
     pub sparse: bool,
+    /// The index document as MongoDB lists it, every option included (a TTL, a
+    /// partial filter, a collation): what CreateIndexRequest.spec_bson takes.
+    #[prost(bytes="bytes", tag="5")]
+    pub spec_bson: ::prost::bytes::Bytes,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ListIndexesRequest {
@@ -883,6 +891,11 @@ pub struct CreateIndexRequest {
     /// optional
     #[prost(string, tag="7")]
     pub name: ::prost::alloc::string::String,
+    /// An index as IndexInfo.spec_bson lists it. When set, the index is created
+    /// from it with every option it holds, and keys_json, unique, sparse and
+    /// name are ignored. API version 5.
+    #[prost(bytes="bytes", tag="8")]
+    pub spec_bson: ::prost::bytes::Bytes,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct DropIndexRequest {
@@ -1346,6 +1359,35 @@ pub struct DeleteManyRequest {
     pub collection: ::prost::alloc::string::String,
     #[prost(string, tag="4")]
     pub filter_json: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct InsertManyRequest {
+    #[prost(string, tag="1")]
+    pub connection_id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub database: ::prost::alloc::string::String,
+    #[prost(string, tag="3")]
+    pub collection: ::prost::alloc::string::String,
+    #[prost(bytes="bytes", repeated, tag="4")]
+    pub documents_bson: ::prost::alloc::vec::Vec<::prost::bytes::Bytes>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct InsertManyResponse {
+    #[prost(int64, tag="1")]
+    pub inserted_count: i64,
+    /// The documents not stored, by their index in the request. A duplicate key
+    /// is code 11000.
+    #[prost(message, repeated, tag="2")]
+    pub refused: ::prost::alloc::vec::Vec<InsertRefusal>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct InsertRefusal {
+    #[prost(int32, tag="1")]
+    pub index: i32,
+    #[prost(int32, tag="2")]
+    pub code: i32,
+    #[prost(string, tag="3")]
+    pub message: ::prost::alloc::string::String,
 }
 include!("mqlens.v1.tonic.rs");
 // @@protoc_insertion_point(module)

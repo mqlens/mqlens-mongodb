@@ -210,6 +210,7 @@ pub(crate) async fn create_index(
         unique: index.unique,
         sparse: index.sparse,
         name: index.name.to_string(),
+        spec_bson: Default::default(),
     };
     session_for(state, conn)
         .await?

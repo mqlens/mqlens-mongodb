@@ -544,22 +544,55 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
             reason: TASKS,
         },
     },
+    // A copy reads its source; the target is checked for write (and ddl)
+    // when the copy starts.
     CommandRoute {
         command: "preflight_copy",
-        serve: Serve::Deferred {
-            reason: TASKS,
+        serve: Serve::Rpc {
+            procedures: &["/mqlens.v1.MetadataService/ListCollections", "/mqlens.v1.DataService/Count"],
+            class: OpClass::Read,
+            since: 5,
+            adapter: true,
         },
     },
+    // A copy reads its source; the target is checked for write (and ddl)
+    // when the copy starts.
     CommandRoute {
         command: "start_collection_copy",
-        serve: Serve::Deferred {
-            reason: TASKS,
+        serve: Serve::Rpc {
+            procedures: &[
+                "/mqlens.v1.DataService/Find",
+                "/mqlens.v1.DataService/Count",
+                "/mqlens.v1.WriteService/InsertMany",
+                "/mqlens.v1.MetadataService/ListCollections",
+                "/mqlens.v1.MetadataService/ListIndexes",
+                "/mqlens.v1.MetadataService/CreateIndex",
+                "/mqlens.v1.DdlService/DropCollection",
+            ],
+            class: OpClass::Read,
+            since: 5,
+            adapter: true,
         },
     },
+    // A copy reads its source; the target is checked for write (and ddl)
+    // when the copy starts.
     CommandRoute {
         command: "start_database_copy",
-        serve: Serve::Deferred {
-            reason: TASKS,
+        serve: Serve::Rpc {
+            procedures: &[
+                "/mqlens.v1.DataService/Find",
+                "/mqlens.v1.DataService/Count",
+                "/mqlens.v1.WriteService/InsertMany",
+                "/mqlens.v1.MetadataService/ListCollections",
+                "/mqlens.v1.MetadataService/ListIndexes",
+                "/mqlens.v1.MetadataService/CreateIndex",
+                "/mqlens.v1.DdlService/DropCollection",
+                "/mqlens.v1.DdlService/GetCollectionOptions",
+                "/mqlens.v1.DdlService/CreateView",
+            ],
+            class: OpClass::Read,
+            since: 5,
+            adapter: true,
         },
     },
     CommandRoute {
@@ -801,7 +834,7 @@ mod tests {
     fn a_deferred_command_refuses_any_remote_connection_with_its_reason() {
         let state = with_remote("r1");
         assert_eq!(
-            refuse_deferred(&state, "start_collection_copy", &["local", "r1"]),
+            refuse_deferred(&state, "start_import_task", &["local", "r1"]),
             Err(TASKS.to_string())
         );
         assert_eq!(
@@ -817,11 +850,6 @@ mod tests {
     #[tokio::test]
     async fn deferred_commands_refuse_a_remote_connection_before_any_work() {
         let state = with_remote("r1");
-        match crate::db::copy::preflight_copy_impl(&state, "r1", "db", Vec::new(), Vec::new()).await
-        {
-            Err(e) => assert_eq!(e, TASKS),
-            Ok(_) => panic!("preflight_copy ran for a remote connection"),
-        }
         let err = crate::db::generate::infer_generate_template_impl(&state, "r1", "db", "c", None)
             .await
             .unwrap_err();

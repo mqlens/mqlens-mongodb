@@ -680,4 +680,89 @@ mod e2e {
         })
         .await;
     }
+
+    // A copy keeps every document as stored and every index option, from a
+    // local connection to the server and back again.
+    #[tokio::test]
+    async fn copies_cross_between_local_and_the_server() {
+        let Some(w) = World::new().await else { return };
+        w.run(|w| {
+            Box::pin(async move {
+                let st = &w.state;
+                let mut docs = people();
+                docs.push(doc! { "_id": 4, "v": { "$numberLong": "7", "other": 1 } });
+                w.seed("source", docs).await;
+                let local = w.client();
+                local
+                    .database(&w.db)
+                    .collection::<Document>("source")
+                    .create_index(
+                        mongodb::IndexModel::builder()
+                            .keys(doc! { "at": 1 })
+                            .options(
+                                mongodb::options::IndexOptions::builder()
+                                    .name("expiring".to_string())
+                                    .expire_after(std::time::Duration::from_secs(60))
+                                    .build(),
+                            )
+                            .build(),
+                    )
+                    .await
+                    .unwrap();
+
+                for (from, from_coll, to, to_coll) in [
+                    (&w.local, "source", &w.remote, "on_server"),
+                    (&w.remote, "on_server", &w.local, "back"),
+                ] {
+                    let task = crate::db::copy::start_collection_copy_impl(
+                        st,
+                        from,
+                        &w.db,
+                        from_coll,
+                        to,
+                        &w.db,
+                        to_coll,
+                        None,
+                        true,
+                        "merge".to_string(),
+                    )
+                    .await
+                    .unwrap_or_else(|e| panic!("copy {from_coll} -> {to_coll}: {e}"));
+                    let done = finished(st, &task.id).await;
+                    assert_eq!(
+                        done.status, "completed",
+                        "{from_coll} -> {to_coll}: {:?}",
+                        done.error
+                    );
+                }
+
+                let read = |coll: &'static str| {
+                    let local = local.clone();
+                    let db = w.db.clone();
+                    async move {
+                        use futures::TryStreamExt;
+                        local
+                            .database(&db)
+                            .collection::<mongodb::bson::RawDocumentBuf>(coll)
+                            .find(doc! {})
+                            .sort(doc! { "_id": 1 })
+                            .await
+                            .unwrap()
+                            .try_collect::<Vec<_>>()
+                            .await
+                            .unwrap()
+                    }
+                };
+                assert_eq!(read("back").await, read("source").await);
+                let indexes = local
+                    .database(&w.db)
+                    .collection::<Document>("back")
+                    .list_index_names()
+                    .await
+                    .unwrap();
+                assert!(indexes.contains(&"expiring".to_string()), "{indexes:?}");
+            })
+        })
+        .await;
+    }
 }
