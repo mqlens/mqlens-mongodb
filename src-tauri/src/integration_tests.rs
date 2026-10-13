@@ -1260,6 +1260,83 @@ mod integration {
         cleanup(&state, &id, &db).await;
     }
 
+    /// Import `wrapper_shaped()` from a BSON file into `coll` and read back
+    /// what was stored, raw.
+    async fn import_wrapper_shaped_bson(
+        state: &AppState,
+        id: &str,
+        db: &str,
+        coll: &str,
+        mode: &str,
+    ) -> Vec<Document> {
+        let path = std::env::temp_dir().join(format!(
+            "mqlens_it_import_{}.bson",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let mut bytes = Vec::new();
+        for d in wrapper_shaped() {
+            bytes.extend(mongodb::bson::to_vec(&d).unwrap());
+        }
+        std::fs::write(&path, bytes).unwrap();
+        let task = crate::db::import::start_import_task_impl(
+            state,
+            id,
+            db,
+            coll,
+            crate::db::import::ImportSourceArg {
+                path: Some(path.to_string_lossy().to_string()),
+                text: None,
+            },
+            "bson",
+            None,
+            mode,
+        )
+        .await
+        .unwrap();
+        let done = wait_for_task(state, &task.id).await;
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(done.status, "completed", "{:?}", done.error);
+
+        use futures::stream::TryStreamExt;
+        let stored: Vec<mongodb::bson::RawDocumentBuf> = client_of(state, id)
+            .database(db)
+            .collection::<mongodb::bson::RawDocumentBuf>(coll)
+            .find(doc! {})
+            .sort(doc! { "_id": 1 })
+            .await
+            .unwrap()
+            .try_collect()
+            .await
+            .unwrap();
+        stored
+            .iter()
+            .map(|raw| Document::try_from(raw.as_ref()).unwrap())
+            .collect()
+    }
+
+    // A BSON import writes such documents exactly as they are in the file.
+    #[tokio::test]
+    async fn it_imports_wrapper_shaped_bson_documents_as_stored() {
+        let Some((state, id, db)) = connect().await else {
+            return;
+        };
+        let stored = import_wrapper_shaped_bson(&state, &id, &db, "odd", "skip").await;
+        assert_eq!(stored, wrapper_shaped());
+        cleanup(&state, &id, &db).await;
+    }
+
+    // Update mode replaces existing documents with them exactly, too.
+    #[tokio::test]
+    async fn it_replaces_with_wrapper_shaped_bson_documents_as_stored() {
+        let Some((state, id, db)) = connect().await else {
+            return;
+        };
+        seed(&state, &id, &db, "odd", vec![doc! { "_id": 1 }, doc! { "_id": 2 }]).await;
+        let stored = import_wrapper_shaped_bson(&state, &id, &db, "odd", "update").await;
+        assert_eq!(stored, wrapper_shaped());
+        cleanup(&state, &id, &db).await;
+    }
+
     // Editing such a document as JSON would write the type its keys imitate,
     // so the edit is refused and the document stays as stored.
     #[tokio::test]
