@@ -1217,7 +1217,7 @@ const TYPE_WRAPPER_KEYS: &[&str] = &[
 
 /// Whether any key of the document, at any depth, is a type-wrapper key.
 /// Values of real BSON types are not sub-documents, so they never count.
-fn has_type_wrapper_key(doc: &Document) -> bool {
+pub(crate) fn has_type_wrapper_key(doc: &Document) -> bool {
     fn value(v: &mongodb::bson::Bson) -> bool {
         match v {
             mongodb::bson::Bson::Document(d) => has_type_wrapper_key(d),

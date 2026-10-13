@@ -6,10 +6,10 @@ use crate::server::ops::copy::RemoteSide;
 use mongodb::bson::Document;
 
 /// `documents::write_imported_docs` on a server connection, mode for mode.
-/// Every import format is parsed into documents first (JSON and CSV as
-/// Extended JSON, BSON through `Document::from_reader`), and each reads a
-/// sub-document shaped like a type wrapper as that type, as local mode does;
-/// so a replacement sent as Extended JSON carries no such key to misread.
+/// Inserts go as raw BSON and keep every document as it is. A replacement
+/// goes as Extended JSON, which would read a sub-document shaped like a type
+/// wrapper (a BSON import keeps those as stored) as that type, so update mode
+/// refuses such a document before writing any of the batch.
 pub(crate) async fn write_imported_docs(
     remote: &RemoteSide,
     database: &str,
@@ -20,6 +20,20 @@ pub(crate) async fn write_imported_docs(
     match mode {
         "update" => {
             let existing = remote.existing_ids(database, collection, &docs).await?;
+            let replaced_wrapper_shaped = docs.iter().find(|d| {
+                d.get("_id")
+                    .is_some_and(|id| existing.contains(&id.to_string()))
+                    && crate::db::documents::has_type_wrapper_key(d)
+            });
+            if let Some(doc) = replaced_wrapper_shaped {
+                return Err(format!(
+                    "Import aborted: the document with _id {} has a sub-document whose field \
+                     names look like an Extended JSON type ($numberLong, $date, $oid and the \
+                     like). Replacing it through MQLens Server would store that type in their \
+                     place. Import it in update mode on a direct connection instead.",
+                    doc.get("_id").map(|id| id.to_string()).unwrap_or_default()
+                ));
+            }
             let (mut inserted, mut updated) = (0u64, 0u64);
             let mut fresh = Vec::new();
             for doc in docs {
@@ -143,11 +157,12 @@ mod tests {
             .with(|s| s.writes.clone())
             .into_iter()
             .filter_map(|w| match w {
-                FakeWrite::InsertMany(r) => Some(
-                    r.documents_bson
-                        .into_iter()
-                        .map(|d| mongodb::bson::from_slice::<Document>(&d).unwrap()),
-                ),
+                FakeWrite::InsertMany(r) => Some(r.documents_bson.into_iter().map(|d| {
+                    crate::db::stored(
+                        mongodb::bson::RawDocumentBuf::from_bytes(d.to_vec()).unwrap(),
+                    )
+                    .unwrap()
+                })),
                 _ => None,
             })
             .flatten()
@@ -231,6 +246,67 @@ mod tests {
         assert_eq!(replaced(&env).len(), 1, "{:?}", replaced(&env));
         assert!(replaced(&env)[0].contains("\"_id\""));
         assert_eq!(inserted(&env).len(), 1);
+    }
+
+    /// A document whose sub-document looks like an Extended JSON type.
+    fn wrapper_shaped(id: i32) -> Document {
+        mongodb::bson::doc! { "_id": id, "v": { "$numberLong": "7", "other": 1 } }
+    }
+
+    async fn import_bson(state: &AppState, id: &str, doc: &Document, mode: &str) -> TaskInfo {
+        let path = std::env::temp_dir().join(format!(
+            "mqlens-server-import-{}.bson",
+            uuid::Uuid::new_v4().simple()
+        ));
+        std::fs::write(&path, mongodb::bson::to_vec(doc).unwrap()).unwrap();
+        let task = start_import_task_impl(
+            state,
+            id,
+            "orders",
+            "items",
+            ImportSourceArg {
+                path: Some(path.to_string_lossy().to_string()),
+                text: None,
+            },
+            "bson",
+            None,
+            mode,
+        )
+        .await
+        .unwrap();
+        let done = finished(state, &task).await;
+        let _ = std::fs::remove_file(&path);
+        done
+    }
+
+    // A BSON import inserts such a document exactly as it is in the file.
+    #[tokio::test]
+    async fn a_bson_import_inserts_wrapper_shaped_documents_as_stored() {
+        let env = Env::new().await;
+        let (state, id) = writing(&env).await;
+
+        let done = import_bson(&state, &id, &wrapper_shaped(99), "skip").await;
+
+        assert_eq!(done.status, "completed", "{:?}", done.error);
+        assert_eq!(inserted(&env), vec![wrapper_shaped(99)]);
+    }
+
+    // A replacement goes as Extended JSON, which would read such a document
+    // as the type it imitates, so update mode refuses it and writes nothing.
+    #[tokio::test]
+    async fn an_update_import_refuses_to_replace_with_a_wrapper_shaped_document() {
+        let env = Env::new().await;
+        let (state, id) = writing(&env).await;
+
+        let done = import_bson(&state, &id, &wrapper_shaped(1), "update").await;
+
+        assert_eq!(done.status, "failed");
+        assert!(
+            done.error.as_deref().unwrap_or("").contains("$numberLong"),
+            "{:?}",
+            done.error
+        );
+        assert!(replaced(&env).is_empty(), "{:?}", replaced(&env));
     }
 
     // Generated documents are written to the server in batches.

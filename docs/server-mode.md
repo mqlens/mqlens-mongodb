@@ -106,7 +106,11 @@ option they have.
 Importing a file and generating test data work on a server connection too,
 with a role that can write and a server that speaks API version 5. The file is
 read by this app and its documents are written through the server; the skip,
-update and abort modes behave as they do locally.
+update and abort modes behave as they do locally, with one exception. Update
+mode replaces a document through the server as Extended JSON, so it refuses to
+replace one with a sub-document whose field names look like an Extended JSON
+type (`$numberLong`, `$date`, `$oid` and the like), which a BSON file can hold.
+Import such a file in update mode on a direct connection.
 
 ## When something fails
 
