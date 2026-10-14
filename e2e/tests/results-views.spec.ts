@@ -121,3 +121,29 @@ test('plain JSON converts BSON for display and copy and restores the shell view'
   await toggle.uncheck();
   await expect(jsonLine(page, '"_id"')).toContainText('ObjectId(');
 });
+
+test('plain JSON exports the remaining BSON scalars as JSON-safe values', async ({ app, page, context, browserName }) => {
+  const doc = {
+    _id: 1, values: [
+      { $numberInt: '42' }, { $numberDouble: '1.5' }, { $numberDouble: 'NaN' },
+      { $numberDecimal: '123.450' }, { $timestamp: { t: 2, i: 3 } },
+      { $binary: { base64: 'AQID', subType: '00' } },
+      { $regularExpression: { pattern: 'a.*', options: 'im' } },
+      { $code: 'return x', $scope: { x: 1 } }, { $symbol: 's' }, { $minKey: 1 }, { $maxKey: 1 },
+      { $ref: 'users', $id: { $oid: '603d779f4f102e3a185c3220' }, $db: 'shop' },
+      { $ref: 'users', $id: { $oid: '603d779f4f102e3a185c3220' } },
+      {}, null, true,
+    ],
+  };
+  await openThings(app, page, [doc]);
+  await view(page).getByRole('checkbox', { name: 'Plain JSON' }).check();
+  await expect(jsonLine(page, '123.450')).toBeVisible();
+  if (browserName === 'chromium') {
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+    await view(page).getByTestId('copy-doc-btn').click();
+    await expect.poll(async () => JSON.parse(await page.evaluate(() => navigator.clipboard.readText())))
+      .toEqual({ _id: 1, values: [42, 1.5, 'NaN', '123.450', '8589934595', 'AQID', '/a.*/im', 'return x', 's', 'MinKey', 'MaxKey',
+        { $ref: 'users', $id: '603d779f4f102e3a185c3220', $db: 'shop' },
+        { $ref: 'users', $id: '603d779f4f102e3a185c3220' }, {}, null, true] });
+  }
+});
