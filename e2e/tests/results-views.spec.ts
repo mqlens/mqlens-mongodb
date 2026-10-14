@@ -100,3 +100,24 @@ test.describe('Results views', () => {
     await expect.poll(clipboard).toContain('queryPlanner');
   });
 });
+
+test('plain JSON converts BSON for display and copy and restores the shell view', async ({ app, page, context, browserName }) => {
+  const doc = { _id: { $oid: '603d779f4f102e3a185c3220' }, createdAt: { $date: '2026-06-15T15:48:03.793Z' }, n: { $numberLong: '9007199254740993' } };
+  await openThings(app, page, [doc]);
+  await expect(jsonLine(page, '"_id"')).toContainText('ObjectId(');
+  const toggle = view(page).getByRole('checkbox', { name: 'Plain JSON' });
+  await toggle.check();
+  await expect(jsonLine(page, '"_id"')).toContainText('"603d779f4f102e3a185c3220"');
+  await expect(jsonLine(page, '"_id"')).not.toContainText('ObjectId(');
+  await expect(jsonLine(page, '"createdAt"')).toContainText('"2026-06-15T15:48:03.793Z"');
+  await expect(jsonLine(page, '"n"')).toContainText('"9007199254740993"');
+  await expect(view(page)).toContainText('BSON type information may be lost');
+  if (browserName === 'chromium') {
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+    await view(page).getByTestId('copy-doc-btn').click();
+    await expect.poll(async () => JSON.parse(await page.evaluate(() => navigator.clipboard.readText())))
+      .toEqual({ _id: '603d779f4f102e3a185c3220', createdAt: '2026-06-15T15:48:03.793Z', n: '9007199254740993' });
+  }
+  await toggle.uncheck();
+  await expect(jsonLine(page, '"_id"')).toContainText('ObjectId(');
+});
