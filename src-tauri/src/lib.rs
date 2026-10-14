@@ -40,6 +40,7 @@ mod write_guard;
 pub mod biometric;
 pub mod oidc;
 pub mod oidc_login;
+pub mod oidc_cache;
 pub use db::aggregate::{execute_aggregate_impl, explain_aggregate_query_impl};
 pub use db::ddl::{
     create_collection_impl, create_view_impl, drop_collection_impl, drop_database_impl,
@@ -856,6 +857,7 @@ pub(crate) async fn connect_db_with_login(
             report.record(&phase);
         }
     }));
+    session.set_cache(login.cache.clone());
     // Registered before the SSH tunnel and `ClientOptions::parse` (which can
     // do SRV and TXT lookups), decided from the string alone: the UI can
     // cancel the moment it has invoked, and a cancel sent during either must
@@ -1644,21 +1646,41 @@ pub(crate) fn connection_is_mock(state: &AppState, id: &str) -> Result<bool, Str
 /// from the UI, though the driver's five-minute deadline still bounds it.
 #[tauri::command]
 async fn connect_db(
+    app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     uri: String,
     ssh: Option<ssh_tunnel::SshConfig>,
     oidc: Option<connections::OidcProfileConfig>,
     login_id: Option<String>,
+    profile_id: Option<String>,
 ) -> Result<String, String> {
-    connect_db_with_oidc_impl(
-        &state,
-        &uri,
-        ssh.as_ref(),
-        oidc.as_ref(),
-        login_id,
-        oidc_login::system_browser_opener(),
-    )
-    .await
+    let cache = if oidc.as_ref().is_some_and(|c| c.remember_login) && oidc_login::uri_requests_oidc(&uri) {
+        match profile_id.as_deref() {
+            Some(id) => {
+                let path = connections::get_profiles_enc_path(&app_handle);
+                let meta = connections::get_vault_meta_path(&app_handle);
+                let key = state.vault_key.clone();
+                let cache_uri = uri.clone();
+                let config = oidc.clone();
+                let cache_ssh = ssh.clone();
+                let id = id.to_string();
+                server::session::blocking(move || oidc_cache::TokenCache::open(path, meta, key, &id, &cache_uri, config.as_ref(), cache_ssh.as_ref())).await?
+            }
+            None => None,
+        }
+    } else { None };
+    let mut login = oidc_login::HumanLogin::interactive(oidc.as_ref(), login_id, oidc_login::system_browser_opener());
+    login.cache = cache;
+    connect_db_with_login(&state, &uri, ssh.as_ref(), login).await
+}
+
+/// Forget the saved refresh token. In-memory connections stay signed in;
+/// the generation change prevents their callbacks from saving it again.
+#[tauri::command]
+async fn forget_oidc_login(app_handle: tauri::AppHandle, state: tauri::State<'_, AppState>, profile_id: String) -> Result<(), String> {
+    let meta = connections::get_vault_meta_path(&app_handle);
+    let (_lock, key) = lock_vault_and_get_key_async(&state, &meta).await?;
+    oidc_cache::forget(&connections::get_profiles_enc_path(&app_handle), &key, &profile_id)
 }
 
 /// Cancel a browser login whose connect or test is still in flight (#430).
@@ -4319,6 +4341,7 @@ pub fn run() {
             log_frontend_error,
             connect_db,
             cancel_oidc_login,
+            forget_oidc_login,
             reopen_oidc_login,
             detect_mongo_tools,
             detect_mongosh_binary,

@@ -160,7 +160,7 @@ interface ConnectionProfile {
   uri: string;
   color_tag?: string;
   /** Human OIDC settings (#430). Mirrors backend `ConnectionProfile::oidc`. */
-  oidc?: { allowed_hosts?: string[]; use_id_token?: boolean } | null;
+  oidc?: { allowed_hosts?: string[]; use_id_token?: boolean; remember_login?: boolean } | null;
 }
 
 interface SidebarProps {

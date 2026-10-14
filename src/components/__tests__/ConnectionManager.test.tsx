@@ -3597,3 +3597,45 @@ describe('ConnectionManager: MQLens Server', () => {
     );
   });
 });
+
+describe('OIDC refresh-token persistence (#439)', () => {
+  it('defaults off and saves only the opt-in setting in the profile', async () => {
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      calls.push({ cmd, args });
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      return Promise.resolve(null);
+    });
+    render(<ConnectionManager isOpen onClose={() => {}} onConnect={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: /new\.\.\./i }));
+    fireEvent.click(screen.getByRole('button', { name: /^authentication$/i }));
+    await pickSelectOption('auth-method-select', /oidc \(browser login\)/i);
+    const toggle = screen.getByRole('checkbox', { name: 'Remember login in encrypted vault' });
+    expect(toggle).not.toBeChecked();
+    fireEvent.click(toggle);
+    fireEvent.change(screen.getByLabelText('Display Name'), { target: { value: 'Remembered OIDC' } });
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    await waitFor(() => {
+      const profile = calls.find(c => c.cmd === 'save_connection_profile')?.args.profile;
+      expect(profile?.oidc).toEqual({ remember_login: true });
+      expect(profile?.uri).not.toContain('remember_login');
+    });
+  });
+
+  it('restores the opt-in and forgets a saved profile login without sending tokens through IPC', async () => {
+    const calls: any[] = [];
+    const profile = { id: 'remembered', name: 'Remembered OIDC', uri: 'mongodb://localhost/?authMechanism=MONGODB-OIDC&authSource=$external', oidc: { remember_login: true } };
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      calls.push({ cmd, args });
+      if (cmd === 'load_connection_profiles') return Promise.resolve([profile]);
+      return Promise.resolve(null);
+    });
+    render(<ConnectionManager isOpen onClose={() => {}} onConnect={() => {}} />);
+    fireEvent.click((await screen.findAllByText('Remembered OIDC'))[0]);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^authentication$/i }));
+    expect(screen.getByRole('checkbox', { name: 'Remember login in encrypted vault' })).toBeChecked();
+    fireEvent.click(screen.getByRole('button', { name: 'Forget saved login' }));
+    await waitFor(() => expect(calls.find(c => c.cmd === 'forget_oidc_login')?.args).toEqual({ profileId: 'remembered' }));
+  });
+});
