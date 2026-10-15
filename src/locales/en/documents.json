@@ -149,6 +149,8 @@
       "page": "Page {{page}}",
       "pageOf": "Page {{page}} / {{totalPages}}",
       "perPageOption": "{{size}} / page",
+      "plainJson": "Plain JSON",
+      "plainJsonWarning": "Display/copy only — BSON type information may be lost.",
       "queryPlanGenerated": "Query Plan Generated",
       "showingEmpty": "showing {{from}}",
       "showingRange": "showing {{from}}–{{to}}",
