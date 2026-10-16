@@ -366,6 +366,7 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
       send({ phase: 'ping', status: 'ok' });
       return null;
     },
+    forget_oidc_login: () => undefined,
     cancel_oidc_login: ({ loginId }) => {
       const cancel = pendingOidcLogins.get(String(loginId));
       pendingOidcLogins.delete(String(loginId));

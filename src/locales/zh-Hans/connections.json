@@ -60,7 +60,7 @@
     },
     "oidcAllowedHosts": "允许的主机（可选）",
     "oidcAllowedHostsHelp": "仅自托管部署需要。MongoDB Atlas 主机已默认允许。以逗号分隔，例如 mongo.corp.example.com",
-    "oidcNote": "登录将在系统浏览器中打开。你的凭据仅在身份提供商处输入 —— MQLens 不会看到它们，也不会保存任何令牌。",
+    "oidcNote": "登录将在系统浏览器中打开。你的凭据仅在身份提供商处输入，MQLens 不会看到它们。",
     "oidcUseIdToken": "使用 ID 令牌代替访问令牌",
     "oidcUseIdTokenHelp": "如果 MongoDB 拒绝你的身份提供商签发的访问令牌（例如 cidaas），请开启此项。MongoDB 随后会校验 ID 令牌，其受众（audience）是你的客户端 ID。",
     "passLabelAws": "Secret Access Key",
@@ -72,7 +72,10 @@
     "userLabelDefault": "用户名",
     "userLabelKerberos": "Principal",
     "userLabelX509": "用户名（可选 —— 可从证书中推导）",
-    "x509Note": "需要启用 TLS 并配置客户端证书（TLS 标签页）。"
+    "x509Note": "需要启用 TLS 并配置客户端证书（TLS 标签页）。",
+    "oidcRememberLogin": "在加密保险库中记住登录",
+    "oidcRememberLoginHelp": "请先保存配置再连接，以便在重启后保留刷新令牌。默认关闭。忘记登录会删除已保存的令牌，现有连接仍保持登录状态。",
+    "oidcForgetLogin": "忘记已保存的登录"
   },
   "colorTags": {
     "amber": "琥珀色",
