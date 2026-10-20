@@ -2562,7 +2562,8 @@ describe('Plain JSON representation (#451)', () => {
     expect(screen.queryByText('ObjectId')).not.toBeInTheDocument();
     expect(screen.getByText('"2026-06-15T15:48:03.793Z"')).toBeInTheDocument();
     expect(screen.getByText('"9007199254740993"')).toBeInTheDocument();
-    expect(screen.getByText(/BSON type information may be lost/)).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: 'Plain JSON' }).closest('label')).toHaveAttribute('title', expect.stringContaining('BSON type information may be lost'));
+    expect(screen.getByRole('img', { name: /BSON type information may be lost/ })).toBeInTheDocument();
     fireEvent.click(screen.getByTestId('copy-doc-btn'));
     const expected = { _id: '603d779f4f102e3a185c3220', createdAt: '2026-06-15T15:48:03.793Z', n: '9007199254740993' };
     expect(JSON.parse(writeText.mock.calls[0][0])).toEqual(expected);
