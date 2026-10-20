@@ -111,7 +111,7 @@ test('plain JSON converts BSON for display and copy and restores the shell view'
   await expect(jsonLine(page, '"_id"')).not.toContainText('ObjectId(');
   await expect(jsonLine(page, '"createdAt"')).toContainText('"2026-06-15T15:48:03.793Z"');
   await expect(jsonLine(page, '"n"')).toContainText('"9007199254740993"');
-  await expect(view(page)).toContainText('BSON type information may be lost');
+  await expect(toggle.locator('..')).toHaveAttribute('title', /BSON type information may be lost/);
   if (browserName === 'chromium') {
     await context.grantPermissions(['clipboard-read', 'clipboard-write']);
     await view(page).getByTestId('copy-doc-btn').click();
