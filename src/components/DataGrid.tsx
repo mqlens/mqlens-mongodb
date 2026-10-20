@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useContext } from 'react';
 import { useTranslation, Trans } from 'react-i18next';
 import { DocumentViewerContext } from './DocumentViewer';
 import { List } from 'react-window';
-import { Table, Braces, ChevronRight, ChevronDown, ListFilter, Copy, Check, Edit, Trash2, Plus, Table2, BarChart3, Lightbulb, GitCompareArrows } from 'lucide-react';
+import { Table, Braces, ChevronRight, ChevronDown, ListFilter, Copy, Check, Edit, Trash2, Plus, Table2, BarChart3, Lightbulb, GitCompareArrows, AlertTriangle } from 'lucide-react';
 import { ChartView } from './ChartView';
 import { ContextMenu, type ContextMenuItem } from './ContextMenu';
 import { DocumentDiffModal } from './DocumentDiffModal';
@@ -2238,10 +2238,10 @@ export const DataGrid: React.FC<DataGridProps> = ({
               {dateTimezone === 'utc' ? t('dataGrid.labels.utc') : t('dataGrid.labels.local')}
             </button>
             {viewMode === 'json' && (
-              <label className="flex items-center gap-2 text-[11px] text-muted-foreground">
+              <label className="flex items-center gap-2 text-[11px] text-muted-foreground" title={t('dataGrid.labels.plainJsonWarning')}>
                 <input type="checkbox" aria-label={t('dataGrid.labels.plainJson')} checked={plainJson} onChange={e => setPlainJson(e.target.checked)} />
                 {t('dataGrid.labels.plainJson')}
-                {plainJson && <span>{t('dataGrid.labels.plainJsonWarning')}</span>}
+                {plainJson && <AlertTriangle size={12} role="img" aria-label={t('dataGrid.labels.plainJsonWarning')} />}
               </label>
             )}
             <div className="flex items-center rounded-md border border-border bg-background p-0.5">
