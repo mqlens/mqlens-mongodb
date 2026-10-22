@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 import { test, expect, type App } from '../fixtures';
-import { confirmTypedName, connectStaging, dismissHoverCards, expandCollections, openCollection, setEditorText, view } from '../helpers';
+import { confirmTypedName, connectStaging, dismissHoverCards, expandCollections, openCollection, setEditorText, switchTab, view } from '../helpers';
 
 // Dropping and renaming from the sidebar (#396): what it refuses while a
 // document is still being saved there, what it asks for on a connection that
@@ -93,6 +93,8 @@ test.describe('After a drop', () => {
     await sidebar(page).getByText('indexes', { exact: true }).first().click();
     await dismissHoverCards(page);
     await expect(sidebar(page).getByText('email_1', { exact: true })).toBeVisible();
+    // The label also opens the Indexes view (#512); the collection's own tab is the one under test.
+    await switchTab(page, 'customers');
 
     await collectionMenu(page, 'customers', 'Drop Collection');
     await confirmTypedName(page, 'customers');

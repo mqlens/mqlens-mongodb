@@ -36,6 +36,7 @@ import {
 export type QueryTabType =
   | 'collection'
   | 'index'
+  | 'indexes'
   | 'shell'
   | 'settings'
   | 'quickstart'

@@ -47,6 +47,7 @@ const ALLOWED_IDENTICAL_VALUES = new Set([
   'settings:mcp.port', // Port
   'settings:ai.providerName', // Name — identical in German
   'connections:serverAccounts.name', // Name — identical in German
+  'sidebar:indexesView.columns.name', // Name — identical in German
   'sidebar:connection.serverBadge', // Server
   'settings:updates.resultValues.offline', // Offline — established loanword, matches shell:updatePrompt.toast.offline's "offline" usage
   'settings:tools.tabLabel', // Tools

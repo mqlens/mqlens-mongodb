@@ -46,6 +46,7 @@
     "open": "打开",
     "openCollection": "打开 Collection",
     "openInNewTab": "在新标签页中打开",
+    "openIndexesView": "打开索引总览",
     "openShell": "打开 mongosh 终端",
     "pasteHere": "粘贴到这里",
     "pinToSidebar": "固定到侧边栏",
@@ -136,6 +137,39 @@
     "reportBug": "报告问题",
     "requestFeature": "提交功能建议",
     "starOnGithub": "在 GitHub 上点星"
+  },
+  "indexesView": {
+    "actions": {
+      "edit": "编辑索引"
+    },
+    "columns": {
+      "keys": "键",
+      "name": "名称",
+      "properties": "属性",
+      "size": "大小",
+      "type": "类型",
+      "usage": "使用情况"
+    },
+    "empty": "此集合没有索引。",
+    "loading": "正在加载索引…",
+    "properties": {
+      "default": "默认",
+      "sparse": "稀疏",
+      "unique": "唯一"
+    },
+    "statsUnavailable": "无法获取索引使用情况和大小：{{detail}}",
+    "title": "索引",
+    "type": {
+      "compound": "复合",
+      "hashed": "哈希",
+      "regular": "普通",
+      "text": "文本",
+      "wildcard": "通配符"
+    },
+    "usage": {
+      "ops": "{{ops}} 次操作",
+      "since": "自 {{date}} 起"
+    }
   },
   "search": {
     "ariaLabel": "搜索侧边栏",

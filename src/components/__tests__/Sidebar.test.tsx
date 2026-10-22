@@ -543,6 +543,44 @@ describe('Sidebar Component', () => {
     expect(mockInvoke).toHaveBeenCalledWith('coll_stats', { id: 'conn-1', db: 'sales_db', collection: 'customers' });
   });
 
+  it('opens the Indexes view from the indexes folder label, and still expands it (#512)', async () => {
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections' && args.db === 'sales_db') {
+        return Promise.resolve([{ name: 'customers', type: 'collection' }]);
+      }
+      if (cmd === 'list_indexes') return Promise.resolve([{ name: 'email_1', keys: '{"email":1}', unique: false, sparse: false }]);
+      return Promise.resolve([]);
+    });
+    const onOpenIndexes = vi.fn();
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        onOpenIndexes={onOpenIndexes}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Mock DB', uri: 'mongodb://mock' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+      />
+    );
+
+    fireEvent.click(await screen.findByText('sales_db'));
+    fireEvent.click(await screen.findByText('Collections'));
+    fireEvent.click(await screen.findByText('customers'));
+    fireEvent.click(await screen.findByText('indexes'));
+
+    expect(onOpenIndexes).toHaveBeenCalledWith('conn-1', 'sales_db', 'customers');
+    expect(await screen.findByText('email_1')).toBeInTheDocument();
+
+    // Clicking the label again opens the view again; it does not collapse the folder.
+    fireEvent.click(screen.getByText('indexes'));
+    expect(onOpenIndexes).toHaveBeenCalledTimes(2);
+    expect(screen.getByText('email_1')).toBeInTheDocument();
+  });
+
   it('shows an index stats popover when hovering an index row (#178)', async () => {
     mockInvoke.mockImplementation((cmd: string, args: any) => {
       if (cmd === 'list_databases') return Promise.resolve(['sales_db']);

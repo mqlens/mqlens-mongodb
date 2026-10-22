@@ -26,6 +26,7 @@
     "generate": "生成数据：{{name}}",
     "gridfs": "GridFS：{{collection}}",
     "import": "导入：{{collection}}",
+    "indexes": "索引：{{collection}}",
     "monitor": "监控：{{name}}",
     "quickStart": "快速开始",
     "restore": "恢复：{{name}}",

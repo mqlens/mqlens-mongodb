@@ -189,6 +189,8 @@ interface SidebarProps {
   onOpenSettings: () => void;
   onCreateIndex?: (connectionId: string, dbName: string, collName: string) => void;
   onDeleteIndex?: (connectionId: string, dbName: string, collName: string, indexName: string) => void;
+  /** Open the collection's consolidated Indexes view (#512). */
+  onOpenIndexes?: (connectionId: string, dbName: string, collName: string) => void;
   onOpenShell?: (connectionId: string, dbName: string, collName?: string, initialCommand?: string) => void;
   /** Open a live change-stream tail (#190). Omit the collection to watch a
    *  whole database, and the database too to watch the deployment. */
@@ -332,6 +334,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenSettings,
   onCreateIndex,
   onDeleteIndex,
+  onOpenIndexes,
   onOpenShell,
   onWatchCollection,
   onOpenMonitoring,
@@ -1715,15 +1718,33 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     )}
                   />
                   <Folder size={11} className="shrink-0 text-amber-500" />
-                  <span className="text-muted-foreground">{t('tree.indexesLabel')}</span>
-                  {collIndexes.length > 0 && (
-                    <Badge variant="secondary" className="h-4 px-1 text-[9px] font-normal" data-testid="indexes-count">
-                      ({collIndexes.length})
-                    </Badge>
-                  )}
+                  {/* The label opens the Indexes view (#512) and expands the
+                      folder; the chevron alone collapses it. */}
+                  <span
+                    className="flex items-center gap-1"
+                    onClick={(e) => {
+                      if (!onOpenIndexes) return;
+                      e.stopPropagation();
+                      setExpandedIndexesFolders((prev) => ({ ...prev, [`${connId}/${dbName}/${collName}`]: true }));
+                      onOpenIndexes(connId, dbName, collName);
+                    }}
+                  >
+                    <span className="text-muted-foreground">{t('tree.indexesLabel')}</span>
+                    {collIndexes.length > 0 && (
+                      <Badge variant="secondary" className="h-4 px-1 text-[9px] font-normal" data-testid="indexes-count">
+                        ({collIndexes.length})
+                      </Badge>
+                    )}
+                  </span>
                 </div>
               </ContextMenuTrigger>
               <ContextMenuContent>
+                {onOpenIndexes && (
+                  <ContextMenuItem className={ctxItemClass} onClick={() => onOpenIndexes(connId, dbName, collName)}>
+                    <KeyRound />
+                    <span>{t('ctx.openIndexesView')}</span>
+                  </ContextMenuItem>
+                )}
                 <ContextMenuItem className={ctxItemClass} onClick={() => onCreateIndex?.(connId, dbName, collName)} {...gate(connId, 'create_index')}>
                   <Plus />
                   <span>{t('ctx.createIndex')}</span>

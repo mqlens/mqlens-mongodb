@@ -26,6 +26,7 @@
     "generate": "Generate: {{name}}",
     "gridfs": "GridFS: {{collection}}",
     "import": "Import: {{collection}}",
+    "indexes": "Indexes: {{collection}}",
     "monitor": "Monitor: {{name}}",
     "quickStart": "Quick Start",
     "restore": "Restore: {{name}}",

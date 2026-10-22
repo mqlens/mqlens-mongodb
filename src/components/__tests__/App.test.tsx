@@ -126,7 +126,7 @@ vi.mock('@tauri-apps/plugin-fs', () => ({
 
 // Mock Sidebar component
 vi.mock('../Sidebar', () => ({
-  Sidebar: ({ onSelectCollection, onSelectIndex, onCreateIndex, onDeleteIndex, onOpenSettings, onOpenDump, onOpenRestore, onEditValidation, onOpenGenerate, onDatabaseRenamed, onDatabaseDropped, onWatchCollection, activeConnections, onConnectProfile, isCommandBlocked, onOpenShell, onOpenUsers, onAnalyzeSchema, onOpenGridfs, onCreateView }: any) => (
+  Sidebar: ({ onSelectCollection, onSelectIndex, onOpenIndexes, onCreateIndex, onDeleteIndex, onOpenSettings, onOpenDump, onOpenRestore, onEditValidation, onOpenGenerate, onDatabaseRenamed, onDatabaseDropped, onWatchCollection, activeConnections, onConnectProfile, isCommandBlocked, onOpenShell, onOpenUsers, onAnalyzeSchema, onOpenGridfs, onCreateView }: any) => (
     <div data-testid="mock-sidebar">
       {(activeConnections ?? []).map((c: any) => (
         <button key={c.id} data-testid={`mock-open-shell-${c.id}`} onClick={() => onOpenShell?.(c.id, 'sales_db')} />
@@ -185,6 +185,9 @@ vi.mock('../Sidebar', () => ({
         onClick={() => onSelectCollection('conn-trial', 'sales_db', 'customers')}
       >
         Select Collection On Trial
+      </button>
+      <button data-testid="open-indexes-btn" onClick={() => onOpenIndexes?.('conn-1', 'sales_db', 'customers')}>
+        Open Indexes
       </button>
       <button data-testid="select-collection-btn" onClick={() => onSelectCollection('conn-1', 'sales_db', 'customers')}>
         Select Collection
@@ -373,6 +376,32 @@ describe('App Component', () => {
     expect(screen.queryByText('Unique')).not.toBeInTheDocument();
     // The old fabricated description must be gone.
     expect(screen.queryByText(/User-defined single field index/i)).not.toBeInTheDocument();
+  });
+
+  it('opens the consolidated Indexes view for a collection, and a row opens the index (#512)', async () => {
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'list_indexes') {
+        return Promise.resolve([
+          { name: '_id_', keys: '{"_id":1}', unique: false, sparse: false },
+          { name: 'email_1', keys: '{"email":1}', unique: true, sparse: false },
+        ]);
+      }
+      if (cmd === 'index_stats') return Promise.resolve([{ name: 'email_1', sizeBytes: 16_384, ops: 3, sinceMs: 0 }]);
+      return Promise.resolve([]);
+    });
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('open-indexes-btn'));
+    const row = await screen.findByTestId('index-row-email_1');
+    expect(row).toHaveTextContent('16 KB');
+    expect(screen.getByText('Indexes: customers')).toBeInTheDocument();
+
+    fireEvent.click(row);
+    // IndexViewer swaps its loading root for the loaded one, so wait for it to settle.
+    await waitFor(() => expect(screen.getByTestId('index-viewer')).toHaveTextContent('email_1'));
   });
 
   it('hides the collection and index actions a server connection cannot run', async () => {

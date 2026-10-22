@@ -39,6 +39,7 @@ import { ConnectionManager } from './components/ConnectionManager';
 import { WatchPanel } from './components/WatchPanel';
 import { SettingsView, type SettingsTabId, MONGO_TOOLS_DIR_KEY } from './components/SettingsModal';
 import { IndexViewer } from './components/IndexViewer';
+import { CollectionIndexes } from './components/CollectionIndexes';
 import { IndexModal } from './components/IndexModal';
 import { MongoShell } from './components/MongoShell';
 import { ToolSetupDialog, type ManagedToolStatusUi, type InstallTaskUi } from './components/ToolSetupDialog';
@@ -179,7 +180,7 @@ const newEditId = (): string =>
 
 export interface QueryTab {
   id: string;
-  type: 'collection' | 'index' | 'shell' | 'settings' | 'quickstart' | 'export' | 'import' | 'tasks' | 'activity' | 'schema' | 'create-view' | 'gridfs' | 'monitoring' | 'users' | 'dump' | 'restore' | 'validation' | 'generate' | 'watch';
+  type: 'collection' | 'index' | 'indexes' | 'shell' | 'settings' | 'quickstart' | 'export' | 'import' | 'tasks' | 'activity' | 'schema' | 'create-view' | 'gridfs' | 'monitoring' | 'users' | 'dump' | 'restore' | 'validation' | 'generate' | 'watch';
   connectionId: string;
   db: string;
   collection: string;
@@ -347,6 +348,7 @@ const buildTabQuerySpec = (tab: QueryTab): QueryCodeSpec | null => {
 
 /** The command a tab type cannot work without; on a connection that cannot run it, the tab is not mounted. */
 const TAB_COMMANDS: Partial<Record<string, string>> = {
+  indexes: 'list_indexes',
   schema: 'analyze_schema',
   'create-view': 'create_view',
   gridfs: 'list_gridfs_files',
@@ -450,6 +452,7 @@ const tabIconFor = (tab: QueryTab, isActive: boolean): React.ReactNode => {
   const size = 11;
   switch (tab.type) {
     case 'index':
+    case 'indexes':
       return <KeyRound size={size} className={className} />;
     case 'shell':
       return <Terminal size={size} className={className} />;
@@ -499,6 +502,8 @@ export const tabLabelFor = (
   switch (tab.type) {
     case 'index':
       return `${tab.collection}.${tab.indexName}`;
+    case 'indexes':
+      return t('tabs.indexes', { collection: tab.collection });
     case 'shell':
       return `mongosh: ${tab.collection || tab.db}`;
     case 'watch':
@@ -583,6 +588,7 @@ const tabColorLabel = (t: TFunction, color: TabColorId): string => {
 const CONNECTION_TAB_TYPES = new Set<QueryTab['type']>([
   'collection',
   'index',
+  'indexes',
   'shell',
   'export',
   'import',
@@ -1735,6 +1741,28 @@ function Workspace() {
     }
   };
 
+  /** Open the consolidated Indexes view for a collection (#512). */
+  const handleOpenIndexesTab = (connectionId: string, dbName: string, collName: string) => {
+    const tabId = `indexes.${connectionId}.${dbName}.${collName}`;
+    if (!tabs.some(t => t.id === tabId)) {
+      const newTab: QueryTab = {
+        id: tabId,
+        type: 'indexes',
+        connectionId,
+        db: dbName,
+        collection: collName,
+        results: [],
+        loading: false,
+        error: null,
+        explainResult: null,
+      };
+      setTabs(prev => [...prev, newTab]);
+      dispatchWorkspace({ type: 'open_tab', tabId }, { tab: newTab });
+      return;
+    }
+    dispatchWorkspace({ type: 'open_tab', tabId });
+  };
+
   /** Open a live tail. One tab per target, so re-opening focuses rather than
    *  starting a second cursor on the same collection. */
   const handleOpenWatch = (connectionId: string, dbName = '', collName = '') => {
@@ -2350,6 +2378,9 @@ function Workspace() {
       if (tab.type === 'index') {
         return { ...tab, id: `${connectionId}.${dbName}.${newName}.${tab.indexName}`, collection: newName };
       }
+      if (tab.type === 'indexes') {
+        return { ...tab, id: `indexes.${connectionId}.${dbName}.${newName}`, collection: newName };
+      }
       if (tab.type === 'shell') {
         return { ...tab, id: `shell.${connectionId}.${dbName}.${newName}`, collection: newName };
       }
@@ -2430,6 +2461,9 @@ function Workspace() {
           id: `${connectionId}.${newName}.${tab.collection}.${tab.indexName}`,
           db: newName,
         };
+      }
+      if (tab.type === 'indexes') {
+        return { ...tab, id: `indexes.${connectionId}.${newName}.${tab.collection}`, db: newName };
       }
       if (tab.type === 'shell') {
         return {
@@ -4648,6 +4682,24 @@ function Workspace() {
             }
           />
         )}
+        {tab.type === 'indexes' && (
+          <CollectionIndexes
+            connectionId={tab.connectionId}
+            databaseName={tab.db}
+            collectionName={tab.collection}
+            refreshKey={indexMutationTrigger}
+            onOpenIndex={(indexName) => handleSelectIndex(tab.connectionId, tab.db, tab.collection, indexName)}
+            onCreateIndex={isCommandBlocked(tab.connectionId, 'create_index') ? undefined : () =>
+              handleOpenIndexModalForCreate(tab.connectionId, tab.db, tab.collection)
+            }
+            onEditIndex={isCommandBlocked(tab.connectionId, 'create_index') || isCommandBlocked(tab.connectionId, 'delete_index') ? undefined : (indexName, keys, unique, sparse) =>
+              handleOpenIndexModalForEdit(tab.connectionId, tab.db, tab.collection, indexName, keys, unique, sparse)
+            }
+            onDeleteIndex={isCommandBlocked(tab.connectionId, 'delete_index') ? undefined : (indexName) =>
+              handleDeleteIndex(tab.connectionId, tab.db, tab.collection, indexName)
+            }
+          />
+        )}
         {tab.type === 'collection' && (() => {
           const activeConnection = activeConnections.find(c => c.id === tab.connectionId);
           const connectionName = activeConnection ? activeConnection.name : 'cmi-dev';
@@ -5089,6 +5141,7 @@ function Workspace() {
           onSelectIndex={handleSelectIndex}
           onCreateIndex={handleOpenIndexModalForCreate}
           onDeleteIndex={handleDeleteIndex}
+          onOpenIndexes={handleOpenIndexesTab}
           onOpenShell={handleOpenShell}
           onWatchCollection={handleOpenWatch}
           onOpenMonitoring={handleOpenMonitoringTab}

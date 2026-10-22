@@ -45,6 +45,7 @@
     "notOnServer": "Not available on MQLens Server yet",
     "open": "Open",
     "openCollection": "Open Collection",
+    "openIndexesView": "Open Indexes View",
     "openInNewTab": "Open in New Tab",
     "openShell": "Open mongosh Shell",
     "pasteHere": "Paste here",
@@ -136,6 +137,39 @@
     "reportBug": "Report a bug",
     "requestFeature": "Request a feature",
     "starOnGithub": "Star on GitHub"
+  },
+  "indexesView": {
+    "actions": {
+      "edit": "Edit Index"
+    },
+    "columns": {
+      "keys": "Keys",
+      "name": "Name",
+      "properties": "Properties",
+      "size": "Size",
+      "type": "Type",
+      "usage": "Usage"
+    },
+    "empty": "This collection has no indexes.",
+    "loading": "Loading indexes…",
+    "properties": {
+      "default": "DEFAULT",
+      "sparse": "SPARSE",
+      "unique": "UNIQUE"
+    },
+    "statsUnavailable": "Index usage and size are unavailable: {{detail}}",
+    "title": "Indexes",
+    "type": {
+      "compound": "Compound",
+      "hashed": "Hashed",
+      "regular": "Regular",
+      "text": "Text",
+      "wildcard": "Wildcard"
+    },
+    "usage": {
+      "ops": "{{ops}} ops",
+      "since": "since {{date}}"
+    }
   },
   "search": {
     "ariaLabel": "Search sidebar",

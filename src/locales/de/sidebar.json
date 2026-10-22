@@ -46,6 +46,7 @@
     "open": "Öffnen",
     "openCollection": "Collection öffnen",
     "openInNewTab": "In neuem Tab öffnen",
+    "openIndexesView": "Indexübersicht öffnen",
     "openShell": "mongosh-Shell öffnen",
     "pasteHere": "Hier einfügen",
     "pinToSidebar": "An Seitenleiste anheften",
@@ -136,6 +137,39 @@
     "reportBug": "Fehler melden",
     "requestFeature": "Feature vorschlagen",
     "starOnGithub": "Auf GitHub mit Stern markieren"
+  },
+  "indexesView": {
+    "actions": {
+      "edit": "Index bearbeiten"
+    },
+    "columns": {
+      "keys": "Schlüssel",
+      "name": "Name",
+      "properties": "Eigenschaften",
+      "size": "Größe",
+      "type": "Typ",
+      "usage": "Nutzung"
+    },
+    "empty": "Diese Collection hat keine Indizes.",
+    "loading": "Indizes werden geladen…",
+    "properties": {
+      "default": "STANDARD",
+      "sparse": "LÜCKENHAFT",
+      "unique": "EINDEUTIG"
+    },
+    "statsUnavailable": "Nutzung und Größe der Indizes sind nicht verfügbar: {{detail}}",
+    "title": "Indizes",
+    "type": {
+      "compound": "Zusammengesetzt",
+      "hashed": "Gehasht",
+      "regular": "Einfach",
+      "text": "Volltext",
+      "wildcard": "Platzhalter"
+    },
+    "usage": {
+      "ops": "{{ops}} Zugriffe",
+      "since": "seit {{date}}"
+    }
   },
   "search": {
     "ariaLabel": "Seitenleiste durchsuchen",
