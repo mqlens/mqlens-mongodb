@@ -2548,3 +2548,45 @@ describe('DataGrid — blocked explain', () => {
     expect(screen.getByTestId('explain-plan-tab')).toBeDisabled();
   });
 });
+
+
+describe('Plain JSON representation (#451)', () => {
+  it('displays and copies JSON-safe values while editing the original BSON document', () => {
+    const doc = { _id: { $oid: '603d779f4f102e3a185c3220' }, createdAt: { $date: '2026-06-15T15:48:03.793Z' }, n: { $numberLong: '9007199254740993' } };
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    const edit = vi.fn();
+    render(<DataGrid documents={[doc]} onEditDocument={edit} />);
+    expect(screen.getByText('ObjectId')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Plain JSON' }));
+    expect(screen.queryByText('ObjectId')).not.toBeInTheDocument();
+    expect(screen.getByText('"2026-06-15T15:48:03.793Z"')).toBeInTheDocument();
+    expect(screen.getByText('"9007199254740993"')).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: 'Plain JSON' }).closest('label')).toHaveAttribute('title', expect.stringContaining('BSON type information may be lost'));
+    expect(screen.getByRole('img', { name: /BSON type information may be lost/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('copy-doc-btn'));
+    const expected = { _id: '603d779f4f102e3a185c3220', createdAt: '2026-06-15T15:48:03.793Z', n: '9007199254740993' };
+    expect(JSON.parse(writeText.mock.calls[0][0])).toEqual(expected);
+    fireEvent.click(screen.getByTestId('edit-doc-btn'));
+    expect(edit).toHaveBeenCalledWith(doc);
+    fireEvent.contextMenu(screen.getByText('"9007199254740993"'));
+    fireEvent.click(screen.getByText('Copy document (JSON)'));
+    expect(JSON.parse(writeText.mock.calls[1][0])).toEqual(expected);
+    fireEvent.click(screen.getByRole('button', { name: 'Tree' }));
+    expect(screen.getAllByText('ObjectId').length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole('button', { name: 'JSON' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Plain JSON' }));
+    expect(screen.getByText('ObjectId')).toBeInTheDocument();
+  });
+});
+
+
+it('keeps malformed EJSON inspectable in Plain JSON and escapes field names', () => {
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+  const doc = { 'line\n"key': { $oid: 'invalid' } };
+  render(<DataGrid documents={[doc]} />);
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Plain JSON' }));
+  expect(screen.getByText('"line\\n\\"key"')).toBeInTheDocument();
+  expect(screen.getByText('"invalid"')).toBeInTheDocument();
+  error.mockRestore();
+});

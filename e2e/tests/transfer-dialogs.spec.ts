@@ -115,7 +115,7 @@ test.describe('Dump', () => {
     await expect(page.getByTestId('dump-query-error')).toContainText('Not valid JSON');
     await expect(page.getByTestId('dump-run-btn')).toBeDisabled();
 
-    // Wait for the debounced query preview before injecting the next failure.
+    // Let the debounced query preview finish before arming the next failure.
     await expect(page.getByTestId('dump-preview-cmd')).toContainText('--query={ tier: 1');
     await app.failNext('preview_dump_command', 'preview unavailable');
     await page.getByTestId('dump-opt-forcetablescan').click();

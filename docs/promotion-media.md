@@ -41,7 +41,7 @@ The recording exports to `website/public/demo.mp4`, the README animation to `ass
 
 ## Repeat the capture
 
-From the repository root, install the locked root and website dependencies and Playwright Chromium. Use Node 22.12 or later.
+From the repository root, install the locked root and website dependencies and Playwright Chromium. Use Node 26 or later.
 
 ```sh
 npm ci

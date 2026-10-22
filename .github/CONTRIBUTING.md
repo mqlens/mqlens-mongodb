@@ -18,7 +18,7 @@ By participating, you agree to our [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Prerequisites
 
-- **Node.js 20+** and **npm**
+- **Node.js 26+** and **npm**
 - **Rust** (stable, via [rustup](https://rustup.rs))
 - Platform build dependencies for [Tauri v2](https://tauri.app/start/prerequisites/).
   On Debian/Ubuntu: `libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev

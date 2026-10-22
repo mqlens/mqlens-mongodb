@@ -98,9 +98,10 @@ export function matchesFor(tag: string): string[] {
   // hundreds of languages written in Latin, and `und-CH` becomes German out of
   // Switzerland's four. Either would match here and discard the real
   // preference listed after it, so an undetermined tag contributes no
-  // candidates and resolution moves on to the next one.
+  // candidates and resolution moves on to the next one. Older engines report
+  // its language as undefined, newer ones (V8 in Node 26) as "und".
   const language = locale.language?.toLowerCase();
-  if (!language) return [];
+  if (!language || language === 'und') return [];
   const script = locale.script ?? maximize(locale)?.script;
   const candidates: string[] = [];
   if (script) candidates.push(`${language}-${script.toLowerCase()}`);

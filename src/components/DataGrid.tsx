@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useContext } from 'react';
 import { useTranslation, Trans } from 'react-i18next';
 import { DocumentViewerContext } from './DocumentViewer';
 import { List } from 'react-window';
-import { Table, Braces, ChevronRight, ChevronDown, ListFilter, Copy, Check, Edit, Trash2, Plus, Table2, BarChart3, Lightbulb, GitCompareArrows } from 'lucide-react';
+import { Table, Braces, ChevronRight, ChevronDown, ListFilter, Copy, Check, Edit, Trash2, Plus, Table2, BarChart3, Lightbulb, GitCompareArrows, AlertTriangle } from 'lucide-react';
 import { ChartView } from './ChartView';
 import { ContextMenu, type ContextMenuItem } from './ContextMenu';
 import { DocumentDiffModal } from './DocumentDiffModal';
@@ -11,6 +11,7 @@ import { generateQueryCode, CODE_LANGUAGES, CODE_LANGUAGE_MONACO_IDS, type CodeL
 import { suggestESRIndex, type IndexSuggestion } from '../lib/indexSuggestions';
 import { useMonacoTheme, useMonacoFontSize } from '../lib/useMonacoTheme';
 import { EJSON } from 'bson';
+import { toPlainJson } from '../lib/plainJson';
 import { copyValueToText } from '../lib/copyValue';
 import { ResultsFindBar } from './ResultsFindBar';
 import {
@@ -440,7 +441,7 @@ interface JsonLine {
 const jsonPunct = (text: string) => <span className="text-muted-foreground">{text}</span>;
 const jsonKeyNode = (k: string) => (
   <>
-    <span className="text-syntax-key">"{k}"</span>
+    <span className="text-syntax-key">{jsonStringLiteral(k)}</span>
     {jsonPunct(' : ')}
   </>
 );
@@ -658,6 +659,20 @@ export const DataGrid: React.FC<DataGridProps> = ({
     setPendingCompare(null);
   }, [documents]);
 
+  const [plainJson, setPlainJson] = useState(false);
+  const plainDocument = (doc: Record<string, any>) => {
+    try {
+      // Canonical parsing retains large integers until conversion to strings.
+      return toPlainJson(EJSON.parse(JSON.stringify(doc), { relaxed: false }));
+    } catch {
+      // Match the BSON view's fallback for malformed Extended JSON.
+      return toPlainJson(doc);
+    }
+  };
+  const documentCopyText = (doc: Record<string, any>) => JSON.stringify(
+    usePlainJson ? plainDocument(doc) : doc, null, 2,
+  );
+
   const writeClipboard = (text: string) => {
     try { navigator.clipboard?.writeText(text); } catch { /* clipboard unavailable */ }
   };
@@ -676,7 +691,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
     const items: ContextMenuItem[] = [];
     if (onEditDocument) items.push({ label: t('dataGrid.actions.editDocument'), icon: <Edit size={13} />, onClick: () => onEditDocument(m.doc), disabled: isReadOnly, title: isReadOnly ? t('dataGrid.tooltips.readOnly') : undefined });
     if (onDuplicateDocument) items.push({ label: t('dataGrid.actions.duplicateDocument'), icon: <Plus size={13} />, onClick: () => onDuplicateDocument(m.doc), disabled: isReadOnly, title: isReadOnly ? t('dataGrid.tooltips.readOnly') : undefined });
-    items.push({ label: t('dataGrid.actions.copyDocumentJson'), icon: <Copy size={13} />, onClick: () => writeClipboard(JSON.stringify(m.doc, null, 2)) });
+    items.push({ label: t('dataGrid.actions.copyDocumentJson'), icon: <Copy size={13} />, onClick: () => writeClipboard(documentCopyText(m.doc)) });
     if (!pendingCompare) {
       items.push({
         label: t('dataGrid.actions.compareWith'),
@@ -719,6 +734,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   // Chromeless has no switcher, so JSON is the only mode reachable — and the
   // right one for a single document nobody queried for.
   const viewMode = chromeless ? 'json' : (controlledViewMode ?? uncontrolledViewMode);
+  const usePlainJson = viewMode === 'json' && plainJson;
   const setViewMode = (mode: ViewMode) => {
     setUncontrolledViewMode(mode);
     onViewModeChange?.(mode);
@@ -996,6 +1012,13 @@ export const DataGrid: React.FC<DataGridProps> = ({
     });
   }, [documents]);
 
+  const jsonDocs = useMemo(
+    () => usePlainJson
+      ? documents.map(plainDocument)
+      : parsedDocs,
+    [documents, parsedDocs, usePlainJson],
+  );
+
   // Extract all unique columns present in documents
   const columns = useMemo(() => {
     if (!documents || documents.length === 0) return [];
@@ -1146,14 +1169,14 @@ export const DataGrid: React.FC<DataGridProps> = ({
       lines.push({ num: lines.length + 1, depth, kind: 'close', keyName: null, bracket: close, hasComma: trailingComma, ancestors: childAncestors, docIndex });
     };
 
-    parsedDocs.forEach((doc, di) => {
+    jsonDocs.forEach((doc, di) => {
       walk(doc, null, 0, false, [], di, true, documents[di]);
     });
     // Gutter (~68px) + monospace char width (~7.2px); min keeps a sensible floor.
     const maxWidthPx = Math.max(320, 68 + Math.ceil(maxChars * 7.2));
     return { jsonLines: lines, jsonMaxWidthPx: maxWidthPx };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [parsedDocs, documents, dateTimezone]);
+  }, [jsonDocs, documents, dateTimezone]);
 
   // The result's identity: what was asked for — the query, the page — and the
   // shape of what came back: its documents in order, then every foldable
@@ -1258,7 +1281,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   // searches exactly what that renderer paints, so a visible `ObjectId(`, a
   // quote, or an escaped `\n` is matchable.
   const jsonLineText = (line: JsonLine): string => {
-    const key = line.keyName !== null ? `"${line.keyName}" : ` : '';
+    const key = line.keyName !== null ? `${jsonStringLiteral(line.keyName)} : ` : '';
     const comma = line.hasComma ? ',' : '';
     switch (line.kind) {
       case 'scalar':
@@ -1808,7 +1831,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
     const [copied, setCopied] = useState(false);
     const handleCopy = (e: React.MouseEvent) => {
       e.stopPropagation();
-      writeClipboard(JSON.stringify(doc, null, 2));
+      writeClipboard(documentCopyText(doc));
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1500);
     };
@@ -2214,6 +2237,13 @@ export const DataGrid: React.FC<DataGridProps> = ({
             >
               {dateTimezone === 'utc' ? t('dataGrid.labels.utc') : t('dataGrid.labels.local')}
             </button>
+            {viewMode === 'json' && (
+              <label className="flex items-center gap-2 text-[11px] text-muted-foreground" title={t('dataGrid.labels.plainJsonWarning')}>
+                <input type="checkbox" aria-label={t('dataGrid.labels.plainJson')} checked={plainJson} onChange={e => setPlainJson(e.target.checked)} />
+                {t('dataGrid.labels.plainJson')}
+                {plainJson && <AlertTriangle size={12} role="img" aria-label={t('dataGrid.labels.plainJsonWarning')} />}
+              </label>
+            )}
             <div className="flex items-center rounded-md border border-border bg-background p-0.5">
               <button
                 role="button"

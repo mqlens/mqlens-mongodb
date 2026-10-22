@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import ts from 'typescript';
+// TypeScript 7 (the native compiler) has no JS API; its parser lives on in
+// Microsoft's TypeScript 6 API package.
+import ts from '@typescript/typescript6';
 
 /**
  * i18n coverage gate.

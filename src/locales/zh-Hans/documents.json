@@ -129,6 +129,8 @@
       "previous": "上一个匹配项（Shift+Enter）"
     },
     "labels": {
+      "plainJson": "普通 JSON",
+      "plainJsonWarning": "仅用于显示或复制，可能丢失 BSON 类型信息。",
       "actions": "操作",
       "docsCountEstimated_other": "约 {{count}} 个文档",
       "docsCountExact_other": "{{count}} 个文档",

@@ -5,7 +5,7 @@ name: Website CI
 # `npm ci` rejects, or a site that no longer builds, used to surface only as a
 # failed deploy after merge. #388 was that case: its lockfile was regenerated on
 # a newer npm, passed locally, and would have failed `npm ci` on the npm bundled
-# with the Node 22 the deploy uses. This job mirrors the deploy's build job
+# with the Node 26 the deploy uses. This job mirrors the deploy's build job
 # (same runner, Node version and commands) so those failures land on the PR.
 on:
   pull_request:
@@ -38,9 +38,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 22
+          node-version: 26
           cache: npm
           cache-dependency-path: website/package-lock.json
 

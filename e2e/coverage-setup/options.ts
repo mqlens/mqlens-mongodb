@@ -69,7 +69,7 @@ export const coverageOptions: CoverageReportOptions = {
     dir: ['./src'],
     filter: (filePath) => (isAppSource(toSourcePath(filePath)) ? 'js' : false),
     transformer: async (entry: { url: string; source: string; sourceMap?: unknown }) => {
-      const ts = (await import('typescript')).default;
+      const ts = (await import('@typescript/typescript6')).default;
       const sourcePath = toSourcePath(entry.url);
       const output = ts.transpileModule(entry.source, {
         fileName: sourcePath,

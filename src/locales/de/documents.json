@@ -334,6 +334,8 @@
       "previous": "Vorheriger Treffer (Shift+Enter)"
     },
     "labels": {
+      "plainJson": "Einfaches JSON",
+      "plainJsonWarning": "Nur zur Anzeige/zum Kopieren — BSON-Typinformationen können verloren gehen.",
       "actions": "Aktionen",
       "docsCountEstimated_one": "~{{count}} Dokument",
       "docsCountEstimated_other": "~{{count}} Dokumente",
