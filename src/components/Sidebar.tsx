@@ -1723,10 +1723,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <span
                     className="flex items-center gap-1"
                     onClick={(e) => {
-                      if (!onOpenIndexes) return;
                       e.stopPropagation();
                       setExpandedIndexesFolders((prev) => ({ ...prev, [`${connId}/${dbName}/${collName}`]: true }));
-                      onOpenIndexes(connId, dbName, collName);
+                      onOpenIndexes?.(connId, dbName, collName);
                     }}
                   >
                     <span className="text-muted-foreground">{t('tree.indexesLabel')}</span>

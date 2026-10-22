@@ -90,17 +90,20 @@ export const CollectionIndexes: React.FC<CollectionIndexesProps> = ({
       .then((list) => !cancelled && setIndexes(list))
       .catch((err) => !cancelled && setError(String(err)));
     // Separate from the list: without stats the definitions still render.
-    invoke<IndexStatUi[]>('index_stats', args)
-      .then((s) => {
-        if (cancelled) return;
-        setStats(s);
-        setStatsError(null);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setStats(null);
-        setStatsError(String(err));
-      });
+    invoke<IndexStatUi[]>('index_stats', args).then(
+      (s) => {
+        if (!cancelled) {
+          setStats(s);
+          setStatsError(null);
+        }
+      },
+      (err) => {
+        if (!cancelled) {
+          setStats(null);
+          setStatsError(String(err));
+        }
+      }
+    );
     return () => {
       cancelled = true;
     };
