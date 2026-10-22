@@ -1,4 +1,4 @@
-import '@testing-library/jest-dom';
+import '@testing-library/jest-dom/vitest';
 import { configure } from '@testing-library/react';
 
 // `waitFor` defaults to a 1s budget (see @testing-library/dom's config), which

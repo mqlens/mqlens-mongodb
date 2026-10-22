@@ -849,7 +849,6 @@ pub fn write_prepared_file(path: &Path, blob: Option<Vec<u8>>) -> Result<(), Str
 /// released when the returned handle drops, so callers hold it in a `let _guard`
 /// for the whole sequence.
 pub fn lock_settings_for_write(settings_path: &Path) -> Result<fs::File, String> {
-    use fs4::fs_std::FileExt;
     let mut name = settings_path.file_name().unwrap_or_default().to_os_string();
     name.push(".lock");
     let lock_path = settings_path.with_file_name(name);
@@ -863,7 +862,7 @@ pub fn lock_settings_for_write(settings_path: &Path) -> Result<fs::File, String>
         .truncate(false)
         .open(&lock_path)
         .map_err(|e| format!("open {}: {e}", lock_path.display()))?;
-    FileExt::lock_exclusive(&file).map_err(|e| format!("lock {}: {e}", lock_path.display()))?;
+    file.lock().map_err(|e| format!("lock {}: {e}", lock_path.display()))?;
     Ok(file)
 }
 
@@ -871,7 +870,6 @@ pub fn lock_settings_for_write(settings_path: &Path) -> Result<fs::File, String>
 /// writer. Unlike the per-file locks, this serializes reset/initialization
 /// with all files that share vault.json as their key authority.
 pub fn lock_vault_for_write(meta_path: &Path) -> Result<fs::File, String> {
-    use fs4::fs_std::FileExt;
     let lock_path = meta_path.with_file_name("vault-operation.lock");
     if let Some(parent) = lock_path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
@@ -883,7 +881,7 @@ pub fn lock_vault_for_write(meta_path: &Path) -> Result<fs::File, String> {
         .truncate(false)
         .open(&lock_path)
         .map_err(|e| format!("open {}: {e}", lock_path.display()))?;
-    FileExt::lock_exclusive(&file).map_err(|e| format!("lock {}: {e}", lock_path.display()))?;
+    file.lock().map_err(|e| format!("lock {}: {e}", lock_path.display()))?;
     Ok(file)
 }
 
