@@ -46,6 +46,12 @@ const indexKind = (keys: KeyPattern): IndexKind => {
   return fields.length > 1 ? 'compound' : 'regular';
 };
 
+/** Editing drops and re-creates the index from ±1 keys, so only a plain
+ *  ascending/descending index survives it; a 2dsphere, text or hashed key
+ *  would come back as `1`. */
+const isEditable = (keys: KeyPattern): boolean =>
+  Object.values(keys).every((d) => d === 1 || d === -1 || d === '1' || d === '-1');
+
 const keyChip = (dir: number | string): string =>
   dir === 1 || dir === '1' ? '↑' : dir === -1 || dir === '-1' ? '↓' : String(dir);
 
@@ -244,7 +250,7 @@ export const CollectionIndexes: React.FC<CollectionIndexesProps> = ({
                   <td className="px-4 py-1.5">
                     {!isId && (
                       <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
-                        {onEditIndex && (
+                        {onEditIndex && isEditable(keys) && (
                           <Button
                             type="button"
                             variant="ghost"
@@ -257,7 +263,7 @@ export const CollectionIndexes: React.FC<CollectionIndexesProps> = ({
                               onEditIndex(
                                 info.name,
                                 Object.fromEntries(
-                                  Object.entries(keys).map(([f, d]) => [f, d === -1 || d === '-1' ? -1 : typeof d === 'number' ? d : 1])
+                                  Object.entries(keys).map(([f, d]) => [f, Number(d)])
                                 ),
                                 info.unique,
                                 info.sparse

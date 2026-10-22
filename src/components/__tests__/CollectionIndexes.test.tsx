@@ -180,6 +180,28 @@ describe('CollectionIndexes', () => {
     expect(onOpenIndex).not.toHaveBeenCalled();
   });
 
+  it('offers no edit for an index whose keys the editor cannot keep (2dsphere, text, hashed)', async () => {
+    // Editing drops and re-creates the index from ±1 keys, so a special
+    // type would come back as a plain ascending index.
+    mockInvokeByCommand({
+      list_indexes: [
+        EMAIL,
+        LOC,
+        { name: 'bio_text', keys: '{"_fts":"text","_ftsx":1}', unique: false, sparse: false },
+        { name: 'uid_hashed', keys: '{"uid":"hashed"}', unique: false, sparse: false },
+      ],
+      index_stats: [],
+    });
+    render(<CollectionIndexes {...baseProps} onEditIndex={vi.fn()} onDeleteIndex={vi.fn()} />);
+    await screen.findByTestId('index-row-email_1');
+
+    expect(screen.getByTestId('edit-index-email_1')).toBeInTheDocument();
+    for (const name of ['loc_2dsphere', 'bio_text', 'uid_hashed']) {
+      expect(screen.queryByTestId(`edit-index-${name}`)).not.toBeInTheDocument();
+      expect(screen.getByTestId(`drop-index-${name}`)).toBeInTheDocument();
+    }
+  });
+
   it('hides write actions when no handler is given (blocked connection)', async () => {
     mockInvokeByCommand({ list_indexes: [EMAIL], index_stats: STATS });
     render(<CollectionIndexes {...baseProps} />);
