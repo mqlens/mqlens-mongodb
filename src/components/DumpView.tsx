@@ -91,6 +91,12 @@ export const DumpView: React.FC<DumpViewProps> = ({
   const [previewCmd, setPreviewCmd] = React.useState('');
   const [starting, setStarting] = React.useState(false);
   const previewGen = React.useRef(0);
+  // The parent passes a new arrow on every render. Reading it through a ref
+  // keeps the preview keyed to the options alone, so an unrelated re-render
+  // does not send another preview request.
+  const onPreviewRef = React.useRef(onPreviewCommand);
+  onPreviewRef.current = onPreviewCommand;
+  const canPreview = Boolean(onPreviewCommand);
 
   // Reset options that only make sense for a specific scope once that scope is left.
   React.useEffect(() => {
@@ -144,7 +150,7 @@ export const DumpView: React.FC<DumpViewProps> = ({
   }), [scope, targetKind, folderOut, archiveFile, gzip, query, forceTableScan, dumpUsersAndRoles, oplog]);
 
   React.useEffect(() => {
-    if (!onPreviewCommand) return;
+    if (!canPreview) return;
     // Without a detected mongodump the backend can only answer with an error;
     // invalidate any in-flight request and show nothing instead.
     if (!tools?.mongodump) {
@@ -155,7 +161,7 @@ export const DumpView: React.FC<DumpViewProps> = ({
     const options = buildOptions();
     const timer = setTimeout(() => {
       const gen = ++previewGen.current;
-      onPreviewCommand(options)
+      onPreviewRef.current!(options)
         .then((cmd) => {
           if (gen === previewGen.current) setPreviewCmd(cmd);
         })
@@ -164,7 +170,7 @@ export const DumpView: React.FC<DumpViewProps> = ({
         });
     }, PREVIEW_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [buildOptions, onPreviewCommand, tools]);
+  }, [buildOptions, canPreview, tools]);
 
   const pickDestination = async () => {
     if (targetKind === 'folder') {

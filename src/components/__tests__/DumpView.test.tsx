@@ -197,6 +197,33 @@ describe('DumpView', () => {
     expect(screen.getByTestId('dump-preview-cmd')).toBeEmptyDOMElement();
   });
 
+  it('does not re-request the preview when only the callback identity changes', async () => {
+    // App passes `onPreviewCommand` as an inline arrow, so every App render
+    // hands DumpView a new function with the same options behind it.
+    vi.useFakeTimers();
+    const calls: unknown[] = [];
+    const preview = () => (options: unknown) => {
+      calls.push(options);
+      return Promise.resolve('mongodump …');
+    };
+    const tools = { mongodump: { path: '/usr/bin/mongodump', version: '100.9' }, mongorestore: null };
+    const props = {
+      connectionName: 'conn',
+      databases: [{ name: 'sales', collections: ['orders', 'users'] }],
+      tools,
+      onPickFolder: vi.fn(),
+      onPickArchiveFile: vi.fn(),
+      onRunDump: vi.fn(),
+    };
+    const { rerender } = render(<DumpView {...(props as any)} onPreviewCommand={preview()} />);
+    await vi.advanceTimersByTimeAsync(350);
+    expect(calls).toHaveLength(1);
+
+    rerender(<DumpView {...(props as any)} onPreviewCommand={preview()} />);
+    await vi.advanceTimersByTimeAsync(350);
+    expect(calls).toHaveLength(1);
+  });
+
   it('ignores out-of-order preview responses and keeps the latest command', async () => {
     vi.useFakeTimers();
     const resolvers: Array<(v: string) => void> = [];
