@@ -1178,7 +1178,7 @@ function Workspace() {
     );
     if (existing) return existing.id;
     try {
-      const id = await invoke<string>('connect_db', { uri: profile.uri, ssh: profile.ssh ?? null, oidc: profile.oidc ?? null });
+      const id = await invoke<string>('connect_db', { uri: profile.uri, ssh: profile.ssh ?? null, oidc: profile.oidc ?? null, profileId: profile.id });
       addActiveConnection(id, profile.name, profile.uri, profile.id, profile.color_tag ?? undefined, undefined, profile.connection_mode ?? 'normal');
       // Announce this fresh id to every other window (Phase 3 Task 6) — see
       // `setConnectionMeta`'s doc comment for why every connect path calls it.
@@ -3899,7 +3899,7 @@ function Workspace() {
           return;
         }
 
-        newId = await invoke<string>('connect_db', { uri: profile.uri, ssh: profile.ssh ?? null, oidc: profile.oidc ?? null });
+        newId = await invoke<string>('connect_db', { uri: profile.uri, ssh: profile.ssh ?? null, oidc: profile.oidc ?? null, profileId: profile.id });
         addActiveConnection(newId, profileName, profile.uri, profile.id, profile.color_tag ?? undefined, undefined, profile.connection_mode ?? 'normal');
         // Announce this fresh id to every other window (Phase 3 Task 6) —
         // see `setConnectionMeta`'s doc comment. Deliberately NOT called on

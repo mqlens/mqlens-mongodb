@@ -86,7 +86,7 @@ interface ConnectionProfile {
   /** Read-only / confirm-destructive production safeguard. Mirrors backend `ConnectionProfile::connection_mode`. */
   connection_mode?: ConnectionMode;
   /** Human OIDC settings (#430). Mirrors backend `ConnectionProfile::oidc`. */
-  oidc?: { allowed_hosts?: string[]; use_id_token?: boolean } | null;
+  oidc?: { allowed_hosts?: string[]; use_id_token?: boolean; remember_login?: boolean } | null;
 }
 
 interface ConnectionManagerProps {
@@ -166,6 +166,7 @@ const BLANK_CONN = {
   // `oidc.use_id_token`, for an identity provider whose access tokens MongoDB
   // refuses. Never in the URI either.
   oidcUseIdToken: false,
+  oidcRememberLogin: false,
   tlsMode: 'off',
   tlsCa: '',
   tlsClientCert: '',
@@ -563,7 +564,7 @@ export const buildUri = (s: typeof BLANK_CONN) => {
  */
 export const buildOidcConfig = (
   s: typeof BLANK_CONN,
-): { allowed_hosts?: string[]; use_id_token?: boolean } | null => {
+): { allowed_hosts?: string[]; use_id_token?: boolean; remember_login?: boolean } | null => {
   if (s.authMethod !== 'oidc') return null;
   const hosts = s.oidcAllowedHosts
     .split(',')
@@ -572,6 +573,7 @@ export const buildOidcConfig = (
   const config = {
     ...(hosts.length ? { allowed_hosts: hosts } : {}),
     ...(s.oidcUseIdToken ? { use_id_token: true } : {}),
+    ...(s.oidcRememberLogin ? { remember_login: true } : {}),
   };
   return Object.keys(config).length ? config : null;
 };
@@ -933,6 +935,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       // the same source save reads them from (#430).
       oidcAllowedHosts: (profile.oidc?.allowed_hosts ?? []).join(', '),
       oidcUseIdToken: profile.oidc?.use_id_token ?? false,
+      oidcRememberLogin: profile.oidc?.remember_login ?? false,
       ...sshFields,
     };
     setEditorState(opened);
@@ -965,6 +968,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       colorTag: profile.color_tag || '',
       oidcAllowedHosts: (profile.oidc?.allowed_hosts ?? []).join(', '),
       oidcUseIdToken: profile.oidc?.use_id_token ?? false,
+      oidcRememberLogin: profile.oidc?.remember_login ?? false,
       // Adjudicated product call (final fix wave): a duplicated profile
       // never inherits "Expose to MCP agents" from the profile it was
       // copied from, even when the original has it on — the new profile is
@@ -1138,7 +1142,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     setError(null);
     setConnectLoginId(loginId);
     try {
-      const connId = await invoke<string>('connect_db', { uri, ssh, oidc, loginId });
+      const connId = await invoke<string>('connect_db', { uri, ssh, oidc, loginId, profileId: saved?.id ?? null });
       handedOverRef.current = null;
       // The editor was dismissed while this was in flight. There is no longer a
       // surface to offer the connection on, and `pendingSave` set now would be
@@ -1405,7 +1409,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     setError(null);
     setConnectLoginId(loginId);
     try {
-      const connId = await invoke<string>('connect_db', { uri: profile.uri, ssh: profile.ssh ?? null, oidc: profile.oidc ?? null, loginId });
+      const connId = await invoke<string>('connect_db', { uri: profile.uri, ssh: profile.ssh ?? null, oidc: profile.oidc ?? null, loginId, profileId: profile.id });
       onConnect(connId, profile.name, profile.uri, profile.id, profile.color_tag ?? undefined, profile.connection_mode ?? 'normal');
     } catch (err: any) {
       setError(describeConnectError(err, t));
@@ -2645,6 +2649,25 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                           <p className="m-0 text-[10px] text-muted-foreground">
                             {t('auth.oidcNote')}
                           </p>
+                          <div className="flex flex-col gap-1">
+                            <label className="flex items-center gap-2 text-[11px]">
+                              <input type="checkbox" checked={editorState.oidcRememberLogin}
+                                aria-describedby="oidc-remember-help"
+                                onChange={e => setEditorState(prev => ({ ...prev, oidcRememberLogin: e.target.checked }))} />
+                              <span>{t('auth.oidcRememberLogin')}</span>
+                            </label>
+                            <span id="oidc-remember-help" className="text-[10.5px] leading-relaxed text-muted-foreground">
+                              {t('auth.oidcRememberLoginHelp')}
+                            </span>
+                            {editMode === 'edit' && selectedId && (
+                              <Button type="button" variant="outline" size="sm" onClick={async () => {
+                                try {
+                                  await invoke('forget_oidc_login', { profileId: selectedId });
+                                  setError(null);
+                                } catch (err) { setError(String(err)); }
+                              }}>{t('auth.oidcForgetLogin')}</Button>
+                            )}
+                          </div>
                           <div className="flex flex-col gap-1">
                             <Label htmlFor="oidc-allowed-hosts">{t('auth.oidcAllowedHosts')}</Label>
                             <Input

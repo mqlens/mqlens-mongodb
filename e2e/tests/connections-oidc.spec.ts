@@ -113,3 +113,31 @@ test.describe('OIDC waiting-for-browser-login UI (#430)', () => {
     expect((testCall.args as { oidc: unknown }).oidc).toEqual({ use_id_token: true });
   });
 });
+
+test('OIDC remembering is opt-in, survives profile edits, and can be forgotten (#439)', async ({ app, page }) => {
+  await app.open();
+  await openNewConnectionEditor(page);
+  await page.getByLabel('Display Name').fill('Remembered OIDC');
+  await page.getByTestId('host-list').fill('localhost:27017');
+  await page.getByRole('button', { name: 'Authentication', exact: true }).click();
+  await page.getByTestId('auth-method-select').click();
+  await page.getByRole('option', { name: 'OIDC (browser login)', exact: true }).click();
+  const toggle = page.getByRole('checkbox', { name: 'Remember login in encrypted vault' });
+  await expect(toggle).not.toBeChecked();
+  await toggle.check();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect.poll(async () => (await app.calls('save_connection_profile')).length).toBe(1);
+  const profile = (await app.calls('save_connection_profile'))[0].args.profile as { id: string; oidc: unknown; uri: string };
+  expect(profile.oidc).toEqual({ remember_login: true });
+  expect(profile.uri).not.toContain('remember_login');
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('button', { name: 'Authentication', exact: true }).click();
+  await expect(toggle).toBeChecked();
+  await page.getByRole('button', { name: 'Forget saved login', exact: true }).click();
+  await expect.poll(async () => (await app.calls('forget_oidc_login')).length).toBe(1);
+  expect((await app.calls('forget_oidc_login'))[0].args).toEqual({ profileId: profile.id });
+  await toggle.uncheck();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect.poll(async () => (await app.calls('save_connection_profile')).length).toBe(2);
+  expect((await app.calls('save_connection_profile'))[1].args.profile.oidc).toBeNull();
+});

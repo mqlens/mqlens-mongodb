@@ -929,6 +929,7 @@ pub struct OidcSession {
     cancelled: AtomicBool,
     authorization_url: StdMutex<Option<String>>,
     sink: PhaseSink,
+    cache: StdMutex<Option<Arc<crate::oidc_cache::TokenCache>>>,
 }
 
 impl OidcSession {
@@ -937,7 +938,12 @@ impl OidcSession {
             cancelled: AtomicBool::new(false),
             authorization_url: StdMutex::new(None),
             sink,
+            cache: StdMutex::new(None),
         })
+    }
+
+    pub fn set_cache(&self, cache: Option<Arc<crate::oidc_cache::TokenCache>>) {
+        *self.cache.lock().unwrap() = cache;
     }
 
     pub fn cancel(&self) {
@@ -1048,16 +1054,24 @@ async fn run_flow_inner(
     choice: TokenChoice,
 ) -> Result<(IdpServerResponse, Presented), OidcError> {
     let idp = ctx.idp_info.ok_or(OidcError::DiscoveryFailed)?;
+    let metadata = crate::oidc_cache::Metadata::from(&idp);
+    let cache = session.cache.lock().ok().and_then(|c| c.clone());
+    let saved = match &cache { Some(c) => c.load_async(&metadata).await, None => None };
     let endpoints = discover(&idp.issuer, &http).await?;
     let client_id = idp.client_id.clone().ok_or(OidcError::MissingClientId)?;
 
     // A cached refresh token is tried first and never opens a browser. A
     // rejected refresh (expired, revoked) is not returned as an error here —
     // it falls through to the interactive flow below.
-    if let Some(refresh) = ctx.refresh_token.as_deref() {
+    if let Some(refresh) = saved.as_deref().or(ctx.refresh_token.as_deref()) {
         if let Ok(response) = refresh_token(&endpoints, &client_id, refresh, &http, choice).await {
+            if let Some(cache) = &cache {
+                cache.replace_async(&metadata, saved.as_deref(), response.0.refresh_token.as_deref()).await;
+            }
             return Ok(response);
         }
+        // Rejected/expired refresh tokens must not survive a cancelled re-login.
+        if let Some(cache) = &cache { cache.replace_async(&metadata, saved.as_deref(), None).await; }
     }
 
     let listener = LoopbackListener::bind(LISTEN_PORT).await?;
@@ -1107,7 +1121,9 @@ async fn run_flow_inner(
         _ = wait_for_cancel(session) => return Err(OidcError::Cancelled),
     };
 
-    exchange_code(&endpoints, &client_id, &code, &request.verifier, &redirect_uri, &http, choice, &request.nonce).await
+    let response = exchange_code(&endpoints, &client_id, &code, &request.verifier, &redirect_uri, &http, choice, &request.nonce).await?;
+    if let Some(cache) = &cache { cache.replace_async(&metadata, None, response.0.refresh_token.as_deref()).await; }
+    Ok(response)
 }
 
 use futures::future::FutureExt as _;

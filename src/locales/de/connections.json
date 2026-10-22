@@ -60,7 +60,7 @@
     },
     "oidcAllowedHosts": "Erlaubte Hosts (optional)",
     "oidcAllowedHostsHelp": "Nur für selbstverwaltete Bereitstellungen erforderlich. MongoDB-Atlas-Hosts sind bereits zugelassen. Kommagetrennt, z. B. mongo.corp.example.com",
-    "oidcNote": "Die Anmeldung öffnet sich in deinem System-Browser. Deine Anmeldedaten werden ausschließlich bei deinem Identitätsanbieter eingegeben — MQLens bekommt sie nie zu sehen, und es wird kein Token gespeichert.",
+    "oidcNote": "Die Anmeldung öffnet sich in deinem System-Browser. Deine Anmeldedaten werden ausschließlich bei deinem Identitätsanbieter eingegeben — MQLens bekommt sie nie zu sehen.",
     "oidcUseIdToken": "ID-Token statt Access-Token verwenden",
     "oidcUseIdTokenHelp": "Aktiviere dies, wenn MongoDB die Access-Tokens deines Identitätsanbieters ablehnt (zum Beispiel bei cidaas). MongoDB prüft dann das ID-Token, dessen Audience deine Client-ID ist.",
     "passLabelAws": "Geheimer Zugriffsschlüssel",
@@ -72,7 +72,10 @@
     "userLabelDefault": "Benutzername",
     "userLabelKerberos": "Principal",
     "userLabelX509": "Benutzername (optional — aus dem Zertifikat abgeleitet)",
-    "x509Note": "Erfordert TLS mit einem Clientzertifikat (Tab TLS)."
+    "x509Note": "Erfordert TLS mit einem Clientzertifikat (Tab TLS).",
+    "oidcRememberLogin": "Anmeldung im verschlüsselten Tresor speichern",
+    "oidcRememberLoginHelp": "Speichere das Profil vor dem Verbinden, um sein Aktualisierungstoken über Neustarts hinweg zu behalten. Standardmäßig deaktiviert. Vergessen entfernt das gespeicherte Token; bestehende Verbindungen bleiben angemeldet.",
+    "oidcForgetLogin": "Gespeicherte Anmeldung vergessen"
   },
   "colorTags": {
     "amber": "Bernstein",

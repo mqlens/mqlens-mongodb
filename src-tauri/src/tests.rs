@@ -539,7 +539,7 @@ mod tests {
         let src = include_str!("connections.rs");
         for writer in [
             "pub fn save_settings_encrypted",
-            "pub fn save_profiles_encrypted",
+            "pub(crate) fn save_encrypted_profiles",
             "pub fn write_vault_meta",
         ] {
             let start = src.find(writer).unwrap_or_else(|| panic!("{writer} not found"));
