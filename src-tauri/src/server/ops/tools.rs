@@ -239,8 +239,9 @@ fn restore_options(conn: &RemoteConn, o: &RestoreOptions) -> PbRestoreOptions {
 }
 
 /// The files a restore uploads, by their path in the dump: an archive's one
-/// file; or a folder's files, only the chosen collections' when some are
-/// chosen and the restore does not take a whole database's users and roles.
+/// file; or a folder's files: all of them when none are chosen, the chosen
+/// database's when its users and roles are restored, else the chosen
+/// collections' own.
 fn upload_files(o: &RestoreOptions) -> Result<Vec<(String, PathBuf)>, String> {
     let dir = match &o.source {
         RestoreSource::Archive { file } => return Ok(vec![(basename(file), PathBuf::from(file))]),
@@ -248,12 +249,16 @@ fn upload_files(o: &RestoreOptions) -> Result<Vec<(String, PathBuf)>, String> {
     };
     let mut files = Vec::new();
     collect(&dir, &mut Vec::new(), &mut files)?;
-    if o.selections.is_empty() || o.restore_db_users_and_roles {
+    if o.selections.is_empty() {
         return Ok(files);
     }
     Ok(files
         .into_iter()
         .filter(|(rel, _)| match rel.split_once('/') {
+            // Users and roles take the chosen database whole, users included.
+            Some((db, _)) if o.restore_db_users_and_roles => {
+                o.selections.iter().any(|s| s.db == db)
+            }
             Some((db, name)) if !name.contains('/') => o
                 .selections
                 .iter()
@@ -988,5 +993,49 @@ mod tests {
         let (_, files) = env.fake.with(|s| s.restores[0].clone());
         let names: Vec<&str> = files.iter().map(|(p, _)| p.as_str()).collect();
         assert_eq!(names, vec!["shop/orders.bson"]);
+    }
+
+    // Restoring users and roles takes the selected database whole, and no
+    // other database in the folder.
+    #[tokio::test]
+    async fn users_and_roles_upload_their_whole_database_only() {
+        let env = Env::new().await;
+        let (state, id) = on_server(&env, &["read", "write", "ddl", "admin"]).await;
+        env.fake
+            .with(|s| s.task_updates = vec![task("completed", 1, "Restore complete", "")]);
+        let dir = tempfile::tempdir().unwrap();
+        write(&dir.path().join("shop/orders.bson"), b"orders");
+        write(&dir.path().join("shop/items.bson"), b"items");
+        write(&dir.path().join("shop/$admin.system.users.bson"), b"users");
+        write(&dir.path().join("other/x.bson"), b"x");
+
+        let restore = RestoreOptions {
+            source: RestoreSource::Folder {
+                dir: dir.path().to_string_lossy().into_owned(),
+            },
+            selections: vec![NsSelection {
+                db: "shop".into(),
+                coll: "orders".into(),
+                rename_to: None,
+            }],
+            restore_db_users_and_roles: true,
+            ..Default::default()
+        };
+        let started = start_restore_task_impl(&state, &id, "", restore)
+            .await
+            .unwrap();
+        finished(&state, &started).await;
+
+        let (_, files) = env.fake.with(|s| s.restores[0].clone());
+        let mut names: Vec<&str> = files.iter().map(|(p, _)| p.as_str()).collect();
+        names.sort();
+        assert_eq!(
+            names,
+            vec![
+                "shop/$admin.system.users.bson",
+                "shop/items.bson",
+                "shop/orders.bson"
+            ]
+        );
     }
 }
