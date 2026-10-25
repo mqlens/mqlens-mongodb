@@ -545,8 +545,9 @@ fn cancelled(tasks: &Tasks, id: &str) {
     prune_tasks(tasks);
 }
 
-/// Ends the desktop's task as the server's ended, and deletes the server's
-/// task: whatever it kept is fetched or no longer wanted.
+/// Deletes the server's task, whose files are fetched or no longer wanted,
+/// then ends the desktop's as the server's ended: once the desktop's task
+/// shows finished, nothing of it is left on the server.
 async fn conclude(
     session: &Speaking,
     tasks: &Tasks,
@@ -555,15 +556,6 @@ async fn conclude(
     outcome: Result<PbTask, String>,
     done: &str,
 ) {
-    match outcome {
-        Ok(t) if t.state == "completed" => {
-            finish_task(tasks, id, t.processed.max(0) as u64, done.to_string())
-        }
-        Ok(t) if t.state == "cancelled" => cancelled(tasks, id),
-        Ok(t) if !t.error.is_empty() => fail_task(tasks, id, t.error),
-        Ok(t) => fail_task(tasks, id, format!("The task ended as {}", t.state)),
-        Err(e) => fail_task(tasks, id, e),
-    }
     // A task still running there (its stream broke) is refused; the server
     // prunes it a day after it ends.
     let request = DeleteTaskRequest {
@@ -576,6 +568,15 @@ async fn conclude(
                 .await
         })
         .await;
+    match outcome {
+        Ok(t) if t.state == "completed" => {
+            finish_task(tasks, id, t.processed.max(0) as u64, done.to_string())
+        }
+        Ok(t) if t.state == "cancelled" => cancelled(tasks, id),
+        Ok(t) if !t.error.is_empty() => fail_task(tasks, id, t.error),
+        Ok(t) => fail_task(tasks, id, format!("The task ended as {}", t.state)),
+        Err(e) => fail_task(tasks, id, e),
+    }
 }
 
 #[cfg(test)]
@@ -722,13 +723,16 @@ mod tests {
         assert!(!env.fake.with(|s| s.dumps[0].archive));
     }
 
-    // A dump the server fails says why, fetches nothing, and is deleted.
+    // A dump the server fails says why, fetches nothing, and is deleted
+    // before the desktop's task ends, however slow the server is to delete.
     #[tokio::test]
     async fn a_failed_dump_says_why() {
         let env = Env::new().await;
         let (state, id) = on_server(&env, &["read"]).await;
-        env.fake
-            .with(|s| s.task_updates = vec![task("failed", 0, "", "could not connect")]);
+        env.fake.with(|s| {
+            s.task_updates = vec![task("failed", 0, "", "could not connect")];
+            s.delete_delay = Duration::from_millis(300);
+        });
         let out = tempfile::tempdir().unwrap();
 
         let started = start_dump_task_impl(&state, &id, "", dump_to(folder(out.path()), shop()))

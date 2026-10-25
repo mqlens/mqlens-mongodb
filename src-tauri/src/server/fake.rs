@@ -214,6 +214,8 @@ pub(crate) struct FakeState {
     pub task_cancelled: Arc<tokio::sync::Notify>,
     /// What DownloadArtifact streams.
     pub artifact: Vec<ArtifactChunk>,
+    /// Held before DeleteTask records and answers, to play a slow server.
+    pub delete_delay: Duration,
     /// When set, Find and Aggregate stream these bytes instead of
     /// `documents`: BSON a Document cannot hold, such as a repeated key.
     pub raw_documents: Vec<Vec<u8>>,
@@ -481,6 +483,7 @@ impl Fake {
                 task_updates: Vec::new(),
                 task_cancelled: Arc::new(tokio::sync::Notify::new()),
                 artifact: Vec::new(),
+                delete_delay: Duration::ZERO,
                 raw_documents: Vec::new(),
                 rename_result: RenameDatabaseResult {
                     collections: 2,
@@ -1905,6 +1908,8 @@ impl TaskService for Fake {
         &self,
         request: Request<DeleteTaskRequest>,
     ) -> Result<Response<DeleteTaskResponse>, Status> {
+        let delay = self.state.lock().unwrap().delete_delay;
+        tokio::time::sleep(delay).await;
         let mut state = self.state.lock().unwrap();
         state.authenticate(&request)?;
         state
