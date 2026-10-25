@@ -91,7 +91,8 @@
       "title": "Scope"
     },
     "status": {
-      "detecting": "Detecting {{tools}}…"
+      "detecting": "Detecting {{tools}}…",
+      "onServer": "mongodump runs on MQLens Server ({{host}}); the dump is fetched to your destination."
     },
     "title": "Dump"
   },
@@ -399,7 +400,8 @@
     },
     "title": "Restore",
     "tools": {
-      "missing": "mongorestore was not found. Configure the MongoDB Database Tools directory in Settings."
+      "missing": "mongorestore was not found. Configure the MongoDB Database Tools directory in Settings.",
+      "onServer": "mongorestore runs on MQLens Server ({{host}}); the dump is uploaded to it first."
     },
     "tree": {
       "emptySelectionHint": "Select at least one collection to restore."

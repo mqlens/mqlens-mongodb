@@ -59,7 +59,6 @@ on top of what your role allows.
 
 These are disabled on server connections:
 
-- `mongodump`/`mongorestore` (the MongoDB Database Tools).
 - Running a multi-line script as a one-shot `mongosh --file` program. The shell
   itself works, and multi-line input goes to its live session instead.
 - AI agents over MCP: server connections are never offered to them.
@@ -111,6 +110,24 @@ mode replaces a document through the server as Extended JSON, so it refuses to
 replace one with a sub-document whose field names look like an Extended JSON
 type (`$numberLong`, `$date`, `$oid` and the like), which a BSON file can hold.
 Import such a file in update mode on a direct connection.
+
+Dumps and restores run on the server, which has the MongoDB Database Tools; this
+app does not need them. They need a server that speaks API version 8.
+
+- **A dump** runs `mongodump` on the server as a task. The app follows it in
+  Tasks, then fetches it into the archive file or folder you chose (a folder
+  gets each database's files, as `mongodump --out` writes them) and deletes
+  the server's copy. It needs a role that can read; a whole-server dump, or one
+  with users and roles or the oplog, needs admin.
+- **A restore** uploads the archive, or the folder's files, to the server, then
+  runs `mongorestore` there. When you pick collections, only their files are
+  uploaded. It needs a role that can change the deployment's structure;
+  restoring users and roles (which restores that whole database) or replaying
+  the oplog needs admin.
+- **Cancelling** in Tasks cancels the server's task too. If the app loses track
+  of a task while it runs, the server finishes it and removes it a day later.
+- There is no command preview: the command runs on the server, with paths of
+  its own.
 
 ## When something fails
 

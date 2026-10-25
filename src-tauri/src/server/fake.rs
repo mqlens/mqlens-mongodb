@@ -33,11 +33,19 @@ use crate::server::pb::mqlens::v1::monitoring_service_server::{
 };
 use crate::server::pb::mqlens::v1::shell_service_server::{ShellService, ShellServiceServer};
 use crate::server::pb::mqlens::v1::stats_service_server::{StatsService, StatsServiceServer};
+use crate::server::pb::mqlens::v1::task_service_server::{TaskService, TaskServiceServer};
 use crate::server::pb::mqlens::v1::write_service_server::{WriteService, WriteServiceServer};
 use crate::server::pb::mqlens::v1::{
     login_request, ConnectionRef, GetConnectionRequest, ListConnectionsRequest,
     ListConnectionsResponse, LoginRequest, LoginResponse, LogoutRequest, LogoutResponse, Principal,
     RefreshRequest, WhoAmIRequest, WhoAmIResponse,
+};
+use crate::server::pb::mqlens::v1::{
+    start_restore_request, ArtifactChunk, CancelTaskRequest, CancelTaskResponse,
+    ClearFinishedTasksRequest, ClearFinishedTasksResponse, DeleteTaskRequest, DeleteTaskResponse,
+    DownloadArtifactRequest, ListTasksRequest, ListTasksResponse,
+    RestoreOptions as PbRestoreOptions, StartDumpRequest, StartRestoreRequest, Task as PbTask,
+    WatchTaskRequest,
 };
 use crate::server::pb::mqlens::v1::{watch_response, WatchRequest, WatchResponse};
 use crate::server::pb::mqlens::v1::{
@@ -194,6 +202,18 @@ pub(crate) struct FakeState {
     pub watch_stall_opening: bool,
     /// What InsertMany refuses, by index in its batch; the rest are stored.
     pub insert_refusals: Vec<InsertRefusal>,
+    /// The dumps started; each restore received, as its options and every
+    /// file's bytes by path; and the downloads, cancels and deletes asked
+    /// for, as "download:<id>" and so on.
+    pub dumps: Vec<StartDumpRequest>,
+    pub restores: Vec<(PbRestoreOptions, Vec<(String, Vec<u8>)>)>,
+    pub task_calls: Vec<String>,
+    /// What WatchTask sends. If the last one is still running, the watch
+    /// stays open until a CancelTask, then sends the task cancelled.
+    pub task_updates: Vec<PbTask>,
+    pub task_cancelled: Arc<tokio::sync::Notify>,
+    /// What DownloadArtifact streams.
+    pub artifact: Vec<ArtifactChunk>,
     /// When set, Find and Aggregate stream these bytes instead of
     /// `documents`: BSON a Document cannot hold, such as a repeated key.
     pub raw_documents: Vec<Vec<u8>>,
@@ -455,6 +475,12 @@ impl Fake {
                 watch_failure: None,
                 watch_stall_opening: false,
                 insert_refusals: Vec::new(),
+                dumps: Vec::new(),
+                restores: Vec::new(),
+                task_calls: Vec::new(),
+                task_updates: Vec::new(),
+                task_cancelled: Arc::new(tokio::sync::Notify::new()),
+                artifact: Vec::new(),
                 raw_documents: Vec::new(),
                 rename_result: RenameDatabaseResult {
                     collections: 2,
@@ -641,6 +667,7 @@ impl Fake {
                 .add_service(DeploymentUserServiceServer::new(self.clone()))
                 .add_service(ShellServiceServer::new(self.clone()))
                 .add_service(ChangeStreamServiceServer::new(self.clone()))
+                .add_service(TaskServiceServer::new(self.clone()))
                 .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener)),
         );
         format!("http://{addr}")
@@ -1748,5 +1775,158 @@ impl ChangeStreamService for Fake {
         Ok(Response::new(Box::pin(
             tokio_stream::wrappers::ReceiverStream::new(rx),
         )))
+    }
+}
+
+type TaskStream = Pin<Box<dyn tokio_stream::Stream<Item = Result<PbTask, Status>> + Send>>;
+type ArtifactStream =
+    Pin<Box<dyn tokio_stream::Stream<Item = Result<ArtifactChunk, Status>> + Send>>;
+
+fn fake_task(id: &str, kind: &str, state: &str) -> PbTask {
+    PbTask {
+        id: id.to_string(),
+        connection_id: "r1".to_string(),
+        kind: kind.to_string(),
+        label: format!("{kind} on the server"),
+        state: state.to_string(),
+        ..Default::default()
+    }
+}
+
+#[tonic::async_trait]
+impl TaskService for Fake {
+    type WatchTaskStream = TaskStream;
+    type DownloadArtifactStream = ArtifactStream;
+
+    async fn start_dump(
+        &self,
+        request: Request<StartDumpRequest>,
+    ) -> Result<Response<PbTask>, Status> {
+        let mut state = self.state.lock().unwrap();
+        state.authorize_connection(&request, &request.get_ref().connection_id)?;
+        state.dumps.push(request.get_ref().clone());
+        Ok(Response::new(fake_task("server-dump", "dump", "running")))
+    }
+
+    async fn start_restore(
+        &self,
+        request: Request<tonic::Streaming<StartRestoreRequest>>,
+    ) -> Result<Response<PbTask>, Status> {
+        self.state.lock().unwrap().authenticate(&request)?;
+        let mut stream = request.into_inner();
+        let mut options = None;
+        let mut files: Vec<(String, Vec<u8>)> = Vec::new();
+        while let Some(message) = stream.message().await? {
+            match message.kind {
+                Some(start_restore_request::Kind::Options(o)) => options = Some(o),
+                Some(start_restore_request::Kind::File(chunk)) => match files.last_mut() {
+                    Some((path, data)) if *path == chunk.path => {
+                        data.extend_from_slice(&chunk.data)
+                    }
+                    _ => files.push((chunk.path, chunk.data.to_vec())),
+                },
+                None => {}
+            }
+        }
+        let options = options.ok_or_else(|| Status::invalid_argument("no options"))?;
+        self.state.lock().unwrap().restores.push((options, files));
+        Ok(Response::new(fake_task(
+            "server-restore",
+            "restore",
+            "running",
+        )))
+    }
+
+    async fn list_tasks(
+        &self,
+        request: Request<ListTasksRequest>,
+    ) -> Result<Response<ListTasksResponse>, Status> {
+        self.state.lock().unwrap().authenticate(&request)?;
+        Ok(Response::new(ListTasksResponse::default()))
+    }
+
+    async fn watch_task(
+        &self,
+        request: Request<WatchTaskRequest>,
+    ) -> Result<Response<TaskStream>, Status> {
+        let (updates, cancelled) = {
+            let state = self.state.lock().unwrap();
+            state.authenticate(&request)?;
+            (state.task_updates.clone(), state.task_cancelled.clone())
+        };
+        let id = request.get_ref().id.clone();
+        let (tx, rx) = tokio::sync::mpsc::channel(64);
+        tokio::spawn(async move {
+            let still_running = updates.last().map(|t| t.state == "running").unwrap_or(true);
+            for mut update in updates {
+                update.id = id.clone();
+                if tx.send(Ok(update)).await.is_err() {
+                    return;
+                }
+            }
+            if still_running {
+                tokio::select! {
+                    _ = cancelled.notified() => {
+                        let _ = tx.send(Ok(fake_task(&id, "task", "cancelled"))).await;
+                    }
+                    _ = tx.closed() => {}
+                }
+            }
+        });
+        Ok(Response::new(Box::pin(
+            tokio_stream::wrappers::ReceiverStream::new(rx),
+        )))
+    }
+
+    async fn cancel_task(
+        &self,
+        request: Request<CancelTaskRequest>,
+    ) -> Result<Response<CancelTaskResponse>, Status> {
+        let mut state = self.state.lock().unwrap();
+        state.authenticate(&request)?;
+        state
+            .task_calls
+            .push(format!("cancel:{}", request.get_ref().id));
+        state.task_cancelled.notify_one();
+        Ok(Response::new(CancelTaskResponse::default()))
+    }
+
+    async fn clear_finished_tasks(
+        &self,
+        request: Request<ClearFinishedTasksRequest>,
+    ) -> Result<Response<ClearFinishedTasksResponse>, Status> {
+        let mut state = self.state.lock().unwrap();
+        state.authenticate(&request)?;
+        state.task_calls.push("clear".to_string());
+        Ok(Response::new(ClearFinishedTasksResponse::default()))
+    }
+
+    async fn delete_task(
+        &self,
+        request: Request<DeleteTaskRequest>,
+    ) -> Result<Response<DeleteTaskResponse>, Status> {
+        let mut state = self.state.lock().unwrap();
+        state.authenticate(&request)?;
+        state
+            .task_calls
+            .push(format!("delete:{}", request.get_ref().id));
+        Ok(Response::new(DeleteTaskResponse::default()))
+    }
+
+    async fn download_artifact(
+        &self,
+        request: Request<DownloadArtifactRequest>,
+    ) -> Result<Response<ArtifactStream>, Status> {
+        let chunks = {
+            let mut state = self.state.lock().unwrap();
+            state.authenticate(&request)?;
+            state
+                .task_calls
+                .push(format!("download:{}", request.get_ref().id));
+            state.artifact.clone()
+        };
+        Ok(Response::new(Box::pin(tokio_stream::iter(
+            chunks.into_iter().map(Ok),
+        ))))
     }
 }

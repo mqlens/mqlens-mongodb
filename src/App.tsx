@@ -2116,9 +2116,21 @@ function Workspace() {
     void loadMongoTools();
   };
 
+  // On an MQLens Server connection the server runs the Database Tools.
+  const serverHostOf = (connectionId: string): string | undefined => {
+    const url = serverConnections.get(connectionId)?.serverUrl;
+    if (!url) return undefined;
+    try {
+      return new URL(url).host || url;
+    } catch {
+      return url;
+    }
+  };
+
   const handleRunDump = async (tab: QueryTab, options: DumpOptionsUi) => {
-    const toolPath = mongoTools?.mongodump?.path;
-    if (!toolPath) return;
+    const onServer = !!serverHostOf(tab.connectionId);
+    const toolPath = onServer ? '' : mongoTools?.mongodump?.path;
+    if (!onServer && !toolPath) return;
     try {
       const task = await invoke<ExportTaskInfo>('start_dump_task', {
         id: tab.connectionId,
@@ -2134,8 +2146,9 @@ function Workspace() {
   };
 
   const handleRunRestore = async (tab: QueryTab, options: RestoreOptionsUi) => {
-    const toolPath = mongoTools?.mongorestore?.path;
-    if (!toolPath) return;
+    const onServer = !!serverHostOf(tab.connectionId);
+    const toolPath = onServer ? '' : mongoTools?.mongorestore?.path;
+    if (!onServer && !toolPath) return;
     try {
       const task = await invoke<ExportTaskInfo>('start_restore_task', {
         id: tab.connectionId,
@@ -4944,6 +4957,7 @@ function Workspace() {
               databases={dumpDbTrees[tab.connectionId] ?? []}
               initialScope={initialScope}
               tools={mongoTools}
+              serverHost={serverHostOf(tab.connectionId)}
               onOpenSettings={handleOpenToolsSettings}
               onInstallTools={handleOpenToolSetup}
               onPickFolder={async () => {
@@ -4954,7 +4968,7 @@ function Workspace() {
                 const p = await save({ defaultPath: defaultName });
                 return p ?? null;
               }}
-              onPreviewCommand={(options) =>
+              onPreviewCommand={serverHostOf(tab.connectionId) ? undefined : (options) =>
                 invoke<string>('preview_dump_command', {
                   id: tab.connectionId,
                   toolPath: mongoTools?.mongodump?.path ?? '',
@@ -4974,6 +4988,7 @@ function Workspace() {
               key={tab.id}
               connectionName={connectionName}
               tools={mongoTools}
+              serverHost={serverHostOf(tab.connectionId)}
               onOpenSettings={handleOpenToolsSettings}
               onInstallTools={handleOpenToolSetup}
               onPickFolder={async () => {
@@ -4985,7 +5000,7 @@ function Workspace() {
                 return typeof p === 'string' ? p : null;
               }}
               onBrowseFolder={(path) => invoke<DumpTreeUi>('browse_dump_folder', { path })}
-              onPreviewCommand={(options) =>
+              onPreviewCommand={serverHostOf(tab.connectionId) ? undefined : (options) =>
                 invoke<string>('preview_restore_command', {
                   id: tab.connectionId,
                   toolPath: mongoTools?.mongorestore?.path ?? '',

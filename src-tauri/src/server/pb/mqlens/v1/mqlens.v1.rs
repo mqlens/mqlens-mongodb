@@ -167,6 +167,10 @@ pub struct ListGrantsResponse {
     #[prost(message, repeated, tag="1")]
     pub grants: ::prost::alloc::vec::Vec<ConnectionGrant>,
 }
+/// For principal_type "user", principal_id must name a user in the caller's
+/// tenant (NOT_FOUND otherwise) whose status is active (FAILED_PRECONDITION
+/// otherwise). RevokeConnection does not check this, so a grant can still be
+/// removed after its user is gone or inactive.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GrantConnectionRequest {
     #[prost(string, tag="1")]
@@ -1271,6 +1275,181 @@ pub struct IndexStat {
 pub struct IndexStatsResponse {
     #[prost(message, repeated, tag="1")]
     pub indexes: ::prost::alloc::vec::Vec<IndexStat>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct Task {
+    #[prost(string, tag="1")]
+    pub id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub connection_id: ::prost::alloc::string::String,
+    /// "dump" | "restore"
+    #[prost(string, tag="3")]
+    pub kind: ::prost::alloc::string::String,
+    #[prost(string, tag="4")]
+    pub label: ::prost::alloc::string::String,
+    /// "running" | "completed" | "failed" | "cancelled"
+    #[prost(string, tag="5")]
+    pub state: ::prost::alloc::string::String,
+    #[prost(string, tag="6")]
+    pub message: ::prost::alloc::string::String,
+    #[prost(string, tag="7")]
+    pub error: ::prost::alloc::string::String,
+    /// Namespaces finished so far.
+    #[prost(int64, tag="8")]
+    pub processed: i64,
+    /// Unix milliseconds; finished_at_ms is 0 while the task runs.
+    #[prost(int64, tag="9")]
+    pub created_at_ms: i64,
+    #[prost(int64, tag="10")]
+    pub finished_at_ms: i64,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct StartDumpRequest {
+    #[prost(string, tag="1")]
+    pub connection_id: ::prost::alloc::string::String,
+    /// Empty dumps every database.
+    #[prost(string, tag="2")]
+    pub database: ::prost::alloc::string::String,
+    /// Empty dumps the whole database.
+    #[prost(string, tag="3")]
+    pub collection: ::prost::alloc::string::String,
+    /// One archive file (dump.archive) rather than a folder of each database's
+    /// files (shop/orders.bson, ...).
+    #[prost(bool, tag="4")]
+    pub archive: bool,
+    #[prost(bool, tag="5")]
+    pub gzip: bool,
+    /// Extended JSON filter; needs a collection.
+    #[prost(string, tag="6")]
+    pub query: ::prost::alloc::string::String,
+    #[prost(bool, tag="7")]
+    pub force_table_scan: bool,
+    /// Needs a database and no collection.
+    #[prost(bool, tag="8")]
+    pub dump_users_and_roles: bool,
+    /// Needs the whole server.
+    #[prost(bool, tag="9")]
+    pub oplog: bool,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct StartRestoreRequest {
+    #[prost(oneof="start_restore_request::Kind", tags="1, 2")]
+    pub kind: ::core::option::Option<start_restore_request::Kind>,
+}
+/// Nested message and enum types in `StartRestoreRequest`.
+pub mod start_restore_request {
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Kind {
+        #[prost(message, tag="1")]
+        Options(super::RestoreOptions),
+        /// Part of one of the dump's files, as DownloadArtifact sends them. The
+        /// path is relative to the dump folder (shop/orders.bson), so a folder
+        /// dump's download restores as it is; an archive is its one file.
+        #[prost(message, tag="2")]
+        File(super::ArtifactChunk),
+    }
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct RestoreOptions {
+    #[prost(string, tag="1")]
+    pub connection_id: ::prost::alloc::string::String,
+    /// The upload is one archive file rather than a dump folder.
+    #[prost(bool, tag="2")]
+    pub archive: bool,
+    #[prost(bool, tag="3")]
+    pub gzip: bool,
+    /// A folder's namespaces to restore; none restores all. Refused for an
+    /// archive.
+    #[prost(message, repeated, tag="4")]
+    pub selections: ::prost::alloc::vec::Vec<RestoreNamespace>,
+    /// An archive's database, and optionally collection, to restore. Refused
+    /// for a folder.
+    #[prost(string, tag="5")]
+    pub filter_db: ::prost::alloc::string::String,
+    #[prost(string, tag="6")]
+    pub filter_coll: ::prost::alloc::string::String,
+    #[prost(bool, tag="7")]
+    pub drop: bool,
+    #[prost(bool, tag="8")]
+    pub keep_index_version: bool,
+    #[prost(bool, tag="9")]
+    pub no_index_restore: bool,
+    #[prost(bool, tag="10")]
+    pub no_options_restore: bool,
+    #[prost(bool, tag="11")]
+    pub maintain_insertion_order: bool,
+    #[prost(bool, tag="12")]
+    pub stop_on_error: bool,
+    #[prost(bool, tag="13")]
+    pub bypass_document_validation: bool,
+    /// Needs a single database, not admin, and restores that whole database.
+    #[prost(bool, tag="14")]
+    pub restore_db_users_and_roles: bool,
+    /// Needs no namespace filter.
+    #[prost(bool, tag="15")]
+    pub oplog_replay: bool,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RestoreNamespace {
+    #[prost(string, tag="1")]
+    pub db: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub coll: ::prost::alloc::string::String,
+    /// Restore under this name: "coll" in the same database, or "db.coll".
+    #[prost(string, tag="3")]
+    pub rename_to: ::prost::alloc::string::String,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ListTasksRequest {
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ListTasksResponse {
+    #[prost(message, repeated, tag="1")]
+    pub tasks: ::prost::alloc::vec::Vec<Task>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct WatchTaskRequest {
+    #[prost(string, tag="1")]
+    pub id: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CancelTaskRequest {
+    #[prost(string, tag="1")]
+    pub id: ::prost::alloc::string::String,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CancelTaskResponse {
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ClearFinishedTasksRequest {
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ClearFinishedTasksResponse {
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DeleteTaskRequest {
+    #[prost(string, tag="1")]
+    pub id: ::prost::alloc::string::String,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DeleteTaskResponse {
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DownloadArtifactRequest {
+    #[prost(string, tag="1")]
+    pub id: ::prost::alloc::string::String,
+}
+/// Part of one file. A file's chunks come together and in order; path is set
+/// on each, relative to the artifact with '/' separators ("dump.archive",
+/// "shop/orders.bson"); a version-6 request gets a folder dump's files under
+/// dump/ ("dump/shop/orders.bson"). An empty file comes as one chunk with no
+/// data.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ArtifactChunk {
+    #[prost(string, tag="1")]
+    pub path: ::prost::alloc::string::String,
+    #[prost(bytes="bytes", tag="2")]
+    pub data: ::prost::bytes::Bytes,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct WriteResult {

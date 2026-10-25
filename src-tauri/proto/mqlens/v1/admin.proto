@@ -124,6 +124,10 @@ message ListGrantsResponse {
   repeated ConnectionGrant grants = 1;
 }
 
+// For principal_type "user", principal_id must name a user in the caller's
+// tenant (NOT_FOUND otherwise) whose status is active (FAILED_PRECONDITION
+// otherwise). RevokeConnection does not check this, so a grant can still be
+// removed after its user is gone or inactive.
 message GrantConnectionRequest {
   string connection_id = 1;
   string principal_type = 2;

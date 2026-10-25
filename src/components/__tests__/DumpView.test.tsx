@@ -289,3 +289,19 @@ describe('DumpView', () => {
 afterEach(() => {
   vi.useRealTimers();
 });
+
+describe('DumpView on an MQLens Server connection', () => {
+  it('runs on the server without a local mongodump', async () => {
+    const props = renderDumpView({
+      tools: { mongodump: null, mongorestore: null },
+      serverHost: 'mqlens.example.com',
+    });
+
+    expect(screen.queryByTestId('dump-tools-missing')).not.toBeInTheDocument();
+    expect(screen.getByTestId('dump-tools-status')).toHaveTextContent('mqlens.example.com');
+    fireEvent.click(screen.getByTestId('dump-pick-dest-btn'));
+    await waitFor(() => expect(screen.getByTestId('dump-run-btn')).toBeEnabled());
+    fireEvent.click(screen.getByTestId('dump-run-btn'));
+    expect(props.onRunDump).toHaveBeenCalled();
+  });
+});

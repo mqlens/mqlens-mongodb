@@ -47,8 +47,8 @@ pub(crate) struct CommandRoute {
 }
 
 const TASKS: &str = "Long-running tasks are not available on MQLens Server connections yet";
-const DATABASE_TOOLS: &str =
-    "The MongoDB Database Tools are not available on MQLens Server connections yet";
+const ONE_SHOT_SCRIPTS: &str =
+    "One-shot mongosh scripts are not available on MQLens Server connections; use the shell";
 
 pub(crate) const ROUTES: &[CommandRoute] = &[
     // Metadata
@@ -513,7 +513,7 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
     CommandRoute {
         command: "run_mongosh_script",
         serve: Serve::Deferred {
-            reason: "One-shot mongosh scripts are not available on MQLens Server connections; use the shell",
+            reason: ONE_SHOT_SCRIPTS,
         },
     },
     CommandRoute {
@@ -525,17 +525,34 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
             adapter: true,
         },
     },
-    // Not served yet
+    // The server runs the Database Tools; version 8 deletes a task once done.
     CommandRoute {
         command: "start_dump_task",
-        serve: Serve::Deferred {
-            reason: DATABASE_TOOLS,
+        serve: Serve::Rpc {
+            procedures: &[
+                "/mqlens.v1.TaskService/StartDump",
+                "/mqlens.v1.TaskService/WatchTask",
+                "/mqlens.v1.TaskService/CancelTask",
+                "/mqlens.v1.TaskService/DownloadArtifact",
+                "/mqlens.v1.TaskService/DeleteTask",
+            ],
+            class: OpClass::Read,
+            since: 8,
+            adapter: true,
         },
     },
     CommandRoute {
         command: "start_restore_task",
-        serve: Serve::Deferred {
-            reason: DATABASE_TOOLS,
+        serve: Serve::Rpc {
+            procedures: &[
+                "/mqlens.v1.TaskService/StartRestore",
+                "/mqlens.v1.TaskService/WatchTask",
+                "/mqlens.v1.TaskService/CancelTask",
+                "/mqlens.v1.TaskService/DeleteTask",
+            ],
+            class: OpClass::Ddl,
+            since: 8,
+            adapter: true,
         },
     },
     CommandRoute {
@@ -847,12 +864,12 @@ mod tests {
     fn a_deferred_command_refuses_any_remote_connection_with_its_reason() {
         let state = with_remote("r1");
         assert_eq!(
-            refuse_deferred(&state, "start_restore_task", &["local", "r1"]),
-            Err(DATABASE_TOOLS.to_string())
+            refuse_deferred(&state, "run_mongosh_script", &["local", "r1"]),
+            Err(ONE_SHOT_SCRIPTS.to_string())
         );
         assert_eq!(
-            refuse_deferred(&state, "start_dump_task", &["r1"]),
-            Err(DATABASE_TOOLS.to_string())
+            refuse_deferred(&state, "run_mongosh_script", &["r1"]),
+            Err(ONE_SHOT_SCRIPTS.to_string())
         );
         assert_eq!(
             refuse_deferred(&state, "start_collection_copy", &["local"]),

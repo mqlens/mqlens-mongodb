@@ -42,6 +42,8 @@ export interface RestoreOptionsUi {
 interface RestoreViewProps {
   connectionName: string;
   tools: ToolsStatusUi | null;
+  /** On an MQLens Server connection, the server's host: mongorestore runs there. */
+  serverHost?: string;
   onOpenSettings?: () => void;
   onInstallTools?: () => void;
   onPickFolder: () => Promise<string | null>;
@@ -94,6 +96,7 @@ const FLAG_FIELDS: {
 export const RestoreView: React.FC<RestoreViewProps> = ({
   connectionName,
   tools,
+  serverHost,
   onOpenSettings,
   onInstallTools,
   onPickFolder,
@@ -130,7 +133,7 @@ export const RestoreView: React.FC<RestoreViewProps> = ({
   const [previewCmd, setPreviewCmd] = React.useState('');
   const previewGen = React.useRef(0);
 
-  const toolMissing = !tools || !tools.mongorestore;
+  const toolMissing = !serverHost && (!tools || !tools.mongorestore);
 
   const allKeys = React.useMemo(
     () =>
@@ -409,7 +412,9 @@ export const RestoreView: React.FC<RestoreViewProps> = ({
             </div>
           ) : (
             <div className="text-xs text-muted-foreground" data-testid="restore-tools-status">
-              mongorestore {tools!.mongorestore!.version} — {tools!.mongorestore!.path}
+              {serverHost
+                ? t('restoreView.tools.onServer', { host: serverHost })
+                : `mongorestore ${tools!.mongorestore!.version} — ${tools!.mongorestore!.path}`}
             </div>
           )}
         </section>

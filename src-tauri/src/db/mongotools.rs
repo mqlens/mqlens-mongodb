@@ -657,28 +657,28 @@ fn require_real_conn_uri(state: &AppState, id: &str) -> Result<String, String> {
     resolve_conn_uri(state, id)
 }
 
-fn basename(path: &str) -> String {
+pub(crate) fn basename(path: &str) -> String {
     std::path::Path::new(path)
         .file_name()
         .map(|f| f.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.to_string())
 }
 
-fn dump_destination(target: &DumpTarget) -> &str {
+pub(crate) fn dump_destination(target: &DumpTarget) -> &str {
     match target {
         DumpTarget::Folder { out } => out,
         DumpTarget::Archive { file } => file,
     }
 }
 
-fn restore_source_path(source: &RestoreSource) -> &str {
+pub(crate) fn restore_source_path(source: &RestoreSource) -> &str {
     match source {
         RestoreSource::Folder { dir } => dir,
         RestoreSource::Archive { file } => file,
     }
 }
 
-fn dump_scope_desc(scope: &DumpScope) -> String {
+pub(crate) fn dump_scope_desc(scope: &DumpScope) -> String {
     match scope {
         DumpScope::Server => "server".to_string(),
         DumpScope::Db { db } => db.clone(),
@@ -962,7 +962,10 @@ pub async fn start_dump_task_impl(
     tool_path: &str,
     options: DumpOptions,
 ) -> Result<TaskInfo, String> {
-    crate::server::routes::refuse_deferred(state, "start_dump_task", &[id])?;
+    // On MQLens Server the server runs mongodump.
+    if let Some(conn) = state.server.remote(id)? {
+        return crate::server::ops::tools::start_dump(state, conn, options).await;
+    }
     let uri = require_real_conn_uri(state, id)?;
     let tunneled = state.ssh_tunnels.lock_safe()?.contains_key(id);
     let args = build_dump_args(&options)?;
@@ -1011,7 +1014,6 @@ pub async fn start_restore_task_impl(
     tool_path: &str,
     options: RestoreOptions,
 ) -> Result<TaskInfo, String> {
-    crate::server::routes::refuse_deferred(state, "start_restore_task", &[id])?;
     let started = std::time::Instant::now();
     let source = restore_source_path(&options.source).to_string();
     let audit_summary = format!("restore from {}", basename(&source));
@@ -1037,6 +1039,10 @@ async fn start_restore_task_inner(
     options: RestoreOptions,
 ) -> Result<TaskInfo, String> {
     guard_writable(state, id, WriteOp::RestoreWrite, false)?;
+    // On MQLens Server the server runs mongorestore.
+    if let Some(conn) = state.server.remote(id)? {
+        return crate::server::ops::tools::start_restore(state, conn, options).await;
+    }
 
     let uri = require_real_conn_uri(state, id)?;
     let tunneled = state.ssh_tunnels.lock_safe()?.contains_key(id);

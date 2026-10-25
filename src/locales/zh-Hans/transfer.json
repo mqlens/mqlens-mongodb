@@ -90,7 +90,8 @@
       "title": "范围"
     },
     "status": {
-      "detecting": "正在检测 {{tools}}…"
+      "detecting": "正在检测 {{tools}}…",
+      "onServer": "mongodump 在 MQLens Server（{{host}}）上运行；转储完成后会下载到你选择的位置。"
     },
     "title": "备份导出"
   },
@@ -392,7 +393,8 @@
     },
     "title": "恢复",
     "tools": {
-      "missing": "未找到 mongorestore。请在设置中配置 MongoDB Database Tools 目录。"
+      "missing": "未找到 mongorestore。请在设置中配置 MongoDB Database Tools 目录。",
+      "onServer": "mongorestore 在 MQLens Server（{{host}}）上运行；转储会先上传到服务器。"
     },
     "tree": {
       "emptySelectionHint": "请至少选择一个要恢复的 Collection。"

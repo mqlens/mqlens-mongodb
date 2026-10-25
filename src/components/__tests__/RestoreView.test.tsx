@@ -339,3 +339,17 @@ describe('RestoreView footer', () => {
     expect(onOpenTasks).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('RestoreView on an MQLens Server connection', () => {
+  it('runs on the server without a local mongorestore', async () => {
+    const props = renderRestoreView({
+      tools: { mongodump: null, mongorestore: null },
+      serverHost: 'mqlens.example.com',
+    });
+
+    expect(screen.queryByTestId('restore-tools-missing')).not.toBeInTheDocument();
+    expect(screen.getByText(/mqlens\.example\.com/)).toBeInTheDocument();
+    await browseFolder(props);
+    await waitFor(() => expect(screen.getByTestId('restore-run-btn')).toBeEnabled());
+  });
+});

@@ -16,6 +16,8 @@
 //!   mongosh on the server's host.
 //! - `MQLENS_TEST_SERVER_CHANGE_STREAMS=1`: also run the change stream check,
 //!   which needs the MongoDB to be a replica set.
+//! - `MQLENS_TEST_SERVER_TOOLS=1`: also run the dump and restore check, which
+//!   needs mongodump and mongorestore on the server's host.
 //!
 //! Each test makes its own server connection and database, and removes both.
 
@@ -761,6 +763,72 @@ mod e2e {
                     .await
                     .unwrap();
                 assert!(indexes.contains(&"expiring".to_string()), "{indexes:?}");
+            })
+        })
+        .await;
+    }
+
+    // A dump through the server lands in a local folder, and a restore of that
+    // folder through the server brings the documents back under a new name.
+    #[tokio::test]
+    async fn dump_and_restore_run_on_the_server() {
+        if var("MQLENS_TEST_SERVER_TOOLS").as_deref() != Some("1") {
+            return;
+        }
+        let Some(w) = World::new().await else { return };
+        w.run(|w| {
+            Box::pin(async move {
+                use crate::db::mongotools::{
+                    start_dump_task_impl, start_restore_task_impl, DumpOptions, DumpScope,
+                    DumpTarget, NsSelection, RestoreOptions, RestoreSource,
+                };
+                use futures::TryStreamExt;
+                w.seed("people", people()).await;
+                let (st, db) = (&w.state, w.db.as_str());
+                let out = tempfile::tempdir().unwrap();
+                let folder = out.path().to_string_lossy().into_owned();
+
+                let dump = DumpOptions {
+                    scope: DumpScope::Db { db: db.to_string() },
+                    target: DumpTarget::Folder {
+                        out: folder.clone(),
+                    },
+                    gzip: true,
+                    ..Default::default()
+                };
+                let task = start_dump_task_impl(st, &w.remote, "", dump).await.unwrap();
+                let task = finished(st, &task.id).await;
+                assert_eq!(task.status, "completed", "dump: {:?}", task.error);
+                assert!(out.path().join(db).join("people.bson.gz").is_file());
+
+                let restore = RestoreOptions {
+                    source: RestoreSource::Folder { dir: folder },
+                    gzip: true,
+                    selections: vec![NsSelection {
+                        db: db.to_string(),
+                        coll: "people".to_string(),
+                        rename_to: Some("people_restored".to_string()),
+                    }],
+                    ..Default::default()
+                };
+                let task = start_restore_task_impl(st, &w.remote, "", restore)
+                    .await
+                    .unwrap();
+                let task = finished(st, &task.id).await;
+                assert_eq!(task.status, "completed", "restore: {:?}", task.error);
+
+                let mut restored: Vec<Document> = w
+                    .client()
+                    .database(db)
+                    .collection::<Document>("people_restored")
+                    .find(doc! {})
+                    .await
+                    .unwrap()
+                    .try_collect()
+                    .await
+                    .unwrap();
+                restored.sort_by_key(|d| d.get_i32("_id").unwrap_or_default());
+                assert_eq!(restored, people());
             })
         })
         .await;

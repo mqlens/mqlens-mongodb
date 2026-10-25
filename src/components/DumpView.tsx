@@ -40,6 +40,8 @@ interface DumpViewProps {
   databases: { name: string; collections: string[] }[];
   initialScope?: DumpScopeUi;
   tools: ToolsStatusUi | null;
+  /** On an MQLens Server connection, the server's host: mongodump runs there. */
+  serverHost?: string;
   onOpenSettings?: () => void;
   onInstallTools?: () => void;
   onPickFolder: () => Promise<string | null>;
@@ -70,6 +72,7 @@ export const DumpView: React.FC<DumpViewProps> = ({
   databases,
   initialScope,
   tools,
+  serverHost,
   onOpenSettings,
   onInstallTools,
   onPickFolder,
@@ -202,7 +205,7 @@ export const DumpView: React.FC<DumpViewProps> = ({
     }
   }, [scope.kind, query, t]);
 
-  const canRun = !!tools?.mongodump && destPath !== null && scopeReady && !queryError;
+  const canRun = (!!serverHost || !!tools?.mongodump) && destPath !== null && scopeReady && !queryError;
 
   const runDump = async () => {
     if (!canRun || starting) return;
@@ -235,7 +238,11 @@ export const DumpView: React.FC<DumpViewProps> = ({
               <span>mongodump</span>
             </h3>
           </div>
-          {tools === null ? (
+          {serverHost ? (
+            <p className="text-xs text-muted-foreground">
+              {t('dumpView.status.onServer', { host: serverHost })}
+            </p>
+          ) : tools === null ? (
             <p className="text-xs text-muted-foreground">
               {t('dumpView.status.detecting', { tools: 'mongodump / mongorestore' })}
             </p>
