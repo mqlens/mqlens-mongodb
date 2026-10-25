@@ -257,10 +257,19 @@ fn upload_files(o: &RestoreOptions) -> Result<Vec<(String, PathBuf)>, String> {
             Some((db, name)) if !name.contains('/') => o
                 .selections
                 .iter()
-                .any(|s| s.db == db && name.starts_with(&format!("{}.", s.coll))),
+                .any(|s| s.db == db && is_collection_file(name, &s.coll)),
             _ => false,
         })
         .collect())
+}
+
+/// The files mongodump writes for a collection. Matched whole, so a chosen
+/// `orders` does not take `orders.private` with it.
+const COLLECTION_FILES: &[&str] = &[".bson", ".bson.gz", ".metadata.json", ".metadata.json.gz"];
+
+fn is_collection_file(name: &str, coll: &str) -> bool {
+    name.strip_prefix(coll)
+        .is_some_and(|suffix| COLLECTION_FILES.contains(&suffix))
 }
 
 fn collect(
@@ -808,6 +817,9 @@ mod tests {
         write(&dir.path().join("shop/orders.bson"), b"orders");
         write(&dir.path().join("shop/orders.metadata.json"), b"{}");
         write(&dir.path().join("shop/items.bson"), b"items");
+        // Another collection whose name the chosen one begins: not chosen.
+        write(&dir.path().join("shop/orders.private.bson"), b"private");
+        write(&dir.path().join("shop/orders.private.metadata.json"), b"{}");
         write(&dir.path().join("other/x.bson"), b"x");
 
         let started = start_restore_task_impl(
