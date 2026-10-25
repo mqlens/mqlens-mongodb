@@ -1067,7 +1067,7 @@ mod tests {
         let (state, id) = on_server(&env, &["read", "write", "ddl"]).await;
         let logs = tempfile::tempdir().unwrap();
         let session = AuditSession::new(logs.path().join("audit.log.enc"));
-        session.open([5u8; 32]).unwrap();
+        session.open(rand::random::<[u8; 32]>()).unwrap();
         session.set_policy(AuditPolicy {
             enabled: true,
             level: AuditLevel::C,
