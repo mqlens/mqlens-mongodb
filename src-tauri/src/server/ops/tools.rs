@@ -272,11 +272,19 @@ fn collect(
         std::fs::read_dir(dir).map_err(|e| format!("Failed to read {}: {}", dir.display(), e))?;
     for entry in entries {
         let entry = entry.map_err(|e| format!("Failed to read {}: {}", dir.display(), e))?;
+        let kind = entry
+            .file_type()
+            .map_err(|e| format!("Failed to read {}: {}", entry.path().display(), e))?;
+        // What a link points to is not in the dump, as the restore tree
+        // leaves links out too.
+        if kind.is_symlink() {
+            continue;
+        }
         let path = entry.path();
         rel.push(entry.file_name().to_string_lossy().into_owned());
-        if path.is_dir() {
+        if kind.is_dir() {
             collect(&path, rel, out)?;
-        } else {
+        } else if kind.is_file() {
             out.push((rel.join("/"), path));
         }
         rel.pop();
@@ -444,7 +452,8 @@ async fn follow(
 }
 
 /// Where a dump's file goes: the chosen archive file, or its path under the
-/// chosen folder. A path that would leave the folder is refused.
+/// chosen folder. A path that would leave the folder is refused, and so is
+/// one through a link already in it, which could lead anywhere.
 fn destination(target: &DumpTarget, path: &str) -> Result<PathBuf, String> {
     let rel = Path::new(path);
     if path.is_empty() || !rel.components().all(|c| matches!(c, Component::Normal(_))) {
@@ -452,10 +461,24 @@ fn destination(target: &DumpTarget, path: &str) -> Result<PathBuf, String> {
             "MQLens Server sent a file outside the dump: {path:?}"
         ));
     }
-    Ok(match target {
-        DumpTarget::Archive { file } => PathBuf::from(file),
-        DumpTarget::Folder { out } => Path::new(out).join(rel),
-    })
+    let out = match target {
+        DumpTarget::Archive { file } => return Ok(PathBuf::from(file)),
+        DumpTarget::Folder { out } => out,
+    };
+    let mut at = PathBuf::from(out);
+    for part in rel.components() {
+        at.push(part);
+        let linked = std::fs::symlink_metadata(&at)
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false);
+        if linked {
+            return Err(format!(
+                "{} is a link; a dump is not written through one",
+                at.display()
+            ));
+        }
+    }
+    Ok(at)
 }
 
 async fn fetch(
@@ -879,5 +902,75 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.contains("does not allow ddl"), "{err}");
+    }
+
+    /// A directory link at `link` to `target`: a junction on Windows, which
+    /// needs no privilege, and a symbolic link elsewhere.
+    fn link_dir(target: &Path, link: &Path) {
+        #[cfg(windows)]
+        assert!(std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .output()
+            .unwrap()
+            .status
+            .success());
+        #[cfg(not(windows))]
+        std::os::unix::fs::symlink(target, link).unwrap();
+    }
+
+    // A link in the chosen folder does not carry a download out of it.
+    #[tokio::test]
+    async fn a_download_does_not_follow_a_link_out_of_the_folder() {
+        let env = Env::new().await;
+        let (state, id) = on_server(&env, &["read"]).await;
+        env.fake.with(|s| {
+            s.task_updates = vec![task("completed", 1, "Dump complete", "")];
+            s.artifact = vec![chunk("shop/orders.bson", b"x")];
+        });
+        let root = tempfile::tempdir().unwrap();
+        let (out, elsewhere) = (root.path().join("out"), root.path().join("elsewhere"));
+        std::fs::create_dir_all(&out).unwrap();
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        link_dir(&elsewhere, &out.join("shop"));
+
+        let started = start_dump_task_impl(&state, &id, "", dump_to(folder(&out), shop()))
+            .await
+            .unwrap();
+        let done = finished(&state, &started).await;
+
+        assert_eq!(done.status, "failed");
+        assert!(!elsewhere.join("orders.bson").exists());
+    }
+
+    // A restore uploads what is in the folder, not what a link in it points
+    // to.
+    #[tokio::test]
+    async fn a_restore_does_not_upload_through_a_link() {
+        let env = Env::new().await;
+        let (state, id) = on_server(&env, &["read", "write", "ddl"]).await;
+        env.fake
+            .with(|s| s.task_updates = vec![task("completed", 1, "Restore complete", "")]);
+        let root = tempfile::tempdir().unwrap();
+        let (dir, elsewhere) = (root.path().join("dump"), root.path().join("elsewhere"));
+        write(&dir.join("shop/orders.bson"), b"orders");
+        write(&elsewhere.join("secret.bson"), b"secret");
+        link_dir(&elsewhere, &dir.join("linked"));
+
+        let restore = RestoreOptions {
+            source: RestoreSource::Folder {
+                dir: dir.to_string_lossy().into_owned(),
+            },
+            ..Default::default()
+        };
+        let started = start_restore_task_impl(&state, &id, "", restore)
+            .await
+            .unwrap();
+        finished(&state, &started).await;
+
+        let (_, files) = env.fake.with(|s| s.restores[0].clone());
+        let names: Vec<&str> = files.iter().map(|(p, _)| p.as_str()).collect();
+        assert_eq!(names, vec!["shop/orders.bson"]);
     }
 }
