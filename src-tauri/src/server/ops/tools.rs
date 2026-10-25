@@ -161,6 +161,17 @@ pub(crate) async fn start_restore(
     let session = session_for(state, &conn).await?;
     let files = upload_files(&options)?;
     let source = restore_source_path(&options.source).to_string();
+    // Audited as a local restore is: started here, once nothing can refuse it,
+    // and ended below as the task ends.
+    let audit = crate::audit::TaskAuditContext::capture(
+        state,
+        Some(&conn.desktop_id),
+        None,
+        None,
+        "start_restore_task",
+        &format!("restore from {}", basename(&source)),
+    );
+    let audit_started = std::time::Instant::now();
     let task = new_task(
         "restore",
         format!("Restore {}", basename(&source)),
@@ -203,6 +214,12 @@ pub(crate) async fn start_restore(
             Err(_) if cancel.load(Ordering::SeqCst) => cancelled(&tasks, &id),
             Err(e) => fail_task(&tasks, &id, e),
         }
+        let (outcome, error) = crate::db::tasks::terminal_state(&tasks, &id, "failed");
+        audit.record_terminal(
+            &outcome,
+            error.as_deref(),
+            Some(audit_started.elapsed().as_millis() as i64),
+        );
         if let Ok(mut cancels) = cancels.lock() {
             cancels.remove(&id);
         }
@@ -1037,5 +1054,61 @@ mod tests {
                 "shop/orders.bson"
             ]
         );
+    }
+
+    // A restore through the server is audited on the desktop too, from its
+    // start to how it ended, as a local restore is.
+    #[tokio::test]
+    async fn a_restore_through_the_server_is_audited() {
+        use crate::audit::envelope::{AuditPolicy, AuditSession};
+        use crate::audit::level::AuditLevel;
+        use crate::audit::store::AuditFilter;
+        let env = Env::new().await;
+        let (state, id) = on_server(&env, &["read", "write", "ddl"]).await;
+        let logs = tempfile::tempdir().unwrap();
+        let session = AuditSession::new(logs.path().join("audit.log.enc"));
+        session.open([5u8; 32]).unwrap();
+        session.set_policy(AuditPolicy {
+            enabled: true,
+            level: AuditLevel::C,
+            include_payloads: false,
+            retention_days: 30,
+        });
+        *state.audit.lock().unwrap() = Some(session);
+        env.fake
+            .with(|s| s.task_updates = vec![task("failed", 0, "", "could not connect")]);
+        let dir = tempfile::tempdir().unwrap();
+        write(&dir.path().join("shop/orders.bson"), b"orders");
+
+        let restore = RestoreOptions {
+            source: RestoreSource::Folder {
+                dir: dir.path().to_string_lossy().into_owned(),
+            },
+            ..Default::default()
+        };
+        let started = start_restore_task_impl(&state, &id, "", restore)
+            .await
+            .unwrap();
+        finished(&state, &started).await;
+
+        let rows = state
+            .audit
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .query(&AuditFilter::default())
+            .unwrap();
+        let restores: Vec<_> = rows
+            .iter()
+            .filter(|r| r.op == "start_restore_task")
+            .collect();
+        assert_eq!(restores.len(), 1, "{rows:?}");
+        assert!(!restores[0].ok);
+        assert!(restores[0]
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("could not connect"));
     }
 }
