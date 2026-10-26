@@ -598,6 +598,32 @@ describe('MongoShell Component', () => {
     expect(await screen.findByText('mongosh result')).toBeInTheDocument();
   });
 
+  it('runs a multi-line script down the signed-in session on a MONGODB-OIDC connection (#518)', async () => {
+    // A one-shot mongosh is a new process with no token, so every multi-line
+    // run on an OIDC connection opened another browser sign-in.
+    render(
+      <MongoShell
+        connectionId="conn-1"
+        connectionName="mock"
+        connectionUri="mongodb://idp-cluster/?authMechanism=MONGODB-OIDC"
+        databaseName="sales_db"
+      />
+    );
+    await screen.findByText(/mongosh session attached/);
+
+    const script = 'db.users.find({\n  active: true\n}).limit(1)';
+    fireEvent.change(screen.getByLabelText('mongosh editor'), { target: { value: script } });
+    fireEvent.click(screen.getByRole('button', { name: /^run$/i }));
+
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith('run_mongosh_command', expect.objectContaining({
+        sessionId: 'shell-session-1',
+        command: script,
+      }))
+    );
+    expect(mockInvoke.mock.calls.some((c) => c[0] === 'run_mongosh_script')).toBe(false);
+  });
+
   it('keeps a single typed command on the warm session', async () => {
     render(
       <MongoShell

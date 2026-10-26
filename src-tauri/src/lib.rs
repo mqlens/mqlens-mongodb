@@ -1222,6 +1222,49 @@ async fn register_and_prime_session(
     })
 }
 
+/// The one REPL line that runs a staged script file in the session.
+///
+/// `load()` is what `mongosh --file` runs a file with, so the script behaves as
+/// it does one-shot: parsed whole, so a syntax error anywhere runs none of it,
+/// and stopped at the first statement that throws. Around it:
+/// - `db` is put back where it was. A script's `use` changes nothing after a
+///   one-shot run, and must not move a live session out from under its tab.
+/// - An unclosed brace reaches the REPL as its `Recoverable` wrapper, which it
+///   prints as a parser stack dump; the SyntaxError inside is the report.
+/// - `if (…) {}` keeps `load()`'s `true` from being echoed as output.
+pub(crate) fn mongosh_load_line(path: &std::path::Path) -> String {
+    let path = serde_json::Value::from(path.to_string_lossy()).to_string();
+    format!(
+        "{{ const before = db.getName(); try {{ if (load({path})) {{}} }} \
+         catch (e) {{ throw e?.constructor?.name === 'Recoverable' ? e.err : e }} \
+         finally {{ if (db.getName() !== before) db = db.getSiblingDB(before) }} }}"
+    )
+}
+
+/// A multi-line script on a local session, run as one unit (#518).
+///
+/// Fed to the REPL a line at a time, a script is not one: a line opening with
+/// `.` (a chained `.limit(1)`) is taken for a REPL keyword, statements after a
+/// failing one still run, and a syntax error part-way through leaves the lines
+/// after it to run on their own. The one-shot `--file` run avoids all that but
+/// is a new process, which on MONGODB-OIDC means a new browser sign-in every
+/// time. So the script is staged as a file, as the one-shot run does, and
+/// `load()`ed by the session that is already signed in.
+async fn run_mongosh_script_on_session(
+    session: &MongoshSession,
+    script: &str,
+) -> Result<MongoshCommandOutput, String> {
+    let path =
+        std::env::temp_dir().join(format!("mqlens-shell-{}.js", Uuid::new_v4().simple()));
+    tokio::fs::write(&path, script.as_bytes())
+        .await
+        .map_err(|e| format!("Failed to stage the script: {}", e))?;
+    let result = run_mongosh_command_on_session(session, &mongosh_load_line(&path)).await;
+    // Best effort: a leaked temp file must never fail an otherwise good run.
+    let _ = tokio::fs::remove_file(&path).await;
+    result
+}
+
 pub async fn run_mongosh_command_impl(
     state: &AppState,
     session_id: &str,
@@ -1230,7 +1273,14 @@ pub async fn run_mongosh_command_impl(
     let started = std::time::Instant::now();
     let session = get_mongosh_session(state, session_id)?;
     let connection_id = session.connection_id.clone();
-    let result = run_mongosh_command_on_session(&session, command).await;
+    // A server shell cannot read this machine's temp dir; it takes the script
+    // as typed, as it always has.
+    let local = matches!(*session.child.lock().await, MongoshProcess::Local(_));
+    let result = if local && command.contains('\n') {
+        run_mongosh_script_on_session(&session, command).await
+    } else {
+        run_mongosh_command_on_session(&session, command).await
+    };
     crate::audit::maybe_record_result(
         state,
         Some(&connection_id),

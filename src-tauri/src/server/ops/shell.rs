@@ -172,6 +172,27 @@ mod tests {
         assert!(sent.iter().any(|l| l == "db.customers.find()"));
     }
 
+    // A multi-line script on a server shell goes to it as typed. Staging it as
+    // a file to `load()` is for a local mongosh, which can read this machine's
+    // temp dir; the server's cannot (#518).
+    #[tokio::test]
+    async fn a_multi_line_script_reaches_the_server_shell_as_typed() {
+        let env = Env::new().await;
+        let (state, id) = admin(&env).await;
+        let info = start_mongosh_session_impl(&state, &id, "", "", "", "")
+            .await
+            .unwrap();
+
+        run_mongosh_command_impl(&state, &info.session_id, "print(1)\nprint(2)")
+            .await
+            .unwrap();
+
+        let sent = env.fake.with(|s| s.shell_input.clone());
+        assert!(sent.iter().any(|l| l == "print(1)"));
+        assert!(sent.iter().any(|l| l == "print(2)"));
+        assert!(!sent.iter().any(|l| l.contains("load(")));
+    }
+
     // What the shell writes to stderr is reported as stderr, as local mode
     // reports a child's.
     #[tokio::test]

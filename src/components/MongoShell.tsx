@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/dialog';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AIChatPanel, type ChatMessage } from './AIChatPanel';
+import { isOidcUri } from './ConnectionManager';
 import type { IndexInfo } from './Sidebar';
 import { buildRunnableCommand, guardScriptRun, type GeneratedQuery } from '../lib/mongoCommand';
 import { DataGrid } from './DataGrid';
@@ -1282,8 +1283,10 @@ export const MongoShell: React.FC<MongoShellProps> = ({
         return;
       }
       // A server shell has no local mongosh for a one-shot run; its session
-      // takes the script instead.
-      const ranExternally = raw.includes('\n') && !server
+      // takes the script instead. So does an OIDC one: a one-shot mongosh is a
+      // new process with no token, and would open a browser sign-in every run
+      // (#518). The backend runs it there as one unit, as `--file` would.
+      const ranExternally = raw.includes('\n') && !server && !isOidcUri(connectionUri)
         ? await runMongoshScriptOnce(raw)
         : await runExternalMongoshCommand(raw);
       // Whatever follows — a driver call for a recognised command, or nothing —

@@ -3282,6 +3282,118 @@ mod tests {
         );
     }
 
+    /// What a fake local REPL was sent: every line that is not one of the
+    /// session's markers or `.break`, and the contents of any file a line
+    /// `load()`ed, read as it arrived (the file is gone afterwards).
+    #[derive(Default)]
+    struct FakeReplSeen {
+        lines: Vec<String>,
+        loaded: Vec<String>,
+    }
+
+    /// A local session over in-memory pipes, its REPL a task that echoes the
+    /// session's markers and records everything else. The child is a real one
+    /// — this test binary listing nothing — only so the session is `Local`.
+    async fn fake_local_session(
+        state: &AppState,
+    ) -> (String, std::sync::Arc<std::sync::Mutex<FakeReplSeen>>) {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        let (stdin, input) = tokio::io::duplex(64 * 1024);
+        let (mut stdout_in, stdout) = tokio::io::duplex(64 * 1024);
+        let (_stderr_in, stderr) = tokio::io::duplex(64);
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(FakeReplSeen::default()));
+        let record = seen.clone();
+        tokio::spawn(async move {
+            let _keep_stderr_open = _stderr_in;
+            let mut lines = BufReader::new(input).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                if line.starts_with("'__MQLENS_DONE_") {
+                    let echo = format!("{}\n", line.trim_matches('\''));
+                    let _ = stdout_in.write_all(echo.as_bytes()).await;
+                    continue;
+                }
+                if line == ".break" {
+                    continue;
+                }
+                let mut seen = record.lock().unwrap();
+                if let Some(arg) = line.split("load(").nth(1).and_then(|s| s.split(')').next()) {
+                    let path: String = serde_json::from_str(arg).expect("load() of a JSON-quoted path");
+                    seen.loaded.push(std::fs::read_to_string(path).expect("the staged script"));
+                }
+                seen.lines.push(line);
+            }
+        });
+        let child = tokio::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--list", "--exact", "no_such_test"])
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let session = crate::MongoshSession::new(
+            "conn-1",
+            Box::new(stdin),
+            stdout,
+            stderr,
+            crate::MongoshProcess::Local(child),
+        );
+        let id = "local-session".to_string();
+        state
+            .mongosh_sessions
+            .lock()
+            .unwrap()
+            .insert(id.clone(), std::sync::Arc::new(session));
+        (id, seen)
+    }
+
+    /// #518: a multi-line script on a local session runs as one unit. Fed to
+    /// the REPL a line at a time, a line opening with `.` is taken for a REPL
+    /// keyword ("Invalid REPL keyword"), a statement after a failing one still
+    /// runs, and a syntax error part-way through runs whatever comes after it.
+    /// `load()` of the staged file parses and runs it whole, as `--file` does.
+    #[tokio::test]
+    async fn a_multi_line_script_on_a_local_session_is_loaded_as_one_line() {
+        use crate::run_mongosh_command_impl;
+        let state = AppState::new();
+        let (id, seen) = fake_local_session(&state).await;
+        let script = "db.users.find({ active: true })\n  .limit(1)";
+
+        run_mongosh_command_impl(&state, &id, script).await.unwrap();
+
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.lines.len(), 1, "one REPL line, not one per script line: {:?}", seen.lines);
+        assert_eq!(seen.loaded, [script]);
+        // The staged file is removed once the run is over.
+        let arg = seen.lines[0].split("load(").nth(1).unwrap().split(')').next().unwrap();
+        let path: String = serde_json::from_str(arg).unwrap();
+        assert!(!std::path::Path::new(&path).exists(), "the staged script was left behind");
+    }
+
+    #[tokio::test]
+    async fn a_single_line_command_on_a_local_session_is_sent_as_typed() {
+        use crate::run_mongosh_command_impl;
+        let state = AppState::new();
+        let (id, seen) = fake_local_session(&state).await;
+
+        run_mongosh_command_impl(&state, &id, "db.stats()").await.unwrap();
+
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.lines, ["db.stats()"]);
+        assert!(seen.loaded.is_empty());
+    }
+
+    /// The line that loads a script keeps `db` where the session had it: a
+    /// `use` inside the script would otherwise move the shell under the tab,
+    /// which still shows (and runs its driver calls against) the old database.
+    /// It also unwraps the REPL's `Recoverable` around an unclosed-brace error,
+    /// which otherwise prints as a parser stack dump.
+    #[test]
+    fn the_load_line_restores_the_database_and_reports_a_plain_syntax_error() {
+        let line = crate::mongosh_load_line(std::path::Path::new(r"C:\Temp\it's.js"));
+        assert!(!line.contains('\n'));
+        assert!(line.contains(r#"load("C:\\Temp\\it's.js")"#), "{line}");
+        assert!(line.contains("db = db.getSiblingDB("), "{line}");
+        assert!(line.contains("'Recoverable' ? e.err : e"), "{line}");
+    }
+
     /// #188 security review Fix 2 (CRITICAL): `start_mongosh_session_impl`
     /// must refuse a `read_only` connection BEFORE spawning a shell —
     /// mongosh pipes arbitrary free-form commands the guard can't classify
