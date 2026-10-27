@@ -1241,6 +1241,29 @@ pub(crate) fn mongosh_load_line(path: &std::path::Path) -> String {
     )
 }
 
+/// A script staged in the temp dir for mongosh to read, removed when this is
+/// dropped: however the run ends, including a future dropped part-way through,
+/// which would skip a removal written after its `await`. Best effort: a
+/// leaked temp file must never fail an otherwise good run.
+struct StagedScript(std::path::PathBuf);
+
+impl StagedScript {
+    async fn write(script: &str) -> Result<Self, String> {
+        let path =
+            std::env::temp_dir().join(format!("mqlens-shell-{}.js", Uuid::new_v4().simple()));
+        tokio::fs::write(&path, script.as_bytes())
+            .await
+            .map_err(|e| format!("Failed to stage the script: {}", e))?;
+        Ok(Self(path))
+    }
+}
+
+impl Drop for StagedScript {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
 /// A multi-line script on a local session, run as one unit (#518).
 ///
 /// Fed to the REPL a line at a time, a script is not one: a line opening with
@@ -1254,15 +1277,8 @@ async fn run_mongosh_script_on_session(
     session: &MongoshSession,
     script: &str,
 ) -> Result<MongoshCommandOutput, String> {
-    let path =
-        std::env::temp_dir().join(format!("mqlens-shell-{}.js", Uuid::new_v4().simple()));
-    tokio::fs::write(&path, script.as_bytes())
-        .await
-        .map_err(|e| format!("Failed to stage the script: {}", e))?;
-    let result = run_mongosh_command_on_session(session, &mongosh_load_line(&path)).await;
-    // Best effort: a leaked temp file must never fail an otherwise good run.
-    let _ = tokio::fs::remove_file(&path).await;
-    result
+    let staged = StagedScript::write(script).await?;
+    run_mongosh_command_on_session(session, &mongosh_load_line(&staged.0)).await
 }
 
 pub async fn run_mongosh_command_impl(
@@ -1345,11 +1361,7 @@ pub async fn run_mongosh_script_impl(
 
     // The script goes in a temp file, not an `--eval` argument: it can be large,
     // and a file sidesteps every argument-length and shell-quoting limit.
-    let path =
-        std::env::temp_dir().join(format!("mqlens-shell-{}.js", Uuid::new_v4().simple()));
-    tokio::fs::write(&path, script.as_bytes())
-        .await
-        .map_err(|e| format!("Failed to stage the script: {}", e))?;
+    let staged = StagedScript::write(script).await?;
 
     let started = std::time::Instant::now();
     let mut command = TokioCommand::new(&executable);
@@ -1360,7 +1372,7 @@ pub async fn run_mongosh_script_impl(
     if !db.is_empty() && !db.chars().any(|c| c.is_control()) {
         command.arg("--eval").arg(format!("use {}", db));
     }
-    command.arg("--file").arg(&path);
+    command.arg("--file").arg(&staged.0);
 
     // Streamed and capped rather than buffered whole. `Command::output()` holds
     // every byte of stdout and stderr in memory until the process exits and then
@@ -1401,9 +1413,7 @@ pub async fn run_mongosh_script_impl(
         }
         Err(e) => Err(format!("Failed to run mongosh: {}", e)),
     };
-
-    // Best effort: a leaked temp file must never fail an otherwise good run.
-    let _ = tokio::fs::remove_file(&path).await;
+    drop(staged);
 
     crate::audit::maybe_record_result(
         state,

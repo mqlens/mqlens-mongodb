@@ -1403,4 +1403,182 @@ mod integration {
         assert_eq!(modified, 1);
         cleanup(&state, &id, &db).await;
     }
+
+    // ---- The embedded shell against a real mongosh (#518, PR #522 review) ----
+    //
+    // A multi-line script on a local session is staged as a file and run by a
+    // single REPL line that load()s it. These pin what that means in a real
+    // mongosh: each call below is one Run of the editor, on one live session.
+    // They also need MQLENS_TEST_MONGOSH, the mongosh binary to run; CI installs
+    // the pinned one.
+
+    use crate::{run_mongosh_command_impl, start_mongosh_session_impl, stop_mongosh_session_impl};
+
+    const FIXTURE: &str = "mqlens_522_fixture";
+
+    /// A live mongosh session on a fresh database, or None to skip.
+    async fn shell() -> Option<(AppState, String, String, String)> {
+        let Some(mongosh) = std::env::var("MQLENS_TEST_MONGOSH").ok().filter(|s| !s.trim().is_empty())
+        else {
+            eprintln!("skipping: MQLENS_TEST_MONGOSH is not set");
+            return None;
+        };
+        let (state, id, db) = connect().await?;
+        let uri = test_mongo_uri()?;
+        let session = start_mongosh_session_impl(&state, &id, &uri, &db, &mongosh, "")
+            .await
+            .expect("start mongosh")
+            .session_id;
+        Some((state, id, db, session))
+    }
+
+    /// One Run: everything the shell printed, stdout then stderr.
+    async fn run(state: &AppState, session: &str, script: &str) -> String {
+        let out = run_mongosh_command_impl(state, session, script)
+            .await
+            .unwrap_or_else(|e| panic!("run {script:?}: {e}"));
+        [out.stdout, out.stderr].concat().join("\n")
+    }
+
+    /// The _ids now in the fixture collection.
+    async fn fixture_ids(state: &AppState, id: &str, db: &str) -> Vec<String> {
+        use futures::TryStreamExt as _;
+        let docs: Vec<Document> = client_of(state, id)
+            .database(db)
+            .collection::<Document>(FIXTURE)
+            .find(doc! {})
+            .await
+            .unwrap()
+            .try_collect()
+            .await
+            .unwrap();
+        docs.iter().map(|d| d.get("_id").map(|v| v.to_string()).unwrap_or_default()).collect()
+    }
+
+    /// The session still answers, on the tab's database.
+    async fn assert_usable(state: &AppState, session: &str, db: &str) {
+        let out = run(state, session, "db.getName()").await;
+        assert!(out.contains(db), "the session no longer answers on {db}: {out}");
+    }
+
+    #[tokio::test]
+    async fn it_shell_runs_comments_chains_and_repeat_runs_as_one_script() {
+        let Some((state, id, db, session)) = shell().await else { return };
+        seed(&state, &id, &db, FIXTURE, vec![doc! { "_id": "a", "active": true }]).await;
+
+        // Comments and blank lines are ordinary JavaScript.
+        let out = run(&state, &session, "// A leading comment\n\nconst filter = {\n  active: true, // inline comment\n  /* Optional filter:\n  region: \"US\",\n  */\n};\nprintjson(db.mqlens_522_fixture.find(filter).limit(1).toArray());\n// End comment").await;
+        assert!(out.contains("_id: 'a'"), "{out}");
+        run(&state, &session, "// one\n// two").await;
+        assert_usable(&state, &session, &db).await;
+
+        // A chain continued on lines that start with "." (a REPL keyword when
+        // fed a line at a time), run twice, re-declaring its const.
+        let chain = "const docs = db.mqlens_522_fixture.find({\n  active: true\n})\n.limit(2)\n.toArray();\nprintjson(docs);";
+        for _ in 0..2 {
+            let out = run(&state, &session, chain).await;
+            assert!(out.contains("_id: 'a'") && !out.contains("REPL keyword") && !out.contains("Error"), "{out}");
+        }
+
+        // Back-to-back runs each get their own output.
+        for (tick, other) in [("first", "second"), ("second", "first")] {
+            let out = run(&state, &session, &format!("print(db.getName());\nprint(\"{tick}\");")).await;
+            assert!(out.contains(&db) && out.contains(tick) && !out.contains(other), "{out}");
+        }
+        cleanup(&state, &id, &db).await;
+    }
+
+    #[tokio::test]
+    async fn it_shell_runs_none_of_a_script_that_does_not_parse() {
+        let Some((state, id, db, session)) = shell().await else { return };
+
+        // A '#' line is not a comment, and a syntax error anywhere means no
+        // statement runs: not the ones before it, not the ones after.
+        for script in [
+            "db.mqlens_522_fixture.insertOne({ _id: \"hash-before\" });\n# this is not a JavaScript comment\ndb.mqlens_522_fixture.insertOne({ _id: \"hash-after\" });",
+            "db.mqlens_522_fixture.insertOne({ _id: \"syntax-before\" });\nconst bad = ;\ndb.mqlens_522_fixture.insertOne({ _id: \"syntax-after\" });",
+            "db.mqlens_522_fixture.insertOne({ _id: \"brace-before\" });\ndb.mqlens_522_fixture.find({",
+        ] {
+            let out = run(&state, &session, script).await;
+            assert!(out.contains("SyntaxError") && !out.contains("Recoverable"), "{out}");
+            assert_usable(&state, &session, &db).await;
+        }
+        assert!(fixture_ids(&state, &id, &db).await.is_empty(), "a script that failed to parse wrote");
+        cleanup(&state, &id, &db).await;
+    }
+
+    #[tokio::test]
+    async fn it_shell_stops_a_script_at_its_first_throw() {
+        let Some((state, id, db, session)) = shell().await else { return };
+
+        let out = run(&state, &session, "print(\"before\");\nthrow new Error(\"mqlens-522-intentional\");\ndb.mqlens_522_fixture.insertOne({ _id: \"after-throw\" });").await;
+
+        assert!(out.contains("before") && out.contains("mqlens-522-intentional"), "{out}");
+        assert!(fixture_ids(&state, &id, &db).await.is_empty(), "the statement after the throw ran");
+        assert_usable(&state, &session, &db).await;
+        cleanup(&state, &id, &db).await;
+    }
+
+    #[tokio::test]
+    async fn it_shell_keeps_the_tab_database_whatever_a_script_does_to_db() {
+        let Some((state, id, db, session)) = shell().await else { return };
+
+        for script in [
+            "use admin\nprint(db.getName());",
+            "db = db.getSiblingDB(\"admin\");\nthrow new Error(\"after the move\");",
+            // mongosh refuses these itself, and nothing of ours may fail after it.
+            "db = null;\nprint(\"script finished\");",
+            "db = { getName: () => \"x\" };\nprint(\"script finished\");",
+        ] {
+            let out = run(&state, &session, script).await;
+            assert!(!out.contains("is not a function") && !out.contains("of null"), "{script:?}: {out}");
+            assert_usable(&state, &session, &db).await;
+        }
+        cleanup(&state, &id, &db).await;
+    }
+
+    #[tokio::test]
+    async fn it_shell_quit_ends_the_session_and_runs_nothing_after_it() {
+        let Some((state, id, db, session)) = shell().await else { return };
+
+        let quit = run_mongosh_command_impl(&state, &session, "print(\"ending\");\nquit();\ndb.mqlens_522_fixture.insertOne({ _id: \"after-quit\" });").await;
+
+        assert!(quit.err().is_some_and(|e| e.contains("session closed")));
+        assert!(fixture_ids(&state, &id, &db).await.is_empty(), "the statement after quit() ran");
+        let _ = stop_mongosh_session_impl(&state, &session).await;
+        cleanup(&state, &id, &db).await;
+    }
+
+    #[tokio::test]
+    async fn it_shell_stop_ends_a_running_script_and_removes_its_staged_file() {
+        let Some((state, id, db, session)) = shell().await else { return };
+        let state = std::sync::Arc::new(state);
+        // Marks this test's staged file apart from any other test's.
+        let token = uuid::Uuid::new_v4().simple().to_string();
+        let staged = || {
+            std::fs::read_dir(std::env::temp_dir())
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .filter(|e| e.file_name().to_string_lossy().starts_with("mqlens-shell-"))
+                .filter(|e| std::fs::read_to_string(e.path()).is_ok_and(|s| s.contains(&token)))
+                .count()
+        };
+        let script = format!("print(\"started {token}\");\nsleep(30000);\nprint(\"finished\");");
+
+        let running = {
+            let (state, session) = (state.clone(), session.clone());
+            tokio::spawn(async move { run_mongosh_command_impl(&state, &session, &script).await })
+        };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while staged() == 0 && std::time::Instant::now() < deadline {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        assert_eq!(staged(), 1, "the script was never staged");
+        stop_mongosh_session_impl(&state, &session).await.unwrap();
+
+        let stopped = tokio::time::timeout(std::time::Duration::from_secs(20), running).await;
+        assert!(stopped.expect("Stop did not end the run").unwrap().is_err());
+        assert_eq!(staged(), 0, "the stopped run left its staged script behind");
+        cleanup(&state, &id, &db).await;
+    }
 }

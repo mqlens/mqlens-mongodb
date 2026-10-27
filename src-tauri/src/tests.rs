@@ -3292,10 +3292,12 @@ mod tests {
     }
 
     /// A local session over in-memory pipes, its REPL a task that echoes the
-    /// session's markers and records everything else. The child is a real one
-    /// — this test binary listing nothing — only so the session is `Local`.
+    /// session's markers (unless `answers` is false, a REPL still busy with the
+    /// command) and records everything else. The child is a real one — this
+    /// test binary listing nothing — only so the session is `Local`.
     async fn fake_local_session(
         state: &AppState,
+        answers: bool,
     ) -> (String, std::sync::Arc<std::sync::Mutex<FakeReplSeen>>) {
         use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
         let (stdin, input) = tokio::io::duplex(64 * 1024);
@@ -3308,6 +3310,9 @@ mod tests {
             let mut lines = BufReader::new(input).lines();
             while let Ok(Some(line)) = lines.next_line().await {
                 if line.starts_with("'__MQLENS_DONE_") {
+                    if !answers {
+                        continue;
+                    }
                     let echo = format!("{}\n", line.trim_matches('\''));
                     let _ = stdout_in.write_all(echo.as_bytes()).await;
                     continue;
@@ -3353,7 +3358,7 @@ mod tests {
     async fn a_multi_line_script_on_a_local_session_is_loaded_as_one_line() {
         use crate::run_mongosh_command_impl;
         let state = AppState::new();
-        let (id, seen) = fake_local_session(&state).await;
+        let (id, seen) = fake_local_session(&state, true).await;
         let script = "db.users.find({ active: true })\n  .limit(1)";
 
         run_mongosh_command_impl(&state, &id, script).await.unwrap();
@@ -3367,11 +3372,33 @@ mod tests {
         assert!(!std::path::Path::new(&path).exists(), "the staged script was left behind");
     }
 
+    /// The staged file goes however the run ends, including when the future
+    /// running it is dropped part-way, which skips any cleanup written after
+    /// an `await`.
+    #[tokio::test]
+    async fn a_staged_script_is_removed_when_its_run_is_abandoned() {
+        use crate::run_mongosh_command_impl;
+        let state = AppState::new();
+        let (id, seen) = fake_local_session(&state, false).await;
+
+        let run = run_mongosh_command_impl(&state, &id, "print(1)
+print(2)");
+        let abandoned = tokio::time::timeout(std::time::Duration::from_millis(500), run).await;
+
+        assert!(abandoned.is_err(), "the REPL never answered, so the run should still be waiting");
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.loaded, ["print(1)
+print(2)"], "the script was staged and sent");
+        let arg = seen.lines[0].split("load(").nth(1).unwrap().split(')').next().unwrap();
+        let path: String = serde_json::from_str(arg).unwrap();
+        assert!(!std::path::Path::new(&path).exists(), "the abandoned run left its staged script behind");
+    }
+
     #[tokio::test]
     async fn a_single_line_command_on_a_local_session_is_sent_as_typed() {
         use crate::run_mongosh_command_impl;
         let state = AppState::new();
-        let (id, seen) = fake_local_session(&state).await;
+        let (id, seen) = fake_local_session(&state, true).await;
 
         run_mongosh_command_impl(&state, &id, "db.stats()").await.unwrap();
 

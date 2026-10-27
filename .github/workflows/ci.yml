@@ -116,6 +116,14 @@ jobs:
       # starts, neither of which `services:` can do, so a script runs the
       # container. It prints the MQLENS_TEST_OIDC_* variables the test reads;
       # when they are unset the test skips.
+      # The embedded-shell integration tests run a real mongosh. The version and
+      # checksum are the app's own pin for linux-x64 (src-tauri/src/toolsetup.rs).
+      - name: Install the pinned mongosh
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/mongosh.tgz" https://github.com/mongodb-js/mongosh/releases/download/v2.9.2/mongosh-2.9.2-linux-x64.tgz
+          echo "b0febe385c10c9be755c29095ffa95a42bed16ea6625ea3fbde36ae33b42da79  $RUNNER_TEMP/mongosh.tgz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/mongosh.tgz" -C "$RUNNER_TEMP"
+          echo "MQLENS_TEST_MONGOSH=$RUNNER_TEMP/mongosh-2.9.2-linux-x64/bin/mongosh" >> "$GITHUB_ENV"
       - name: Start the MONGODB-OIDC Percona fixture
         run: bash scripts/oidc-percona-fixture.sh start >> "$GITHUB_ENV"
       - name: Backend tests with coverage
