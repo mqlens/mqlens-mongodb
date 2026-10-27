@@ -3115,6 +3115,26 @@ mod tests {
     }
 
     #[test]
+    fn output_that_never_ends_its_line_stays_bounded_and_keeps_a_trailing_marker() {
+        use crate::absorb_mongosh_chunk;
+        // A script writing megabytes with no newline (PR #522 review): the line
+        // being built must not grow with it, and must still end in the marker
+        // the REPL echoes after it, since completion is matched by suffix.
+        let mut pending = Vec::new();
+        for _ in 0..1_000 {
+            assert!(absorb_mongosh_chunk(&mut pending, &[b'a'; 4096]).is_empty());
+        }
+        let bound = crate::limits::MAX_MONGOSH_LINE_CHARS * 4 + 64 * 1024;
+        assert!(pending.len() <= bound, "pending grew to {} bytes", pending.len());
+
+        let lines = absorb_mongosh_chunk(&mut pending, b"test> __MQLENS_DONE_abc__\n");
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].starts_with("aaaa"));
+        assert!(lines[0].ends_with("test> __MQLENS_DONE_abc__"), "the marker was lost");
+        assert!(lines[0].len() <= bound);
+    }
+
+    #[test]
     fn output_split_right_before_its_newline_is_kept_whole() {
         use crate::absorb_mongosh_chunk;
         // `print("ready> ")` delivered as `ready> ` and then `\n`. Judged on its

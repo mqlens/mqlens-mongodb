@@ -469,7 +469,18 @@ pub(crate) fn absorb_mongosh_chunk(pending: &mut Vec<u8>, chunk: &[u8]) -> Vec<S
         }
     }
     pending.extend_from_slice(chunk);
-    take_mongosh_lines(pending)
+    let lines = take_mongosh_lines(pending);
+    // A line still unterminated is bounded as it grows: output that never
+    // writes a newline must not grow memory, nor make every chunk rescan it
+    // (PR #522 review). The head is what `push_mongosh_line` would keep; the
+    // tail is kept too, because the REPL echoes a command's completion marker
+    // at the END of whatever line it lands on, and markers match by suffix.
+    let head = crate::limits::MAX_MONGOSH_LINE_CHARS * 4;
+    let tail = 1024;
+    if pending.len() > head + tail {
+        pending.drain(head..pending.len() - tail);
+    }
+    lines
 }
 
 fn spawn_mongosh_reader<R>(
