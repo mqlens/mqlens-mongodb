@@ -124,10 +124,10 @@ test.describe('The index modal', () => {
     await raw.fill('{ "tier": 2 }');
     await expect(name).toHaveValue('tier_2');
 
-    // Every direction is 1 or -1.
+    // Every key is a direction or an index type.
     await name.fill('tier_idx');
     await save.click();
-    await expect(modal).toContainText('Index direction for "tier" must be 1 (Ascending) or -1 (Descending)');
+    await expect(modal).toContainText('Index type for "tier" must be 1, -1, "text", "2dsphere", "2d" or "hashed"');
 
     // A list of keys is not an index definition.
     await raw.fill('[1]');
@@ -143,9 +143,8 @@ test.describe('The index modal', () => {
     await raw.fill('{ "tier": -1 }');
     await save.click();
     await expect(modal).toHaveCount(0);
-    const args = (await app.calls('create_index'))[0].args as { indexName: string; keys: unknown };
-    expect(args.indexName).toBe('tier_idx');
-    expect(typeof args.keys === 'string' ? JSON.parse(args.keys) : args.keys).toEqual({ tier: -1 });
+    const args = (await app.calls('create_index'))[0].args as { spec: string };
+    expect(JSON.parse(args.spec)).toEqual({ key: { tier: -1 }, name: 'tier_idx' });
   });
 
   test('every key needs a field, and the index needs a name', async ({ app, page }) => {

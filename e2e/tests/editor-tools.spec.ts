@@ -93,7 +93,7 @@ test.describe('Index modal', () => {
     const save = modal.getByTestId('save-index-btn');
 
     await modal.getByRole('tab', { name: 'Raw JSON' }).click();
-    const raw = modal.locator('textarea');
+    const raw = modal.getByPlaceholder('{ "email": 1 }');
     await raw.fill('[1]');
     await save.click();
     await expect(modal).toContainText('Index keys must be a JSON object');
@@ -115,7 +115,7 @@ test.describe('Index modal', () => {
     await expect(modal).toContainText('Index name is required');
     await modal.getByTestId('index-name-input').fill('email_-1');
     const created = await callFrom(app, 'create_index', () => save.click());
-    expect(typeof created.keys === 'string' ? JSON.parse(created.keys) : created.keys).toEqual({ email: -1 });
+    expect(JSON.parse(String(created.spec)).key).toEqual({ email: -1 });
   });
 });
 

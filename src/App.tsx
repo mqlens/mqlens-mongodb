@@ -2629,7 +2629,6 @@ function Workspace() {
       }
 
       await invoke('delete_index', { ...place, indexName: initialData.name });
-      closeTabById(`${connectionId}.${db}.${collection}.${initialData.name}`);
       try {
         await create(spec, commitQuorum);
       } catch (err: any) {
@@ -2643,6 +2642,10 @@ function Workspace() {
         }
         setIndexMutationTrigger(prev => prev + 1);
         return;
+      }
+      // Under the same name the open tab is still right, and refetches.
+      if (spec.name !== initialData.name) {
+        closeTabById(`${connectionId}.${db}.${collection}.${initialData.name}`);
       }
       finish();
     } catch (err: any) {
