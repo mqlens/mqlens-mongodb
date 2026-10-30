@@ -379,6 +379,10 @@ pub struct IndexInfo {
     // The filter as a JSON string, written as `keys` is.
     #[serde(rename = "partialFilterExpression", skip_serializing_if = "Option::is_none")]
     pub partial_filter_expression: Option<String>,
+    // The whole index document as relaxed Extended JSON, every option in it:
+    // what a rebuild recreates. A server before API version 5 sends none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub spec: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -3075,6 +3079,28 @@ async fn set_index_expiry(
 }
 
 #[tauri::command]
+async fn set_index_option(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    database: String,
+    collection: String,
+    index_name: String,
+    option: db::metadata::IndexOption,
+    value: bool,
+) -> Result<(), String> {
+    db::metadata::set_index_option_impl(
+        &state,
+        &id,
+        &database,
+        &collection,
+        &index_name,
+        option,
+        value,
+    )
+    .await
+}
+
+#[tauri::command]
 async fn delete_index(
     state: tauri::State<'_, AppState>,
     id: String,
@@ -4415,6 +4441,7 @@ pub fn run() {
             index_stats,
             create_index,
             set_index_expiry,
+            set_index_option,
             delete_index,
             delete_document,
             delete_many,

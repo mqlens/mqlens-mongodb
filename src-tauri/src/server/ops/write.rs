@@ -186,60 +186,43 @@ pub(crate) async fn delete_many(
     count(result.deleted_count)
 }
 
-/// An index on `keys` named `name`.
-pub(crate) struct NewIndex<'a> {
-    pub name: &'a str,
-    pub keys: &'a Document,
-    pub unique: bool,
-    pub sparse: bool,
-    pub expire_after_seconds: Option<i64>,
-}
+/// What a server before API version 5 takes as plain fields.
+const PLAIN_INDEX_FIELDS: [&str; 4] = ["key", "name", "unique", "sparse"];
 
-/// API version 5 takes an index as its whole document, the only way to send a
-/// TTL.
+/// API version 5 takes an index as its whole document, the only way to send
+/// anything else.
 const INDEX_SPEC_SINCE: u32 = 5;
-
-/// The index document for an index with a TTL, which only it can carry.
-fn ttl_spec(index: &NewIndex<'_>) -> Result<Vec<u8>, String> {
-    let Some(seconds) = index.expire_after_seconds else {
-        return Ok(Vec::new());
-    };
-    let mut spec = mongodb::bson::doc! { "key": index.keys.clone(), "name": index.name };
-    if index.unique {
-        spec.insert("unique", true);
-    }
-    if index.sparse {
-        spec.insert("sparse", true);
-    }
-    // Checked to fit before this.
-    spec.insert("expireAfterSeconds", seconds as i32);
-    mongodb::bson::to_vec(&spec).map_err(|e| e.to_string())
-}
 
 pub(crate) async fn create_index(
     state: &AppState,
     conn: &RemoteConn,
     database: &str,
     collection: &str,
-    index: NewIndex<'_>,
+    spec: &Document,
 ) -> Result<(), String> {
     routes::require("create_index", conn)?;
-    if index.expire_after_seconds.is_some() && conn.api_version < INDEX_SPEC_SINCE {
+    let plain = spec.keys().all(|field| PLAIN_INDEX_FIELDS.contains(&field.as_str()));
+    if !plain && conn.api_version < INDEX_SPEC_SINCE {
         return Err(format!(
-            "A TTL index needs MQLens API version {INDEX_SPEC_SINCE}, and this MQLens Server speaks {}. Update MQLens Server.",
+            "These index options need MQLens API version {INDEX_SPEC_SINCE}, and this MQLens Server speaks {}. Update MQLens Server.",
             conn.api_version
         ));
     }
-    let spec_bson = ttl_spec(&index)?.into();
+    let spec_bson = if plain {
+        Vec::new()
+    } else {
+        mongodb::bson::to_vec(spec).map_err(|e| e.to_string())?
+    };
+    let keys = spec.get_document("key").map_err(|e| e.to_string())?;
     let request = CreateIndexRequest {
         connection_id: conn.remote_id.clone(),
         database: database.to_string(),
         collection: collection.to_string(),
-        keys_json: ejson::doc_to_wire(index.keys),
-        unique: index.unique,
-        sparse: index.sparse,
-        name: index.name.to_string(),
-        spec_bson,
+        keys_json: ejson::doc_to_wire(keys),
+        unique: spec.get_bool("unique").unwrap_or(false),
+        sparse: spec.get_bool("sparse").unwrap_or(false),
+        name: spec.get_str("name").unwrap_or_default().to_string(),
+        spec_bson: spec_bson.into(),
     };
     session_for(state, conn)
         .await?
@@ -283,7 +266,7 @@ mod tests {
         delete_document_impl, delete_many_impl, insert_document_impl, update_document_impl,
         update_many_impl,
     };
-    use crate::db::metadata::{create_index_impl, delete_index_impl};
+    use crate::db::metadata::{create_index_impl, create_index_spec_impl, delete_index_impl};
     use crate::server::ejson;
     use crate::server::fake::{Env, FakeWrite};
     use crate::server::ops::connected;
@@ -624,7 +607,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_ttl_index_needs_api_version_5() {
+    async fn index_options_need_api_version_5() {
         let env = Env::new().await;
         env.fake
             .with(|s| s.connections[0].op_classes.push("ddl".to_string()));
@@ -636,7 +619,126 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert!(err.contains("needs MQLens API version 5"), "{err}");
+        assert!(err.contains("need MQLens API version 5"), "{err}");
+        let err = create_index_spec_impl(
+            &state,
+            &id,
+            "orders",
+            "events",
+            r#"{"key":{"a":1},"name":"a_1","hidden":true}"#,
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("need MQLens API version 5"), "{err}");
+        assert!(writes(&env).is_empty());
+    }
+
+    #[tokio::test]
+    async fn every_option_goes_in_the_index_document() {
+        let env = Env::new().await;
+        env.fake.with(|s| {
+            s.max_api_version = 5;
+            s.connections[0].op_classes.push("ddl".to_string());
+        });
+        let (state, id) = connected(&env).await;
+
+        create_index_spec_impl(
+            &state,
+            &id,
+            "orders",
+            "events",
+            r#"{"key":{"bio":"text"},"name":"bio_text","weights":{"bio":5},"collation":{"locale":"de"}}"#,
+            None,
+        )
+        .await
+        .unwrap();
+
+        match writes(&env).as_slice() {
+            [FakeWrite::CreateIndex(c)] => {
+                let spec: mongodb::bson::Document = mongodb::bson::from_slice(&c.spec_bson).unwrap();
+                assert_eq!(spec.get_document("weights").unwrap(), &doc! { "bio": 5 });
+                assert_eq!(spec.get_document("collation").unwrap(), &doc! { "locale": "de" });
+                assert_eq!(c.name, "bio_text");
+                assert_eq!(ejson::doc_from_wire(&c.keys_json).unwrap(), doc! { "bio": "text" });
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    // A server before API 5 reads the plain fields, so a plain index goes as it always did.
+    #[tokio::test]
+    async fn a_plain_index_needs_no_index_document() {
+        let env = Env::new().await;
+        env.fake
+            .with(|s| s.connections[0].op_classes.push("ddl".to_string()));
+        let (state, id) = connected(&env).await;
+
+        create_index_spec_impl(
+            &state,
+            &id,
+            "orders",
+            "events",
+            r#"{"key":{"loc":"2dsphere"},"name":"loc","unique":true,"sparse":true}"#,
+            None,
+        )
+        .await
+        .unwrap();
+
+        match writes(&env).as_slice() {
+            [FakeWrite::CreateIndex(c)] => {
+                assert!(c.spec_bson.is_empty());
+                assert!(c.unique && c.sparse);
+                assert_eq!(c.name, "loc");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    // No RPC yet: refused here, not sent.
+    #[tokio::test]
+    async fn an_index_option_is_refused_on_the_server() {
+        let env = Env::new().await;
+        env.fake.with(|s| {
+            s.max_api_version = 9;
+            s.connections[0].op_classes.push("ddl".to_string());
+        });
+        let (state, id) = connected(&env).await;
+
+        let err = crate::db::metadata::set_index_option_impl(
+            &state,
+            &id,
+            "orders",
+            "events",
+            "a_1",
+            crate::db::metadata::IndexOption::Hidden,
+            true,
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("not available on MQLens Server"), "{err}");
+        assert!(writes(&env).is_empty());
+    }
+
+    // The request has no field for it, so it is never silently left out.
+    #[tokio::test]
+    async fn a_commit_quorum_is_refused_on_the_server() {
+        let env = Env::new().await;
+        env.fake
+            .with(|s| s.connections[0].op_classes.push("ddl".to_string()));
+        let (state, id) = connected(&env).await;
+
+        let err = create_index_spec_impl(
+            &state,
+            &id,
+            "orders",
+            "events",
+            r#"{"key":{"a":1},"name":"a_1"}"#,
+            Some("majority"),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, crate::db::metadata::NO_REMOTE_COMMIT_QUORUM);
         assert!(writes(&env).is_empty());
     }
 

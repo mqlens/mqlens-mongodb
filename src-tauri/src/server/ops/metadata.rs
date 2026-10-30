@@ -263,8 +263,10 @@ mod tests {
             indexes[0].partial_filter_expression.as_deref(),
             Some(r#"{"archived":false}"#)
         );
+        assert!(indexes[0].spec.as_deref().unwrap().contains("expireAfterSeconds"));
         assert_eq!(indexes[1].expire_after_seconds, None);
         assert!(!indexes[1].hidden);
+        assert_eq!(indexes[1].spec, None);
     }
 
     // An index document that cannot be read is an error, not an index without
