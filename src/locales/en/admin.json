@@ -134,6 +134,7 @@
       "ttlNotId": "A TTL index cannot be on _id",
       "ttlRange": "Expire after seconds must be a whole number from 0 to 2147483647",
       "ttlSingleField": "A TTL index must have exactly one key field",
+      "weightsNeedKey": "Text weights name {{field}}, which is not a text key",
       "wildcardProjectionNeedsAllFields": "A wildcard projection needs the key $**",
       "wildcardSparse": "A wildcard index cannot be sparse",
       "wildcardTtl": "A wildcard index cannot have a TTL",

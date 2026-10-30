@@ -25,8 +25,9 @@ interface CollectionIndexesProps {
 
 type SortKey = 'name' | 'size' | 'usage';
 
-// How often a running build is checked on.
+// How often a running build is checked on, and how often one is looked for.
 const BUILD_POLL_MS = 3000;
+const IDLE_POLL_MS = 15000;
 
 const keyChip = (dir: unknown): string =>
   dir === 1 || dir === '1' ? '↑' : dir === -1 || dir === '-1' ? '↓' : String(dir);
@@ -93,17 +94,19 @@ export const CollectionIndexes: React.FC<CollectionIndexesProps> = ({
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const check = async () => {
-      let running: IndexBuild[] = [];
+      let running: IndexBuild[];
       try {
         running = indexBuilds(await currentOps(connectionId), `${databaseName}.${collectionName}`);
       } catch {
-        // No banner.
+        // One failed look at a running build says nothing about the build.
+        if (!cancelled && building.current) timer = setTimeout(check, BUILD_POLL_MS);
+        return;
       }
       if (cancelled) return;
       setBuilds(running);
       if (building.current && running.length === 0) setBuildsFinished((n) => n + 1);
       building.current = running.length > 0;
-      if (running.length > 0) timer = setTimeout(check, BUILD_POLL_MS);
+      timer = setTimeout(check, running.length > 0 ? BUILD_POLL_MS : IDLE_POLL_MS);
     };
     void check();
     return () => {

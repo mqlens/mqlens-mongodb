@@ -244,14 +244,44 @@ async fn list_indexes_impl_inner(
         .await
         .map_err(|e| format!("Failed to list indexes: {}", e))?;
 
-    let mut indexes = Vec::new();
+    let mut specs = Vec::new();
     use futures::stream::StreamExt;
     while let Some(result) = cursor.next().await {
-        let spec = result.map_err(|e| format!("Index read error: {}", e))?;
-        indexes.push(index_info(&spec));
+        specs.push(result.map_err(|e| format!("Index read error: {}", e))?);
     }
+    with_simple_collation(&mut specs);
 
-    Ok(indexes)
+    Ok(specs.iter().map(index_info).collect())
+}
+
+/// MongoDB lists the simple collation as no collation at all, while an index
+/// created without one takes the collection's default, which `_id_` lists. On
+/// such a collection this says so: a rebuild would otherwise change the index,
+/// or fail on a type that takes no other collation.
+pub(crate) fn with_simple_collation(specs: &mut [Document]) {
+    let has_default = specs.iter().any(|spec| {
+        spec.get_str("name").is_ok_and(|name| name == "_id_") && spec.contains_key("collation")
+    });
+    if has_default {
+        for spec in specs.iter_mut().filter(|spec| !spec.contains_key("collation")) {
+            spec.insert("collation", doc! { "locale": "simple" });
+        }
+    }
+}
+
+/// Relaxed Extended JSON writes an Int64 as a bare number, which JavaScript
+/// rounds past 2^53. A rebuild would write the rounded value back.
+fn keep_large_integers(value: &mut serde_json::Value) {
+    use serde_json::Value;
+    const SAFE: u64 = (1 << 53) - 1;
+    match value {
+        Value::Number(n) if n.as_i64().is_some_and(|n| n.unsigned_abs() > SAFE) => {
+            *value = serde_json::json!({ "$numberLong": n.to_string() });
+        }
+        Value::Array(items) => items.iter_mut().for_each(keep_large_integers),
+        Value::Object(fields) => fields.values_mut().for_each(keep_large_integers),
+        _ => {}
+    }
 }
 
 /// What the index document `spec` lists for one index.
@@ -297,8 +327,11 @@ pub(crate) fn with_spec_details(mut info: IndexInfo, spec: &Document) -> IndexIn
         .get_document("partialFilterExpression")
         .ok()
         .and_then(|filter| serde_json::to_string(filter).ok());
-    info.spec = (!spec.is_empty())
-        .then(|| Bson::Document(spec.clone()).into_relaxed_extjson().to_string());
+    info.spec = (!spec.is_empty()).then(|| {
+        let mut json = Bson::Document(spec.clone()).into_relaxed_extjson();
+        keep_large_integers(&mut json);
+        json.to_string()
+    });
     info
 }
 
@@ -898,6 +931,39 @@ mod tests {
             serde_json::from_str(info.spec.as_deref().unwrap()).unwrap();
         assert_eq!(listed["prepareUnique"], true);
         assert_eq!(listed["collation"]["strength"], 2);
+    }
+
+    // MongoDB lists the simple collation as none, and an index created without
+    // one takes the collection's default, which `_id_` lists.
+    #[test]
+    fn an_index_on_a_collated_collection_says_when_it_is_simple() {
+        let mut specs = vec![
+            doc! { "key": { "_id": 1 }, "name": "_id_", "collation": { "locale": "en" } },
+            doc! { "key": { "a": 1 }, "name": "a_1" },
+            doc! { "key": { "b": 1 }, "name": "b_1", "collation": { "locale": "de" } },
+        ];
+        with_simple_collation(&mut specs);
+        assert_eq!(specs[1].get_document("collation").unwrap(), &doc! { "locale": "simple" });
+        assert_eq!(specs[2].get_document("collation").unwrap(), &doc! { "locale": "de" });
+
+        let mut plain = vec![
+            doc! { "key": { "_id": 1 }, "name": "_id_" },
+            doc! { "key": { "a": 1 }, "name": "a_1" },
+        ];
+        with_simple_collation(&mut plain);
+        assert!(!plain[1].contains_key("collation"));
+    }
+
+    // JavaScript rounds an integer past 2^53, and a rebuild would write it back.
+    #[test]
+    fn a_large_integer_survives_the_ui() {
+        let spec = doc! {
+            "key": { "a": 1 }, "name": "a_1",
+            "partialFilterExpression": { "$and": [{ "a": { "$gt": 9_007_199_254_740_993_i64 } }] },
+        };
+        let listed = index_info(&spec).spec.unwrap();
+        assert!(listed.contains(r#""$numberLong":"9007199254740993""#), "{listed}");
+        assert_eq!(parse_index_spec(&listed).unwrap(), spec);
     }
 
     // A date in a partial filter is a date, there and back through the UI.

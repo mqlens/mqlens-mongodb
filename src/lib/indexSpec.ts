@@ -7,6 +7,8 @@ export type IndexKeyType = 1 | -1 | 'text' | '2dsphere' | '2d' | 'hashed';
 export type IndexDocument = Record<string, unknown> & { key: Record<string, unknown>; name: string };
 export type IndexKind = 'regular' | 'compound' | 'text' | '2dsphere' | '2d' | 'hashed' | 'wildcard';
 
+export const KEY_TYPES: IndexKeyType[] = [1, -1, 'text', '2dsphere', '2d', 'hashed'];
+
 /** What is wrong with an index, as a key under `indexModal.errors`. */
 export interface IndexProblem {
   key: string;
@@ -43,11 +45,19 @@ export const specOf = (info: IndexInfo): IndexDocument => {
   };
 };
 
-/** Whether a rebuild can keep the index. Without its document, only plain
- *  keys say all there is to know: a special index may hold options nothing
- *  listed, and could not be put back if the rebuild failed. */
-export const isEditable = (info: IndexInfo): boolean =>
-  info.spec !== undefined || ['regular', 'compound'].includes(indexKind(parseObject(info.keys)));
+/** Whether the form can hold the index exactly. Without its document a rebuild
+ *  would lose options it never saw, and could not put the index back. A key
+ *  like `-2` has no row, and JavaScript moves a field called `2024` to the front
+ *  of a compound key: either way a save would change the index. */
+export const isEditable = (info: IndexInfo): boolean => {
+  if (info.spec === undefined) return false;
+  const keys = displayKeys(specOf(info));
+  const fields = Object.keys(keys);
+  return (
+    Object.values(keys).every((type) => KEY_TYPES.includes(type as IndexKeyType)) &&
+    (fields.length < 2 || !fields.some((field) => /^\d+$/.test(field)))
+  );
+};
 
 /** The keys as they were written: MongoDB lists a text index as `_fts` and
  *  `_ftsx`, with its fields in `weights`. */
@@ -120,8 +130,15 @@ export const validateIndex = (spec: IndexDocument): IndexProblem | null => {
   if (wildcard && '$**' in spec.key && values.length > 1 && spec.wildcardProjection === undefined) {
     return { key: 'compoundWildcardNeedsProjection' };
   }
-  if (spec.collation !== undefined && (values.includes('text') || values.includes('2d'))) {
+  // The simple collation is the one they do take.
+  const collated = isObject(spec.collation) && spec.collation.locale !== 'simple';
+  if (collated && (values.includes('text') || values.includes('2d'))) {
     return { key: 'collationNotSupported' };
+  }
+  // MongoDB would index a field named only in the weights.
+  if (isObject(spec.weights) && !('$**' in spec.key)) {
+    const field = Object.keys(spec.weights).find((name) => spec.key[name] !== 'text');
+    if (field) return { key: 'weightsNeedKey', params: { field } };
   }
   return null;
 };
@@ -222,7 +239,11 @@ export const specFromForm = (
   for (const field of ['unique', 'sparse', 'hidden', 'expireAfterSeconds', ...INDEX_OPTIONS.map((o) => o.option)]) {
     delete spec[field];
   }
-  if (form.unique) spec.unique = true;
+  if (form.unique) {
+    spec.unique = true;
+    // MongoDB refuses the two together, and unique is where prepareUnique leads.
+    delete spec.prepareUnique;
+  }
   if (form.sparse) spec.sparse = true;
   if (form.hidden) spec.hidden = true;
   if (form.ttlSeconds !== null) spec.expireAfterSeconds = form.ttlSeconds;

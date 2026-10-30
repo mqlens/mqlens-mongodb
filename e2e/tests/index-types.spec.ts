@@ -244,6 +244,11 @@ test.describe('Creating each type of index', () => {
     await expect(modal).toContainText('Text and 2d indexes cannot have a collation');
     await option(modal, 'collation').fill('');
 
+    await option(modal, 'weights').fill('{ "title": 2 }');
+    await save.click();
+    await expect(modal).toContainText('Text weights name title, which is not a text key');
+    await option(modal, 'weights').fill('');
+
     await setKey(modal, 0, 'pt', '2d');
     await option(modal, 'bits').fill('many');
     await save.click();

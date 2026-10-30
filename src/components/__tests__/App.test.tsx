@@ -543,7 +543,7 @@ describe('App Component', () => {
       }
       if (cmd === 'list_indexes') {
         return Promise.resolve([
-          { name: 'email_1', keys: '{"city":1}', unique: false, sparse: false },
+          { name: 'email_1', keys: '{"city":1}', unique: false, sparse: false, spec: '{"key":{"city":1},"name":"email_1"}' },
         ]);
       }
       return Promise.resolve([]);
@@ -686,6 +686,44 @@ describe('App Component', () => {
     expect(screen.getByText(/"key":\{"city":1\}/)).toBeInTheDocument();
   });
 
+  // A second drop would abort the build the first save is waiting on.
+  it('runs one save at a time', async () => {
+    const { waitFor } = await import('@testing-library/react');
+    let finishCreate = () => {};
+    const { calls, fireEvent } = await editIndex(specIndex({ key: { city: 1 }, name: 'email_1' }), (cmd) =>
+      cmd === 'create_index' ? new Promise<void>((resolve) => (finishCreate = () => resolve())) : undefined
+    );
+    fireEvent.click(screen.getByTestId('unique-checkbox'));
+    fireEvent.click(screen.getByTestId('save-index-btn'));
+    await waitFor(() => expect(writes(calls).map((c) => c.cmd)).toEqual(['delete_index', 'create_index']));
+    expect(screen.getByTestId('save-index-btn')).toBeDisabled();
+    fireEvent.click(screen.getByTestId('save-index-btn'));
+    fireEvent.submit(screen.getByTestId('save-index-btn').closest('form')!);
+    expect(writes(calls)).toHaveLength(2);
+    finishCreate();
+    await waitFor(() => expect(screen.queryByTestId('index-modal')).not.toBeInTheDocument());
+  });
+
+  // Cancel closes the modal; the build goes on, and must not close the next one.
+  it('leaves a modal opened since alone when a long save ends', async () => {
+    const { waitFor } = await import('@testing-library/react');
+    let finishCreate = () => {};
+    const { calls, fireEvent } = await editIndex(specIndex({ key: { city: 1 }, name: 'email_1' }), (cmd) =>
+      cmd === 'create_index' ? new Promise<void>((resolve) => (finishCreate = () => resolve())) : undefined
+    );
+    fireEvent.click(screen.getByTestId('unique-checkbox'));
+    fireEvent.click(screen.getByTestId('save-index-btn'));
+    await waitFor(() => expect(writes(calls).map((c) => c.cmd)).toEqual(['delete_index', 'create_index']));
+    fireEvent.click(screen.getByLabelText('Close modal'));
+    await waitFor(() => expect(screen.queryByTestId('index-modal')).not.toBeInTheDocument());
+
+    fireEvent.click(await screen.findByTestId('edit-index-btn'));
+    expect(screen.getByTestId('index-modal')).toBeInTheDocument();
+    finishCreate();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.getByTestId('index-modal')).toBeInTheDocument();
+  });
+
   it('passes a commit quorum to the create', async () => {
     const { waitFor } = await import('@testing-library/react');
     const { calls, fireEvent } = await editIndex(specIndex({ key: { city: 1 }, name: 'email_1' }));
@@ -790,7 +828,9 @@ describe('App Component', () => {
       calls.push({ cmd, args });
       if (cmd === 'connection_list') return Promise.resolve([{ id: 'conn-1', profileId: 'server:a1:c1', name: 'Orders', viaMcp: false, server }]);
       if (cmd === 'execute_mql_query') return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
-      if (cmd === 'list_indexes') return Promise.resolve([{ name: 'email_1', keys: '{"city":1}', unique: false, sparse: false }]);
+      if (cmd === 'list_indexes') {
+        return Promise.resolve([{ name: 'email_1', keys: '{"city":1}', unique: false, sparse: false, spec: '{"key":{"city":1},"name":"email_1"}' }]);
+      }
       return Promise.resolve([]);
     });
     const { fireEvent } = await import('@testing-library/react');
@@ -816,7 +856,10 @@ describe('App Component', () => {
       }
       if (cmd === 'execute_mql_query') return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
       if (cmd === 'list_indexes') {
-        return Promise.resolve([{ name: 'email_1', keys: '{"city":1}', unique: false, sparse: false, expireAfterSeconds: 3600 }]);
+        return Promise.resolve([{
+          name: 'email_1', keys: '{"city":1}', unique: false, sparse: false, expireAfterSeconds: 3600,
+          spec: '{"key":{"city":1},"name":"email_1","expireAfterSeconds":3600}',
+        }]);
       }
       return Promise.resolve([]);
     });

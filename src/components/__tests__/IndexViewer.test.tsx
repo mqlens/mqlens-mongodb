@@ -116,6 +116,10 @@ describe('IndexViewer (T2)', () => {
     const TTL_INDEX = {
       name: 'city_1', keys: '{"city":1}', unique: false, sparse: false,
       expireAfterSeconds: 3600, hidden: true, partialFilterExpression: '{"active":true}',
+      spec: JSON.stringify({
+        key: { city: 1 }, name: 'city_1', expireAfterSeconds: 3600, hidden: true,
+        partialFilterExpression: { active: true },
+      }),
     };
     mockInvokeByCommand({ list_indexes: [TTL_INDEX], index_stats: [] });
     const onEditIndex = vi.fn();
@@ -253,7 +257,7 @@ describe('IndexViewer (T2)', () => {
       expect(screen.queryByTestId('convert-unique-btn')).not.toBeInTheDocument();
     });
 
-    it('offers no edit for a special index without its document', async () => {
+    it('offers no edit for an index without its document', async () => {
       mockInvokeByCommand({
         list_indexes: [{ name: 'a_hashed', keys: '{"a":"hashed"}', unique: false, sparse: false }],
         index_stats: [],

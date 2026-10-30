@@ -63,15 +63,26 @@ describe('isEditable', () => {
     expect(isEditable(info('{"a":"hashed"}', '{"key":{"a":"hashed"},"name":"i"}'))).toBe(true);
   });
 
-  it('takes a plain index without one', () => {
-    expect(isEditable(info('{"a":1,"b":-1}'))).toBe(true);
+  it('takes a text index as MongoDB lists it', () => {
+    const text = { key: { _fts: 'text', _ftsx: 1 }, name: 'i', weights: { bio: 1 } };
+    expect(isEditable(info('{"_fts":"text","_ftsx":1}', JSON.stringify(text)))).toBe(true);
   });
 
   // A rebuild could not know its options, nor put it back if it failed.
-  it('refuses a special index without one', () => {
+  it('refuses any index without its document', () => {
+    expect(isEditable(info('{"a":1,"b":-1}'))).toBe(false);
     expect(isEditable(info('{"a":"hashed"}'))).toBe(false);
     expect(isEditable(info('{"_fts":"text","_ftsx":1}'))).toBe(false);
-    expect(isEditable(info('{"a.$**":1}'))).toBe(false);
+  });
+
+  // The form could not hold these as they are, and a save would change them.
+  it('refuses keys the form cannot hold', () => {
+    const edit = (key: Record<string, unknown>) => isEditable(info(JSON.stringify(key), JSON.stringify({ key, name: 'i' })));
+    expect(edit({ a: -2 })).toBe(false);
+    expect(edit({ a: 0.5 })).toBe(false);
+    expect(edit({ '$**': 'columnstore' })).toBe(false);
+    expect(edit({ a: 1, 2024: 1 })).toBe(false);
+    expect(edit({ 2024: 1 })).toBe(true);
   });
 });
 
@@ -167,6 +178,18 @@ describe('validateIndex', () => {
     expect(problem({ key: { b: 1, '$**': 1 } })).toBe('compoundWildcardNeedsProjection');
     expect(problem({ key: { b: 1, '$**': 1 }, wildcardProjection: { b: 0 } })).toBeUndefined();
     expect(problem({ key: { '$**': 1 }, wildcardProjection: { a: 1 } })).toBeUndefined();
+  });
+
+  it('takes the simple collation on text and 2d indexes', () => {
+    expect(problem({ key: { a: 'text' }, collation: { locale: 'simple' } })).toBeUndefined();
+    expect(problem({ key: { a: '2d' }, collation: { locale: 'simple' } })).toBeUndefined();
+  });
+
+  it('holds text weights to the text keys, which MongoDB would otherwise add to', () => {
+    const found = validateIndex(doc({ key: { title: 'text' }, weights: { title: 2, body: 1 } }));
+    expect(found).toEqual({ key: 'weightsNeedKey', params: { field: 'body' } });
+    expect(problem({ key: { title: 'text' }, weights: { title: 2 } })).toBeUndefined();
+    expect(problem({ key: { '$**': 'text' }, weights: { body: 2 } })).toBeUndefined();
   });
 
   it('refuses a collation on text and 2d indexes', () => {
@@ -280,6 +303,13 @@ describe('forms and documents', () => {
   it('keeps what the form has no field for, and drops what the server sets', () => {
     const base: IndexDocument = { v: 2, ns: 'd.c', key: { a: 1 }, name: 'a_1', prepareUnique: true, future: { x: 1 } };
     expect(spec({ name: 'a_1' }, base).spec).toEqual({ key: { a: 1 }, name: 'a_1', prepareUnique: true, future: { x: 1 } });
+  });
+
+  // MongoDB refuses the two together, and unique is what prepareUnique leads to.
+  it('stops preparing an index the edit makes unique', () => {
+    const base: IndexDocument = { key: { a: 1 }, name: 'i', prepareUnique: true };
+    expect(spec({ unique: true }, base).spec).toEqual({ key: { a: 1 }, name: 'i', unique: true });
+    expect(spec({}, base).spec).toEqual({ key: { a: 1 }, name: 'i', prepareUnique: true });
   });
 
   it('removes what an edit cleared', () => {

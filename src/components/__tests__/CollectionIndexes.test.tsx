@@ -7,10 +7,17 @@ vi.mock('@tauri-apps/api/core', () => ({
   invoke: (...args: any[]) => mockInvoke(...args),
 }));
 
-const ID = { name: '_id_', keys: '{"_id":1}', unique: false, sparse: false };
-const EMAIL = { name: 'email_1', keys: '{"email":1}', unique: true, sparse: false };
-const LOC = { name: 'loc_2dsphere', keys: '{"loc":"2dsphere"}', unique: false, sparse: true };
-const COMPOUND = { name: 'tier_1_age_-1', keys: '{"tier":1,"age":-1}', unique: false, sparse: false };
+const listed = (name: string, key: Record<string, unknown>, flags: { unique?: boolean; sparse?: boolean } = {}) => ({
+  name,
+  keys: JSON.stringify(key),
+  unique: Boolean(flags.unique),
+  sparse: Boolean(flags.sparse),
+  spec: JSON.stringify({ key, name, ...flags }),
+});
+const ID = listed('_id_', { _id: 1 });
+const EMAIL = listed('email_1', { email: 1 }, { unique: true });
+const LOC = listed('loc_2dsphere', { loc: '2dsphere' }, { sparse: true });
+const COMPOUND = listed('tier_1_age_-1', { tier: 1, age: -1 });
 
 const STATS = [
   { name: '_id_', sizeBytes: 4_096, ops: 10, sinceMs: 1_749_427_200_000 },
@@ -182,17 +189,8 @@ describe('CollectionIndexes', () => {
 
   // An edit starts from the whole document, so every kind of index comes back.
   it('offers an edit for every kind of index with its document', async () => {
-    const withDocument = (info: typeof LOC) => ({
-      ...info,
-      spec: JSON.stringify({ key: JSON.parse(info.keys), name: info.name }),
-    });
     mockInvokeByCommand({
-      list_indexes: [
-        ID,
-        EMAIL,
-        withDocument(LOC),
-        withDocument({ name: 'uid_hashed', keys: '{"uid":"hashed"}', unique: false, sparse: false }),
-      ],
+      list_indexes: [ID, EMAIL, LOC, listed('uid_hashed', { uid: 'hashed' })],
       index_stats: [],
     });
     render(<CollectionIndexes {...baseProps} onEditIndex={vi.fn()} onDeleteIndex={vi.fn()} />);
@@ -205,14 +203,15 @@ describe('CollectionIndexes', () => {
   });
 
   // A server before API version 5 lists no document, so a rebuild could not
-  // keep the options of a special index, nor put it back.
-  it('offers no edit for a special index without its document', async () => {
-    mockInvokeByCommand({ list_indexes: [EMAIL, LOC], index_stats: [] });
+  // keep options it never saw, nor put the index back.
+  it('offers no edit for an index without its document', async () => {
+    const OLD = { name: 'old_1', keys: '{"old":1}', unique: false, sparse: false };
+    mockInvokeByCommand({ list_indexes: [EMAIL, OLD], index_stats: [] });
     render(<CollectionIndexes {...baseProps} onEditIndex={vi.fn()} onDeleteIndex={vi.fn()} />);
-    await screen.findByTestId('index-row-loc_2dsphere');
+    await screen.findByTestId('index-row-old_1');
     expect(screen.getByTestId('edit-index-email_1')).toBeInTheDocument();
-    expect(screen.queryByTestId('edit-index-loc_2dsphere')).not.toBeInTheDocument();
-    expect(screen.getByTestId('drop-index-loc_2dsphere')).toBeInTheDocument();
+    expect(screen.queryByTestId('edit-index-old_1')).not.toBeInTheDocument();
+    expect(screen.getByTestId('drop-index-old_1')).toBeInTheDocument();
   });
 
   it('hands an edit the whole document of the index', async () => {
@@ -278,6 +277,42 @@ describe('CollectionIndexes', () => {
       expect(screen.queryByTestId('collection-indexes-error')).not.toBeInTheDocument();
     });
 
+    it('keeps following a build through one failed check', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        let ops: unknown = [BUILD];
+        mockInvokeByCommand({ list_indexes: [ID], index_stats: [], current_ops: () => ops });
+        render(<CollectionIndexes {...baseProps} />);
+        expect(await screen.findByTestId('index-builds')).toHaveTextContent('25%');
+
+        ops = Promise.reject(new Error('timed out'));
+        await act(() => vi.advanceTimersByTimeAsync(3000));
+        expect(screen.getByTestId('index-builds')).toHaveTextContent('25%');
+
+        ops = [{ ...BUILD, progress: { done: 75, total: 100 } }];
+        await act(() => vi.advanceTimersByTimeAsync(3000));
+        await waitFor(() => expect(screen.getByTestId('index-builds')).toHaveTextContent('75%'));
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    // A build from a shell, or from the modal while this tab was open.
+    it('notices a build that starts later', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        let ops: unknown[] = [];
+        mockInvokeByCommand({ list_indexes: [ID], index_stats: [], current_ops: () => ops });
+        render(<CollectionIndexes {...baseProps} />);
+        await screen.findByTestId('index-row-_id_');
+        ops = [BUILD];
+        await act(() => vi.advanceTimersByTimeAsync(15000));
+        await waitFor(() => expect(screen.getByTestId('index-builds')).toHaveTextContent('25%'));
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('follows a build and lists the index when it ends', async () => {
       vi.useFakeTimers({ shouldAdvanceTime: true });
       try {
@@ -334,7 +369,10 @@ describe('CollectionIndexes', () => {
   });
 
   it('shows a TTL with its duration, and hidden and partial indexes', async () => {
-    const TTL = { name: 'createdAt_1', keys: '{"createdAt":1}', unique: false, sparse: false, expireAfterSeconds: 86400 };
+    const TTL = {
+      name: 'createdAt_1', keys: '{"createdAt":1}', unique: false, sparse: false, expireAfterSeconds: 86400,
+      spec: JSON.stringify({ key: { createdAt: 1 }, name: 'createdAt_1', expireAfterSeconds: 86400 }),
+    };
     const HIDDEN = { name: 'status_1', keys: '{"status":1}', unique: false, sparse: false, hidden: true, partialFilterExpression: '{"active":true}' };
     mockInvokeByCommand({ list_indexes: [ID, EMAIL, TTL, HIDDEN], index_stats: [] });
     const onEditIndex = vi.fn();

@@ -419,6 +419,42 @@ mod integration {
         cleanup(&state, &id, &db).await;
     }
 
+    // On a collection with a default collation, an index with none is simple:
+    // a text index cannot be anything else, and must come back the same.
+    #[tokio::test]
+    async fn it_simple_collation_survives_a_rebuild_real() {
+        use crate::db::metadata::create_index_spec_impl;
+        let Some((state, id, db)) = connect().await else {
+            return;
+        };
+        client_of(&state, &id)
+            .database(&db)
+            .run_command(doc! { "create": "docs", "collation": { "locale": "en" } })
+            .await
+            .unwrap();
+        for spec in [
+            r#"{"key":{"t":"text"},"name":"text","collation":{"locale":"simple"}}"#,
+            r#"{"key":{"a":1},"name":"plain","collation":{"locale":"simple"}}"#,
+        ] {
+            create_index_spec_impl(&state, &id, &db, "docs", spec, None)
+                .await
+                .unwrap_or_else(|e| panic!("{spec}: {e}"));
+        }
+        for name in ["text", "plain"] {
+            let listed = |indexes: Vec<crate::IndexInfo>| {
+                indexes.into_iter().find(|i| i.name == name).unwrap().spec.unwrap()
+            };
+            let spec = listed(list_indexes_impl(&state, &id, &db, "docs").await.unwrap());
+            assert!(spec.contains(r#""locale":"simple""#), "{spec}");
+            delete_index_impl(&state, &id, &db, "docs", name).await.unwrap();
+            create_index_spec_impl(&state, &id, &db, "docs", &spec, None)
+                .await
+                .unwrap_or_else(|e| panic!("{spec}: {e}"));
+            assert_eq!(listed(list_indexes_impl(&state, &id, &db, "docs").await.unwrap()), spec);
+        }
+        cleanup(&state, &id, &db).await;
+    }
+
     #[tokio::test]
     async fn it_index_options_change_in_place_real() {
         use crate::db::metadata::{create_index_spec_impl, set_index_option_impl, IndexOption};

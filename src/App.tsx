@@ -1211,6 +1211,7 @@ function Workspace() {
     }
   };
   const [isIndexModalOpen, setIsIndexModalOpen] = useState(false);
+  const [isSavingIndex, setIsSavingIndex] = useState(false);
   const [indexModalTarget, setIndexModalTarget] = useState<{
     connectionId: string;
     db: string;
@@ -1221,6 +1222,8 @@ function Workspace() {
       keys: Record<string, number>;
     } | null;
   } | null>(null);
+  const indexModalTargetRef = useRef(indexModalTarget);
+  indexModalTargetRef.current = indexModalTarget;
   // Document writes sent and not yet answered, one entry per request.
   //
   // Kept beside the tabs rather than on them because a request outlives the
@@ -2590,14 +2593,20 @@ function Workspace() {
   };
 
   const handleSaveIndex = async (spec: IndexDocument, commitQuorum: string | null) => {
-    if (!indexModalTarget) return;
-    const { connectionId, db, collection, initialData } = indexModalTarget;
+    // Dropping the index a save is building would abort the build.
+    if (!indexModalTarget || isSavingIndex) return;
+    setIsSavingIndex(true);
+    const target = indexModalTarget;
+    const { connectionId, db, collection, initialData } = target;
     const place = { id: connectionId, database: db, collection };
     const create = (document: IndexDocument, quorum: string | null) =>
       invoke('create_index', { ...place, spec: JSON.stringify(document), commitQuorum: quorum });
     const finish = () => {
-      setIsIndexModalOpen(false);
-      setIndexModalTarget(null);
+      // A long build can outlast this modal, and another may be open by now.
+      if (indexModalTargetRef.current === target) {
+        setIsIndexModalOpen(false);
+        setIndexModalTarget(null);
+      }
       // Trigger sidebar refresh; an open viewer refetches on it too.
       setIndexMutationTrigger(prev => prev + 1);
       // Automatically open/focus the index tab!
@@ -2650,6 +2659,8 @@ function Workspace() {
       finish();
     } catch (err: any) {
       toast(t('toast.failedToSaveIndex', { detail: err }), 'error');
+    } finally {
+      setIsSavingIndex(false);
     }
   };
 
@@ -5313,6 +5324,7 @@ function Workspace() {
             availableFields={fieldsFromResults(activeTab?.results)}
             initialData={indexModalTarget?.initialData}
             allowCommitQuorum={!serverConnections.has(indexModalTarget?.connectionId ?? '')}
+            saving={isSavingIndex}
             prefill={indexModalTarget?.prefill}
           />
 

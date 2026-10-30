@@ -556,6 +556,27 @@ describe('IndexModal Component', () => {
       );
     });
 
+    it('says when a text weight names a field the keys no longer have', () => {
+      const onSave = vi.fn();
+      render(
+        <IndexModal
+          isOpen={true}
+          onClose={() => {}}
+          onSave={onSave}
+          initialData={{ key: { _fts: 'text', _ftsx: 1 }, name: 'i', weights: { body: 1, title: 1 } }}
+        />
+      );
+      fireEvent.click(screen.getAllByTitle('Remove Key')[0]);
+      fireEvent.click(screen.getByTestId('save-index-btn'));
+      expect(screen.getByText('Text weights name body, which is not a text key')).toBeInTheDocument();
+      expect(onSave).not.toHaveBeenCalled();
+    });
+
+    it('cannot save twice while a save runs', () => {
+      render(<IndexModal isOpen={true} onClose={() => {}} onSave={() => {}} saving={true} />);
+      expect(screen.getByTestId('save-index-btn')).toBeDisabled();
+    });
+
     it('says an edit rebuilds the index', () => {
       const { rerender } = render(<IndexModal isOpen={true} onClose={() => {}} onSave={() => {}} />);
       expect(screen.queryByTestId('index-rebuild-hint')).not.toBeInTheDocument();

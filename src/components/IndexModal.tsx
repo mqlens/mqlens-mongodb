@@ -20,6 +20,7 @@ import {
   emptyIndexForm,
   formFromSpec,
   INDEX_OPTIONS,
+  KEY_TYPES,
   parseObject,
   specFromForm,
   type IndexDocument,
@@ -33,8 +34,6 @@ interface IndexKeyRule {
   field: string;
   direction: IndexKeyType;
 }
-
-const KEY_TYPES: IndexKeyType[] = [1, -1, 'text', '2dsphere', '2d', 'hashed'];
 
 const asKeyType = (value: unknown): IndexKeyType =>
   KEY_TYPES.find((type) => String(type) === String(value)) ?? 1;
@@ -83,6 +82,8 @@ interface IndexModalProps {
   initialData?: IndexDocument | null;
   // MQLens Server has no field for a commit quorum yet.
   allowCommitQuorum?: boolean;
+  // A save is running; one more would drop the index it is building.
+  saving?: boolean;
   // Pre-fills the create-mode form (e.g. from a COLLSCAN index suggestion).
   // Ignored when initialData is set (edit mode) — unique/sparse always start false.
   prefill?: {
@@ -122,6 +123,7 @@ export const IndexModal: React.FC<IndexModalProps> = ({
   collectionName,
   initialData,
   allowCommitQuorum = true,
+  saving = false,
   prefill,
 }) => {
   const { t } = useTranslation('admin');
@@ -249,6 +251,7 @@ export const IndexModal: React.FC<IndexModalProps> = ({
       wildcardSparse: t('indexModal.errors.wildcardSparse'),
       wildcardTtl: t('indexModal.errors.wildcardTtl'),
       wildcardUnique: t('indexModal.errors.wildcardUnique'),
+      weightsNeedKey: t('indexModal.errors.weightsNeedKey', params),
     })[key] ?? key;
 
   const handleAddKeyRow = () => {
@@ -663,7 +666,7 @@ export const IndexModal: React.FC<IndexModalProps> = ({
               <Button type="button" variant="outline" onClick={onClose}>
                 {t('indexModal.actions.cancel')}
               </Button>
-              <Button type="submit" data-testid="save-index-btn">
+              <Button type="submit" disabled={saving} data-testid="save-index-btn">
                 {initialData ? t('indexModal.actions.saveChanges') : t('indexModal.actions.createIndex')}
               </Button>
             </div>
