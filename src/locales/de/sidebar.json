@@ -142,6 +142,10 @@
     "actions": {
       "edit": "Index bearbeiten"
     },
+    "builds": {
+      "progress": "{{names}} wird aufgebaut: {{percent}} % ({{seconds}} s)",
+      "running": "{{names}} wird aufgebaut ({{seconds}} s)"
+    },
     "columns": {
       "keys": "Schlüssel",
       "name": "Name",

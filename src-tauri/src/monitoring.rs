@@ -150,6 +150,16 @@ pub struct CurrentOp {
     pub client: String,
     pub desc: String,
     pub command: String,
+    /// A long-running operation's own count, such as an index build's documents.
+    /// MQLens Server does not report it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress: Option<OpProgress>,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct OpProgress {
+    pub done: i64,
+    pub total: i64,
 }
 
 /// An operation's id: a number on a single server or replica set, and a
@@ -223,6 +233,10 @@ pub fn curate_current_op(d: &Document) -> CurrentOp {
         client: d.get_str("client").unwrap_or_default().to_string(),
         desc: d.get_str("desc").unwrap_or_default().to_string(),
         command,
+        progress: d.get_document("progress").ok().map(|p| OpProgress {
+            done: num(p, "done"),
+            total: num(p, "total"),
+        }),
     }
 }
 
@@ -476,6 +490,7 @@ async fn current_ops_impl_inner(state: &AppState, id: &str) -> Result<Vec<Curren
             client: "127.0.0.1:51544".into(),
             desc: "conn412".into(),
             command: "{ find: \"orders\", filter: { status: \"open\" } }".into(),
+            progress: None,
         }]);
     }
     let client = match crate::server::remote::route(state, id)? {
@@ -820,6 +835,16 @@ mod tests {
         assert!(op.command.ends_with('…'));
     }
 
+    // An index build counts its documents; most operations count nothing.
+    #[test]
+    fn an_operation_keeps_its_progress() {
+        let building = curate_current_op(&doc! { "opid": 1, "progress": { "done": 10, "total": 40 } });
+        let json = serde_json::to_value(&building).unwrap();
+        assert_eq!(json["progress"], serde_json::json!({ "done": 10, "total": 40 }));
+        let plain = serde_json::to_value(curate_current_op(&doc! { "opid": 1 })).unwrap();
+        assert!(plain.get("progress").is_none());
+    }
+
     #[test]
     fn cap_current_ops_limits_count() {
         let ops: Vec<CurrentOp> = (0..300)
@@ -831,6 +856,7 @@ mod tests {
                 client: String::new(),
                 desc: String::new(),
                 command: "{ find: \"c\" }".into(),
+                progress: None,
             })
             .collect();
         let capped = cap_current_ops(ops);
@@ -848,6 +874,7 @@ mod tests {
             client: String::new(),
             desc: String::new(),
             command: "{ find: \"c\" }".into(),
+            progress: None,
         }];
         let capped = cap_current_ops(ops);
         assert_eq!(capped[0].command, "{ find: \"c\" }");

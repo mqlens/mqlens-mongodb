@@ -47,6 +47,8 @@ pub(crate) struct CommandRoute {
 }
 
 const TASKS: &str = "Long-running tasks are not available on MQLens Server connections yet";
+const INDEX_OPTIONS: &str =
+    "Hiding an index and making it unique in place are not available on MQLens Server connections yet";
 const ONE_SHOT_SCRIPTS: &str =
     "One-shot mongosh scripts are not available on MQLens Server connections; use the shell";
 
@@ -113,6 +115,12 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
             class: OpClass::Ddl,
             since: 9,
             adapter: true,
+        },
+    },
+    CommandRoute {
+        command: "set_index_option",
+        serve: Serve::Deferred {
+            reason: INDEX_OPTIONS,
         },
     },
     // Documents

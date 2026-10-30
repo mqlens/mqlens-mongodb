@@ -355,6 +355,166 @@ mod integration {
         cleanup(&state, &id, &db).await;
     }
 
+    // Every kind of index MongoDB 7 and 8 has, created from its document,
+    // dropped and created again from its own listing: what a rebuild does.
+    #[tokio::test]
+    async fn it_index_types_round_trip_real() {
+        let Some((state, id, db)) = connect().await else {
+            return;
+        };
+        seed(
+            &state,
+            &id,
+            &db,
+            "docs",
+            vec![doc! {
+                "a": 1, "b": 2, "t": "hello world",
+                "loc": { "type": "Point", "coordinates": [1, 1] },
+                "xy": [1, 1], "tags": { "x": 1 },
+            }],
+        )
+        .await;
+
+        for spec in [
+            r#"{"key":{"b":1,"t":"text","z":"text"},"name":"text","weights":{"t":5},"default_language":"german","language_override":"lang"}"#,
+            r#"{"key":{"loc":"2dsphere"},"name":"sphere"}"#,
+            r#"{"key":{"xy":"2d"},"name":"flat","bits":20,"min":-10,"max":100}"#,
+            r#"{"key":{"a":"hashed"},"name":"hashed"}"#,
+            r#"{"key":{"b":1,"a":"hashed"},"name":"compound_hashed"}"#,
+            r#"{"key":{"$**":1},"name":"wildcard","wildcardProjection":{"tags":1}}"#,
+            r#"{"key":{"tags.$**":1},"name":"path_wildcard"}"#,
+            r#"{"key":{"b":1,"$**":1},"name":"compound_wildcard","wildcardProjection":{"b":0}}"#,
+            r#"{"key":{"t":1},"name":"collated","collation":{"locale":"de","strength":2}}"#,
+            r#"{"key":{"a":1},"name":"partial","partialFilterExpression":{"at":{"$gt":{"$date":"2026-01-01T00:00:00Z"}},"b":{"$in":[1,2]}}}"#,
+            r#"{"key":{"b":-1},"name":"engine","storageEngine":{"wiredTiger":{"configString":"block_compressor=zstd"}}}"#,
+            r#"{"key":{"at":1},"name":"hidden_ttl","hidden":true,"expireAfterSeconds":3600}"#,
+        ] {
+            crate::db::metadata::create_index_spec_impl(&state, &id, &db, "docs", spec, None)
+                .await
+                .unwrap_or_else(|e| panic!("{spec}: {e}"));
+        }
+
+        async fn specs(state: &AppState, id: &str, db: &str) -> Vec<(String, String)> {
+            let mut specs: Vec<_> = list_indexes_impl(state, id, db, "docs")
+                .await
+                .unwrap()
+                .into_iter()
+                .filter(|i| i.name != "_id_")
+                .map(|i| (i.name, i.spec.expect("a listing has the whole document")))
+                .collect();
+            specs.sort();
+            specs
+        }
+        let before = specs(&state, &id, &db).await;
+        assert_eq!(before.len(), 12);
+
+        for (name, spec) in &before {
+            delete_index_impl(&state, &id, &db, "docs", name).await.unwrap();
+            crate::db::metadata::create_index_spec_impl(&state, &id, &db, "docs", spec, None)
+                .await
+                .unwrap_or_else(|e| panic!("{spec}: {e}"));
+        }
+        assert_eq!(specs(&state, &id, &db).await, before);
+
+        cleanup(&state, &id, &db).await;
+    }
+
+    // On a collection with a default collation, an index with none is simple:
+    // a text index cannot be anything else, and must come back the same.
+    #[tokio::test]
+    async fn it_simple_collation_survives_a_rebuild_real() {
+        use crate::db::metadata::create_index_spec_impl;
+        let Some((state, id, db)) = connect().await else {
+            return;
+        };
+        client_of(&state, &id)
+            .database(&db)
+            .run_command(doc! { "create": "docs", "collation": { "locale": "en" } })
+            .await
+            .unwrap();
+        for spec in [
+            r#"{"key":{"t":"text"},"name":"text","collation":{"locale":"simple"}}"#,
+            r#"{"key":{"a":1},"name":"plain","collation":{"locale":"simple"}}"#,
+        ] {
+            create_index_spec_impl(&state, &id, &db, "docs", spec, None)
+                .await
+                .unwrap_or_else(|e| panic!("{spec}: {e}"));
+        }
+        for name in ["text", "plain"] {
+            let listed = |indexes: Vec<crate::IndexInfo>| {
+                indexes.into_iter().find(|i| i.name == name).unwrap().spec.unwrap()
+            };
+            let spec = listed(list_indexes_impl(&state, &id, &db, "docs").await.unwrap());
+            assert!(spec.contains(r#""locale":"simple""#), "{spec}");
+            delete_index_impl(&state, &id, &db, "docs", name).await.unwrap();
+            create_index_spec_impl(&state, &id, &db, "docs", &spec, None)
+                .await
+                .unwrap_or_else(|e| panic!("{spec}: {e}"));
+            assert_eq!(listed(list_indexes_impl(&state, &id, &db, "docs").await.unwrap()), spec);
+        }
+        cleanup(&state, &id, &db).await;
+    }
+
+    #[tokio::test]
+    async fn it_index_options_change_in_place_real() {
+        use crate::db::metadata::{create_index_spec_impl, set_index_option_impl, IndexOption};
+        let Some((state, id, db)) = connect().await else {
+            return;
+        };
+        seed(&state, &id, &db, "docs", vec![doc! { "_id": 1, "a": 1 }, doc! { "_id": 2, "a": 1 }]).await;
+        create_index_spec_impl(&state, &id, &db, "docs", r#"{"key":{"a":1},"name":"a_1"}"#, None)
+            .await
+            .unwrap();
+        let index = || async {
+            list_indexes_impl(&state, &id, &db, "docs")
+                .await
+                .unwrap()
+                .into_iter()
+                .find(|i| i.name == "a_1")
+                .unwrap()
+        };
+        let set = |option: IndexOption, value: bool| {
+            let (state, id, db) = (&state, &id, &db);
+            async move { set_index_option_impl(state, id, db, "docs", "a_1", option, value).await }
+        };
+
+        set(IndexOption::Hidden, true).await.unwrap();
+        assert!(index().await.hidden);
+        set(IndexOption::Hidden, false).await.unwrap();
+        assert!(!index().await.hidden);
+
+        // MongoDB's refusals come back as they are: not yet prepared, then
+        // documents in the way.
+        let err = set(IndexOption::Unique, true).await.unwrap_err();
+        assert!(err.contains("prepareUnique"), "{err}");
+        set(IndexOption::PrepareUnique, true).await.unwrap();
+        assert!(index().await.spec.unwrap().contains("prepareUnique"));
+        let err = set(IndexOption::Unique, true).await.unwrap_err();
+        assert!(err.contains("Cannot convert the index to unique"), "{err}");
+
+        delete_document_impl(&state, &id, &db, "docs", r#"{"_id":2}"#).await.unwrap();
+        set(IndexOption::Unique, true).await.unwrap();
+        assert!(index().await.unique);
+        let err = set(IndexOption::Unique, false).await.unwrap_err();
+        assert!(err.contains("non-unique"), "{err}");
+
+        // A standalone refuses a commit quorum; a replica set takes it.
+        let quorum = create_index_spec_impl(
+            &state,
+            &id,
+            &db,
+            "docs",
+            r#"{"key":{"q":1},"name":"q_1"}"#,
+            Some("majority"),
+        )
+        .await;
+        if let Err(err) = quorum {
+            assert!(err.contains("commitQuorum"), "{err}");
+        }
+
+        cleanup(&state, &id, &db).await;
+    }
+
     #[tokio::test]
     async fn it_document_crud_real() {
         let Some((state, id, db)) = connect().await else {

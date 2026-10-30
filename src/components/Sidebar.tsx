@@ -133,6 +133,8 @@ export interface IndexInfo {
   hidden?: boolean;
   // A JSON string, as `keys` is.
   partialFilterExpression?: string;
+  // The whole index document; see lib/indexSpec. A server before API version 5 sends none.
+  spec?: string;
 }
 
 // Discriminated target for the row-hover stats popover (issue #178):
