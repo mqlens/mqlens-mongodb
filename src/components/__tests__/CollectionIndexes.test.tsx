@@ -280,15 +280,21 @@ describe('CollectionIndexes', () => {
     it('keeps following a build through one failed check', async () => {
       vi.useFakeTimers({ shouldAdvanceTime: true });
       try {
-        let ops: unknown = [BUILD];
-        mockInvokeByCommand({ list_indexes: [ID], index_stats: [], current_ops: () => ops });
+        let ops = [BUILD];
+        let failing = false;
+        mockInvokeByCommand({
+          list_indexes: [ID],
+          index_stats: [],
+          current_ops: () => (failing ? Promise.reject(new Error('timed out')) : ops),
+        });
         render(<CollectionIndexes {...baseProps} />);
         expect(await screen.findByTestId('index-builds')).toHaveTextContent('25%');
 
-        ops = Promise.reject(new Error('timed out'));
+        failing = true;
         await act(() => vi.advanceTimersByTimeAsync(3000));
         expect(screen.getByTestId('index-builds')).toHaveTextContent('25%');
 
+        failing = false;
         ops = [{ ...BUILD, progress: { done: 75, total: 100 } }];
         await act(() => vi.advanceTimersByTimeAsync(3000));
         await waitFor(() => expect(screen.getByTestId('index-builds')).toHaveTextContent('75%'));
