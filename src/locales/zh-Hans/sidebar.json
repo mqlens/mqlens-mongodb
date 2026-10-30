@@ -142,6 +142,10 @@
     "actions": {
       "edit": "编辑索引"
     },
+    "builds": {
+      "progress": "正在构建 {{names}}：{{percent}}%（{{seconds}} 秒）",
+      "running": "正在构建 {{names}}（{{seconds}} 秒）"
+    },
     "columns": {
       "keys": "键",
       "name": "名称",

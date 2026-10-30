@@ -129,7 +129,9 @@ describe('IndexViewer (T2)', () => {
     expect(screen.getByText(/"partialFilterExpression"/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId('edit-index-btn'));
-    expect(onEditIndex).toHaveBeenCalledWith('city_1', { city: 1 }, false, false, 3600, true);
+    expect(onEditIndex).toHaveBeenCalledWith({
+      key: { city: 1 }, name: 'city_1', expireAfterSeconds: 3600, hidden: true, partialFilterExpression: { active: true },
+    });
   });
 
   it('says an index has no TTL', async () => {
@@ -155,5 +157,117 @@ describe('IndexViewer (T2)', () => {
       </DialogProvider>
     );
     await waitFor(() => expect(screen.getByTestId('index-ttl')).toHaveTextContent('86400 s'));
+  });
+
+  describe('the whole document', () => {
+    const listed = (document: Record<string, unknown>) => ({
+      name: document.name, keys: JSON.stringify(document.key), unique: Boolean(document.unique), sparse: false,
+      hidden: Boolean(document.hidden), spec: JSON.stringify(document),
+    });
+    const show = async (document: Record<string, unknown>, props: Record<string, unknown> = {}) => {
+      mockInvokeByCommand({ list_indexes: [listed(document)], index_stats: [] });
+      render(<IndexViewer {...baseProps} indexName={String(document.name)} {...props} />);
+      await screen.findByTestId('index-kind');
+      return screen.getByTestId('index-viewer');
+    };
+
+    it('shows the document as MongoDB lists it', async () => {
+      const viewer = await show({ v: 2, key: { a: 1 }, name: 'a_1', storageEngine: { wiredTiger: {} } });
+      expect(viewer).toHaveTextContent('"storageEngine"');
+      expect(viewer).toHaveTextContent('"wiredTiger"');
+    });
+
+    it('gives every other option a row', async () => {
+      await show({
+        v: 2, key: { a: 1 }, name: 'a_1', collation: { locale: 'de' }, prepareUnique: true, bits: 20,
+      });
+      expect(screen.getByTestId('index-option-collation')).toHaveTextContent('{"locale":"de"}');
+      expect(screen.getByTestId('index-option-prepareUnique')).toHaveTextContent('true');
+      expect(screen.getByTestId('index-option-bits')).toHaveTextContent('20');
+      expect(screen.queryByTestId('index-option-v')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('index-option-name')).not.toBeInTheDocument();
+    });
+
+    it.each([
+      [{ _fts: 'text', _ftsx: 1 }, { weights: { bio: 1 } }, 'Text'],
+      [{ loc: '2dsphere' }, {}, '2dsphere'],
+      [{ loc: '2d' }, {}, '2d'],
+      [{ a: 'hashed' }, {}, 'Hashed'],
+      [{ '$**': 1 }, {}, 'Wildcard'],
+      [{ a: 1, b: 1 }, {}, 'Compound'],
+      [{ a: 1 }, {}, 'Single Field'],
+    ])('names the kind of %j', async (key, extra, label) => {
+      await show({ key, name: 'i', ...extra });
+      expect(screen.getByTestId('index-kind')).toHaveTextContent(label);
+    });
+
+    it('names the fields of a text index', async () => {
+      const viewer = await show({ key: { _fts: 'text', _ftsx: 1 }, name: 'i', weights: { bio: 1, title: 5 } });
+      expect(viewer).toHaveTextContent('2 fields');
+      expect(screen.getByText('bio')).toBeInTheDocument();
+      expect(screen.getByText('title')).toBeInTheDocument();
+    });
+
+    it('hides and shows an index', async () => {
+      const onSetIndexOption = vi.fn();
+      await show({ key: { a: 1 }, name: 'a_1' }, { onSetIndexOption });
+      fireEvent.click(screen.getByTestId('hide-index-btn'));
+      expect(onSetIndexOption).toHaveBeenCalledWith('hidden', true);
+    });
+
+    it('offers to show a hidden index', async () => {
+      const onSetIndexOption = vi.fn();
+      await show({ key: { a: 1 }, name: 'a_1', hidden: true }, { onSetIndexOption });
+      expect(screen.getByTestId('hide-index-btn')).toHaveTextContent('Unhide');
+      fireEvent.click(screen.getByTestId('hide-index-btn'));
+      expect(onSetIndexOption).toHaveBeenCalledWith('hidden', false);
+    });
+
+    it('offers to make a plain index unique', async () => {
+      const onConvertToUnique = vi.fn();
+      await show({ key: { a: 1 }, name: 'a_1' }, { onConvertToUnique });
+      fireEvent.click(screen.getByTestId('convert-unique-btn'));
+      expect(onConvertToUnique).toHaveBeenCalled();
+    });
+
+    it.each([
+      [{ key: { a: 1 }, name: 'a_1', unique: true }],
+      [{ key: { a: 'hashed' }, name: 'a_1' }],
+      [{ key: { '$**': 1 }, name: 'a_1' }],
+      [{ key: { _fts: 'text', _ftsx: 1 }, name: 'a_1', weights: { a: 1 } }],
+    ])('does not offer unique on %j', async (document) => {
+      await show(document, { onConvertToUnique: vi.fn() });
+      expect(screen.queryByTestId('convert-unique-btn')).not.toBeInTheDocument();
+    });
+
+    it('offers to stop preparing an index that did not turn unique', async () => {
+      const onSetIndexOption = vi.fn();
+      await show({ key: { a: 1 }, name: 'a_1', prepareUnique: true }, { onSetIndexOption });
+      fireEvent.click(screen.getByTestId('stop-prepare-unique-btn'));
+      expect(onSetIndexOption).toHaveBeenCalledWith('prepareUnique', false);
+    });
+
+    it('has no such actions on _id_, or where the connection cannot run them', async () => {
+      await show({ key: { _id: 1 }, name: '_id_' }, { onSetIndexOption: vi.fn(), onConvertToUnique: vi.fn() });
+      expect(screen.queryByTestId('hide-index-btn')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('convert-unique-btn')).not.toBeInTheDocument();
+    });
+
+    it('offers no edit for a special index without its document', async () => {
+      mockInvokeByCommand({
+        list_indexes: [{ name: 'a_hashed', keys: '{"a":"hashed"}', unique: false, sparse: false }],
+        index_stats: [],
+      });
+      render(<IndexViewer {...baseProps} indexName="a_hashed" onEditIndex={vi.fn()} onDeleteIndex={vi.fn()} />);
+      await screen.findByTestId('index-kind');
+      expect(screen.queryByTestId('edit-index-btn')).not.toBeInTheDocument();
+      expect(screen.getByTestId('delete-index-btn')).toBeInTheDocument();
+    });
+
+    it('has no such actions without their handlers', async () => {
+      await show({ key: { a: 1 }, name: 'a_1' });
+      expect(screen.queryByTestId('hide-index-btn')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('convert-unique-btn')).not.toBeInTheDocument();
+    });
   });
 });

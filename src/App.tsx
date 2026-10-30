@@ -41,6 +41,7 @@ import { SettingsView, type SettingsTabId, MONGO_TOOLS_DIR_KEY } from './compone
 import { IndexViewer } from './components/IndexViewer';
 import { CollectionIndexes } from './components/CollectionIndexes';
 import { IndexModal } from './components/IndexModal';
+import { inPlaceEdits, isPlainIndex, withoutServerFields, type IndexDocument } from './lib/indexSpec';
 import { MongoShell } from './components/MongoShell';
 import { ToolSetupDialog, type ManagedToolStatusUi, type InstallTaskUi } from './components/ToolSetupDialog';
 import { QuickStart } from './components/QuickStart';
@@ -1214,14 +1215,7 @@ function Workspace() {
     connectionId: string;
     db: string;
     collection: string;
-    initialData?: {
-      name: string;
-      keys: Record<string, number>;
-      unique: boolean;
-      sparse: boolean;
-      expireAfterSeconds?: number;
-      rebuildDrops?: boolean;
-    } | null;
+    initialData?: IndexDocument | null;
     prefill?: {
       name: string;
       keys: Record<string, number>;
@@ -2584,116 +2578,120 @@ function Workspace() {
     connectionId: string,
     dbName: string,
     collName: string,
-    indexName: string,
-    keys: Record<string, number>,
-    unique: boolean,
-    sparse: boolean,
-    expireAfterSeconds?: number,
-    rebuildDrops?: boolean
+    spec: IndexDocument
   ) => {
     setIndexModalTarget({
       connectionId,
       db: dbName,
       collection: collName,
-      initialData: {
-        name: indexName,
-        keys,
-        unique,
-        sparse,
-        expireAfterSeconds,
-        rebuildDrops,
-      },
+      initialData: spec,
     });
     setIsIndexModalOpen(true);
   };
 
-  const handleSaveIndex = async (
-    indexName: string,
-    keys: string,
-    unique: boolean,
-    sparse: boolean,
-    expireAfterSeconds: number | null
-  ) => {
+  const handleSaveIndex = async (spec: IndexDocument, commitQuorum: string | null) => {
     if (!indexModalTarget) return;
     const { connectionId, db, collection, initialData } = indexModalTarget;
-
-    try {
-      // A TTL index whose expiry alone changed keeps its build: collMod
-      // changes the expiry in place where the connection can run it.
-      const expiryOnly =
-        initialData?.expireAfterSeconds !== undefined &&
-        expireAfterSeconds !== null &&
-        indexName === initialData.name &&
-        keys === JSON.stringify(initialData.keys) &&
-        unique === initialData.unique &&
-        sparse === initialData.sparse &&
-        !isCommandBlocked(connectionId, 'set_index_expiry');
-      if (expiryOnly) {
-        await invoke('set_index_expiry', {
-          id: connectionId,
-          database: db,
-          collection,
-          indexName,
-          expireAfterSeconds,
-        });
-        setIsIndexModalOpen(false);
-        setIndexModalTarget(null);
-        // The open viewer refetches on the trigger, so it shows the new expiry.
-        setIndexMutationTrigger(prev => prev + 1);
-        handleSelectIndex(connectionId, db, collection, indexName);
-        return;
-      }
-
-      // Rebuilding would lose the filter (and, on a TTL index, widen what
-      // expires) or bring the index back visible.
-      if (initialData?.rebuildDrops) {
-        toast(t('toast.indexRebuildDropsOptions'), 'error');
-        return;
-      }
-      // Refused before an edit drops the old index, not after.
-      const apiVersion = serverConnections.get(connectionId)?.apiVersion;
-      if (expireAfterSeconds !== null && apiVersion !== undefined && apiVersion < 5) {
-        toast(t('toast.ttlNeedsServerApi5', { version: apiVersion }), 'error');
-        return;
-      }
-
-      if (initialData) {
-        // Edit mode: drop index first
-        await invoke('delete_index', {
-          id: connectionId,
-          database: db,
-          collection,
-          indexName: initialData.name,
-        });
-
-        // Close/rename tab
-        const oldTabId = `${connectionId}.${db}.${collection}.${initialData.name}`;
-        closeTabById(oldTabId);
-      }
-
-      // Create new index
-      await invoke('create_index', {
-        id: connectionId,
-        database: db,
-        collection,
-        indexName,
-        keys,
-        unique,
-        sparse,
-        expireAfterSeconds,
-      });
-
+    const place = { id: connectionId, database: db, collection };
+    const create = (document: IndexDocument, quorum: string | null) =>
+      invoke('create_index', { ...place, spec: JSON.stringify(document), commitQuorum: quorum });
+    const finish = () => {
       setIsIndexModalOpen(false);
       setIndexModalTarget(null);
-
-      // Trigger sidebar refresh
+      // Trigger sidebar refresh; an open viewer refetches on it too.
       setIndexMutationTrigger(prev => prev + 1);
+      // Automatically open/focus the index tab!
+      handleSelectIndex(connectionId, db, collection, spec.name);
+    };
 
-      // Automatically open/focus the new index tab!
-      handleSelectIndex(connectionId, db, collection, indexName);
+    try {
+      // What collMod can change keeps the build, where the connection can run it.
+      const edits = initialData ? inPlaceEdits(initialData, spec) : null;
+      if (edits?.every(({ command }) => !isCommandBlocked(connectionId, command))) {
+        for (const { command, args } of edits) {
+          await invoke(command, { ...place, indexName: spec.name, ...args });
+        }
+        finish();
+        return;
+      }
+
+      // Refused before an edit drops the old index, not after.
+      const apiVersion = serverConnections.get(connectionId)?.apiVersion;
+      if (!isPlainIndex(spec) && apiVersion !== undefined && apiVersion < 5) {
+        toast(t('toast.indexOptionsNeedServerApi5', { version: apiVersion }), 'error');
+        return;
+      }
+
+      if (!initialData) {
+        await create(spec, commitQuorum);
+        finish();
+        return;
+      }
+
+      await invoke('delete_index', { ...place, indexName: initialData.name });
+      closeTabById(`${connectionId}.${db}.${collection}.${initialData.name}`);
+      try {
+        await create(spec, commitQuorum);
+      } catch (err: any) {
+        // The new definition did not build, so put back the one just dropped.
+        const original = withoutServerFields(initialData);
+        try {
+          await create(original, null);
+          toast(t('toast.indexPutBack', { detail: err }), 'error');
+        } catch {
+          toast(t('toast.indexNotPutBack', { detail: err, spec: JSON.stringify(original) }), 'error');
+        }
+        setIndexMutationTrigger(prev => prev + 1);
+        return;
+      }
+      finish();
     } catch (err: any) {
       toast(t('toast.failedToSaveIndex', { detail: err }), 'error');
     }
+  };
+
+  const setIndexOption = (
+    connectionId: string,
+    dbName: string,
+    collName: string,
+    indexName: string,
+    option: 'hidden' | 'prepareUnique' | 'unique',
+    value: boolean
+  ) =>
+    invoke('set_index_option', { id: connectionId, database: dbName, collection: collName, indexName, option, value });
+
+  const handleSetIndexOption = async (
+    connectionId: string,
+    dbName: string,
+    collName: string,
+    indexName: string,
+    option: 'hidden' | 'prepareUnique',
+    value: boolean
+  ) => {
+    try {
+      await setIndexOption(connectionId, dbName, collName, indexName, option, value);
+      setIndexMutationTrigger(prev => prev + 1);
+    } catch (err: any) {
+      toast(t('toast.failedToSaveIndex', { detail: err }), 'error');
+    }
+  };
+
+  // Writes that would add a duplicate are refused from the first step, so the
+  // second can check the documents. If it finds duplicates the index stays
+  // prepared, and the viewer offers to undo that.
+  const handleConvertToUnique = async (connectionId: string, dbName: string, collName: string, indexName: string) => {
+    if (!(await confirm({
+      title: t('admin:indexViewer.confirm.convertToUniqueTitle'),
+      message: t('admin:indexViewer.confirm.convertToUniqueMessage'),
+      confirmLabel: t('admin:indexViewer.actions.convertToUnique'),
+    }))) return;
+    try {
+      await setIndexOption(connectionId, dbName, collName, indexName, 'prepareUnique', true);
+      await setIndexOption(connectionId, dbName, collName, indexName, 'unique', true);
+    } catch (err: any) {
+      toast(t('toast.indexStaysNonUnique', { detail: err }), 'error');
+    }
+    setIndexMutationTrigger(prev => prev + 1);
   };
 
   const handleDeleteIndex = async (connectionId: string, dbName: string, collName: string, indexName: string) => {
@@ -4727,18 +4725,8 @@ function Workspace() {
             collectionName={tab.collection}
             indexName={tab.indexName || ''}
             refreshKey={indexMutationTrigger}
-            onEditIndex={isCommandBlocked(tab.connectionId, 'create_index') || isCommandBlocked(tab.connectionId, 'delete_index') ? undefined : (indexName, keys, unique, sparse, expireAfterSeconds, rebuildDrops) =>
-              handleOpenIndexModalForEdit(
-                tab.connectionId,
-                tab.db,
-                tab.collection,
-                indexName,
-                keys,
-                unique,
-                sparse,
-                expireAfterSeconds,
-                rebuildDrops
-              )
+            onEditIndex={isCommandBlocked(tab.connectionId, 'create_index') || isCommandBlocked(tab.connectionId, 'delete_index') ? undefined : (spec) =>
+              handleOpenIndexModalForEdit(tab.connectionId, tab.db, tab.collection, spec)
             }
             onDeleteIndex={isCommandBlocked(tab.connectionId, 'delete_index') ? undefined : (indexName) =>
               handleDeleteIndex(
@@ -4747,6 +4735,12 @@ function Workspace() {
                 tab.collection,
                 indexName
               )
+            }
+            onSetIndexOption={isCommandBlocked(tab.connectionId, 'set_index_option') ? undefined : (option, value) =>
+              handleSetIndexOption(tab.connectionId, tab.db, tab.collection, tab.indexName || '', option, value)
+            }
+            onConvertToUnique={isCommandBlocked(tab.connectionId, 'set_index_option') ? undefined : () =>
+              handleConvertToUnique(tab.connectionId, tab.db, tab.collection, tab.indexName || '')
             }
           />
         )}
@@ -4760,8 +4754,8 @@ function Workspace() {
             onCreateIndex={isCommandBlocked(tab.connectionId, 'create_index') ? undefined : () =>
               handleOpenIndexModalForCreate(tab.connectionId, tab.db, tab.collection)
             }
-            onEditIndex={isCommandBlocked(tab.connectionId, 'create_index') || isCommandBlocked(tab.connectionId, 'delete_index') ? undefined : (indexName, keys, unique, sparse, expireAfterSeconds, rebuildDrops) =>
-              handleOpenIndexModalForEdit(tab.connectionId, tab.db, tab.collection, indexName, keys, unique, sparse, expireAfterSeconds, rebuildDrops)
+            onEditIndex={isCommandBlocked(tab.connectionId, 'create_index') || isCommandBlocked(tab.connectionId, 'delete_index') ? undefined : (spec) =>
+              handleOpenIndexModalForEdit(tab.connectionId, tab.db, tab.collection, spec)
             }
             onDeleteIndex={isCommandBlocked(tab.connectionId, 'delete_index') ? undefined : (indexName) =>
               handleDeleteIndex(tab.connectionId, tab.db, tab.collection, indexName)
@@ -5315,6 +5309,7 @@ function Workspace() {
             collectionName={indexModalTarget?.collection}
             availableFields={fieldsFromResults(activeTab?.results)}
             initialData={indexModalTarget?.initialData}
+            allowCommitQuorum={!serverConnections.has(indexModalTarget?.connectionId ?? '')}
             prefill={indexModalTarget?.prefill}
           />
 

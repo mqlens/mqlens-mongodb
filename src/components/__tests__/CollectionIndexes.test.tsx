@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { CollectionIndexes } from '../CollectionIndexes';
 
 const mockInvoke = vi.fn();
@@ -174,32 +174,132 @@ describe('CollectionIndexes', () => {
     expect(onDeleteIndex).toHaveBeenCalledWith('email_1');
 
     fireEvent.click(screen.getByTestId('edit-index-tier_1_age_-1'));
-    expect(onEditIndex).toHaveBeenCalledWith('tier_1_age_-1', { tier: 1, age: -1 }, false, false, undefined, false);
+    expect(onEditIndex).toHaveBeenCalledWith({ key: { tier: 1, age: -1 }, name: 'tier_1_age_-1' });
 
     // Actions do not also open the row.
     expect(onOpenIndex).not.toHaveBeenCalled();
   });
 
-  it('offers no edit for an index whose keys the editor cannot keep (2dsphere, text, hashed)', async () => {
-    // Editing drops and re-creates the index from ±1 keys, so a special
-    // type would come back as a plain ascending index.
+  // An edit starts from the whole document, so every kind of index comes back.
+  it('offers an edit for every kind of index with its document', async () => {
+    const withDocument = (info: typeof LOC) => ({
+      ...info,
+      spec: JSON.stringify({ key: JSON.parse(info.keys), name: info.name }),
+    });
     mockInvokeByCommand({
       list_indexes: [
+        ID,
         EMAIL,
-        LOC,
-        { name: 'bio_text', keys: '{"_fts":"text","_ftsx":1}', unique: false, sparse: false },
-        { name: 'uid_hashed', keys: '{"uid":"hashed"}', unique: false, sparse: false },
+        withDocument(LOC),
+        withDocument({ name: 'uid_hashed', keys: '{"uid":"hashed"}', unique: false, sparse: false }),
       ],
       index_stats: [],
     });
     render(<CollectionIndexes {...baseProps} onEditIndex={vi.fn()} onDeleteIndex={vi.fn()} />);
     await screen.findByTestId('index-row-email_1');
 
-    expect(screen.getByTestId('edit-index-email_1')).toBeInTheDocument();
-    for (const name of ['loc_2dsphere', 'bio_text', 'uid_hashed']) {
-      expect(screen.queryByTestId(`edit-index-${name}`)).not.toBeInTheDocument();
-      expect(screen.getByTestId(`drop-index-${name}`)).toBeInTheDocument();
+    for (const name of ['email_1', 'loc_2dsphere', 'uid_hashed']) {
+      expect(screen.getByTestId(`edit-index-${name}`)).toBeInTheDocument();
     }
+    expect(screen.queryByTestId('edit-index-_id_')).not.toBeInTheDocument();
+  });
+
+  // A server before API version 5 lists no document, so a rebuild could not
+  // keep the options of a special index, nor put it back.
+  it('offers no edit for a special index without its document', async () => {
+    mockInvokeByCommand({ list_indexes: [EMAIL, LOC], index_stats: [] });
+    render(<CollectionIndexes {...baseProps} onEditIndex={vi.fn()} onDeleteIndex={vi.fn()} />);
+    await screen.findByTestId('index-row-loc_2dsphere');
+    expect(screen.getByTestId('edit-index-email_1')).toBeInTheDocument();
+    expect(screen.queryByTestId('edit-index-loc_2dsphere')).not.toBeInTheDocument();
+    expect(screen.getByTestId('drop-index-loc_2dsphere')).toBeInTheDocument();
+  });
+
+  it('hands an edit the whole document of the index', async () => {
+    const document = { v: 2, key: { a: 1 }, name: 'a_1', collation: { locale: 'de' } };
+    mockInvokeByCommand({
+      list_indexes: [{ name: 'a_1', keys: '{"a":1}', unique: false, sparse: false, spec: JSON.stringify(document) }],
+      index_stats: [],
+    });
+    const onEditIndex = vi.fn();
+    render(<CollectionIndexes {...baseProps} onEditIndex={onEditIndex} />);
+    fireEvent.click(await screen.findByTestId('edit-index-a_1'));
+    expect(onEditIndex).toHaveBeenCalledWith(document);
+  });
+
+  it('shows the fields of a text index rather than _fts and _ftsx', async () => {
+    const document = { v: 2, key: { _fts: 'text', _ftsx: 1 }, name: 'bio_text', weights: { bio: 1, title: 5 } };
+    mockInvokeByCommand({
+      list_indexes: [{ name: 'bio_text', keys: '{"_fts":"text","_ftsx":1}', unique: false, sparse: false, spec: JSON.stringify(document) }],
+      index_stats: [],
+    });
+    render(<CollectionIndexes {...baseProps} />);
+    const row = await screen.findByTestId('index-row-bio_text');
+    expect(row).toHaveTextContent('bio text');
+    expect(row).toHaveTextContent('title text');
+    expect(row).not.toHaveTextContent('_fts');
+  });
+
+  describe('index builds', () => {
+    const BUILD = {
+      opid: 7, op: 'command', ns: 'shop.users', secsRunning: 12, client: '', desc: 'IndexBuildsCoordinatorMongod-0',
+      command: '{ "createIndexes": "users", "indexes": [{ "key": { "a": 1 }, "name": "a_1" }] }',
+      progress: { done: 25, total: 100 },
+    };
+
+    it('shows a build running on this collection', async () => {
+      mockInvokeByCommand({ list_indexes: [ID], index_stats: [], current_ops: [BUILD] });
+      render(<CollectionIndexes {...baseProps} />);
+      const banner = await screen.findByTestId('index-builds');
+      expect(banner).toHaveTextContent('Building a_1: 25% (12 s)');
+    });
+
+    it('shows a build without a percent where the connection has no progress', async () => {
+      mockInvokeByCommand({ list_indexes: [ID], index_stats: [], current_ops: [{ ...BUILD, progress: undefined }] });
+      render(<CollectionIndexes {...baseProps} />);
+      expect(await screen.findByTestId('index-builds')).toHaveTextContent('Building a_1 (12 s)');
+    });
+
+    it('leaves out builds elsewhere', async () => {
+      mockInvokeByCommand({ list_indexes: [ID], index_stats: [], current_ops: [{ ...BUILD, ns: 'shop.other' }] });
+      render(<CollectionIndexes {...baseProps} />);
+      await screen.findByTestId('index-row-_id_');
+      await waitFor(() => expect(mockInvoke).toHaveBeenCalledWith('current_ops', { id: 'c1' }));
+      expect(screen.queryByTestId('index-builds')).not.toBeInTheDocument();
+    });
+
+    // Not every account may read operations; the indexes still show.
+    it('says nothing when operations cannot be read', async () => {
+      mockInvokeByCommand({ list_indexes: [ID], index_stats: [], current_ops: new Error('not authorized') });
+      render(<CollectionIndexes {...baseProps} />);
+      await screen.findByTestId('index-row-_id_');
+      await waitFor(() => expect(mockInvoke).toHaveBeenCalledWith('current_ops', { id: 'c1' }));
+      expect(screen.queryByTestId('index-builds')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('collection-indexes-error')).not.toBeInTheDocument();
+    });
+
+    it('follows a build and lists the index when it ends', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        let ops = [BUILD];
+        let list = [ID];
+        mockInvokeByCommand({ list_indexes: () => list, index_stats: [], current_ops: () => ops });
+        render(<CollectionIndexes {...baseProps} />);
+        expect(await screen.findByTestId('index-builds')).toHaveTextContent('25%');
+
+        ops = [{ ...BUILD, progress: { done: 50, total: 100 } }];
+        await act(() => vi.advanceTimersByTimeAsync(3000));
+        await waitFor(() => expect(screen.getByTestId('index-builds')).toHaveTextContent('50%'));
+
+        ops = [];
+        list = [ID, EMAIL];
+        await act(() => vi.advanceTimersByTimeAsync(3000));
+        await waitFor(() => expect(screen.queryByTestId('index-builds')).not.toBeInTheDocument());
+        expect(await screen.findByTestId('index-row-email_1')).toBeInTheDocument();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   it('hides write actions when no handler is given (blocked connection)', async () => {
@@ -246,6 +346,6 @@ describe('CollectionIndexes', () => {
     expect(screen.getByTestId('index-row-status_1')).toHaveTextContent('PARTIAL');
 
     fireEvent.click(screen.getByTestId('edit-index-createdAt_1'));
-    expect(onEditIndex).toHaveBeenCalledWith('createdAt_1', { createdAt: 1 }, false, false, 86400, false);
+    expect(onEditIndex).toHaveBeenCalledWith({ key: { createdAt: 1 }, name: 'createdAt_1', expireAfterSeconds: 86400 });
   });
 });

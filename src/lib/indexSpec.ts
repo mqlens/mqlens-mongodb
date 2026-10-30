@@ -43,11 +43,17 @@ export const specOf = (info: IndexInfo): IndexDocument => {
   };
 };
 
+/** Whether a rebuild can keep the index. Without its document, only plain
+ *  keys say all there is to know: a special index may hold options nothing
+ *  listed, and could not be put back if the rebuild failed. */
+export const isEditable = (info: IndexInfo): boolean =>
+  info.spec !== undefined || ['regular', 'compound'].includes(indexKind(parseObject(info.keys)));
+
 /** The keys as they were written: MongoDB lists a text index as `_fts` and
  *  `_ftsx`, with its fields in `weights`. */
 export const displayKeys = (spec: IndexDocument): Record<string, unknown> => {
-  if (!('_fts' in spec.key)) return spec.key;
-  const fields = isObject(spec.weights) ? Object.keys(spec.weights) : [];
+  if (!('_fts' in spec.key) || !isObject(spec.weights)) return spec.key;
+  const fields = Object.keys(spec.weights);
   return Object.fromEntries(
     Object.entries(spec.key).flatMap(([field, value]): [string, unknown][] => {
       if (field === '_fts') return fields.map((name) => [name, 'text']);
@@ -121,7 +127,7 @@ export const validateIndex = (spec: IndexDocument): IndexProblem | null => {
 };
 
 /** The options the modal has a text field for. */
-type OptionField =
+export type OptionField =
   | 'partialFilterExpression' | 'collation' | 'storageEngine' | 'weights' | 'defaultLanguage'
   | 'languageOverride' | 'textIndexVersion' | 'sphereIndexVersion' | 'bits' | 'min' | 'max'
   | 'wildcardProjection';
@@ -143,7 +149,7 @@ interface OptionDefinition {
   needs?: IndexKeyType | 'wildcard';
 }
 
-const OPTIONS: OptionDefinition[] = [
+export const INDEX_OPTIONS: OptionDefinition[] = [
   { option: 'partialFilterExpression', field: 'partialFilterExpression', parse: 'json' },
   { option: 'collation', field: 'collation', parse: 'json' },
   { option: 'storageEngine', field: 'storageEngine', parse: 'json' },
@@ -175,7 +181,7 @@ export const formFromSpec = (spec: IndexDocument): IndexForm => {
     hidden: Boolean(spec.hidden),
     ttlSeconds: typeof spec.expireAfterSeconds === 'number' ? spec.expireAfterSeconds : null,
   };
-  for (const { option, field, parse } of OPTIONS) {
+  for (const { option, field, parse } of INDEX_OPTIONS) {
     const value = spec[option];
     if (value !== undefined) form[field] = parse === 'json' ? JSON.stringify(value, null, 2) : String(value);
   }
@@ -200,24 +206,27 @@ const parseOption = (parse: OptionDefinition['parse'], text: string): unknown =>
   return Number.isFinite(value) && (parse === 'number' || Number.isInteger(value)) ? value : undefined;
 };
 
+/** The document without what the server sets for itself and sets again. */
+export const withoutServerFields = (spec: IndexDocument): IndexDocument => {
+  const { v: _v, ns: _ns, ...rest } = spec;
+  return rest as IndexDocument;
+};
+
 /** The document the form describes. It starts from `base`, the index being
  *  edited, so an option the form has no field for survives. */
 export const specFromForm = (
   form: IndexForm,
   base?: IndexDocument
 ): { spec: IndexDocument; problem?: undefined } | { spec?: undefined; problem: IndexProblem } => {
-  const spec: IndexDocument = { ...base, key: form.keys, name: form.name };
-  // Set by the server, which sets them again.
-  delete spec.v;
-  delete spec.ns;
-  for (const field of ['unique', 'sparse', 'hidden', 'expireAfterSeconds', ...OPTIONS.map((o) => o.option)]) {
+  const spec: IndexDocument = { ...(base && withoutServerFields(base)), key: form.keys, name: form.name };
+  for (const field of ['unique', 'sparse', 'hidden', 'expireAfterSeconds', ...INDEX_OPTIONS.map((o) => o.option)]) {
     delete spec[field];
   }
   if (form.unique) spec.unique = true;
   if (form.sparse) spec.sparse = true;
   if (form.hidden) spec.hidden = true;
   if (form.ttlSeconds !== null) spec.expireAfterSeconds = form.ttlSeconds;
-  for (const { option, field, parse, needs } of OPTIONS) {
+  for (const { option, field, parse, needs } of INDEX_OPTIONS) {
     const text = form[field].trim();
     if (!text || !appliesTo(needs, form.keys)) continue;
     const value = parseOption(parse, text);

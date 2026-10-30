@@ -6,6 +6,7 @@ import {
   inPlaceEdits,
   indexBuilds,
   indexKind,
+  isEditable,
   isPlainIndex,
   specFromForm,
   specOf,
@@ -46,8 +47,31 @@ describe('displayKeys', () => {
     ).toEqual({ b: 1, title: 'text', body: 'text', c: -1 });
   });
 
+  it('leaves a text key as it is without its weights', () => {
+    expect(displayKeys({ key: { _fts: 'text', _ftsx: 1 }, name: 't' })).toEqual({ _fts: 'text', _ftsx: 1 });
+  });
+
   it('leaves every other key as it is', () => {
     expect(displayKeys({ key: { a: 1, b: 'hashed' }, name: 'x' })).toEqual({ a: 1, b: 'hashed' });
+  });
+});
+
+describe('isEditable', () => {
+  const info = (keys: string, spec?: string) => ({ name: 'i', keys, unique: false, sparse: false, spec });
+
+  it('takes any index with its document', () => {
+    expect(isEditable(info('{"a":"hashed"}', '{"key":{"a":"hashed"},"name":"i"}'))).toBe(true);
+  });
+
+  it('takes a plain index without one', () => {
+    expect(isEditable(info('{"a":1,"b":-1}'))).toBe(true);
+  });
+
+  // A rebuild could not know its options, nor put it back if it failed.
+  it('refuses a special index without one', () => {
+    expect(isEditable(info('{"a":"hashed"}'))).toBe(false);
+    expect(isEditable(info('{"_fts":"text","_ftsx":1}'))).toBe(false);
+    expect(isEditable(info('{"a.$**":1}'))).toBe(false);
   });
 });
 

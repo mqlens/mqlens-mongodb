@@ -15,18 +15,53 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
 import { useEscapeClose } from '../lib/useEscapeClose';
 import { useTranslation } from 'react-i18next';
+import {
+  appliesTo,
+  emptyIndexForm,
+  formFromSpec,
+  INDEX_OPTIONS,
+  parseObject,
+  specFromForm,
+  type IndexDocument,
+  type IndexKeyType,
+  type IndexProblem,
+  type OptionField,
+} from '../lib/indexSpec';
 
 interface IndexKeyRule {
   id: string;
   field: string;
-  direction: 1 | -1;
+  direction: IndexKeyType;
 }
 
-const newKeyRule = (field = '_id', direction: 1 | -1 = 1): IndexKeyRule => ({
+const KEY_TYPES: IndexKeyType[] = [1, -1, 'text', '2dsphere', '2d', 'hashed'];
+
+const asKeyType = (value: unknown): IndexKeyType =>
+  KEY_TYPES.find((type) => String(type) === String(value)) ?? 1;
+
+const newKeyRule = (field = '_id', direction: IndexKeyType = 1): IndexKeyRule => ({
   id: Math.random().toString(36).slice(2, 11),
   field,
   direction,
 });
+
+const rulesFor = (keys: Record<string, unknown>): IndexKeyRule[] =>
+  Object.entries(keys).map(([field, type]) => newKeyRule(field, asKeyType(type)));
+
+const OPTION_PLACEHOLDERS: Partial<Record<OptionField, string>> = {
+  partialFilterExpression: '{ "status": "active" }',
+  collation: '{ "locale": "en", "strength": 2 }',
+  storageEngine: '{ "wiredTiger": { "configString": "block_compressor=zstd" } }',
+  weights: '{ "title": 10, "body": 1 }',
+  defaultLanguage: 'english',
+  languageOverride: 'language',
+  textIndexVersion: '3',
+  sphereIndexVersion: '3',
+  bits: '26',
+  min: '-180',
+  max: '180',
+  wildcardProjection: '{ "tags": 1 }',
+};
 
 const sortFieldNames = (fields: Iterable<string>): string[] =>
   Array.from(new Set(fields)).sort((a, b) => {
@@ -38,19 +73,16 @@ const sortFieldNames = (fields: Iterable<string>): string[] =>
 interface IndexModalProps {
   isOpen: boolean;
   onClose: () => void;
-  // `expireAfterSeconds` is null for an index without a TTL.
-  onSave: (indexName: string, keys: string, unique: boolean, sparse: boolean, expireAfterSeconds: number | null) => void;
+  // The whole index document, and a commit quorum if one was given.
+  onSave: (spec: IndexDocument, commitQuorum: string | null) => void;
   availableFields?: string[];
   connectionId?: string;
   databaseName?: string;
   collectionName?: string;
-  initialData?: {
-    name: string;
-    keys: Record<string, number>;
-    unique: boolean;
-    sparse: boolean;
-    expireAfterSeconds?: number;
-  } | null;
+  // The index being edited. What the form has no field for stays as it is.
+  initialData?: IndexDocument | null;
+  // MQLens Server has no field for a commit quorum yet.
+  allowCommitQuorum?: boolean;
   // Pre-fills the create-mode form (e.g. from a COLLSCAN index suggestion).
   // Ignored when initialData is set (edit mode) — unique/sparse always start false.
   prefill?: {
@@ -89,6 +121,7 @@ export const IndexModal: React.FC<IndexModalProps> = ({
   databaseName,
   collectionName,
   initialData,
+  allowCommitQuorum = true,
   prefill,
 }) => {
   const { t } = useTranslation('admin');
@@ -102,6 +135,9 @@ export const IndexModal: React.FC<IndexModalProps> = ({
   const [keysList, setKeysList] = useState<IndexKeyRule[]>([newKeyRule()]);
   const [rawKeysJson, setRawKeysJson] = useState('{\n  "_id": 1\n}');
   const [jsonError, setJsonError] = useState<string | null>(null);
+  // Hidden and the options; the fields above keep the rest of the form.
+  const [form, setForm] = useState(emptyIndexForm);
+  const [commitQuorum, setCommitQuorum] = useState('');
 
   const { schema } = useCollectionSchema(
     isOpen ? connectionId : undefined,
@@ -114,7 +150,7 @@ export const IndexModal: React.FC<IndexModalProps> = ({
     availableFields.forEach((f) => names.add(f));
     schema.forEach((_, path) => names.add(path));
     if (initialData) {
-      Object.keys(initialData.keys).forEach((f) => names.add(f));
+      Object.keys(formFromSpec(initialData).keys).forEach((f) => names.add(f));
     }
     keysList.forEach((k) => {
       const trimmed = k.field.trim();
@@ -127,27 +163,26 @@ export const IndexModal: React.FC<IndexModalProps> = ({
 
   useEffect(() => {
     if (isOpen) {
+      setForm(emptyIndexForm());
+      setCommitQuorum('');
       if (initialData) {
-        setIndexName(initialData.name);
-        setUnique(initialData.unique);
-        setSparse(initialData.sparse);
-        setTtl(initialData.expireAfterSeconds !== undefined);
-        setTtlSeconds(initialData.expireAfterSeconds !== undefined ? String(initialData.expireAfterSeconds) : '');
-        const list: IndexKeyRule[] = Object.entries(initialData.keys).map(([field, dir]) =>
-          newKeyRule(field, dir === -1 ? -1 : 1)
-        );
+        const editing = formFromSpec(initialData);
+        setForm(editing);
+        setIndexName(editing.name);
+        setUnique(editing.unique);
+        setSparse(editing.sparse);
+        setTtl(editing.ttlSeconds !== null);
+        setTtlSeconds(editing.ttlSeconds !== null ? String(editing.ttlSeconds) : '');
+        const list = rulesFor(editing.keys);
         setKeysList(list.length > 0 ? list : [newKeyRule()]);
-        setRawKeysJson(JSON.stringify(initialData.keys, null, 2));
+        setRawKeysJson(JSON.stringify(editing.keys, null, 2));
       } else if (prefill && Object.keys(prefill.keys).length > 0) {
         setIndexName(prefill.name);
         setUnique(false);
         setSparse(false);
         setTtl(false);
         setTtlSeconds('');
-        const list: IndexKeyRule[] = Object.entries(prefill.keys).map(([field, dir]) =>
-          newKeyRule(field, dir === -1 ? -1 : 1)
-        );
-        setKeysList(list);
+        setKeysList(rulesFor(prefill.keys));
         setRawKeysJson(JSON.stringify(prefill.keys, null, 2));
       } else {
         setIndexName('');
@@ -171,7 +206,7 @@ export const IndexModal: React.FC<IndexModalProps> = ({
 
   useEffect(() => {
     if (!isRawMode) {
-      const keysObj: Record<string, number> = {};
+      const keysObj: Record<string, IndexKeyType> = {};
       keysList.forEach((k) => {
         if (k.field.trim()) {
           keysObj[k.field.trim()] = k.direction;
@@ -180,6 +215,41 @@ export const IndexModal: React.FC<IndexModalProps> = ({
       setRawKeysJson(JSON.stringify(keysObj, null, 2));
     }
   }, [keysList, isRawMode]);
+
+  // In step with the builder through the effect above.
+  const currentKeys = useMemo(() => parseObject(rawKeysJson), [rawKeysJson]);
+
+  const optionLabels: Record<OptionField, string> = {
+    partialFilterExpression: t('indexModal.optionLabels.partialFilterExpression'),
+    collation: t('indexModal.optionLabels.collation'),
+    storageEngine: t('indexModal.optionLabels.storageEngine'),
+    weights: t('indexModal.optionLabels.weights'),
+    defaultLanguage: t('indexModal.optionLabels.defaultLanguage'),
+    languageOverride: t('indexModal.optionLabels.languageOverride'),
+    textIndexVersion: t('indexModal.optionLabels.textIndexVersion'),
+    sphereIndexVersion: t('indexModal.optionLabels.sphereIndexVersion'),
+    bits: t('indexModal.optionLabels.bits'),
+    min: t('indexModal.optionLabels.min'),
+    max: t('indexModal.optionLabels.max'),
+    wildcardProjection: t('indexModal.optionLabels.wildcardProjection'),
+  };
+
+  const describeProblem = ({ key, params }: IndexProblem): string =>
+    ({
+      collationNotSupported: t('indexModal.errors.collationNotSupported'),
+      compoundWildcardNeedsProjection: t('indexModal.errors.compoundWildcardNeedsProjection'),
+      hashedOneField: t('indexModal.errors.hashedOneField'),
+      hashedUnique: t('indexModal.errors.hashedUnique'),
+      optionNotJson: t('indexModal.errors.optionNotJson', params),
+      optionNotNumber: t('indexModal.errors.optionNotNumber', params),
+      partialExistsFalse: t('indexModal.errors.partialExistsFalse'),
+      partialOperator: t('indexModal.errors.partialOperator', params),
+      partialWithSparse: t('indexModal.errors.partialWithSparse'),
+      wildcardProjectionNeedsAllFields: t('indexModal.errors.wildcardProjectionNeedsAllFields'),
+      wildcardSparse: t('indexModal.errors.wildcardSparse'),
+      wildcardTtl: t('indexModal.errors.wildcardTtl'),
+      wildcardUnique: t('indexModal.errors.wildcardUnique'),
+    })[key] ?? key;
 
   const handleAddKeyRow = () => {
     const addedFields = new Set(keysList.map((k) => k.field.trim()).filter(Boolean));
@@ -209,7 +279,7 @@ export const IndexModal: React.FC<IndexModalProps> = ({
           throw new Error(t('indexModal.errors.keysMustBeObject'));
         }
         Object.entries(parsed).forEach(([key, val]) => {
-          if (val !== 1 && val !== -1) {
+          if (!KEY_TYPES.includes(val as IndexKeyType)) {
             throw new Error(t('indexModal.errors.invalidDirection', { field: key }));
           }
         });
@@ -219,7 +289,7 @@ export const IndexModal: React.FC<IndexModalProps> = ({
         return;
       }
     } else {
-      const keysObj: Record<string, number> = {};
+      const keysObj: Record<string, IndexKeyType> = {};
       let hasEmptyField = false;
 
       keysList.forEach((k) => {
@@ -270,16 +340,21 @@ export const IndexModal: React.FC<IndexModalProps> = ({
       expireAfterSeconds = Number(seconds);
     }
 
-    onSave(trimmedName, keysJsonStr, unique, sparse, expireAfterSeconds);
+    const made = specFromForm(
+      { ...form, name: trimmedName, keys: JSON.parse(keysJsonStr), unique, sparse, ttlSeconds: expireAfterSeconds },
+      initialData ?? undefined
+    );
+    if (made.problem) {
+      setJsonError(describeProblem(made.problem));
+      return;
+    }
+    onSave(made.spec, (allowCommitQuorum && commitQuorum.trim()) || null);
   };
 
   const switchToBuilder = () => {
     if (isRawMode) {
       try {
-        const parsed = JSON.parse(rawKeysJson);
-        const list: IndexKeyRule[] = Object.entries(parsed).map(([field, dir]) =>
-          newKeyRule(field, dir === -1 ? -1 : 1)
-        );
+        const list = rulesFor(JSON.parse(rawKeysJson));
         if (list.length > 0) setKeysList(list);
       } catch {
         /* keep current list */
@@ -290,7 +365,7 @@ export const IndexModal: React.FC<IndexModalProps> = ({
 
   const switchToRaw = () => {
     if (!isRawMode) {
-      const keysObj: Record<string, number> = {};
+      const keysObj: Record<string, IndexKeyType> = {};
       keysList.forEach((k) => {
         if (k.field.trim()) {
           keysObj[k.field.trim()] = k.direction;
@@ -306,7 +381,7 @@ export const IndexModal: React.FC<IndexModalProps> = ({
       <DraggableDialogContent
         resetKey={isOpen}
         defaultWidth={560}
-        defaultHeight={520}
+        defaultHeight={600}
         minWidth={440}
         minHeight={360}
         hideClose
@@ -334,6 +409,11 @@ export const IndexModal: React.FC<IndexModalProps> = ({
 
         <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
           <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
+            {initialData && (
+              <p className="text-[11px] text-muted-foreground" data-testid="index-rebuild-hint">
+                {t('indexModal.hints.rebuild')}
+              </p>
+            )}
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="index-name-input">{t('indexModal.labels.indexName')}</Label>
               <Input
@@ -414,19 +494,26 @@ export const IndexModal: React.FC<IndexModalProps> = ({
                             {fieldOptions.map((f) => (
                               <option key={f} value={f}>{f}</option>
                             ))}
+                            {!fieldOptions.includes('$**') && (
+                              <option value="$**">{t('indexModal.options.wildcardField')}</option>
+                            )}
                             <option value="__custom__">{t('indexModal.options.customField')}</option>
                           </select>
                         )}
                         <select
                           value={String(rule.direction)}
                           onChange={(e) =>
-                            handleKeyRowChange(idx, { direction: parseInt(e.target.value, 10) as 1 | -1 })
+                            handleKeyRowChange(idx, { direction: asKeyType(e.target.value) })
                           }
                           className="h-9 w-[150px] shrink-0 rounded-md border border-input bg-background px-2 text-sm"
                           data-testid={`index-key-direction-${idx}`}
                         >
                           <option value="1">{t('indexModal.options.ascending')}</option>
                           <option value="-1">{t('indexModal.options.descending')}</option>
+                          <option value="text">{t('indexModal.options.text')}</option>
+                          <option value="2dsphere">2dsphere</option>
+                          <option value="2d">2d</option>
+                          <option value="hashed">{t('indexModal.options.hashed')}</option>
                         </select>
                         <Button
                           type="button"
@@ -484,6 +571,17 @@ export const IndexModal: React.FC<IndexModalProps> = ({
                   <span>{t('indexModal.constraintLabels.sparse')}</span>
                   <span className="text-muted-foreground">{t('indexModal.constraintLabels.sparseHint')}</span>
                 </label>
+                <label className="flex cursor-pointer items-center gap-2 text-xs text-foreground">
+                  <input
+                    type="checkbox"
+                    checked={form.hidden}
+                    onChange={() => setForm((f) => ({ ...f, hidden: !f.hidden }))}
+                    data-testid="hidden-checkbox"
+                    className="rounded border-input"
+                  />
+                  <span>{t('indexModal.constraintLabels.hidden')}</span>
+                  <span className="text-muted-foreground">{t('indexModal.constraintLabels.hiddenHint')}</span>
+                </label>
                 <div className="flex items-center gap-2 text-xs text-foreground">
                   <label className="flex cursor-pointer items-center gap-2">
                     <input
@@ -510,6 +608,52 @@ export const IndexModal: React.FC<IndexModalProps> = ({
                   <span className="text-muted-foreground">{t('indexModal.constraintLabels.ttlUnit')}</span>
                 </div>
               </div>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <Label>{t('indexModal.labels.options')}</Label>
+              {INDEX_OPTIONS.filter(({ needs }) => appliesTo(needs, currentKeys)).map(({ field, parse }) => (
+                <div key={field} className="flex flex-col gap-1">
+                  <label htmlFor={`index-option-${field}`} className="text-[11px] text-muted-foreground">
+                    {optionLabels[field]}
+                  </label>
+                  {parse === 'json' ? (
+                    <textarea
+                      id={`index-option-${field}`}
+                      value={form[field]}
+                      onChange={(e) => setForm((f) => ({ ...f, [field]: e.target.value }))}
+                      rows={2}
+                      className={cn(textareaClassName, 'min-h-[56px]')}
+                      placeholder={OPTION_PLACEHOLDERS[field]}
+                      data-testid={`index-option-${field}`}
+                    />
+                  ) : (
+                    <Input
+                      id={`index-option-${field}`}
+                      value={form[field]}
+                      onChange={(e) => setForm((f) => ({ ...f, [field]: e.target.value }))}
+                      className="h-8 font-mono text-xs"
+                      placeholder={OPTION_PLACEHOLDERS[field]}
+                      data-testid={`index-option-${field}`}
+                    />
+                  )}
+                </div>
+              ))}
+              {allowCommitQuorum && (
+                <div className="flex flex-col gap-1">
+                  <label htmlFor="index-commit-quorum" className="text-[11px] text-muted-foreground">
+                    {t('indexModal.optionLabels.commitQuorum')}
+                  </label>
+                  <Input
+                    id="index-commit-quorum"
+                    value={commitQuorum}
+                    onChange={(e) => setCommitQuorum(e.target.value)}
+                    className="h-8 font-mono text-xs"
+                    placeholder="votingMembers"
+                    data-testid="index-commit-quorum"
+                  />
+                </div>
+              )}
             </div>
           </div>
 

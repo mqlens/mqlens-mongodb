@@ -3038,22 +3038,16 @@ async fn create_index(
     id: String,
     database: String,
     collection: String,
-    index_name: String,
-    keys: String,
-    unique: bool,
-    sparse: bool,
-    expire_after_seconds: Option<i64>,
+    spec: String,
+    commit_quorum: Option<String>,
 ) -> Result<(), String> {
-    create_index_impl(
+    db::metadata::create_index_spec_impl(
         &state,
         &id,
         &database,
         &collection,
-        &index_name,
-        &keys,
-        unique,
-        sparse,
-        expire_after_seconds,
+        &spec,
+        commit_quorum.as_deref(),
     )
     .await
 }

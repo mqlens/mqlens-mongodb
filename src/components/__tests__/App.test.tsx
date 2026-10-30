@@ -557,45 +557,226 @@ describe('App Component', () => {
     fireEvent.click(screen.getByTestId('select-collection-btn'));
     fireEvent.click(screen.getByTestId('select-index-btn'));
 
-    // Open the edit modal from the index viewer, then save unchanged.
+    // Open the edit modal from the index viewer, then change the flag.
     fireEvent.click(await screen.findByTestId('edit-index-btn'));
     expect(screen.getByTestId('index-modal')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('unique-checkbox'));
     fireEvent.click(screen.getByTestId('save-index-btn'));
 
     // create_index must be called with the REAL key pattern + unique flag.
     await waitFor(() => {
       const createCall = calls.find((c) => c.cmd === 'create_index');
       expect(createCall).toBeTruthy();
-      expect(createCall.args.keys).toBe('{"city":1}');
-      expect(createCall.args.unique).toBe(false);
+      expect(JSON.parse(createCall.args.spec)).toEqual({ key: { city: 1 }, name: 'email_1', unique: true });
     });
   });
 
-  // Rebuilding would drop the partial filter, and a TTL index without its
-  // filter expires every document, not just the ones it matched.
-  it('refuses to rebuild an index whose partial filter or hidden flag it cannot keep', async () => {
+  // Opens the edit modal on an index listed as `index`.
+  const editIndex = async (index: object, respond: (cmd: string, args: any) => unknown = () => undefined, server?: object) => {
     const calls: any[] = [];
     mockInvoke.mockImplementation((cmd, args) => {
       calls.push({ cmd, args });
-      if (cmd === 'execute_mql_query') return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
-      if (cmd === 'list_indexes') {
-        return Promise.resolve([
-          { name: 'email_1', keys: '{"city":1}', unique: false, sparse: false, expireAfterSeconds: 3600, partialFilterExpression: '{"archived":true}' },
-        ]);
+      const answer = respond(cmd, args);
+      if (answer !== undefined) return answer as Promise<unknown>;
+      if (cmd === 'connection_list' && server) {
+        return Promise.resolve([{ id: 'conn-1', profileId: 'server:a1:c1', name: 'Orders', viaMcp: false, server }]);
       }
+      if (cmd === 'execute_mql_query') return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+      if (cmd === 'list_indexes') return Promise.resolve([index]);
       return Promise.resolve([]);
     });
     const { fireEvent } = await import('@testing-library/react');
     renderWithProviders(<App />);
-    await screen.findByTestId('mock-sidebar');
+    await screen.findByTestId(server ? 'sidebar-conn-conn-1' : 'mock-sidebar');
     fireEvent.click(screen.getByTestId('select-collection-btn'));
     fireEvent.click(screen.getByTestId('select-index-btn'));
     fireEvent.click(await screen.findByTestId('edit-index-btn'));
+    return { calls, fireEvent };
+  };
+  const writes = (calls: any[]) =>
+    calls.filter((c) => ['delete_index', 'create_index', 'set_index_option', 'set_index_expiry'].includes(c.cmd));
+  const specIndex = (document: Record<string, unknown>) => ({
+    name: document.name, keys: JSON.stringify(document.key), unique: Boolean(document.unique), sparse: false,
+    hidden: Boolean(document.hidden), spec: JSON.stringify(document),
+  });
+
+  it('writes nothing when an edit changes nothing', async () => {
+    const { waitFor } = await import('@testing-library/react');
+    const { calls, fireEvent } = await editIndex(specIndex({ v: 2, key: { _fts: 'text', _ftsx: 1 }, name: 'email_1', weights: { t: 1 }, textIndexVersion: 3 }));
+    fireEvent.click(screen.getByTestId('save-index-btn'));
+    await waitFor(() => expect(screen.queryByTestId('index-modal')).not.toBeInTheDocument());
+    expect(writes(calls)).toEqual([]);
+  });
+
+  it('hides an index in place, keeping its build', async () => {
+    const { waitFor } = await import('@testing-library/react');
+    const { calls, fireEvent } = await editIndex(specIndex({ v: 2, key: { city: 1 }, name: 'email_1' }));
+    fireEvent.click(screen.getByTestId('hidden-checkbox'));
+    fireEvent.click(screen.getByTestId('save-index-btn'));
+    await waitFor(() => expect(screen.queryByTestId('index-modal')).not.toBeInTheDocument());
+    expect(writes(calls).map((c) => c.cmd)).toEqual(['set_index_option']);
+    expect(writes(calls)[0].args).toEqual({
+      id: 'conn-1', database: 'sales_db', collection: 'customers', indexName: 'email_1', option: 'hidden', value: true,
+    });
+  });
+
+  it('changes hidden and the expiry together in place', async () => {
+    const { waitFor } = await import('@testing-library/react');
+    const { calls, fireEvent } = await editIndex(specIndex({ key: { city: 1 }, name: 'email_1', expireAfterSeconds: 60 }));
+    fireEvent.click(screen.getByTestId('hidden-checkbox'));
+    fireEvent.change(screen.getByTestId('ttl-seconds-input'), { target: { value: '90' } });
+    fireEvent.click(screen.getByTestId('save-index-btn'));
+    await waitFor(() => expect(writes(calls).map((c) => c.cmd)).toEqual(['set_index_expiry', 'set_index_option']));
+  });
+
+  it('rebuilds with every option where the connection cannot change it in place', async () => {
+    const { waitFor } = await import('@testing-library/react');
+    const server = {
+      accountId: 'a1', accountName: 'Work', serverUrl: 'https://s', remoteId: 'c1', opClasses: ['read', 'ddl'],
+      apiVersion: 9, blockedCommands: ['set_index_option'], roleBlockedCommands: [],
+    };
+    const { calls, fireEvent } = await editIndex(
+      specIndex({ v: 2, key: { city: 1 }, name: 'email_1', collation: { locale: 'de' } }),
+      undefined,
+      server
+    );
+    fireEvent.click(screen.getByTestId('hidden-checkbox'));
+    fireEvent.click(screen.getByTestId('save-index-btn'));
+    await waitFor(() => expect(writes(calls).map((c) => c.cmd)).toEqual(['delete_index', 'create_index']));
+    expect(JSON.parse(writes(calls)[1].args.spec)).toEqual({
+      key: { city: 1 }, name: 'email_1', collation: { locale: 'de' }, hidden: true,
+    });
+  });
+
+  it('carries a partial filter and a TTL through a rebuild', async () => {
+    const { waitFor } = await import('@testing-library/react');
+    const { calls, fireEvent } = await editIndex(
+      specIndex({ v: 2, key: { city: 1 }, name: 'email_1', expireAfterSeconds: 60, partialFilterExpression: { archived: true } })
+    );
     fireEvent.click(screen.getByTestId('unique-checkbox'));
     fireEvent.click(screen.getByTestId('save-index-btn'));
+    await waitFor(() => expect(writes(calls).map((c) => c.cmd)).toEqual(['delete_index', 'create_index']));
+    expect(JSON.parse(writes(calls)[1].args.spec)).toEqual({
+      key: { city: 1 }, name: 'email_1', unique: true, expireAfterSeconds: 60, partialFilterExpression: { archived: true },
+    });
+  });
 
-    expect(await screen.findByText(/partial filter or is hidden/)).toBeInTheDocument();
-    expect(calls.some((c) => c.cmd === 'delete_index' || c.cmd === 'create_index')).toBe(false);
+  it('puts the old index back when the rebuild fails, and says so', async () => {
+    let creates = 0;
+    const old = { v: 2, key: { city: 1 }, name: 'email_1', collation: { locale: 'de' } };
+    const { calls, fireEvent } = await editIndex(specIndex(old), (cmd) => {
+      if (cmd === 'create_index' && ++creates === 1) return Promise.reject('E11000 duplicate key');
+      return undefined;
+    });
+    fireEvent.click(screen.getByTestId('unique-checkbox'));
+    fireEvent.click(screen.getByTestId('save-index-btn'));
+    expect(await screen.findByText(/put back as it was: E11000 duplicate key/)).toBeInTheDocument();
+    expect(writes(calls).map((c) => c.cmd)).toEqual(['delete_index', 'create_index', 'create_index']);
+    expect(JSON.parse(writes(calls)[2].args.spec)).toEqual({ key: { city: 1 }, name: 'email_1', collation: { locale: 'de' } });
+    expect(screen.getByTestId('index-modal')).toBeInTheDocument();
+  });
+
+  it('gives the old definition when it cannot be put back either', async () => {
+    const { fireEvent } = await editIndex(specIndex({ key: { city: 1 }, name: 'email_1' }), (cmd) =>
+      cmd === 'create_index' ? Promise.reject('connection lost') : undefined
+    );
+    fireEvent.click(screen.getByTestId('unique-checkbox'));
+    fireEvent.click(screen.getByTestId('save-index-btn'));
+    expect(await screen.findByText(/could not be put back: connection lost/)).toBeInTheDocument();
+    expect(screen.getByText(/"key":\{"city":1\}/)).toBeInTheDocument();
+  });
+
+  it('passes a commit quorum to the create', async () => {
+    const { waitFor } = await import('@testing-library/react');
+    const { calls, fireEvent } = await editIndex(specIndex({ key: { city: 1 }, name: 'email_1' }));
+    fireEvent.change(screen.getByTestId('index-commit-quorum'), { target: { value: 'majority' } });
+    fireEvent.click(screen.getByTestId('unique-checkbox'));
+    fireEvent.click(screen.getByTestId('save-index-btn'));
+    await waitFor(() => expect(writes(calls).at(-1)?.args.commitQuorum).toBe('majority'));
+  });
+
+  it('does not offer a commit quorum on a server connection', async () => {
+    await editIndex(specIndex({ key: { city: 1 }, name: 'email_1' }), undefined, {
+      accountId: 'a1', accountName: 'Work', serverUrl: 'https://s', remoteId: 'c1', opClasses: ['read', 'ddl'],
+      apiVersion: 9, blockedCommands: [], roleBlockedCommands: [],
+    });
+    expect(screen.queryByTestId('index-commit-quorum')).not.toBeInTheDocument();
+  });
+
+  describe('index options from the viewer', () => {
+    const openViewer = async (index: object, respond: (cmd: string, args: any) => unknown = () => undefined, server?: object) => {
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd, args) => {
+        calls.push({ cmd, args });
+        const answer = respond(cmd, args);
+        if (answer !== undefined) return answer as Promise<unknown>;
+        if (cmd === 'connection_list' && server) {
+          return Promise.resolve([{ id: 'conn-1', profileId: 'server:a1:c1', name: 'Orders', viaMcp: false, server }]);
+        }
+        if (cmd === 'execute_mql_query') return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+        if (cmd === 'list_indexes') return Promise.resolve([index]);
+        return Promise.resolve([]);
+      });
+      const { fireEvent } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId(server ? 'sidebar-conn-conn-1' : 'mock-sidebar');
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      fireEvent.click(screen.getByTestId('select-index-btn'));
+      await screen.findByTestId('index-viewer');
+      return { calls, fireEvent };
+    };
+    const plain = specIndex({ key: { city: 1 }, name: 'email_1' });
+    const options = (calls: any[]) => calls.filter((c) => c.cmd === 'set_index_option').map((c) => [c.args.option, c.args.value]);
+
+    it('hides an index', async () => {
+      const { waitFor } = await import('@testing-library/react');
+      const { calls, fireEvent } = await openViewer(plain);
+      fireEvent.click(await screen.findByTestId('hide-index-btn'));
+      await waitFor(() => expect(options(calls)).toEqual([['hidden', true]]));
+    });
+
+    it('says when an option cannot be changed', async () => {
+      const { fireEvent } = await openViewer(plain, (cmd) =>
+        cmd === 'set_index_option' ? Promise.reject('not authorized') : undefined
+      );
+      fireEvent.click(await screen.findByTestId('hide-index-btn'));
+      expect(await screen.findByText(/not authorized/)).toBeInTheDocument();
+    });
+
+    it('asks, then prepares and converts to unique', async () => {
+      const { waitFor } = await import('@testing-library/react');
+      const { calls, fireEvent } = await openViewer(plain);
+      fireEvent.click(await screen.findByTestId('convert-unique-btn'));
+      fireEvent.click(await screen.findByTestId('dialog-confirm'));
+      await waitFor(() => expect(options(calls)).toEqual([['prepareUnique', true], ['unique', true]]));
+    });
+
+    it('does nothing when the conversion is declined', async () => {
+      const { calls, fireEvent } = await openViewer(plain);
+      fireEvent.click(await screen.findByTestId('convert-unique-btn'));
+      fireEvent.click(await screen.findByTestId('dialog-cancel'));
+      await new Promise((r) => setTimeout(r, 20));
+      expect(options(calls)).toEqual([]);
+    });
+
+    it('says when duplicates stop the conversion, leaving it prepared', async () => {
+      const { calls, fireEvent } = await openViewer(plain, (cmd, args) =>
+        cmd === 'set_index_option' && args.option === 'unique' ? Promise.reject('Cannot convert the index to unique.') : undefined
+      );
+      fireEvent.click(await screen.findByTestId('convert-unique-btn'));
+      fireEvent.click(await screen.findByTestId('dialog-confirm'));
+      expect(await screen.findByText(/stays non-unique: Cannot convert the index to unique/)).toBeInTheDocument();
+      expect(options(calls)).toEqual([['prepareUnique', true], ['unique', true]]);
+    });
+
+    it('offers neither on a connection that cannot run them', async () => {
+      await openViewer(plain, undefined, {
+        accountId: 'a1', accountName: 'Work', serverUrl: 'https://s', remoteId: 'c1', opClasses: ['read', 'ddl'],
+        apiVersion: 9, blockedCommands: ['set_index_option'], roleBlockedCommands: [],
+      });
+      expect(screen.queryByTestId('hide-index-btn')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('convert-unique-btn')).not.toBeInTheDocument();
+    });
   });
 
   // The server would refuse the TTL only after the old index was dropped.
@@ -622,7 +803,7 @@ describe('App Component', () => {
     fireEvent.change(screen.getByTestId('ttl-seconds-input'), { target: { value: '60' } });
     fireEvent.click(screen.getByTestId('save-index-btn'));
 
-    expect(await screen.findByText(/needs MQLens API version 5, and this MQLens Server speaks 4/)).toBeInTheDocument();
+    expect(await screen.findByText(/need MQLens API version 5, and this MQLens Server speaks 4/)).toBeInTheDocument();
     expect(calls.some((c) => c.cmd === 'delete_index' || c.cmd === 'create_index')).toBe(false);
   });
 
@@ -674,7 +855,7 @@ describe('App Component', () => {
     });
     await waitFor(() => {
       const create = calls.find((c) => c.cmd === 'create_index');
-      expect(create?.args).toMatchObject({ indexName: 'email_1', keys: '{"city":1}', expireAfterSeconds: 7200 });
+      expect(JSON.parse(create?.args.spec)).toEqual({ key: { city: 1 }, name: 'email_1', expireAfterSeconds: 7200 });
     });
     expect(calls.some((c) => c.cmd === 'set_index_expiry')).toBe(false);
   });
@@ -714,12 +895,13 @@ describe('App Component', () => {
     await waitFor(() => {
       expect(screen.queryByTestId('index-modal')).not.toBeInTheDocument();
     });
-    expect(mockInvoke).toHaveBeenCalledWith('create_index', expect.objectContaining({
+    expect(mockInvoke).toHaveBeenCalledWith('create_index', {
       id: 'conn-1',
       database: 'sales_db',
       collection: 'customers',
-      indexName: 'custom_index',
-    }));
+      spec: JSON.stringify({ key: { _id: 1 }, name: 'custom_index' }),
+      commitQuorum: null,
+    });
 
     // Click Delete Index button in mock sidebar
     const deleteIndexBtn = screen.getByTestId('mock-delete-index-btn');
