@@ -75,6 +75,17 @@ describe('isEditable', () => {
     expect(isEditable(info('{"_fts":"text","_ftsx":1}'))).toBe(false);
   });
 
+  // JSON.parse moves these fields to the front, and embedded document equality
+  // depends on field order: a rebuild would index different documents.
+  it('refuses a document JavaScript would reorder anywhere in it', () => {
+    const edit = (filter: string) =>
+      isEditable(info('{"a":1}', `{"key":{"a":1},"name":"i","partialFilterExpression":${filter}}`));
+    expect(edit('{"tag":{"z":1,"0":2}}')).toBe(false);
+    expect(edit('{"$or":[{"tag":{"z":1,"0":2}},{"a":1}]}')).toBe(false);
+    expect(edit('{"tag":{"0":2}}')).toBe(true);
+    expect(edit('{"tag":{"z":1,"y":2},"a":{"$in":[1,2]}}')).toBe(true);
+  });
+
   // The form could not hold these as they are, and a save would change them.
   it('refuses keys the form cannot hold', () => {
     const edit = (key: Record<string, unknown>) => isEditable(info(JSON.stringify(key), JSON.stringify({ key, name: 'i' })));

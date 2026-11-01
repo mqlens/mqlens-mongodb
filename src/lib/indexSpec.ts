@@ -45,17 +45,24 @@ export const specOf = (info: IndexInfo): IndexDocument => {
   };
 };
 
+/** JavaScript moves a field called `2024` to the front of its object. */
+const reorders = (value: unknown): boolean => {
+  if (Array.isArray(value)) return value.some(reorders);
+  if (!isObject(value)) return false;
+  const fields = Object.keys(value);
+  return (fields.length > 1 && fields.some((field) => /^\d+$/.test(field))) || Object.values(value).some(reorders);
+};
+
 /** Whether the form can hold the index exactly. Without its document a rebuild
  *  would lose options it never saw, and could not put the index back. A key
- *  like `-2` has no row, and JavaScript moves a field called `2024` to the front
- *  of a compound key: either way a save would change the index. */
+ *  like `-2` has no row, and a reordered compound key or embedded document in a
+ *  filter is a different index: either way a save would change it. */
 export const isEditable = (info: IndexInfo): boolean => {
   if (info.spec === undefined) return false;
-  const keys = displayKeys(specOf(info));
-  const fields = Object.keys(keys);
+  const spec = specOf(info);
   return (
-    Object.values(keys).every((type) => KEY_TYPES.includes(type as IndexKeyType)) &&
-    (fields.length < 2 || !fields.some((field) => /^\d+$/.test(field)))
+    Object.values(displayKeys(spec)).every((type) => KEY_TYPES.includes(type as IndexKeyType)) &&
+    !reorders(spec)
   );
 };
 
