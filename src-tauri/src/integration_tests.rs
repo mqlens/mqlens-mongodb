@@ -516,6 +516,39 @@ mod integration {
     }
 
     #[tokio::test]
+    async fn it_index_refusals_leave_out_the_raw_response_real() {
+        use crate::db::metadata::{
+            create_index_spec_impl, set_index_expiry_impl, set_index_option_impl, IndexOption,
+        };
+        let Some((state, id, db)) = connect().await else {
+            return;
+        };
+        seed(&state, &id, &db, "docs", vec![doc! { "_id": 1, "a": 1 }, doc! { "_id": 2, "a": 1 }]).await;
+        let prepared = r#"{"key":{"a":1},"name":"a_1","prepareUnique":true}"#;
+        create_index_spec_impl(&state, &id, &db, "docs", prepared, None).await.unwrap();
+
+        // A refused conversion carries the id of every conflicting document in
+        // its response, which the driver would print as hex.
+        let duplicate = r#"{"key":{"a":1,"z":1},"name":"dup","unique":true}"#;
+        let refusals = [
+            (
+                set_index_option_impl(&state, &id, &db, "docs", "a_1", IndexOption::Unique, true).await,
+                "CannotConvertIndexToUnique",
+            ),
+            (create_index_spec_impl(&state, &id, &db, "docs", duplicate, None).await, "DuplicateKey"),
+            (set_index_expiry_impl(&state, &id, &db, "docs", "missing_1", 60).await, "IndexNotFound"),
+            (delete_index_impl(&state, &id, &db, "docs", "_id_").await, "cannot drop _id index"),
+        ];
+        for (result, expected) in refusals {
+            let err = result.unwrap_err();
+            assert!(err.contains(expected), "{err}");
+            assert!(!err.contains("server response"), "{err}");
+        }
+
+        cleanup(&state, &id, &db).await;
+    }
+
+    #[tokio::test]
     async fn it_document_crud_real() {
         let Some((state, id, db)) = connect().await else {
             return;

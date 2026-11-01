@@ -437,7 +437,7 @@ async fn set_index_expiry_inner(
         .run_command(set_expiry_command(collection, index_name, expire_after_seconds))
         .await
         .map(|_| ())
-        .map_err(|e| format!("Failed to change the index expiry: {}", e))
+        .map_err(|e| format!("Failed to change the index expiry: {}", e.kind))
 }
 
 pub async fn create_index_impl(
@@ -624,7 +624,7 @@ async fn create_from_spec(
         .run_command(create_indexes_command(collection, spec, commit_quorum))
         .await
         .map(|_| ())
-        .map_err(|e| format!("Failed to create index: {}", e))
+        .map_err(|e| format!("Failed to create index: {}", e.kind))
 }
 
 /// An option `collMod` changes on an index in place, named as MongoDB names it.
@@ -729,7 +729,8 @@ async fn set_index_option_inner(
         .run_command(set_option_command(collection, index_name, option, value))
         .await
         .map(|_| ())
-        .map_err(|e| format!("Failed to change the index: {}", e))
+        // Just the kind: a refused conversion's response holds every conflicting id.
+        .map_err(|e| format!("Failed to change the index: {}", e.kind))
 }
 
 pub async fn delete_index_impl(
@@ -799,7 +800,7 @@ async fn delete_index_inner(
     coll.drop_index(index_name)
         .await
         .map(|_| ())
-        .map_err(|e| format!("Failed to delete index: {}", e))
+        .map_err(|e| format!("Failed to delete index: {}", e.kind))
 }
 
 #[cfg(test)]
