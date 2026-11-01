@@ -313,7 +313,7 @@ test.describe('Query tools', () => {
     const modal = page.getByTestId('index-modal');
     await expect(modal).toBeVisible();
     const created = await callFrom(app, 'create_index', () => modal.getByTestId('save-index-btn').click());
-    expect(typeof created.keys === 'string' ? JSON.parse(created.keys) : created.keys).toEqual({ tier: 1 });
+    expect(JSON.parse(String(created.spec)).key).toEqual({ tier: 1 });
   });
 
   test('creates a view from a pipeline and opens it', async ({ app, page }) => {

@@ -220,6 +220,8 @@ const EXEMPT_HITS: Record<string, string[]> = {
     "label: 'BSON'",
   ],
   'src/components/IndexModal.tsx': [
+    // A commit quorum MongoDB itself names, typed as it is.
+    'placeholder="votingMembers"',
     // Example index-keys JSON syntax, matching CreateViewView's pipeline example.
     'placeholder=\'{ "',
   ],

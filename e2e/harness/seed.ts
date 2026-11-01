@@ -14,6 +14,8 @@ export interface IndexSeed {
   unique?: boolean;
   sparse?: boolean;
   expireAfterSeconds?: number;
+  /** Every other field of the index document. */
+  options?: Doc;
 }
 
 export interface CollectionSeed {

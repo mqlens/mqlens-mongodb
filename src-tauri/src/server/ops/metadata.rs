@@ -101,10 +101,24 @@ pub(crate) async fn list_indexes(
                 .await
         })
         .await?;
+    // The whole index document, from API version 5; empty before.
+    let mut specs = response
+        .indexes
+        .iter()
+        .map(|index| {
+            if index.spec_bson.is_empty() {
+                return Ok(mongodb::bson::Document::new());
+            }
+            mongodb::bson::from_slice(&index.spec_bson)
+                .map_err(|e| format!("MQLens Server sent an unreadable index {}: {e}", index.name))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    crate::db::metadata::with_simple_collation(&mut specs);
     response
         .indexes
         .into_iter()
-        .map(|index| {
+        .zip(specs)
+        .map(|(index, spec)| {
             // Written as local mode writes the driver's key document, straight
             // from the document so field order holds.
             let keys = ejson::doc_from_wire(&index.keys_json)?;
@@ -114,13 +128,6 @@ pub(crate) async fn list_indexes(
                 unique: index.unique,
                 sparse: index.sparse,
                 ..Default::default()
-            };
-            // The whole index document, from API version 5; empty before.
-            let spec = if index.spec_bson.is_empty() {
-                mongodb::bson::Document::new()
-            } else {
-                mongodb::bson::from_slice(&index.spec_bson)
-                    .map_err(|e| format!("MQLens Server sent an unreadable index {}: {e}", info.name))?
             };
             Ok(crate::db::metadata::with_spec_details(info, &spec))
         })
@@ -263,8 +270,31 @@ mod tests {
             indexes[0].partial_filter_expression.as_deref(),
             Some(r#"{"archived":false}"#)
         );
+        assert!(indexes[0].spec.as_deref().unwrap().contains("expireAfterSeconds"));
         assert_eq!(indexes[1].expire_after_seconds, None);
         assert!(!indexes[1].hidden);
+        assert_eq!(indexes[1].spec, None);
+    }
+
+    #[tokio::test]
+    async fn a_simple_collation_reads_the_same_through_the_server() {
+        use crate::server::pb::mqlens::v1::IndexInfo as PbIndexInfo;
+        let env = Env::new().await;
+        let listed = |spec: mongodb::bson::Document| PbIndexInfo {
+            name: spec.get_str("name").unwrap().to_string(),
+            keys_json: r#"{"a":{"$numberInt":"1"}}"#.to_string(),
+            spec_bson: mongodb::bson::to_vec(&spec).unwrap().into(),
+            ..Default::default()
+        };
+        env.fake.with(|s| {
+            s.indexes = vec![
+                listed(doc! { "key": { "_id": 1 }, "name": "_id_", "collation": { "locale": "en" } }),
+                listed(doc! { "key": { "a": 1 }, "name": "a_1" }),
+            ]
+        });
+        let (state, id) = connected(&env).await;
+        let indexes = list_indexes_impl(&state, &id, "orders", "customers").await.unwrap();
+        assert!(indexes[1].spec.as_deref().unwrap().contains(r#""locale":"simple""#));
     }
 
     // An index document that cannot be read is an error, not an index without

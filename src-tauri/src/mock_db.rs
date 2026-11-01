@@ -336,23 +336,22 @@ fn get_mock_data(database: &str, collection: &str) -> Vec<Value> {
 // Build a mock IndexInfo from a conventional index name (e.g. "email_1" -> { email: 1 }).
 // This name-parsing lives ONLY in mock data; real connections read the actual spec.
 fn mock_index(name: &str) -> crate::IndexInfo {
-    let (keys, unique) = if name == "_id_" {
-        (r#"{"_id":1}"#.to_string(), true)
+    use mongodb::bson::doc;
+    let key = if name == "_id_" {
+        doc! { "_id": 1 }
     } else {
         // Split a trailing _1 / _-1 direction off the field name.
         match name.rsplit_once('_') {
-            Some((field, dir)) if dir == "1" || dir == "-1" => {
-                (format!("{{\"{}\":{}}}", field, dir), false)
-            }
-            _ => (format!("{{\"{}\":1}}", name), false),
+            Some((field, "1")) => doc! { field: 1 },
+            Some((field, "-1")) => doc! { field: -1 },
+            _ => doc! { name: 1 },
         }
     };
-    crate::IndexInfo {
-        name: name.to_string(),
-        keys,
-        unique,
-        ..Default::default()
+    let mut spec = doc! { "v": 2, "key": key, "name": name };
+    if name == "_id_" {
+        spec.insert("unique", true);
     }
+    crate::db::metadata::index_info(&spec)
 }
 
 pub fn get_mock_indexes(db: &str, collection: &str) -> Vec<crate::IndexInfo> {

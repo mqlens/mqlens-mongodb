@@ -55,9 +55,9 @@ test.describe('Indexes', () => {
     await expect(modal).toHaveCount(0);
     const creates = await app.calls('create_index');
     expect(creates).toHaveLength(1);
-    const args = creates[0].args as { indexName: string; keys: unknown; unique: boolean };
-    expect(args).toMatchObject({ database: 'sales_db', collection: 'customers', indexName: 'tier_-1', unique: false });
-    expect(typeof args.keys === 'string' ? JSON.parse(args.keys) : args.keys).toEqual({ tier: -1 });
+    const args = creates[0].args as { spec: string };
+    expect(args).toMatchObject({ database: 'sales_db', collection: 'customers' });
+    expect(JSON.parse(args.spec)).toEqual({ key: { tier: -1 }, name: 'tier_-1' });
   });
 
   test('creates a TTL index and changes its expiry in place', async ({ app, page }) => {
@@ -72,7 +72,8 @@ test.describe('Indexes', () => {
     await modal.getByTestId('save-index-btn').click();
 
     await expect(modal).toHaveCount(0);
-    expect((await app.calls('create_index'))[0].args).toMatchObject({ indexName: 'tier_-1', expireAfterSeconds: 3600 });
+    const [created] = await app.calls('create_index');
+    expect(JSON.parse((created.args as { spec: string }).spec)).toEqual({ key: { tier: -1 }, name: 'tier_-1', expireAfterSeconds: 3600 });
     // Saving opens the new index.
     const viewer = view(page).getByTestId('index-viewer');
     await expect(viewer.getByTestId('index-ttl')).toHaveText('TTL 1 hour (3600 s)');

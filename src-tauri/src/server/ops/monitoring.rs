@@ -185,6 +185,7 @@ pub(crate) async fn current_ops(
             client: op.client,
             desc: op.desc,
             command: command_text(&op.command),
+            progress: None,
         })
         .collect();
     Ok(cap_current_ops(ops))

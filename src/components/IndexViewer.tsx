@@ -15,6 +15,10 @@ import {
   Loader2,
   HardDrive,
   Activity,
+  Eye,
+  EyeOff,
+  Fingerprint,
+  CircleOff,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -22,6 +26,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { formatBytes, formatDuration } from '@/lib/format';
+import { displayKeys, indexKind, isEditable, specOf, type IndexDocument, type IndexKind } from '@/lib/indexSpec';
 import type { IndexInfo } from './Sidebar';
 import type { IndexStatUi } from './StatsCards';
 import { useTranslation } from 'react-i18next';
@@ -33,17 +38,17 @@ interface IndexViewerProps {
   indexName: string;
   /** Bumped after an index is changed in place. */
   refreshKey?: number;
-  onEditIndex?: (
-    indexName: string,
-    keys: Record<string, number>,
-    unique: boolean,
-    sparse: boolean,
-    expireAfterSeconds?: number,
-    // A partial filter or hidden flag, which a rebuild would drop.
-    rebuildDrops?: boolean
-  ) => void;
+  onEditIndex?: (spec: IndexDocument) => void;
   onDeleteIndex?: (indexName: string) => void;
+  // Absent on a connection that cannot run them.
+  onSetIndexOption?: (option: 'hidden' | 'prepareUnique', value: boolean) => void;
+  onConvertToUnique?: () => void;
 }
+
+// What the card above the raw document shows, or that says nothing about the index.
+const OWN_ROWS = new Set([
+  'v', 'ns', 'key', 'name', 'unique', 'sparse', 'expireAfterSeconds', 'hidden', 'partialFilterExpression',
+]);
 
 export const IndexViewer: React.FC<IndexViewerProps> = ({
   connectionId,
@@ -53,6 +58,8 @@ export const IndexViewer: React.FC<IndexViewerProps> = ({
   refreshKey,
   onEditIndex,
   onDeleteIndex,
+  onSetIndexOption,
+  onConvertToUnique,
 }) => {
   const { t, i18n } = useTranslation('admin');
   const [copied, setCopied] = useState(false);
@@ -112,20 +119,20 @@ export const IndexViewer: React.FC<IndexViewerProps> = ({
   const statEntry = useMemo(() => stats?.find((s) => s.name === indexName) ?? null, [stats, indexName]);
 
   const indexSpecs = useMemo(() => {
-    let keyPattern: Record<string, number | string> = {};
-    if (info) {
-      try {
-        const parsed = JSON.parse(info.keys);
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          keyPattern = parsed;
-        }
-      } catch {
-        keyPattern = {};
-      }
-    }
-
+    const spec: IndexDocument = info ? specOf(info) : { key: {}, name: indexName };
+    const keyPattern = displayKeys(spec);
     const fieldCount = Object.keys(keyPattern).length;
-    const type = fieldCount > 1 ? t('indexViewer.type.compound') : t('indexViewer.type.singleField');
+    const kind = indexKind(keyPattern);
+    // Geo types are MongoDB's own names, so they stay untranslated.
+    const kindLabels: Record<IndexKind, string> = {
+      regular: t('indexViewer.type.singleField'),
+      compound: t('indexViewer.type.compound'),
+      text: t('sidebar:indexesView.type.text'),
+      hashed: t('sidebar:indexesView.type.hashed'),
+      wildcard: t('sidebar:indexesView.type.wildcard'),
+      '2dsphere': '2dsphere',
+      '2d': '2d',
+    };
     const unique = info?.unique ?? false;
     const sparse = info?.sparse ?? false;
     const isId = indexName === '_id_';
@@ -135,42 +142,23 @@ export const IndexViewer: React.FC<IndexViewerProps> = ({
           fields: Object.keys(keyPattern).join(', ') || t('indexViewer.labels.unknownFields'),
         });
 
-    const expireAfterSeconds = info?.expireAfterSeconds;
-    const hidden = info?.hidden ?? false;
-    const partialFilter = info?.partialFilterExpression;
-    let partialFilterExpression: unknown;
-    try {
-      partialFilterExpression = partialFilter === undefined ? undefined : JSON.parse(partialFilter);
-    } catch {
-      partialFilterExpression = partialFilter;
-    }
-
-    const rawJson = JSON.stringify(
-      {
-        v: 2,
-        key: keyPattern,
-        name: indexName,
-        ns: `${databaseName}.${collectionName}`,
-        unique: unique ? true : undefined,
-        sparse: sparse ? true : undefined,
-        expireAfterSeconds,
-        hidden: hidden ? true : undefined,
-        partialFilterExpression,
-      },
-      null,
-      2
-    );
-
-    return { keyPattern, type, unique, sparse, expireAfterSeconds, hidden, partialFilter, fieldCount, description, rawJson };
-  }, [info, indexName, databaseName, collectionName, t]);
-
-  const editableKeyPattern = useMemo(() => {
-    const out: Record<string, number> = {};
-    Object.entries(indexSpecs.keyPattern).forEach(([field, dir]) => {
-      out[field] = dir === -1 || dir === '-1' ? -1 : typeof dir === 'number' ? dir : 1;
-    });
-    return out;
-  }, [indexSpecs.keyPattern]);
+    return {
+      spec,
+      keyPattern,
+      kind,
+      type: kindLabels[kind],
+      unique,
+      sparse,
+      expireAfterSeconds: info?.expireAfterSeconds,
+      hidden: info?.hidden ?? false,
+      partialFilter: info?.partialFilterExpression,
+      prepareUnique: spec.prepareUnique === true,
+      otherOptions: Object.entries(spec).filter(([option]) => !OWN_ROWS.has(option)),
+      fieldCount,
+      description,
+      rawJson: JSON.stringify(spec, null, 2),
+    };
+  }, [info, indexName, t]);
 
   const handleCopy = () => {
     navigator.clipboard.writeText(indexSpecs.rawJson);
@@ -255,23 +243,44 @@ export const IndexViewer: React.FC<IndexViewerProps> = ({
             </div>
           </div>
 
-          {indexName !== '_id_' && (onEditIndex || onDeleteIndex) && (
-            <div className="flex items-center gap-2">
-              {onEditIndex && (
+          {indexName !== '_id_' && (onEditIndex || onDeleteIndex || onSetIndexOption || onConvertToUnique) && (
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {onSetIndexOption && (
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
-                  onClick={() =>
-                    onEditIndex(
-                      indexName,
-                      editableKeyPattern,
-                      indexSpecs.unique,
-                      indexSpecs.sparse,
-                      indexSpecs.expireAfterSeconds,
-                      indexSpecs.hidden || indexSpecs.partialFilter !== undefined
-                    )
-                  }
+                  onClick={() => onSetIndexOption('hidden', !indexSpecs.hidden)}
+                  data-testid="hide-index-btn"
+                >
+                  {indexSpecs.hidden ? <Eye size={13} /> : <EyeOff size={13} />}
+                  {indexSpecs.hidden ? t('indexViewer.actions.unhideIndex') : t('indexViewer.actions.hideIndex')}
+                </Button>
+              )}
+              {onConvertToUnique && !indexSpecs.unique && ['regular', 'compound'].includes(indexSpecs.kind) && (
+                <Button type="button" variant="outline" size="sm" onClick={onConvertToUnique} data-testid="convert-unique-btn">
+                  <Fingerprint size={13} />
+                  {t('indexViewer.actions.convertToUnique')}
+                </Button>
+              )}
+              {onSetIndexOption && indexSpecs.prepareUnique && !indexSpecs.unique && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onSetIndexOption('prepareUnique', false)}
+                  data-testid="stop-prepare-unique-btn"
+                >
+                  <CircleOff size={13} />
+                  {t('indexViewer.actions.stopPrepareUnique')}
+                </Button>
+              )}
+              {onEditIndex && info && isEditable(info) && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onEditIndex(indexSpecs.spec)}
                   title={t('indexViewer.actions.editIndex')}
                   data-testid="edit-index-btn"
                 >
@@ -306,7 +315,7 @@ export const IndexViewer: React.FC<IndexViewerProps> = ({
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-lg font-semibold text-foreground">{indexSpecs.type}</div>
+              <div className="text-lg font-semibold text-foreground" data-testid="index-kind">{indexSpecs.type}</div>
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {Object.entries(indexSpecs.keyPattern).map(([key, dir]) => {
                   const isDesc = dir === -1 || dir === '-1';
@@ -452,6 +461,14 @@ export const IndexViewer: React.FC<IndexViewerProps> = ({
                   </span>
                 </div>
               )}
+              {indexSpecs.otherOptions.map(([option, value]) => (
+                <div key={option} className="flex items-center justify-between gap-4 text-xs">
+                  <span className="font-mono text-muted-foreground">{option}</span>
+                  <span className="select-text break-all font-mono text-foreground" data-testid={`index-option-${option}`}>
+                    {typeof value === 'string' ? value : JSON.stringify(value)}
+                  </span>
+                </div>
+              ))}
               <div className="flex items-center justify-between gap-4 text-xs">
                 <span className="text-muted-foreground">{t('indexViewer.properties.operationalStatus')}</span>
                 <Badge variant="success">{t('indexViewer.properties.active')}</Badge>

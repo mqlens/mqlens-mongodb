@@ -23,6 +23,8 @@ export interface CurrentOp {
   client: string;
   desc: string;
   command: string;
+  // A long-running operation's own count, such as an index build's documents.
+  progress?: { done: number; total: number };
 }
 
 export interface ProfilingStatus {

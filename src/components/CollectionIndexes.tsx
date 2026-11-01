@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle, ArrowDown, ArrowUp, Edit, KeyRound, Loader2, Plus, Trash2 } from 'lucide-react';
@@ -6,6 +6,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { formatBytes, formatDuration } from '@/lib/format';
+import { displayKeys, indexBuilds, indexKind, isEditable, specOf, type IndexBuild, type IndexDocument, type IndexKind } from '@/lib/indexSpec';
+import { currentOps } from '@/lib/monitoringApi';
 import type { IndexInfo } from './Sidebar';
 import type { IndexStatUi } from './StatsCards';
 
@@ -17,50 +19,17 @@ interface CollectionIndexesProps {
   refreshKey?: number;
   onOpenIndex: (indexName: string) => void;
   onCreateIndex?: () => void;
-  onEditIndex?: (
-    indexName: string,
-    keys: Record<string, number>,
-    unique: boolean,
-    sparse: boolean,
-    expireAfterSeconds?: number,
-    // A partial filter or hidden flag, which a rebuild would drop.
-    rebuildDrops?: boolean
-  ) => void;
+  onEditIndex?: (spec: IndexDocument) => void;
   onDeleteIndex?: (indexName: string) => void;
 }
 
 type SortKey = 'name' | 'size' | 'usage';
-type KeyPattern = Record<string, number | string>;
 
-const parseKeys = (keys: string): KeyPattern => {
-  try {
-    const parsed = JSON.parse(keys);
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
-  } catch {
-    return {};
-  }
-};
+// How often a running build is checked on, and how often one is looked for.
+const BUILD_POLL_MS = 3000;
+const IDLE_POLL_MS = 15000;
 
-type IndexKind = 'regular' | 'compound' | 'text' | '2dsphere' | '2d' | 'hashed' | 'wildcard';
-
-const indexKind = (keys: KeyPattern): IndexKind => {
-  const fields = Object.keys(keys);
-  const values = Object.values(keys);
-  if (values.includes('text')) return 'text';
-  if (values.includes('2dsphere')) return '2dsphere';
-  if (values.includes('2d')) return '2d';
-  if (values.includes('hashed')) return 'hashed';
-  if (fields.some((f) => f === '$**' || f.endsWith('.$**'))) return 'wildcard';
-  return fields.length > 1 ? 'compound' : 'regular';
-};
-
-/** Editing drops and re-creates the index from ±1 keys, so only a plain
- *  ascending/descending index survives it; a 2dsphere, text or hashed key
- *  would come back as `1`. */
-const isEditable = (keys: KeyPattern): boolean =>
-  Object.values(keys).every((d) => d === 1 || d === -1 || d === '1' || d === '-1');
-
-const keyChip = (dir: number | string): string =>
+const keyChip = (dir: unknown): string =>
   dir === 1 || dir === '1' ? '↑' : dir === -1 || dir === '-1' ? '↓' : String(dir);
 
 export const CollectionIndexes: React.FC<CollectionIndexesProps> = ({
@@ -79,6 +48,9 @@ export const CollectionIndexes: React.FC<CollectionIndexesProps> = ({
   const [stats, setStats] = useState<IndexStatUi[] | null>(null);
   const [statsError, setStatsError] = useState<string | null>(null);
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean } | null>(null);
+  const [builds, setBuilds] = useState<IndexBuild[]>([]);
+  const [buildsFinished, setBuildsFinished] = useState(0);
+  const building = useRef(false);
   // Geo types are MongoDB's own names, so they stay untranslated.
   const kindLabel: Record<IndexKind, string> = {
     regular: t('indexesView.type.regular'),
@@ -115,14 +87,44 @@ export const CollectionIndexes: React.FC<CollectionIndexesProps> = ({
     return () => {
       cancelled = true;
     };
+  }, [connectionId, databaseName, collectionName, refreshKey, buildsFinished]);
+
+  // Not every account may read operations, and the indexes show either way.
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const check = async () => {
+      let running: IndexBuild[];
+      try {
+        running = indexBuilds(await currentOps(connectionId), `${databaseName}.${collectionName}`);
+      } catch {
+        // One failed look at a running build says nothing about the build.
+        if (!cancelled && building.current) timer = setTimeout(check, BUILD_POLL_MS);
+        return;
+      }
+      if (cancelled) return;
+      setBuilds(running);
+      if (building.current && running.length === 0) setBuildsFinished((n) => n + 1);
+      building.current = running.length > 0;
+      timer = setTimeout(check, running.length > 0 ? BUILD_POLL_MS : IDLE_POLL_MS);
+    };
+    void check();
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, [connectionId, databaseName, collectionName, refreshKey]);
 
   const rows = useMemo(() => {
-    const merged = (indexes ?? []).map((info) => ({
-      info,
-      keys: parseKeys(info.keys),
-      stat: stats?.find((s) => s.name === info.name) ?? null,
-    }));
+    const merged = (indexes ?? []).map((info) => {
+      const spec = specOf(info);
+      return {
+        info,
+        spec,
+        keys: displayKeys(spec),
+        stat: stats?.find((s) => s.name === info.name) ?? null,
+      };
+    });
     if (!sort) return merged;
     const value = (r: (typeof merged)[number]) =>
       sort.key === 'size' ? (r.stat?.sizeBytes ?? -1) : (r.stat?.ops ?? -1);
@@ -164,6 +166,20 @@ export const CollectionIndexes: React.FC<CollectionIndexesProps> = ({
           </Button>
         )}
       </div>
+      {builds.length > 0 && (
+        <div className="flex flex-col gap-1 border-b border-border bg-primary/10 px-4 py-2 text-xs text-primary" data-testid="index-builds">
+          {builds.map((build) => (
+            <div key={String(build.opid)} className="flex items-center gap-2">
+              <Loader2 size={13} className="shrink-0 animate-spin" />
+              <span className="select-text">
+                {build.percent === null
+                  ? t('indexesView.builds.running', { names: build.names.join(', '), seconds: build.secsRunning })
+                  : t('indexesView.builds.progress', { names: build.names.join(', '), percent: build.percent, seconds: build.secsRunning })}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
       {body}
     </div>
   );
@@ -213,7 +229,7 @@ export const CollectionIndexes: React.FC<CollectionIndexesProps> = ({
             </tr>
           </thead>
           <tbody>
-            {rows.map(({ info, keys, stat }) => {
+            {rows.map(({ info, spec, keys, stat }) => {
               const isId = info.name === '_id_';
               return (
                 <tr
@@ -275,7 +291,7 @@ export const CollectionIndexes: React.FC<CollectionIndexesProps> = ({
                   <td className="px-4 py-1.5">
                     {!isId && (
                       <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
-                        {onEditIndex && isEditable(keys) && (
+                        {onEditIndex && isEditable(info) && (
                           <Button
                             type="button"
                             variant="ghost"
@@ -284,18 +300,7 @@ export const CollectionIndexes: React.FC<CollectionIndexesProps> = ({
                             title={t('indexesView.actions.edit')}
                             aria-label={t('indexesView.actions.edit')}
                             data-testid={`edit-index-${info.name}`}
-                            onClick={() =>
-                              onEditIndex(
-                                info.name,
-                                Object.fromEntries(
-                                  Object.entries(keys).map(([f, d]) => [f, Number(d)])
-                                ),
-                                info.unique,
-                                info.sparse,
-                                info.expireAfterSeconds,
-                                Boolean(info.hidden) || info.partialFilterExpression !== undefined
-                              )
-                            }
+                            onClick={() => onEditIndex(spec)}
                           >
                             <Edit size={12} />
                           </Button>

@@ -81,7 +81,7 @@ test.describe('Indexes view', () => {
     await expect(row(page, 'all_wild')).toContainText('Wildcard');
     // Keys the app cannot read leave the row with no chips, not a crash.
     await expect(row(page, 'garbled')).toContainText('Regular');
-    // Editing re-creates from ±1 keys, so special types offer no edit.
+    // Listed without their documents, a rebuild could not keep their options.
     await expect(overview(page).getByTestId('edit-index-loc_2dsphere')).toHaveCount(0);
 
     await overview(page).getByRole('button', { name: 'Name', exact: true }).click();
@@ -120,11 +120,15 @@ test.describe('Indexes view', () => {
     await expect(viewer).toContainText('"partialFilterExpression"');
   });
 
-  test('will not rebuild an index whose partial filter the edit would drop', async ({ app, page }) => {
+  test('keeps a partial filter through a rebuild', async ({ app, page }) => {
     await page.evaluate(() => {
+      const spec = { v: 2, key: { tier: 1 }, name: 'tier_1', partialFilterExpression: { tier: 'Premium' } };
       window.__MQLENS_E2E__!.register({
         list_indexes: () => [
-          { name: 'tier_1', keys: '{"tier":1}', unique: false, sparse: false, partialFilterExpression: '{"tier":"Premium"}' },
+          {
+            name: 'tier_1', keys: '{"tier":1}', unique: false, sparse: false,
+            partialFilterExpression: '{"tier":"Premium"}', spec: JSON.stringify(spec),
+          },
         ],
       });
     });
@@ -134,8 +138,11 @@ test.describe('Indexes view', () => {
     await modal.getByTestId('unique-checkbox').check();
     await modal.getByTestId('save-index-btn').click();
 
-    await expect(page.getByTestId('dialog-toast').filter({ hasText: 'has a partial filter or is hidden' })).toBeVisible();
-    expect(await app.calls('delete_index')).toHaveLength(0);
+    await expect(modal).toHaveCount(0);
+    const [created] = await app.calls('create_index');
+    expect(JSON.parse((created.args as { spec: string }).spec)).toEqual({
+      key: { tier: 1 }, name: 'tier_1', unique: true, partialFilterExpression: { tier: 'Premium' },
+    });
   });
 
   test('says when a collection has no indexes', async ({ page }) => {
@@ -221,9 +228,28 @@ test.describe('Indexes view on an MQLens Server connection', () => {
     await modal.getByTestId('save-index-btn').click();
 
     await expect(
-      page.getByTestId('dialog-toast').filter({ hasText: 'needs MQLens API version 5, and this MQLens Server speaks 4' })
+      page.getByTestId('dialog-toast').filter({ hasText: 'need MQLens API version 5, and this MQLens Server speaks 4' })
     ).toBeVisible();
     expect(await app.calls('delete_index')).toHaveLength(0);
+  });
+
+  test('rebuilds to hide an index where the server cannot do it in place', async ({ app, page }) => {
+    const connection = { ...ORDERS, apiVersion: 9, blockedCommands: ['set_index_option'] };
+    await connectOrders(app, page, { ...WORK, connections: [connection] });
+    await openOverview(page);
+    await overview(page).getByTestId('edit-index-tier_1').click();
+    const modal = page.getByTestId('index-modal');
+    await expect(modal.getByTestId('index-commit-quorum')).toHaveCount(0);
+    await modal.getByTestId('hidden-checkbox').check();
+    await modal.getByTestId('save-index-btn').click();
+
+    await expect(modal).toHaveCount(0);
+    expect(await app.calls('set_index_option')).toHaveLength(0);
+    expect(await app.calls('delete_index')).toHaveLength(1);
+    const viewer = view(page).getByTestId('index-viewer');
+    await expect(viewer.getByTestId('index-hidden')).toBeVisible();
+    await expect(viewer.getByTestId('hide-index-btn')).toHaveCount(0);
+    await expect(viewer.getByTestId('convert-unique-btn')).toHaveCount(0);
   });
 
   test('shows the server refusing to list them', async ({ app, page }) => {

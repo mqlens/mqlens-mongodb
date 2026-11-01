@@ -219,6 +219,7 @@ pub(crate) const GUARDED_WRITE_COMMANDS: &[&str] = &[
     "run_mongosh_script",
     "create_index",
     "set_index_expiry",
+    "set_index_option",
     "delete_index",
     "delete_document",
     "delete_many",
