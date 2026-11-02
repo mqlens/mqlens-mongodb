@@ -79,9 +79,9 @@ not as JSON. The known differences:
   it runs. **Stop** ends the shell and starts a fresh one.
 - **A script is staged in the temp directory of the server's host.** That
   directory must be writable: a script that cannot be written there does not
-  run at all. The file is readable only by the server's user and is removed
-  when the script ends; a script ended by **Stop** leaves it behind, as mongosh
-  is killed before it can clean up.
+  run at all. The file is readable only by the server's user, which every shell
+  on that server runs as, and is removed when the script ends; a script ended
+  by **Stop** leaves it behind, as mongosh is killed before it can clean up.
 - **Ids that are themselves type-wrapper-shaped documents.** An inserted,
   upserted or GridFS file `_id` comes back as Extended JSON. So an `_id` that
   is itself a document like `{"$oid": …}` cannot be told apart from the type
