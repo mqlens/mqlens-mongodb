@@ -20,7 +20,7 @@
 //! `explain_mql_query_impl`, `explain_aggregate_query_impl`) already
 //! produces *relaxed* MongoDB Extended JSON — the `mongodb::bson::Document`
 //! -> `serde_json::Value` conversion in `db/query.rs`/`db/aggregate.rs`
-//! (`serde_json::to_value(&doc)`) goes through `bson` 2.x's `Serialize`
+//! (`crate::db::ui_json`) goes through `bson` 2.x's `Serialize`
 //! impl, which emits `$oid`/`$date`/`$numberLong`/etc. wrappers rather than
 //! bson-crate-internal representations. This module never re-encodes that —
 //! `find`/`aggregate` re-parse each already-relaxed-EJSON document string

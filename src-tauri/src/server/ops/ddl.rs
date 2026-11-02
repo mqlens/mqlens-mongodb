@@ -40,7 +40,7 @@ pub(crate) async fn get_collection_options(
     // both.
     let validator = ejson::doc_from_wire(&options.validator)?;
     Ok(CollectionValidation {
-        validator: serde_json::to_string_pretty(&validator)
+        validator: serde_json::to_string_pretty(&ejson::ui_json(&validator)?)
             .map_err(|e| format!("Failed to serialize validator: {}", e))?,
         validation_level: options.validation_level,
         validation_action: options.validation_action,

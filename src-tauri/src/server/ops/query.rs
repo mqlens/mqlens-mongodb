@@ -171,8 +171,8 @@ pub(crate) async fn explain(
         })
         .await?;
     let plan = ejson::doc_from_wire(&response.plan_json)?;
-    let json = serde_json::to_value(&plan).map_err(|e| format!("BSON to JSON error: {e}"))?;
-    serde_json::to_string_pretty(&json).map_err(|e| format!("BSON to JSON error: {e}"))
+    serde_json::to_string_pretty(&ejson::ui_json(&plan)?)
+        .map_err(|e| format!("BSON to JSON error: {e}"))
 }
 
 async fn run_pipeline(
@@ -237,10 +237,9 @@ mod tests {
     use crate::server::session::STREAM_IDLE_TIMEOUT;
     use mongodb::bson::{doc, Bson, Document};
 
-    /// What local mode returns for one document: `serde_json::to_value` of
-    /// the driver's document, then `to_string`.
+    /// What local mode returns for one document.
     fn as_local_mode_shows(doc: &Document) -> String {
-        serde_json::to_string(&serde_json::to_value(doc).unwrap()).unwrap()
+        crate::db::ui_string(doc).unwrap()
     }
 
     fn many(n: usize) -> Vec<Document> {

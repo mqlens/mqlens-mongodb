@@ -22,7 +22,7 @@ mod integration {
         get_collection_options_impl, set_validator_impl,
         AppState, CopyTargetRef,
     };
-    use mongodb::bson::{doc, Document};
+    use mongodb::bson::{doc, spec::BinarySubtype, Binary, Bson, Document};
 
     fn test_mongo_uri() -> Option<String> {
         std::env::var("MQLENS_TEST_MONGO_URI")
@@ -179,6 +179,67 @@ mod integration {
             explain.contains("queryPlanner") || explain.contains("winningPlan"),
             "explain output should include a query plan"
         );
+
+        cleanup(&state, &id, &db).await;
+    }
+
+    // Find and aggregate both give the viewer binary as `$binary`, not as a
+    // list of byte values, so it can display it and an edit can save it.
+    #[tokio::test]
+    async fn it_binary_is_read_as_binary_and_survives_a_whole_document_save() {
+        let Some((state, id, db)) = connect().await else {
+            return;
+        };
+        let blob = Binary {
+            subtype: BinarySubtype::Generic,
+            bytes: vec![1, 2, 3],
+        };
+        seed(
+            &state,
+            &id,
+            &db,
+            "blobs",
+            vec![doc! { "_id": 1, "blob": blob.clone(), "a.b": 1 }],
+        )
+        .await;
+        let want = serde_json::json!({ "$binary": { "base64": "AQID", "subType": "00" } });
+
+        let found = execute_mql_query_impl(&state, &id, &db, "blobs", "{}", "{}", "{}", 1, 0)
+            .await
+            .expect("real find");
+        let shown: serde_json::Value = serde_json::from_str(&found[0]).unwrap();
+        assert_eq!(shown["blob"], want, "find");
+
+        let rows = execute_aggregate_impl(&state, &id, &db, "blobs", r#"[{"$match":{}}]"#, false)
+            .await
+            .expect("real aggregate");
+        let row: serde_json::Value = serde_json::from_str(&rows[0]).unwrap();
+        assert_eq!(row["blob"], want, "aggregate");
+
+        // A dotted field name cannot be updated in place, so this save replaces
+        // the whole document with what the viewer holds.
+        let mut edited = shown.clone();
+        edited["a.b"] = serde_json::json!(2);
+        update_document_impl(
+            &state,
+            &id,
+            &db,
+            "blobs",
+            r#"{"_id":1}"#,
+            &shown.to_string(),
+            &edited.to_string(),
+            Some("{}"),
+        )
+        .await
+        .expect("whole document save");
+        let saved = client_of(&state, &id)
+            .database(&db)
+            .collection::<Document>("blobs")
+            .find_one(doc! { "_id": 1 })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(saved.get("blob"), Some(&Bson::Binary(blob)));
 
         cleanup(&state, &id, &db).await;
     }

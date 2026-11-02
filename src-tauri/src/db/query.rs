@@ -133,9 +133,7 @@ async fn execute_mql_query_inner(
     use futures::stream::StreamExt;
     while let Some(result) = cursor.next().await {
         let doc = crate::db::stored(result.map_err(|e| format!("Cursor read error: {}", e))?)?;
-        let json_val: serde_json::Value =
-            serde_json::to_value(&doc).map_err(|e| format!("BSON to JSON error: {}", e))?;
-        results.push(serde_json::to_string(&json_val).unwrap());
+        results.push(crate::db::ui_string(&doc)?);
     }
 
     Ok(results)
@@ -329,8 +327,7 @@ async fn explain_mql_query_impl_inner(
         .await
         .map_err(|e| format!("Explain failed: {}", e))?;
 
-    let json_val: serde_json::Value =
-        serde_json::to_value(&explain_result).map_err(|e| format!("BSON to JSON error: {}", e))?;
+    let json_val = crate::db::ui_json(&explain_result)?;
 
     Ok(serde_json::to_string_pretty(&json_val).unwrap())
 }

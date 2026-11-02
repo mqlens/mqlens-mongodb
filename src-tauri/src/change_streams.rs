@@ -282,7 +282,7 @@ fn now_ms() -> u64 {
 }
 
 fn to_json(doc: Option<&Document>) -> Option<serde_json::Value> {
-    doc.and_then(|d| serde_json::to_value(d).ok())
+    doc.and_then(|d| crate::db::ui_json(d).ok())
 }
 
 /// One change event as the server sent it, flattened into the shape the
@@ -1345,10 +1345,34 @@ pub async fn stop_change_stream(
 #[cfg(test)]
 mod raw_event_tests {
     use super::flatten_raw;
-    use mongodb::bson::{doc, DateTime, RawDocumentBuf};
+    use mongodb::bson::{doc, spec::BinarySubtype, Binary, DateTime, RawDocumentBuf};
 
     fn raw(event: mongodb::bson::Document) -> RawDocumentBuf {
         RawDocumentBuf::from_document(&event).unwrap()
+    }
+
+    // Binary in an event reads as it does in a query result, not as a list of
+    // byte values.
+    #[test]
+    fn an_event_shows_binary_as_extended_json() {
+        let event = raw(doc! {
+            "_id": { "_data": "8264" },
+            "operationType": "insert",
+            "ns": { "db": "shop", "coll": "orders" },
+            "documentKey": { "_id": 1 },
+            "fullDocument": {
+                "_id": 1,
+                "blob": Binary { subtype: BinarySubtype::Generic, bytes: vec![1, 2, 3] },
+            },
+            "wallTime": DateTime::from_millis(1_700_000_000_000),
+        });
+
+        let (_, flat) = flatten_raw(&event, "shop").unwrap();
+
+        assert_eq!(
+            flat.full_document.unwrap()["blob"],
+            serde_json::json!({ "$binary": { "base64": "AQID", "subType": "00" } })
+        );
     }
 
     // An event's bodies show the documents as stored: a sub-document whose

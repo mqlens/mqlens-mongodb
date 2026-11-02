@@ -1304,8 +1304,7 @@ async fn update_document_inner(
     let attempted = Some(match &plan {
         WritePlan::Update(update) => AppliedWrite {
             op: "updateOne",
-            payload: serde_json::to_string(&mongodb::bson::Bson::Document(update.clone()))
-                .unwrap_or_else(|_| "{}".into()),
+            payload: crate::db::ui_string(update).unwrap_or_else(|_| "{}".into()),
         },
         WritePlan::Replace => AppliedWrite {
             op: "replaceOne",
