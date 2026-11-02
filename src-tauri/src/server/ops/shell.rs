@@ -354,6 +354,35 @@ mod tests {
         assert!(ended(&env, 1).await, "the server's shell kept running");
     }
 
+    // A tab that reopens learns a run has ended by waiting on this lock, so
+    // the run keeps it from staging to the end. Handed over in between, the
+    // tab would be told the shell is idle with the script still to run, and
+    // lose its Stop.
+    #[tokio::test]
+    async fn a_script_keeps_the_shell_until_it_ends() {
+        let env = Env::new().await;
+        let (state, id, session) = shell(&env).await;
+        let tab = crate::get_mongosh_session(&state, &session).unwrap();
+        let held = tab.command_lock.lock().await;
+
+        let running = tokio::spawn(async move {
+            script(&state, &id, &session, "print(1)\nprint(2)").await
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let reopened = {
+            let (tab, fake) = (tab.clone(), env.fake.clone());
+            tokio::spawn(async move {
+                let _idle = tab.command_lock.lock().await;
+                fake.with(|s| s.shell_loaded.len())
+            })
+        };
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        drop(held);
+
+        assert_eq!(reopened.await.unwrap(), 1, "idle before the script ran");
+        running.await.unwrap().unwrap();
+    }
+
     // Recorded as a local script is: what ran, and how it went.
     #[tokio::test]
     async fn a_script_is_audited() {
@@ -361,7 +390,7 @@ mod tests {
         let (state, id, session) = shell(&env).await;
         let dir = tempfile::tempdir().unwrap();
         let audit = crate::audit::AuditSession::new(dir.path().join("audit.log.enc"));
-        audit.open([5u8; 32]).unwrap();
+        audit.open(rand::random::<[u8; 32]>()).unwrap();
         audit.set_policy(crate::audit::AuditPolicy {
             enabled: true,
             level: crate::audit::AuditLevel::C,

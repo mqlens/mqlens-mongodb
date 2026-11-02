@@ -623,6 +623,14 @@ async fn run_mongosh_command_on_session(
     command: &str,
 ) -> Result<MongoshCommandOutput, String> {
     let _command_guard = session.command_lock.lock().await;
+    run_mongosh_command_locked(session, command).await
+}
+
+/// A command on a session whose `command_lock` the caller holds.
+async fn run_mongosh_command_locked(
+    session: &MongoshSession,
+    command: &str,
+) -> Result<MongoshCommandOutput, String> {
     let marker = format!("{MONGOSH_MARKER_PREFIX}{}__", Uuid::new_v4().simple());
     let recovered = format!("{MONGOSH_MARKER_PREFIX}{}__", Uuid::new_v4().simple());
 
@@ -1324,6 +1332,8 @@ async fn run_mongosh_script_on_session(
     session: &MongoshSession,
     script: &str,
 ) -> Result<MongoshCommandOutput, String> {
+    // One command to whatever waits on this lock, however many it takes to run.
+    let _command_guard = session.command_lock.lock().await;
     let remote = matches!(*session.child.lock().await, MongoshProcess::Remote(_));
     if remote {
         return run_mongosh_script_on_server(session, script).await;
@@ -1339,7 +1349,7 @@ async fn run_mongosh_load_line(
     session: &MongoshSession,
     path: &str,
 ) -> Result<MongoshCommandOutput, String> {
-    let mut output = run_mongosh_command_on_session(session, &mongosh_load_line(path)).await?;
+    let mut output = run_mongosh_command_locked(session, &mongosh_load_line(path)).await?;
     if output.stdout.last().is_some_and(String::is_empty) {
         output.stdout.pop();
     }
@@ -1369,7 +1379,7 @@ async fn run_mongosh_script_on_server(
             )
         })
         .collect();
-    let staged = run_mongosh_command_on_session(session, &stage.join("\n")).await?;
+    let staged = run_mongosh_command_locked(session, &stage.join("\n")).await?;
     let failure = staged
         .stdout
         .iter()
@@ -1377,7 +1387,7 @@ async fn run_mongosh_script_on_server(
         .find(|line| line.contains("Uncaught"));
     if let Some(failure) = failure {
         let remove = format!("require('fs').rmSync({path}, {{ force: true }})");
-        run_mongosh_command_on_session(session, &remove).await?;
+        run_mongosh_command_locked(session, &remove).await?;
         return Ok(MongoshCommandOutput {
             stdout: Vec::new(),
             stderr: vec![failure.replace('\r', "")],
