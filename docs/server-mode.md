@@ -59,8 +59,6 @@ on top of what your role allows.
 
 These are disabled on server connections:
 
-- Running a multi-line script as a one-shot `mongosh --file` program. The shell
-  itself works, and multi-line input goes to its live session instead.
 - AI agents over MCP: server connections are never offered to them.
 
 ## How it differs from local mode
@@ -71,9 +69,19 @@ not as JSON. The known differences:
 
 - **The shell runs the server's mongosh.** Its startup banner says
   `Using Mongosh: on MQLens Server`, because the server does not report its
-  mongosh version. Multi-line input runs in the live session, so a script that
-  calls `quit()` ends the shell. If the server ends the shell with an error,
-  the error is shown.
+  mongosh version. If the server ends the shell with an error, the error is
+  shown.
+- **A multi-line script runs in the tab's live shell.** It runs as one script,
+  as it does locally: it is parsed whole, so a syntax error runs none of it,
+  and it stops at its first error. `quit()` ends the script, not the shell,
+  and `quit(n)` reports no exit code. Being in the live shell, what a script
+  declares stays for the next command, and a script holds up the shell while
+  it runs. **Stop** ends the shell and starts a fresh one.
+- **A script is staged in the temp directory of the server's host.** That
+  directory must be writable: a script that cannot be written there does not
+  run at all. The file is readable only by the server's user and is removed
+  when the script ends; a script ended by **Stop** leaves it behind, as mongosh
+  is killed before it can clean up.
 - **Ids that are themselves type-wrapper-shaped documents.** An inserted,
   upserted or GridFS file `_id` comes back as Extended JSON. So an `_id` that
   is itself a document like `{"$oid": …}` cannot be told apart from the type

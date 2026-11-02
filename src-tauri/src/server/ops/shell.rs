@@ -127,7 +127,10 @@ pub(crate) async fn open(state: &AppState, conn: &RemoteConn) -> Result<Shell, S
 mod tests {
     use crate::server::fake::Env;
     use crate::server::ops::connected;
-    use crate::{run_mongosh_command_impl, start_mongosh_session_impl, stop_mongosh_session_impl};
+    use crate::{
+        run_mongosh_command_impl, run_mongosh_script_impl, start_mongosh_session_impl,
+        stop_mongosh_session_impl, AppState, MongoshCommandOutput,
+    };
 
     async fn admin(env: &Env) -> (crate::AppState, String) {
         env.fake.with(|s| {
@@ -172,25 +175,283 @@ mod tests {
         assert!(sent.iter().any(|l| l == "db.customers.find()"));
     }
 
-    // A multi-line script on a server shell goes to it as typed. Staging it as
-    // a file to `load()` is for a local mongosh, which can read this machine's
-    // temp dir; the server's cannot (#518).
+    /// A script on the tab's shell, as MongoShell runs one.
+    async fn script(
+        state: &AppState,
+        id: &str,
+        session: &str,
+        script: &str,
+    ) -> Result<MongoshCommandOutput, String> {
+        run_mongosh_script_impl(state, id, "", "orders", "", script, Some(session)).await
+    }
+
+    async fn shell(env: &Env) -> (AppState, String, String) {
+        let (state, id) = admin(env).await;
+        let session = start_mongosh_session_impl(&state, &id, "", "orders", "", "")
+            .await
+            .unwrap()
+            .session_id;
+        (state, id, session)
+    }
+
+    /// The shell still takes commands, and the server never ended it.
+    async fn assert_usable(env: &Env, state: &AppState, session: &str) {
+        let out = run_mongosh_command_impl(state, session, "db.stats()")
+            .await
+            .unwrap();
+        assert_eq!(out.stdout, ["ran db.stats()"]);
+        assert_eq!(env.fake.with(|s| s.shells_ended), 0);
+    }
+
+    // A script runs in the tab's shell as one unit: the server's mongosh reads
+    // it whole, so no line of it reaches the REPL to be taken for a keyword or
+    // to run on its own (#518). The shell is the tab's, not a second process.
     #[tokio::test]
-    async fn a_multi_line_script_reaches_the_server_shell_as_typed() {
+    async fn a_script_runs_in_the_server_shell_as_one_unit() {
         let env = Env::new().await;
-        let (state, id) = admin(&env).await;
-        let info = start_mongosh_session_impl(&state, &id, "", "", "", "")
-            .await
-            .unwrap();
+        let (state, id, session) = shell(&env).await;
+        let text = "db.orders.find()\n  .limit(1)\nprint(2)";
 
-        run_mongosh_command_impl(&state, &info.session_id, "print(1)\nprint(2)")
-            .await
-            .unwrap();
+        let out = script(&state, &id, &session, text).await.unwrap();
 
+        assert_eq!(
+            out.stdout,
+            ["ran db.orders.find()", "ran .limit(1)", "ran print(2)"]
+        );
+        assert!(out.stderr.is_empty());
+        assert_eq!(env.fake.with(|s| s.shell_loaded.clone()), [text]);
         let sent = env.fake.with(|s| s.shell_input.clone());
-        assert!(sent.iter().any(|l| l == "print(1)"));
-        assert!(sent.iter().any(|l| l == "print(2)"));
-        assert!(!sent.iter().any(|l| l.contains("load(")));
+        assert!(!sent.iter().any(|l| l == "print(2)"), "{sent:?}");
+        assert_eq!(env.fake.with(|s| s.shells.len()), 1);
+        assert_usable(&env, &state, &session).await;
+    }
+
+    // Multi-line input on a server shell is a script however it arrives.
+    #[tokio::test]
+    async fn a_multi_line_command_on_a_server_shell_runs_as_one_unit_too() {
+        let env = Env::new().await;
+        let (state, _, session) = shell(&env).await;
+
+        run_mongosh_command_impl(&state, &session, "print(1)\nprint(2)")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            env.fake.with(|s| s.shell_loaded.clone()),
+            ["print(1)\nprint(2)"]
+        );
+    }
+
+    // A long line is quadratic in mongosh's readline: a 1 MiB one never
+    // finished. And it ends a line at U+2028 and U+2029, where JSON does not
+    // escape them, which would cut the script's string literal in two.
+    #[tokio::test]
+    async fn a_large_script_reaches_the_server_on_short_lines_intact() {
+        let env = Env::new().await;
+        let (state, id, session) = shell(&env).await;
+        let text = format!(
+            "print(\"a\\u2028b\u{2028}c\u{2029}\")\n{}",
+            "// é\r\n".repeat(40_000)
+        );
+
+        script(&state, &id, &session, &text).await.unwrap();
+
+        assert_eq!(env.fake.with(|s| s.shell_loaded.clone()), [text]);
+        let sent = env.fake.with(|s| s.shell_input.clone());
+        let longest = sent.iter().map(|l| l.chars().count()).max().unwrap();
+        assert!(longest < 64 * 1024, "a line of {longest} characters");
+        assert!(sent.iter().all(|l| !l.contains(['\u{2028}', '\u{2029}'])));
+    }
+
+    // A script stops at its first throw, says so, and leaves the shell as it was.
+    #[tokio::test]
+    async fn a_script_that_throws_stops_there_and_keeps_the_shell() {
+        let env = Env::new().await;
+        let (state, id, session) = shell(&env).await;
+
+        let out = script(&state, &id, &session, "print(1)\nthrow boom\nprint(2)")
+            .await
+            .unwrap();
+
+        assert_eq!(out.stdout, ["ran print(1)", "Uncaught boom"]);
+        assert_usable(&env, &state, &session).await;
+    }
+
+    // A file that stopped short must not run as far as it got: its first half
+    // is a script nobody wrote. One error for it, however many writes failed.
+    #[tokio::test]
+    async fn a_script_that_cannot_be_staged_does_not_run() {
+        let env = Env::new().await;
+        let (state, id, session) = shell(&env).await;
+        env.fake.with(|s| s.shell_stage_failure = true);
+        let text = "x".repeat(100 * 1024);
+
+        let out = script(&state, &id, &session, &text).await.unwrap();
+
+        assert_eq!(out.stderr, ["Uncaught Error: ENOSPC"]);
+        assert!(out.stdout.is_empty(), "{:?}", out.stdout);
+        let sent = env.fake.with(|s| s.shell_input.clone());
+        assert!(!sent.iter().any(|l| l.contains("load(")), "{sent:?}");
+        assert!(sent.iter().any(|l| l.contains("rmSync(")), "the partial file stayed");
+        assert_usable(&env, &state, &session).await;
+    }
+
+    #[tokio::test]
+    async fn a_script_that_does_not_parse_runs_nothing_and_keeps_the_shell() {
+        let env = Env::new().await;
+        let (state, id, session) = shell(&env).await;
+
+        let out = script(&state, &id, &session, "print(1)\nnot javascript\nprint(2)")
+            .await
+            .unwrap();
+
+        assert_eq!(out.stdout, ["Uncaught SyntaxError"]);
+        assert_usable(&env, &state, &session).await;
+    }
+
+    // `quit()` ends a script, as it does a one-shot run. It must not end the
+    // tab's shell, with its signed-in session and its `use` state.
+    #[tokio::test]
+    async fn quit_ends_the_script_and_keeps_the_shell() {
+        let env = Env::new().await;
+        let (state, id, session) = shell(&env).await;
+
+        let out = script(&state, &id, &session, "print(1)\nquit()\nprint(2)")
+            .await
+            .unwrap();
+
+        assert_eq!(out.stdout, ["ran print(1)"]);
+        assert!(out.stderr.is_empty(), "{:?}", out.stderr);
+        assert_usable(&env, &state, &session).await;
+    }
+
+    // A script that goes on running ends with the shell, which is what Stop
+    // ends: on the server too, and the run comes back rather than hanging.
+    #[tokio::test]
+    async fn stopping_the_shell_stops_a_running_script() {
+        let env = Env::new().await;
+        let (state, id, session) = shell(&env).await;
+        let state = std::sync::Arc::new(state);
+        let running = {
+            let (state, session) = (state.clone(), session.clone());
+            tokio::spawn(async move {
+                script(&state, &id, &session, "print(1)\nsleep()\nprint(2)").await
+            })
+        };
+        for _ in 0..100 {
+            if !env.fake.with(|s| s.shell_loaded.is_empty()) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        assert_eq!(env.fake.with(|s| s.shell_loaded.len()), 1);
+
+        stop_mongosh_session_impl(&state, &session).await.unwrap();
+
+        let stopped = tokio::time::timeout(std::time::Duration::from_secs(5), running).await;
+        let err = stopped.expect("Stop did not end the run").unwrap();
+        assert_eq!(err.err().as_deref(), Some("mongosh session closed"));
+        assert!(ended(&env, 1).await, "the server's shell kept running");
+    }
+
+    // Recorded as a local script is: what ran, and how it went.
+    #[tokio::test]
+    async fn a_script_is_audited() {
+        let env = Env::new().await;
+        let (state, id, session) = shell(&env).await;
+        let dir = tempfile::tempdir().unwrap();
+        let audit = crate::audit::AuditSession::new(dir.path().join("audit.log.enc"));
+        audit.open([5u8; 32]).unwrap();
+        audit.set_policy(crate::audit::AuditPolicy {
+            enabled: true,
+            level: crate::audit::AuditLevel::C,
+            include_payloads: true,
+            retention_days: 30,
+        });
+        *state.audit.lock().unwrap() = Some(audit);
+
+        script(&state, &id, &session, "print(1)\nprint(2)")
+            .await
+            .unwrap();
+
+        let guard = state.audit.lock().unwrap();
+        let rows = guard
+            .as_ref()
+            .unwrap()
+            .query(&crate::audit::AuditFilter::default())
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].op, "run_mongosh_script");
+        assert_eq!(rows[0].connection_id.as_deref(), Some(id.as_str()));
+        assert!(rows[0].ok);
+    }
+
+    // The guards a shell has, a script has: read-only mode, then the role.
+    // Neither reaches the shell, and none of this falls back to a local
+    // mongosh, which has no URI to connect to.
+    #[tokio::test]
+    async fn a_script_is_refused_without_reaching_the_shell() {
+        let env = Env::new().await;
+        let (state, id, session) = shell(&env).await;
+        crate::set_connection_meta_impl(
+            &state,
+            &id,
+            "server:a:c1",
+            "Orders",
+            false,
+            crate::connections::ConnectionMode::ReadOnly,
+        )
+        .unwrap();
+        let refused = script(&state, &id, &session, "print(1)\nprint(2)")
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert_eq!(refused, crate::write_guard::READ_ONLY_MSG);
+
+        let writer = Env::new().await;
+        let (state, id) = connected(&writer).await;
+        let refused = script(&state, &id, "no-such-session", "print(1)\nprint(2)")
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(refused.contains("admin"), "{refused}");
+
+        assert!(env.fake.with(|s| s.shell_loaded.is_empty()));
+        assert!(writer.fake.with(|s| s.shells.is_empty()));
+    }
+
+    // Without the tab's shell there is nowhere to run it. Another connection's
+    // shell will not do: the guards above were for this one.
+    #[tokio::test]
+    async fn a_script_needs_a_shell_of_its_own_connection() {
+        let env = Env::new().await;
+        let (state, id, session) = shell(&env).await;
+        let conn = state.server.remote(&id).unwrap().unwrap();
+        state
+            .server
+            .add_remote(crate::server::remote::RemoteConn {
+                desktop_id: "other".to_string(),
+                account_id: conn.account_id.clone(),
+                identity: conn.identity.clone(),
+                accounts_path: conn.accounts_path.clone(),
+                account_name: conn.account_name.clone(),
+                server_url: conn.server_url.clone(),
+                remote_id: "c2".to_string(),
+                op_classes: conn.op_classes.clone(),
+                api_version: conn.api_version,
+            })
+            .unwrap();
+        let text = "print(1)\nprint(2)";
+
+        for (connection, shell) in [(id.as_str(), None), ("other", Some(session.as_str()))] {
+            let refused =
+                run_mongosh_script_impl(&state, connection, "", "", "no-such-mongosh", text, shell)
+                    .await
+                    .map(|_| ())
+                    .unwrap_err();
+            assert_eq!(refused, "mongosh session not found");
+        }
+        assert!(env.fake.with(|s| s.shell_loaded.is_empty()));
     }
 
     // What the shell writes to stderr is reported as stderr, as local mode

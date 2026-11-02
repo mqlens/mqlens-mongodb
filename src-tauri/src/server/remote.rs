@@ -298,8 +298,7 @@ mod tests {
     }
 
     // Until a command has an adapter, every path from a command to MongoDB
-    // refuses a remote connection plainly: no driver client, no URI, no
-    // mongosh process.
+    // refuses a remote connection plainly: no driver client, no URI.
     #[tokio::test]
     async fn every_path_to_mongodb_refuses_a_remote_connection() {
         let state = AppState::new();
@@ -313,19 +312,6 @@ mod tests {
         assert_not_available(
             "resolve_conn_uri",
             crate::db::mongotools::resolve_conn_uri(&state, "r1"),
-        );
-        assert_not_available(
-            "run_mongosh_script",
-            crate::run_mongosh_script_impl(
-                &state,
-                "r1",
-                "mongodb://127.0.0.1:1",
-                "admin",
-                "no-such-mongosh-binary",
-                "db.version()",
-            )
-            .await
-            .map(|_| ()),
         );
     }
 
