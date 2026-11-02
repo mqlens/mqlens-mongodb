@@ -136,6 +136,13 @@ describe('plainBsonShape — the table view’s extended-JSON shapes', () => {
     expect(plainBsonShape({ $binary: 'not a wrapper' })).toBeNull();
   });
 
+  it('keeps a stored sub-document that has fields beside $binary whole', () => {
+    const stored = { $binary: { base64: 'AQID', subType: '00' }, other: 1 };
+
+    expect(plainBsonShape(stored)).toBeNull();
+    expect(tableValueText(stored)).toBe(JSON.stringify(stored));
+  });
+
   it('formats table dates locally and falls back safely for malformed dates', () => {
     const localString = plainBsonShape(
       { $date: '2026-08-27T10:00:00.000Z' },

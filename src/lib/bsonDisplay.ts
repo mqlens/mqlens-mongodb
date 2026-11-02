@@ -251,7 +251,11 @@ export function plainBsonShape(val: Record<string, any>, options?: BsonDisplayOp
   if (val.$numberInt !== undefined) return { text: String(val.$numberInt), kind: "number" };
   if (val.$numberDouble !== undefined) return { text: String(val.$numberDouble), kind: "number" };
   const binary = val.$binary;
-  if (typeof binary?.base64 === "string" && typeof binary?.subType === "string") {
+  if (
+    Object.keys(val).length === 1 &&
+    typeof binary?.base64 === "string" &&
+    typeof binary?.subType === "string"
+  ) {
     const subType = parseInt(binary.subType, 16);
     return { text: `BinData(${subType}, ${jsonStringLiteral(binary.base64)})`, kind: "string" };
   }
