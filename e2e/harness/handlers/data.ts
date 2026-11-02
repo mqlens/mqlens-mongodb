@@ -209,11 +209,7 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
       ...(conn.server ? { server: conn.server } : {}),
     }));
 
-  // A human OIDC login (#430) that `test_connection_uri` or `connect_db` is waiting on, keyed
-  // by `loginId`. This fake can't observe a real browser or socket, so it
-  // never completes a login on its own — it only ever answers Cancel, which
-  // is all the e2e suite here exercises (Rust tests cover the real listener).
-  const pendingOidcLogins = new Map<string, () => void>();
+  const { pendingOidcLogins } = state;
 
   /**
    * Write an aggregation's results the way its final `$out` or `$merge` stage

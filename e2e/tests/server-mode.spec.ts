@@ -85,7 +85,7 @@ test.describe('MQLens Server accounts', () => {
     await expect(button(page, 'Sign out')).toBeDisabled();
     await button(page, 'Edit Work').click();
     await expect(page.getByLabel('Server URL')).toBeDisabled();
-    await expect(page.getByText("Disconnect this account's connections to change its server, tenant or email.")).toBeVisible();
+    await expect(page.getByText("Disconnect this account's connections to change its server, tenant, email or sign-in method.")).toBeVisible();
     await page.getByLabel('Name', { exact: true }).fill('Work (EU)');
     await button(page, 'Save account').click();
     // Only the name changed, so the session stays and nothing was displaced.
@@ -101,6 +101,89 @@ test.describe('MQLens Server accounts', () => {
     await button(page, 'Delete Work (EU)').click();
     await page.getByTestId('dialog-confirm').click();
     await expect(page.getByText('No MQLens Server accounts yet.')).toBeVisible();
+  });
+});
+
+test.describe('An account that signs in through an identity provider', () => {
+  const OKTA = { id: 'okta-id', name: 'Okta' };
+  const SSO = (over: Partial<ServerAccountSeed> = {}) => WORK({ auth: 'oidc', email: '', password: undefined, oidcProviders: [OKTA], ...over });
+  const row = (page: Page) => page.getByRole('listitem').filter({ hasText: 'https://mqlens.example.com' });
+  const WAITING = 'Finish signing in in your browser.';
+
+  test('needs no email to be added', async ({ app, page }) => {
+    await app.open({ servers, serverAccounts: [] });
+    await openServerAccounts(page);
+
+    await button(page, 'Add server account').click();
+    await page.getByLabel('Sign-in method').selectOption('oidc');
+    await expect(page.getByLabel('Email')).toHaveCount(0);
+    await page.getByLabel('Name', { exact: true }).fill('Work');
+    await page.getByLabel('Server URL').fill('https://mqlens.example.com');
+    await page.getByLabel('Tenant').fill('acme');
+    const saved = await callFrom(app, 'server_account_save', () => button(page, 'Save account').click());
+
+    expect(saved.account).toMatchObject({ auth: 'oidc', email: '' });
+    await expect(row(page).getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
+  });
+
+  test('signs in as who the server names, and connects', async ({ app, page }) => {
+    await app.open({ servers, serverAccounts: [SSO({ oidcEmail: 'sso.user@example.com' })] });
+    await openServerAccounts(page);
+
+    await row(page).getByRole('button', { name: 'Sign in', exact: true }).click();
+
+    await expect(row(page).getByText('sso.user@example.com · https://mqlens.example.com')).toBeVisible();
+    await expect(page.getByLabel('Password', { exact: true })).toHaveCount(0);
+    await button(page, 'Connect to Orders').click();
+    await expect(sidebar(page).getByText('Orders')).toBeVisible();
+  });
+
+  test('asks which provider when the tenant has several', async ({ app, page }) => {
+    const providers = [OKTA, { id: 'entra-id', name: 'Entra ID' }];
+    await app.open({ servers, serverAccounts: [SSO({ oidcProviders: providers, oidcEmail: 'sso.user@example.com' })] });
+    await openServerAccounts(page);
+
+    await row(page).getByRole('button', { name: 'Sign in', exact: true }).click();
+    const started = await callFrom(app, 'server_oidc_sign_in', () => button(page, 'Sign in with Entra ID').click());
+
+    expect(started.providerId).toBe('entra-id');
+    await expect(row(page).getByText('sso.user@example.com')).toBeVisible();
+  });
+
+  test('says when the tenant has no provider', async ({ app, page }) => {
+    await app.open({ servers, serverAccounts: [SSO({ oidcProviders: [] })] });
+    await openServerAccounts(page);
+
+    await row(page).getByRole('button', { name: 'Sign in', exact: true }).click();
+
+    await expect(page.getByRole('alert')).toHaveText('This tenant has no identity provider to sign in with.');
+  });
+
+  test('can reopen or abandon the browser', async ({ app, page }) => {
+    await app.open({ servers, serverAccounts: [SSO()] });
+    await openServerAccounts(page);
+
+    await row(page).getByRole('button', { name: 'Sign in', exact: true }).click();
+    await expect(page.getByText(WAITING)).toBeVisible();
+
+    const reopened = await callFrom(app, 'reopen_oidc_login', () => button(page, 'Open browser again').click());
+    expect(reopened.loginId).toEqual(expect.any(String));
+    await expect(page.getByText(WAITING)).toBeVisible();
+
+    await button(page, 'Cancel').click();
+    await expect(page.getByText(WAITING)).toHaveCount(0);
+    await expect(page.getByRole('alert')).toHaveCount(0);
+    await expect(row(page).getByRole('button', { name: 'Sign in', exact: true })).toBeEnabled();
+  });
+
+  test('stops the login when the connection manager closes', async ({ app, page }) => {
+    await app.open({ servers, serverAccounts: [SSO()] });
+    await openServerAccounts(page);
+
+    await row(page).getByRole('button', { name: 'Sign in', exact: true }).click();
+    await expect(page.getByText(WAITING)).toBeVisible();
+
+    await callFrom(app, 'cancel_oidc_login', () => page.keyboard.press('Escape'));
   });
 });
 

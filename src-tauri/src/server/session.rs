@@ -28,8 +28,9 @@ use crate::server::channel::{self, client};
 use crate::server::errors;
 use crate::server::pb::mqlens::v1::auth_service_client::AuthServiceClient;
 use crate::server::pb::mqlens::v1::{
-    login_request, LocalCreds, LoginRequest, LoginResponse, LogoutRequest, Principal,
-    RefreshRequest,
+    login_request, ListOidcProvidersRequest, LocalCreds, LoginRequest, LoginResponse,
+    LogoutRequest, OidcCode, OidcProvider, Principal, RefreshRequest, StartOidcLoginRequest,
+    StartOidcLoginResponse,
 };
 use std::future::Future;
 use std::path::PathBuf;
@@ -39,7 +40,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tonic::metadata::MetadataValue;
 use tonic::transport::Channel;
 use tonic::Streaming;
-use tonic::{Request, Response, Status};
+use tonic::{Code, Request, Response, Status};
 use zeroize::Zeroizing;
 
 /// An access token with less validity left than this is refreshed before use,
@@ -84,21 +85,27 @@ pub(crate) trait TokenStore: Send + Sync + 'static {
     fn read(&self, account: &ServerAccount) -> Result<Option<Zeroizing<String>>, String>;
     /// Replaces the stored refresh token. The caller holds the lock.
     fn write(&self, account: &ServerAccount, token: Option<&str>) -> Result<(), String>;
-    /// Stores `token` and returns the one it displaced, if any: another
-    /// sign-in to the same account finished first, and its server session
-    /// must now be ended, since nothing stores its token any more. The caller
-    /// holds the lock.
+    /// Stores `token` as the session of `email`, in one write, and returns the
+    /// token it displaced, if any: another sign-in to the same account finished
+    /// first, and its server session must now be ended, since nothing stores
+    /// its token any more. The caller holds the lock.
     fn replace(
         &self,
         account: &ServerAccount,
+        email: &str,
         token: &str,
-    ) -> Result<Option<Zeroizing<String>>, String> {
-        let previous = self.read(account)?;
-        self.write(account, Some(token))?;
-        Ok(previous.filter(|p| p.as_str() != token))
-    }
+    ) -> Result<Option<Zeroizing<String>>, String>;
 }
 
+/// What a sign-in presents. No `Debug`, so neither can reach a log by accident.
+pub(crate) enum Credentials<'a> {
+    Local(&'a str),
+    /// What a browser brought back from an identity provider.
+    OidcCode(OidcCode),
+}
+
+pub(crate) const SIGNS_IN_WITH_PASSWORD: &str =
+    "This MQLens Server account signs in with a password";
 pub(crate) const ACCOUNT_CHANGED: &str =
     "This MQLens Server account was changed to another server or user. Sign in again.";
 
@@ -156,6 +163,27 @@ impl TokenStore for FileTokenStore {
             (None, Some(_)) => Err("This MQLens Server account has been removed".to_string()),
             (Some(_), Some(_)) => Err(ACCOUNT_CHANGED.to_string()),
         }
+    }
+
+    fn replace(
+        &self,
+        account: &ServerAccount,
+        email: &str,
+        token: &str,
+    ) -> Result<Option<Zeroizing<String>>, String> {
+        let key = (self.key)()?;
+        let mut all = accounts::load(&self.path, &key)?;
+        let stored = all
+            .iter_mut()
+            .find(|a| a.id == account.id)
+            .ok_or_else(|| "This MQLens Server account has been removed".to_string())?;
+        if !stored.same_identity(account) {
+            return Err(ACCOUNT_CHANGED.to_string());
+        }
+        stored.email = email.to_string();
+        let previous = stored.refresh_token.replace(token.to_string());
+        accounts::save(&self.path, &key, &all)?;
+        Ok(previous.filter(|p| p != token).map(Zeroizing::new))
     }
 }
 
@@ -267,6 +295,11 @@ impl AccountSession {
         &self.account.id
     }
 
+    /// Who this session is signed in as.
+    pub(crate) fn email(&self) -> &str {
+        &self.account.email
+    }
+
     /// Whether this session belongs to `account` as it is now: the same
     /// account, still pointing at the same server and user.
     pub(crate) fn serves(&self, account: &ServerAccount) -> bool {
@@ -296,6 +329,16 @@ impl AccountSession {
         Ok(Arc::new(Self::new(account, store)?))
     }
 
+    /// Signs in with `credentials`, storing the new session's refresh token
+    /// over any stored before.
+    pub(crate) async fn sign_in_with(
+        account: &ServerAccount,
+        credentials: Credentials<'_>,
+        store: Arc<dyn TokenStore>,
+    ) -> Result<Arc<Self>, String> {
+        Self::sign_in_impl(account, credentials, store, false).await
+    }
+
     /// Signs in with the account's email and `password`, storing the new
     /// session's refresh token over any stored before.
     pub(crate) async fn sign_in(
@@ -303,7 +346,7 @@ impl AccountSession {
         password: &str,
         store: Arc<dyn TokenStore>,
     ) -> Result<Arc<Self>, String> {
-        Self::sign_in_impl(account, password, store, false).await
+        Self::sign_in_with(account, Credentials::Local(password), store).await
     }
 
     /// Signs in while the caller holds `vault-operation.lock` across the
@@ -311,43 +354,60 @@ impl AccountSession {
     /// that fact; the returned session continues to use normal lifecycle locks.
     pub(crate) async fn sign_in_with_vault_operation_lock_held(
         account: &ServerAccount,
-        password: &str,
+        credentials: Credentials<'_>,
         store: Arc<dyn TokenStore>,
     ) -> Result<Arc<Self>, String> {
-        Self::sign_in_impl(account, password, store, true).await
+        Self::sign_in_impl(account, credentials, store, true).await
     }
 
     async fn sign_in_impl(
         account: &ServerAccount,
-        password: &str,
+        credentials: Credentials<'_>,
         store: Arc<dyn TokenStore>,
         vault_operation_lock_held: bool,
     ) -> Result<Arc<Self>, String> {
-        if account.auth != AuthMethod::Password {
-            return Err("This MQLens Server account does not sign in with a password".to_string());
-        }
-        if password.is_empty() {
-            return Err("Enter your MQLens Server password".to_string());
-        }
+        let credential = match credentials {
+            Credentials::Local(_) if account.auth != AuthMethod::Password => {
+                return Err(
+                    "This MQLens Server account does not sign in with a password".to_string(),
+                )
+            }
+            Credentials::Local("") => return Err("Enter your MQLens Server password".to_string()),
+            Credentials::Local(password) => login_request::Login::Local(LocalCreds {
+                email: account.email.clone(),
+                password: password.to_string(),
+            }),
+            Credentials::OidcCode(_) if account.auth != AuthMethod::Oidc => {
+                return Err(SIGNS_IN_WITH_PASSWORD.to_string())
+            }
+            Credentials::OidcCode(code) => login_request::Login::Oidc(code),
+        };
         let mut session = Self::new(account, store)?;
 
         let mut request = Request::new(LoginRequest {
             tenant: account.tenant.clone(),
-            login: Some(login_request::Login::Local(LocalCreds {
-                email: account.email.clone(),
-                password: password.to_string(),
-            })),
+            login: Some(credential),
         });
         request.set_timeout(AUTH_RPC_TIMEOUT);
         let login = client!(AuthServiceClient, session.channel.clone())
             .login(request)
             .await
-            .map_err(|status| login_error(&status))?
+            .map_err(|status| login_error(&status, account.auth))?
             .into_inner();
 
+        // An identity provider says who signed in, and from here the session
+        // belongs to that person. The file must say the same before the next
+        // refresh looks for this identity there, so both are stored together.
+        let email = login
+            .principal
+            .as_ref()
+            .map(|principal| principal.email.clone())
+            .filter(|email| account.auth == AuthMethod::Oidc && !email.is_empty())
+            .unwrap_or_else(|| account.email.clone());
         let stored = {
             let store = session.store.clone();
             let who = session.account.clone();
+            let email = email.clone();
             let refresh = Zeroizing::new(login.refresh_token.clone());
             blocking(move || {
                 let _lock = if vault_operation_lock_held {
@@ -355,10 +415,11 @@ impl AccountSession {
                 } else {
                     store.lock()?
                 };
-                store.replace(&who, &refresh)
+                store.replace(&who, &email, &refresh)
             })
             .await
         };
+        session.account.email = email;
         match stored {
             Ok(Some(displaced)) => {
                 // A concurrent sign-in stored first; its session is ours to end.
@@ -790,15 +851,72 @@ async fn logout_with_refresh_token(channel: &Channel, refresh_token: &str) -> bo
     }
 }
 
-fn login_error(status: &Status) -> String {
+fn login_error(status: &Status, auth: AuthMethod) -> String {
     if errors::is_unauthenticated(status) {
+        let text = match auth {
+            AuthMethod::Password => {
+                "MQLens Server did not accept this email and password for this tenant"
+            }
+            // The server says no more on purpose, and a new sign-in is the cure.
+            AuthMethod::Oidc => "MQLens Server did not accept this sign-in. Sign in again.",
+        };
+        errors::with_correlation(text.to_string(), status)
+    } else {
+        errors::describe(status)
+    }
+}
+
+/// What an identity provider call failed with. A server from before OIDC
+/// sign-in does not know these calls; the account can still use a password.
+fn oidc_call_error(status: &Status) -> String {
+    if status.code() == Code::Unimplemented {
         errors::with_correlation(
-            "MQLens Server did not accept this email and password for this tenant".to_string(),
+            "This MQLens Server cannot sign in through an identity provider. Update it, or use a password for this account.".to_string(),
             status,
         )
     } else {
         errors::describe(status)
     }
+}
+
+/// The identity providers of the account's tenant. Needs no session and no API
+/// version, like `Login`.
+pub(crate) async fn list_oidc_providers(
+    account: &ServerAccount,
+) -> Result<Vec<OidcProvider>, String> {
+    let channel = channel::channel(&account.channel_config())?;
+    let mut request = Request::new(ListOidcProvidersRequest {
+        tenant: account.tenant.clone(),
+    });
+    request.set_timeout(AUTH_RPC_TIMEOUT);
+    client!(AuthServiceClient, channel)
+        .list_oidc_providers(request)
+        .await
+        .map(|response| response.into_inner().providers)
+        .map_err(|status| oidc_call_error(&status))
+}
+
+/// Asks the server to start a sign-in through `provider_id`. Its answer holds
+/// the page to open and the `state` the provider must send back.
+pub(crate) async fn start_oidc_login(
+    account: &ServerAccount,
+    provider_id: &str,
+    redirect_uri: &str,
+    code_challenge: &str,
+) -> Result<StartOidcLoginResponse, String> {
+    let channel = channel::channel(&account.channel_config())?;
+    let mut request = Request::new(StartOidcLoginRequest {
+        tenant: account.tenant.clone(),
+        provider_id: provider_id.to_string(),
+        redirect_uri: redirect_uri.to_string(),
+        code_challenge: code_challenge.to_string(),
+    });
+    request.set_timeout(AUTH_RPC_TIMEOUT);
+    client!(AuthServiceClient, channel)
+        .start_oidc_login(request)
+        .await
+        .map(Response::into_inner)
+        .map_err(|status| oidc_call_error(&status))
 }
 
 /// Runs file and lock work off the async executor.
@@ -821,8 +939,10 @@ pub(crate) fn unix_now() -> i64 {
 mod tests {
     use super::*;
     use crate::server::accounts::ServerAccountInput;
-    use crate::server::fake::{file_store, list_connections, Env, KEY, PASSWORD, TENANT};
-    use tonic::Code;
+    use crate::oidc::PkceVerifier;
+    use crate::server::fake::{
+        file_store, list_connections, Env, KEY, OIDC_EMAIL, PASSWORD, TENANT,
+    };
 
     /// What another MQLens instance does when the user points this account at
     /// a different user: the stored session belongs to the old one and goes.
@@ -836,6 +956,7 @@ mod tests {
                 url: env.account.url.clone(),
                 tenant: TENANT.to_string(),
                 email: "dba@acme.test".to_string(),
+                auth: AuthMethod::Password,
                 allow_insecure_http: false,
                 extra_ca_pem: None,
             },
@@ -908,6 +1029,238 @@ mod tests {
             Ok(session) => session,
             Err(e) => panic!("sign in failed: {e}"),
         }
+    }
+
+    const REDIRECT: &str = "http://127.0.0.1:50000/callback";
+
+    /// What the browser brings back from a provider, with the verifier and
+    /// state of the sign-in it belongs to.
+    async fn browser_code(env: &Env) -> OidcCode {
+        let verifier = PkceVerifier::generate();
+        let started = start_oidc_login(&env.account, "okta-id", REDIRECT, &verifier.challenge())
+            .await
+            .unwrap();
+        OidcCode {
+            code: "idp-code".to_string(),
+            redirect_uri: REDIRECT.to_string(),
+            code_verifier: verifier.as_str().to_string(),
+            state: started.state,
+        }
+    }
+
+    async fn signed_in_with_a_provider(env: &Env) -> Arc<AccountSession> {
+        let code = browser_code(env).await;
+        match AccountSession::sign_in_with(
+            &env.stored_account(),
+            Credentials::OidcCode(code),
+            env.store(),
+        )
+        .await
+        {
+            Ok(session) => session,
+            Err(e) => panic!("sign in failed: {e}"),
+        }
+    }
+
+    async fn sign_in_error(
+        account: &ServerAccount,
+        credentials: Credentials<'_>,
+        env: &Env,
+    ) -> String {
+        match AccountSession::sign_in_with(account, credentials, env.store()).await {
+            Ok(_) => panic!("signed in"),
+            Err(e) => e,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_provider_sign_in_stores_who_the_server_says_signed_in() {
+        let env = Env::oidc().await;
+        assert_eq!(env.stored_account().email, "");
+
+        let session = signed_in_with_a_provider(&env).await;
+
+        let stored = env.stored_account();
+        assert_eq!(stored.email, OIDC_EMAIL);
+        assert!(stored.refresh_token.is_some());
+        assert_eq!(session.email(), OIDC_EMAIL);
+        assert!(session.serves(&stored));
+        assert_eq!(list_connections(&session).await.unwrap()[0].id, "c1");
+    }
+
+    // The session a provider gives is an ordinary one: refresh reads the stored
+    // token, sends it once, and stores the successor before using it.
+    #[tokio::test]
+    async fn a_provider_session_refreshes_through_the_stored_token() {
+        let env = Env::oidc().await;
+        let session = signed_in_with_a_provider(&env).await;
+        let first = env.stored_token().unwrap();
+        env.fake.revoke_access_tokens();
+
+        list_connections(&session).await.unwrap();
+
+        assert_ne!(env.stored_token().unwrap(), first);
+        env.fake.with(|s| {
+            assert_eq!(s.refreshes, 1);
+            assert_eq!(s.reuse_detected, 0);
+            assert_eq!(s.live_families(), 1);
+        });
+    }
+
+    #[tokio::test]
+    async fn a_provider_session_resumes_after_a_restart() {
+        let env = Env::oidc().await;
+        signed_in_with_a_provider(&env).await;
+
+        let session = AccountSession::resume(&env.stored_account(), env.store()).unwrap();
+
+        list_connections(&session).await.unwrap();
+        env.fake.with(|s| assert_eq!(s.reuse_detected, 0));
+    }
+
+    // Past the provider's session limit the server refuses the refresh, and
+    // the account signs in again, as with any session that ends.
+    #[tokio::test]
+    async fn a_provider_session_past_its_limit_asks_to_sign_in_again() {
+        let env = Env::oidc().await;
+        let session = signed_in_with_a_provider(&env).await;
+        env.fake.forget_sessions();
+
+        let err = list_connections(&session).await.unwrap_err();
+
+        assert!(err.contains("Sign in again"), "{err}");
+        assert_eq!(env.stored_token(), None);
+        assert_eq!(env.stored_account().email, OIDC_EMAIL);
+    }
+
+    // The same browser can come back as someone else. That is a new identity:
+    // the old person's session ends, and nothing of theirs serves the new one.
+    #[tokio::test]
+    async fn signing_in_as_someone_else_replaces_the_session_and_the_identity() {
+        let env = Env::oidc().await;
+        let old = signed_in_with_a_provider(&env).await;
+        env.fake.with(|s| s.oidc_email = "someone.else@acme.test".to_string());
+
+        let new = signed_in_with_a_provider(&env).await;
+
+        let stored = env.stored_account();
+        assert_eq!(stored.email, "someone.else@acme.test");
+        assert!(new.serves(&stored));
+        assert!(!old.serves(&stored), "the old person's session serves the new one");
+        env.fake.with(|s| {
+            assert_eq!(s.live_families(), 1);
+            assert_eq!(s.reuse_detected, 0);
+        });
+    }
+
+    #[tokio::test]
+    async fn a_provider_sign_in_never_stores_over_an_edited_account() {
+        let env = Env::oidc().await;
+        env.fake.with(|s| s.login_delay = Duration::from_millis(300));
+        let code = browser_code(&env).await;
+        let signing_in = {
+            let account = env.stored_account();
+            let store = env.store();
+            tokio::spawn(async move {
+                AccountSession::sign_in_with(&account, Credentials::OidcCode(code), store)
+                    .await
+                    .map(|_| ())
+            })
+        };
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        accounts::update(&env.path, &KEY, |all| {
+            all[0].tenant = "globex".to_string();
+            Ok(())
+        })
+        .unwrap();
+
+        let err = signing_in.await.unwrap().unwrap_err();
+
+        assert!(err.contains("changed"), "{err}");
+        assert_eq!(env.stored_token(), None);
+        assert_eq!(env.stored_account().email, "");
+        env.fake.with(|s| assert_eq!(s.live_families(), 0));
+    }
+
+    #[tokio::test]
+    async fn neither_credential_reaches_an_account_of_the_other_kind() {
+        let password_env = Env::new().await;
+        let code = browser_code(&password_env).await;
+        let err = sign_in_error(&password_env.account, Credentials::OidcCode(code), &password_env).await;
+        assert!(err.contains("signs in with a password"), "{err}");
+        password_env.fake.with(|s| assert_eq!(s.logins, 0));
+
+        let env = Env::oidc().await;
+        let err = sign_in_error(&env.account, Credentials::Local(PASSWORD), &env).await;
+        assert!(err.contains("does not sign in with a password"), "{err}");
+        env.fake.with(|s| assert_eq!(s.logins, 0));
+    }
+
+    // docs/desktop-clients.md: Unauthenticated says no more, on purpose, and a
+    // client restarts. The verifier and code are secrets in any error.
+    #[tokio::test]
+    async fn a_refused_code_stores_nothing_and_shows_no_secret() {
+        let env = Env::oidc().await;
+        env.fake.with(|s| s.oidc_login_failure = Some(Status::unauthenticated("invalid login")));
+        let code = browser_code(&env).await;
+        let verifier = code.code_verifier.clone();
+
+        let err = sign_in_error(&env.account, Credentials::OidcCode(code), &env).await;
+
+        assert!(err.contains("did not accept this sign-in"), "{err}");
+        assert!(!err.contains("idp-code") && !err.contains(&verifier), "{err}");
+        assert_eq!(env.stored_token(), None);
+        assert_eq!(env.stored_account().email, "");
+    }
+
+    #[tokio::test]
+    async fn a_refusal_from_the_server_keeps_its_reason() {
+        let env = Env::oidc().await;
+        for (status, want) in [
+            (Status::permission_denied("user is not provisioned in this tenant"), "user is not provisioned"),
+            (Status::unavailable("identity provider unavailable"), "identity provider unavailable"),
+            (Status::resource_exhausted("too many failed sign-ins"), "too many failed sign-ins"),
+        ] {
+            env.fake.with(|s| s.oidc_login_failure = Some(status));
+            let code = browser_code(&env).await;
+            let err = sign_in_error(&env.account, Credentials::OidcCode(code), &env).await;
+            assert!(err.contains(want), "{err}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_code_that_is_not_the_servers_own_is_refused() {
+        let env = Env::oidc().await;
+        let mut code = browser_code(&env).await;
+        code.code_verifier = PkceVerifier::generate().as_str().to_string();
+
+        let err = sign_in_error(&env.account, Credentials::OidcCode(code), &env).await;
+
+        assert!(err.contains("did not accept this sign-in"), "{err}");
+        assert_eq!(env.stored_token(), None);
+    }
+
+    #[tokio::test]
+    async fn the_tenants_providers_are_listed() {
+        let env = Env::oidc().await;
+        let providers = list_oidc_providers(&env.account).await.unwrap();
+        assert_eq!(providers[0].name, "Okta");
+        assert_eq!(providers[0].id, "okta-id");
+    }
+
+    #[tokio::test]
+    async fn a_server_from_before_oidc_says_so() {
+        let env = Env::oidc().await;
+        env.fake.with(|s| s.oidc_unimplemented = true);
+
+        let err = list_oidc_providers(&env.account).await.unwrap_err();
+        assert!(err.contains("identity provider"), "{err}");
+        assert!(err.contains("Update"), "{err}");
+
+        let err = start_oidc_login(&env.account, "okta-id", REDIRECT, "x")
+            .await
+            .unwrap_err();
+        assert!(err.contains("Update"), "{err}");
     }
 
     #[tokio::test]
@@ -994,7 +1347,7 @@ mod tests {
             .unwrap();
         let session = AccountSession::sign_in_with_vault_operation_lock_held(
             &env.account,
-            PASSWORD,
+            Credentials::Local(PASSWORD),
             env.store(),
         )
         .await
@@ -1379,6 +1732,17 @@ mod tests {
                 return Err("disk full".to_string());
             }
             self.inner.write(account, token)
+        }
+        fn replace(
+            &self,
+            account: &ServerAccount,
+            email: &str,
+            token: &str,
+        ) -> Result<Option<Zeroizing<String>>, String> {
+            if self.fail.load(Ordering::SeqCst) {
+                return Err("disk full".to_string());
+            }
+            self.inner.replace(account, email, token)
         }
     }
 

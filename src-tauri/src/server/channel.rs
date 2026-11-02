@@ -86,7 +86,7 @@ pub(crate) fn normalize_url(input: &str, allow_insecure_http: bool) -> Result<St
     ))
 }
 
-fn is_loopback_host(host: &str) -> bool {
+pub(crate) fn is_loopback_host(host: &str) -> bool {
     let host = host.trim_start_matches('[').trim_end_matches(']');
     host.eq_ignore_ascii_case("localhost")
         || host

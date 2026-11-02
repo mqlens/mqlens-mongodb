@@ -342,6 +342,186 @@ pub mod admin_service_client {
                 .insert(GrpcMethod::new("mqlens.v1.AdminService", "RevokeConnection"));
             self.inner.unary(req, path, codec).await
         }
+        pub async fn get_server_settings(
+            &mut self,
+            request: impl tonic::IntoRequest<super::GetServerSettingsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetServerSettingsResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/mqlens.v1.AdminService/GetServerSettings",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("mqlens.v1.AdminService", "GetServerSettings"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn list_oidc_configs(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ListOidcConfigsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListOidcConfigsResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/mqlens.v1.AdminService/ListOidcConfigs",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("mqlens.v1.AdminService", "ListOidcConfigs"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn create_oidc_config(
+            &mut self,
+            request: impl tonic::IntoRequest<super::CreateOidcConfigRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::CreateOidcConfigResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/mqlens.v1.AdminService/CreateOidcConfig",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("mqlens.v1.AdminService", "CreateOidcConfig"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn update_oidc_config(
+            &mut self,
+            request: impl tonic::IntoRequest<super::UpdateOidcConfigRequest>,
+        ) -> std::result::Result<tonic::Response<super::AdminAck>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/mqlens.v1.AdminService/UpdateOidcConfig",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("mqlens.v1.AdminService", "UpdateOidcConfig"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn delete_oidc_config(
+            &mut self,
+            request: impl tonic::IntoRequest<super::DeleteOidcConfigRequest>,
+        ) -> std::result::Result<tonic::Response<super::AdminAck>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/mqlens.v1.AdminService/DeleteOidcConfig",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("mqlens.v1.AdminService", "DeleteOidcConfig"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn test_oidc_discovery(
+            &mut self,
+            request: impl tonic::IntoRequest<super::TestOidcDiscoveryRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::TestOidcDiscoveryResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/mqlens.v1.AdminService/TestOidcDiscovery",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("mqlens.v1.AdminService", "TestOidcDiscovery"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn link_oidc_user(
+            &mut self,
+            request: impl tonic::IntoRequest<super::LinkOidcUserRequest>,
+        ) -> std::result::Result<tonic::Response<super::AdminAck>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/mqlens.v1.AdminService/LinkOidcUser",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("mqlens.v1.AdminService", "LinkOidcUser"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn unlink_oidc_user(
+            &mut self,
+            request: impl tonic::IntoRequest<super::UnlinkOidcUserRequest>,
+        ) -> std::result::Result<tonic::Response<super::AdminAck>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/mqlens.v1.AdminService/UnlinkOidcUser",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("mqlens.v1.AdminService", "UnlinkOidcUser"));
+            self.inner.unary(req, path, codec).await
+        }
     }
 }
 /// Generated server implementations.
@@ -422,6 +602,50 @@ pub mod admin_service_server {
         async fn revoke_connection(
             &self,
             request: tonic::Request<super::RevokeConnectionRequest>,
+        ) -> std::result::Result<tonic::Response<super::AdminAck>, tonic::Status>;
+        async fn get_server_settings(
+            &self,
+            request: tonic::Request<super::GetServerSettingsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetServerSettingsResponse>,
+            tonic::Status,
+        >;
+        async fn list_oidc_configs(
+            &self,
+            request: tonic::Request<super::ListOidcConfigsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListOidcConfigsResponse>,
+            tonic::Status,
+        >;
+        async fn create_oidc_config(
+            &self,
+            request: tonic::Request<super::CreateOidcConfigRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::CreateOidcConfigResponse>,
+            tonic::Status,
+        >;
+        async fn update_oidc_config(
+            &self,
+            request: tonic::Request<super::UpdateOidcConfigRequest>,
+        ) -> std::result::Result<tonic::Response<super::AdminAck>, tonic::Status>;
+        async fn delete_oidc_config(
+            &self,
+            request: tonic::Request<super::DeleteOidcConfigRequest>,
+        ) -> std::result::Result<tonic::Response<super::AdminAck>, tonic::Status>;
+        async fn test_oidc_discovery(
+            &self,
+            request: tonic::Request<super::TestOidcDiscoveryRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::TestOidcDiscoveryResponse>,
+            tonic::Status,
+        >;
+        async fn link_oidc_user(
+            &self,
+            request: tonic::Request<super::LinkOidcUserRequest>,
+        ) -> std::result::Result<tonic::Response<super::AdminAck>, tonic::Status>;
+        async fn unlink_oidc_user(
+            &self,
+            request: tonic::Request<super::UnlinkOidcUserRequest>,
         ) -> std::result::Result<tonic::Response<super::AdminAck>, tonic::Status>;
     }
     #[derive(Debug)]
@@ -999,6 +1223,372 @@ pub mod admin_service_server {
                     };
                     Box::pin(fut)
                 }
+                "/mqlens.v1.AdminService/GetServerSettings" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetServerSettingsSvc<T: AdminService>(pub Arc<T>);
+                    impl<
+                        T: AdminService,
+                    > tonic::server::UnaryService<super::GetServerSettingsRequest>
+                    for GetServerSettingsSvc<T> {
+                        type Response = super::GetServerSettingsResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::GetServerSettingsRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as AdminService>::get_server_settings(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = GetServerSettingsSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/mqlens.v1.AdminService/ListOidcConfigs" => {
+                    #[allow(non_camel_case_types)]
+                    struct ListOidcConfigsSvc<T: AdminService>(pub Arc<T>);
+                    impl<
+                        T: AdminService,
+                    > tonic::server::UnaryService<super::ListOidcConfigsRequest>
+                    for ListOidcConfigsSvc<T> {
+                        type Response = super::ListOidcConfigsResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ListOidcConfigsRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as AdminService>::list_oidc_configs(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = ListOidcConfigsSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/mqlens.v1.AdminService/CreateOidcConfig" => {
+                    #[allow(non_camel_case_types)]
+                    struct CreateOidcConfigSvc<T: AdminService>(pub Arc<T>);
+                    impl<
+                        T: AdminService,
+                    > tonic::server::UnaryService<super::CreateOidcConfigRequest>
+                    for CreateOidcConfigSvc<T> {
+                        type Response = super::CreateOidcConfigResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::CreateOidcConfigRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as AdminService>::create_oidc_config(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = CreateOidcConfigSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/mqlens.v1.AdminService/UpdateOidcConfig" => {
+                    #[allow(non_camel_case_types)]
+                    struct UpdateOidcConfigSvc<T: AdminService>(pub Arc<T>);
+                    impl<
+                        T: AdminService,
+                    > tonic::server::UnaryService<super::UpdateOidcConfigRequest>
+                    for UpdateOidcConfigSvc<T> {
+                        type Response = super::AdminAck;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::UpdateOidcConfigRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as AdminService>::update_oidc_config(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = UpdateOidcConfigSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/mqlens.v1.AdminService/DeleteOidcConfig" => {
+                    #[allow(non_camel_case_types)]
+                    struct DeleteOidcConfigSvc<T: AdminService>(pub Arc<T>);
+                    impl<
+                        T: AdminService,
+                    > tonic::server::UnaryService<super::DeleteOidcConfigRequest>
+                    for DeleteOidcConfigSvc<T> {
+                        type Response = super::AdminAck;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::DeleteOidcConfigRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as AdminService>::delete_oidc_config(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = DeleteOidcConfigSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/mqlens.v1.AdminService/TestOidcDiscovery" => {
+                    #[allow(non_camel_case_types)]
+                    struct TestOidcDiscoverySvc<T: AdminService>(pub Arc<T>);
+                    impl<
+                        T: AdminService,
+                    > tonic::server::UnaryService<super::TestOidcDiscoveryRequest>
+                    for TestOidcDiscoverySvc<T> {
+                        type Response = super::TestOidcDiscoveryResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::TestOidcDiscoveryRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as AdminService>::test_oidc_discovery(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = TestOidcDiscoverySvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/mqlens.v1.AdminService/LinkOidcUser" => {
+                    #[allow(non_camel_case_types)]
+                    struct LinkOidcUserSvc<T: AdminService>(pub Arc<T>);
+                    impl<
+                        T: AdminService,
+                    > tonic::server::UnaryService<super::LinkOidcUserRequest>
+                    for LinkOidcUserSvc<T> {
+                        type Response = super::AdminAck;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::LinkOidcUserRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as AdminService>::link_oidc_user(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = LinkOidcUserSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/mqlens.v1.AdminService/UnlinkOidcUser" => {
+                    #[allow(non_camel_case_types)]
+                    struct UnlinkOidcUserSvc<T: AdminService>(pub Arc<T>);
+                    impl<
+                        T: AdminService,
+                    > tonic::server::UnaryService<super::UnlinkOidcUserRequest>
+                    for UnlinkOidcUserSvc<T> {
+                        type Response = super::AdminAck;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::UnlinkOidcUserRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as AdminService>::unlink_oidc_user(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = UnlinkOidcUserSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
                 _ => {
                     Box::pin(async move {
                         let mut response = http::Response::new(
@@ -1214,6 +1804,54 @@ pub mod auth_service_client {
                 .insert(GrpcMethod::new("mqlens.v1.AuthService", "WhoAmI"));
             self.inner.unary(req, path, codec).await
         }
+        pub async fn list_oidc_providers(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ListOidcProvidersRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListOidcProvidersResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/mqlens.v1.AuthService/ListOidcProviders",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("mqlens.v1.AuthService", "ListOidcProviders"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn start_oidc_login(
+            &mut self,
+            request: impl tonic::IntoRequest<super::StartOidcLoginRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::StartOidcLoginResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/mqlens.v1.AuthService/StartOidcLogin",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("mqlens.v1.AuthService", "StartOidcLogin"));
+            self.inner.unary(req, path, codec).await
+        }
     }
 }
 /// Generated server implementations.
@@ -1246,6 +1884,20 @@ pub mod auth_service_server {
             &self,
             request: tonic::Request<super::WhoAmIRequest>,
         ) -> std::result::Result<tonic::Response<super::WhoAmIResponse>, tonic::Status>;
+        async fn list_oidc_providers(
+            &self,
+            request: tonic::Request<super::ListOidcProvidersRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListOidcProvidersResponse>,
+            tonic::Status,
+        >;
+        async fn start_oidc_login(
+            &self,
+            request: tonic::Request<super::StartOidcLoginRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::StartOidcLoginResponse>,
+            tonic::Status,
+        >;
     }
     #[derive(Debug)]
     pub struct AuthServiceServer<T> {
@@ -1486,6 +2138,97 @@ pub mod auth_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = WhoAmISvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/mqlens.v1.AuthService/ListOidcProviders" => {
+                    #[allow(non_camel_case_types)]
+                    struct ListOidcProvidersSvc<T: AuthService>(pub Arc<T>);
+                    impl<
+                        T: AuthService,
+                    > tonic::server::UnaryService<super::ListOidcProvidersRequest>
+                    for ListOidcProvidersSvc<T> {
+                        type Response = super::ListOidcProvidersResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ListOidcProvidersRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as AuthService>::list_oidc_providers(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = ListOidcProvidersSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/mqlens.v1.AuthService/StartOidcLogin" => {
+                    #[allow(non_camel_case_types)]
+                    struct StartOidcLoginSvc<T: AuthService>(pub Arc<T>);
+                    impl<
+                        T: AuthService,
+                    > tonic::server::UnaryService<super::StartOidcLoginRequest>
+                    for StartOidcLoginSvc<T> {
+                        type Response = super::StartOidcLoginResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::StartOidcLoginRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as AuthService>::start_oidc_login(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = StartOidcLoginSvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

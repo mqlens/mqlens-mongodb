@@ -3646,6 +3646,52 @@ async fn server_sign_in(
 }
 
 #[tauri::command]
+async fn server_oidc_providers(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    account_id: String,
+) -> Result<Vec<server::commands::OidcProviderView>, String> {
+    let path = connections::get_server_accounts_path(&app_handle);
+    server::commands::oidc_providers_impl(&state, &path, &account_id).await
+}
+
+#[tauri::command]
+async fn server_oidc_sign_in(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    account_id: String,
+    provider_id: String,
+    login_id: Option<String>,
+) -> Result<server::accounts::ServerAccountView, String> {
+    let started = Instant::now();
+    let path = connections::get_server_accounts_path(&app_handle);
+    let result = server::commands::oidc_sign_in_impl(
+        &state,
+        &path,
+        &account_id,
+        &provider_id,
+        login_id,
+        &oidc_login::system_browser_opener(),
+        server::commands::OIDC_SIGN_IN_TIMEOUT,
+    )
+    .await;
+    audit::maybe_record_result(
+        &state,
+        None,
+        None,
+        None,
+        "server_oidc_sign_in",
+        audit::OpClass::Write,
+        Some("ui"),
+        started,
+        &format!("sign in to MQLens Server account {account_id} through an identity provider"),
+        None,
+        &result,
+    );
+    result
+}
+
+#[tauri::command]
 async fn server_connection_mode_set(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
@@ -4571,6 +4617,8 @@ pub fn run() {
             server_account_save,
             server_account_delete,
             server_sign_in,
+            server_oidc_providers,
+            server_oidc_sign_in,
             server_sign_out,
             server_connection_mode_set,
             server_list_connections,

@@ -6,6 +6,10 @@
 //! a session reads it from this file each time it is needed (see `session`),
 //! and `ServerAccountView`, the only shape the webview receives, leaves it out.
 //! The account password is used once to sign in and never stored.
+//!
+//! An account that signs in through an identity provider has no email of its
+//! own to fill in: who it is comes from the server at each sign-in, and is
+//! stored with the session that sign-in got.
 
 use crate::connections::ConnectionMode;
 use crate::server::channel;
@@ -26,13 +30,14 @@ pub(crate) fn vault_meta_path(accounts_path: &Path) -> std::path::PathBuf {
     accounts_path.with_file_name("vault.json")
 }
 
-/// How an account signs in. Password sign-in is the only method until the
-/// server offers OIDC to desktop clients.
+/// How an account signs in.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum AuthMethod {
     #[default]
     Password,
+    /// In the system browser, through one of the server's identity providers.
+    Oidc,
 }
 
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
@@ -109,6 +114,7 @@ impl ServerAccount {
             url: self.url.clone(),
             tenant: self.tenant.clone(),
             email: self.email.clone(),
+            auth: self.auth,
             allow_insecure_http: self.allow_insecure_http,
             extra_ca_pem: self.extra_ca_pem.clone(),
             signed_in: self.refresh_token.is_some(),
@@ -127,6 +133,7 @@ pub(crate) struct ServerAccountView {
     pub url: String,
     pub tenant: String,
     pub email: String,
+    pub auth: AuthMethod,
     pub allow_insecure_http: bool,
     pub extra_ca_pem: Option<String>,
     pub signed_in: bool,
@@ -144,7 +151,10 @@ pub(crate) struct ServerAccountInput {
     pub name: String,
     pub url: String,
     pub tenant: String,
+    #[serde(default)]
     pub email: String,
+    #[serde(default)]
+    pub auth: AuthMethod,
     #[serde(default)]
     pub allow_insecure_http: bool,
     #[serde(default)]
@@ -163,8 +173,11 @@ impl ServerAccountInput {
         if tenant.is_empty() {
             return Err("Enter the MQLens Server tenant".to_string());
         }
-        let email = self.email.trim();
-        if !looks_like_email(email) {
+        let email = match self.auth {
+            AuthMethod::Password => self.email.trim(),
+            AuthMethod::Oidc => "",
+        };
+        if self.auth == AuthMethod::Password && !looks_like_email(email) {
             return Err("Enter the email address you sign in to MQLens Server with".to_string());
         }
         let extra_ca_pem = channel::normalize_extra_ca(self.extra_ca_pem.as_deref())?;
@@ -179,7 +192,7 @@ impl ServerAccountInput {
             url,
             tenant: tenant.to_string(),
             email: email.to_string(),
-            auth: AuthMethod::Password,
+            auth: self.auth,
             allow_insecure_http: self.allow_insecure_http,
             extra_ca_pem,
             refresh_token: None,
@@ -310,8 +323,16 @@ pub(crate) fn save_account_while(
         match accounts.iter_mut().find(|a| a.id == account.id) {
             Some(existing) => {
                 let previous = existing.clone();
+                // A sign-in records who an identity provider signed in, and no
+                // form may change that: one opened before that sign-in would
+                // otherwise end its session.
+                if (previous.auth, account.auth) == (AuthMethod::Oidc, AuthMethod::Oidc) {
+                    account.email = previous.email.clone();
+                }
                 if previous.same_identity(&account) {
                     account.refresh_token = previous.refresh_token.clone();
+                } else if account.auth == AuthMethod::Oidc {
+                    account.email.clear();
                 }
                 // Kept even across a change of server or user: a mode only
                 // ever restricts, so keeping one is never less safe.
@@ -396,9 +417,31 @@ mod tests {
             url: "https://MQLens.acme.test/".to_string(),
             tenant: " acme ".to_string(),
             email: " ops@acme.test ".to_string(),
+            auth: AuthMethod::Password,
             allow_insecure_http: false,
             extra_ca_pem: None,
         }
+    }
+
+    /// The form for an account that signs in through an identity provider:
+    /// it has no email field to fill in.
+    fn oidc_input() -> ServerAccountInput {
+        ServerAccountInput {
+            email: String::new(),
+            auth: AuthMethod::Oidc,
+            ..input()
+        }
+    }
+
+    /// What a sign-in leaves behind: a session, and who the server said it is.
+    fn sign_in_as(path: &Path, id: &str, email: &str) {
+        update(path, &KEY, |accounts| {
+            let account = accounts.iter_mut().find(|a| a.id == id).unwrap();
+            account.email = email.to_string();
+            account.refresh_token = Some("refresh-1".to_string());
+            Ok(())
+        })
+        .unwrap();
     }
 
     fn store() -> (tempfile::TempDir, std::path::PathBuf) {
@@ -544,6 +587,89 @@ mod tests {
         };
         let (saved, _) = save_account(&path, &KEY, back).unwrap();
         assert_eq!(saved.refresh_token.as_deref(), Some("refresh-2"));
+    }
+
+    #[test]
+    fn an_identity_provider_account_needs_no_email() {
+        let account = oidc_input().into_account().unwrap();
+        assert_eq!(account.auth, AuthMethod::Oidc);
+        assert_eq!(account.email, "");
+        assert_eq!(account.view().auth, AuthMethod::Oidc);
+    }
+
+    // Only the server says who an identity provider signed in. The form has no
+    // say, and one opened before that sign-in must not undo it.
+    #[test]
+    fn an_identity_provider_account_keeps_who_signed_in_through_an_edit() {
+        let (_dir, path) = store();
+        let (account, _) = save_account(&path, &KEY, oidc_input()).unwrap();
+        sign_in_as(&path, &account.id, "sso.user@acme.test");
+
+        for email in ["", "someone.else@acme.test"] {
+            let edit = ServerAccountInput {
+                id: Some(account.id.clone()),
+                name: "Renamed".to_string(),
+                email: email.to_string(),
+                ..oidc_input()
+            };
+            let (saved, _) = save_account(&path, &KEY, edit).unwrap();
+            assert_eq!(saved.email, "sso.user@acme.test");
+            assert_eq!(saved.refresh_token.as_deref(), Some("refresh-1"));
+        }
+    }
+
+    #[test]
+    fn another_server_forgets_who_an_identity_provider_signed_in() {
+        let (_dir, path) = store();
+        let (account, _) = save_account(&path, &KEY, oidc_input()).unwrap();
+        sign_in_as(&path, &account.id, "sso.user@acme.test");
+
+        let edit = ServerAccountInput {
+            id: Some(account.id.clone()),
+            url: "https://other.acme.test".to_string(),
+            ..oidc_input()
+        };
+        let (saved, previous) = save_account(&path, &KEY, edit).unwrap();
+
+        assert_eq!(saved.email, "");
+        assert_eq!(saved.refresh_token, None);
+        assert_eq!(previous.unwrap().refresh_token.as_deref(), Some("refresh-1"));
+    }
+
+    #[test]
+    fn changing_how_an_account_signs_in_ends_its_session() {
+        let (_dir, path) = store();
+        let (account, _) = save_account(&path, &KEY, input()).unwrap();
+        set_token(&path, &account.id, "refresh-1");
+
+        let to_oidc = ServerAccountInput {
+            id: Some(account.id.clone()),
+            ..oidc_input()
+        };
+        let (saved, _) = save_account(&path, &KEY, to_oidc).unwrap();
+        assert_eq!(saved.auth, AuthMethod::Oidc);
+        assert_eq!(saved.refresh_token, None);
+        assert_eq!(saved.email, "", "the old email is not who signs in now");
+
+        sign_in_as(&path, &account.id, "sso.user@acme.test");
+        let back = ServerAccountInput {
+            id: Some(account.id.clone()),
+            ..input()
+        };
+        let (saved, _) = save_account(&path, &KEY, back).unwrap();
+        assert_eq!(saved.auth, AuthMethod::Password);
+        assert_eq!(saved.refresh_token, None);
+        assert_eq!(saved.email, "ops@acme.test");
+    }
+
+    #[test]
+    fn a_password_account_still_needs_an_email() {
+        let form = ServerAccountInput {
+            email: String::new(),
+            ..input()
+        };
+        let err = form.into_account().unwrap_err();
+        assert!(err.contains("Enter the email address"), "{err}");
     }
 
     #[test]

@@ -76,11 +76,16 @@ export interface ServerAccountSeed {
   url: string;
   tenant: string;
   email: string;
+  auth?: 'password' | 'oidc';
   allowInsecureHttp?: boolean;
   extraCaPem?: string | null;
   signedIn?: boolean;
   /** When set, server_sign_in rejects any other password. */
   password?: string;
+  /** What server_oidc_providers answers with. */
+  oidcProviders?: { id: string; name: string }[];
+  /** Who a browser sign-in signs in, at once. Unset, it waits until it is cancelled. */
+  oidcEmail?: string;
   connections?: RemoteConnectionSeed[];
   /** Signing out (or deleting while signed in) cannot confirm the session ended. */
   signOutUnconfirmed?: boolean;

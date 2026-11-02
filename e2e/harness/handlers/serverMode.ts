@@ -13,6 +13,7 @@ const view = (account: ServerAccountSeed) => ({
   url: account.url,
   tenant: account.tenant,
   email: account.email,
+  auth: account.auth ?? 'password',
   allowInsecureHttp: account.allowInsecureHttp ?? false,
   extraCaPem: account.extraCaPem ?? null,
   signedIn: account.signedIn ?? false,
@@ -56,23 +57,24 @@ function normalizeUrl(input: string, allowInsecureHttp: boolean): string {
 }
 
 /** The form as ServerAccountInput::into_account validates and stores it, with its messages. */
-function normalize(a: Pick<ServerAccountSeed, 'id' | 'name' | 'url' | 'tenant' | 'email' | 'allowInsecureHttp' | 'extraCaPem'>) {
+function normalize(a: Pick<ServerAccountSeed, 'id' | 'name' | 'url' | 'tenant' | 'email' | 'auth' | 'allowInsecureHttp' | 'extraCaPem'>) {
   const name = a.name.trim();
   if (!name) throw 'Enter a name for this MQLens Server account';
   const allowInsecureHttp = a.allowInsecureHttp ?? false;
   const url = normalizeUrl(a.url, allowInsecureHttp);
   const tenant = a.tenant.trim();
   if (!tenant) throw 'Enter the MQLens Server tenant';
-  const email = a.email.trim();
+  const auth = a.auth ?? 'password';
+  const email = auth === 'oidc' ? '' : a.email.trim();
   const [local, domain, extra] = email.split('@');
-  if (!local || !domain || extra !== undefined || /\s/.test(email)) {
+  if (auth === 'password' && (!local || !domain || extra !== undefined || /\s/.test(email))) {
     throw 'Enter the email address you sign in to MQLens Server with';
   }
   const extraCaPem = a.extraCaPem?.trim() || null;
   if (extraCaPem && !extraCaPem.includes('-----BEGIN CERTIFICATE-----')) {
     throw 'The extra CA certificate must be PEM text starting with -----BEGIN CERTIFICATE-----';
   }
-  return { id: a.id, name, url, tenant, email, allowInsecureHttp, extraCaPem };
+  return { id: a.id, name, url, tenant, email, auth, allowInsecureHttp, extraCaPem };
 }
 
 /** Whether two accounts sign in to the same place as the same user, as ServerAccount::same_identity decides. */
@@ -80,6 +82,7 @@ const sameIdentity = (a: ServerAccountSeed, b: ReturnType<typeof normalize>) =>
   a.url === b.url &&
   a.tenant === b.tenant &&
   a.email.toLowerCase() === b.email.toLowerCase() &&
+  (a.auth ?? 'password') === b.auth &&
   (a.allowInsecureHttp ?? false) === b.allowInsecureHttp &&
   (a.extraCaPem ?? null) === b.extraCaPem;
 
@@ -103,9 +106,13 @@ export function registerServerModeHandlers(backend: Backend, state: E2EState): v
     server_account_list: () => state.serverAccounts.map(view),
     server_account_save: ({ account: input }) => {
       // Only what the backend's ServerAccountInput carries; the view's signedIn and warning are not input.
-      const { id, name, url, tenant, email, allowInsecureHttp, extraCaPem } = input as ServerAccountSeed;
-      const fields = normalize({ id, name, url, tenant, email, allowInsecureHttp, extraCaPem });
+      const { id, name, url, tenant, email, auth, allowInsecureHttp, extraCaPem } = input as ServerAccountSeed;
+      const fields = normalize({ id, name, url, tenant, email, auth, allowInsecureHttp, extraCaPem });
       const existing = fields.id ? account(fields.id) : undefined;
+      // Only a sign-in says who an identity provider signed in, as save_account_while keeps it.
+      if (existing?.auth === 'oidc' && sameIdentity(existing, { ...fields, email: existing.email })) {
+        fields.email = existing.email;
+      }
       // A new identity ends the session; only then is there one to revoke, and a warning when that fails.
       const displaced = !!existing?.signedIn && !sameIdentity(existing, fields);
       if (displaced) existing!.signedIn = false;
@@ -123,6 +130,18 @@ export function registerServerModeHandlers(backend: Backend, state: E2EState): v
     server_sign_in: ({ accountId, password }) => {
       const found = account(accountId);
       if (found.password !== undefined && password !== found.password) throw 'Wrong email or password';
+      found.signedIn = true;
+      return view(found);
+    },
+    server_oidc_providers: ({ accountId }) => account(accountId).oidcProviders ?? [],
+    server_oidc_sign_in: ({ accountId, loginId }) => {
+      const found = account(accountId);
+      if (!found.oidcEmail) {
+        return new Promise((_resolve, reject) => {
+          state.pendingOidcLogins.set(String(loginId), () => reject('auth.oidc.errors.cancelled'));
+        });
+      }
+      found.email = found.oidcEmail;
       found.signedIn = true;
       return view(found);
     },

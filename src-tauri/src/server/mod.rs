@@ -240,6 +240,7 @@ mod tests {
                 url: env.account.url.clone(),
                 tenant: TENANT.to_string(),
                 email: "dba@acme.test".to_string(),
+                auth: Default::default(),
                 allow_insecure_http: false,
                 extra_ca_pem: None,
             },

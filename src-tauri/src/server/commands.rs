@@ -3,14 +3,21 @@
 //! Each takes the accounts file path explicitly, like the other `_impl`s, so
 //! tests run against a temporary file with no `AppHandle`.
 
-use crate::server::accounts::{self, ServerAccount, ServerAccountInput, ServerAccountView};
+use crate::oidc::{
+    require_browsable, wait_for_code, BrowserOpener, LoopbackListener, OidcError, OidcSession,
+    PkceVerifier,
+};
+use crate::oidc_login::register_login;
+use crate::server::accounts::{
+    self, AuthMethod, ServerAccount, ServerAccountInput, ServerAccountView,
+};
 use crate::server::channel::client;
 use crate::server::key_source;
 use crate::server::pb::mqlens::v1::capability_service_client::CapabilityServiceClient;
 use crate::server::pb::mqlens::v1::connection_service_client::ConnectionServiceClient;
 use crate::server::pb::mqlens::v1::metadata_service_client::MetadataServiceClient;
 use crate::server::pb::mqlens::v1::{
-    GetCapabilitiesRequest, ListConnectionsRequest, MongoVersionRequest,
+    GetCapabilitiesRequest, ListConnectionsRequest, MongoVersionRequest, OidcCode,
 };
 use crate::server::remote::RemoteConn;
 use crate::server::session::{self, blocking, AccountSession, FileTokenStore, TokenStore};
@@ -24,6 +31,10 @@ use zeroize::Zeroizing;
 
 /// How long a vault reset waits for its sessions to end on their servers.
 const RESET_SIGN_OUT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// How long a sign-in waits for the browser: the deadline the driver gives a
+/// connection's human OIDC login.
+pub(crate) const OIDC_SIGN_IN_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -178,15 +189,27 @@ pub(crate) async fn sign_in_impl(
     let password = Zeroizing::new(password);
     let key = state.require_key()?;
     let account = accounts::find(path, &key, account_id)?;
+    commit_sign_in(state, path, &account, session::Credentials::Local(&password)).await
+}
+
+/// Signs `account` in and makes the session the runtime's. The caller holds
+/// the vault operation lock.
+async fn commit_sign_in(
+    state: &AppState,
+    path: &Path,
+    account: &ServerAccount,
+    credentials: session::Credentials<'_>,
+) -> Result<ServerAccountView, String> {
     // A session already stored stays until the new one replaces it, so a
     // mistyped password or a failed login leaves the user signed in.
     // `AccountSession::sign_in` ends the session it displaces on the server.
     let session = AccountSession::sign_in_with_vault_operation_lock_held(
-        &account,
-        &password,
+        account,
+        credentials,
         token_store(state, path),
     )
     .await?;
+    let account_id = account.id.as_str();
     state.server.insert(session.clone()).await;
     // The vault may have locked while the server answered; a session must not
     // be left behind for a locked vault.
@@ -216,9 +239,99 @@ pub(crate) async fn sign_in_impl(
         }
     }
     let mut view = account.view();
+    view.email = session.email().to_string();
     view.signed_in = true;
     view.warning = session.displaced_session_warning().map(str::to_string);
     Ok(view)
+}
+
+/// One of the identity providers an account's tenant can sign in through.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct OidcProviderView {
+    pub id: String,
+    pub name: String,
+}
+
+pub(crate) async fn oidc_providers_impl(
+    state: &AppState,
+    path: &Path,
+    account_id: &str,
+) -> Result<Vec<OidcProviderView>, String> {
+    let account = accounts::find(path, &state.require_key()?, account_id)?;
+    let providers = session::list_oidc_providers(&account).await?;
+    Ok(providers
+        .into_iter()
+        .map(|provider| OidcProviderView { id: provider.id, name: provider.name })
+        .collect())
+}
+
+/// Signs in through an identity provider in the system browser. The server
+/// does the code exchange, so all this holds is a code, a state and a verifier,
+/// and only until `Login`.
+///
+/// `login_id` names the login to `cancel_oidc_login` and `reopen_oidc_login`.
+/// Errors the UI can translate are locale keys, as human OIDC login's are.
+pub(crate) async fn oidc_sign_in_impl(
+    state: &AppState,
+    path: &Path,
+    account_id: &str,
+    provider_id: &str,
+    login_id: Option<String>,
+    open: &BrowserOpener,
+    timeout: Duration,
+) -> Result<ServerAccountView, String> {
+    let locale = |error: OidcError| error.locale_key().to_string();
+    let account = accounts::find(path, &state.require_key()?, account_id)?;
+    if account.auth != AuthMethod::Oidc {
+        return Err(session::SIGNS_IN_WITH_PASSWORD.to_string());
+    }
+    let login = OidcSession::new(Arc::new(|_| {}));
+    let _registration = register_login(&state.oidc_sessions, login_id, login.clone())?;
+    // `PortUnavailable`'s message is about the fixed port of a connection's login.
+    let listener = LoopbackListener::bind_callback()
+        .await
+        .map_err(|_| "MQLens could not open a local port to receive the sign-in.".to_string())?;
+    let verifier = PkceVerifier::generate();
+    let started = session::start_oidc_login(
+        &account,
+        provider_id,
+        &listener.redirect_uri,
+        &verifier.challenge(),
+    )
+    .await?;
+    // A callback that carries no state compares equal to an empty one.
+    if started.state.is_empty() {
+        return Err(locale(OidcError::StateMismatch));
+    }
+    require_browsable(&started.authorization_url).map_err(locale)?;
+    listener.expect_state(&started.state);
+    login.set_authorization_url(started.authorization_url.clone());
+    if login.is_cancelled() {
+        return Err(locale(OidcError::Cancelled));
+    }
+    open(&started.authorization_url).map_err(locale)?;
+    let redirect_uri = listener.redirect_uri.clone();
+    let code = wait_for_code(listener, &started.state, &login, timeout)
+        .await
+        .map(Zeroizing::new)
+        .map_err(locale)?;
+
+    // Only now: nothing may wait on a person at a browser, and the vault
+    // lock and reset wait on this. `account` is as it was when the sign-in
+    // began, since the code belongs to that server and tenant; the store refuses
+    // the session if the account has since changed.
+    let meta_path = accounts::vault_meta_path(path);
+    let _vault_lock =
+        blocking(move || crate::connections::lock_vault_for_write(&meta_path)).await?;
+    state.require_key()?;
+    let credentials = session::Credentials::OidcCode(OidcCode {
+        code: code.to_string(),
+        redirect_uri,
+        code_verifier: verifier.as_str().to_string(),
+        state: started.state,
+    });
+    commit_sign_in(state, path, &account, credentials).await
 }
 
 pub(crate) async fn sign_out_impl(
@@ -561,7 +674,11 @@ async fn current_session(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::server::fake::{file_store, write_vault_meta, Env, EMAIL, KEY, PASSWORD, TENANT};
+    use crate::oidc_login::{cancel_oidc_login_impl, reopen_oidc_login_impl};
+    use crate::server::fake::{
+        file_store, write_vault_meta, Env, EMAIL, KEY, OIDC_EMAIL, PASSWORD, TENANT,
+    };
+    use std::sync::Mutex;
 
     fn unlocked() -> AppState {
         let state = AppState::new();
@@ -571,6 +688,7 @@ mod tests {
 
     fn form(env: &Env) -> ServerAccountInput {
         ServerAccountInput {
+            auth: Default::default(),
             id: Some(env.account.id.clone()),
             name: env.account.name.clone(),
             url: env.account.url.clone(),
@@ -639,6 +757,478 @@ mod tests {
         assert!(sign_out_impl(&state, &env.path, id).await.is_err());
         assert!(list_connections_impl(&state, &env.path, id).await.is_err());
         env.fake.with(|s| assert_eq!(s.logins, 0));
+    }
+
+    const STATE: &str = "issued-state";
+    const LOGIN: &str = "login-1";
+    const TIMEOUT: Duration = Duration::from_secs(30);
+
+    type Pages = Arc<Mutex<Vec<String>>>;
+
+    async fn browser_env() -> Env {
+        let env = Env::oidc().await;
+        env.fake.with(|s| s.oidc_state = Some(STATE.to_string()));
+        env
+    }
+
+    /// The system browser, with the pages it was sent to.
+    fn browser() -> (BrowserOpener, Pages) {
+        let pages = Pages::default();
+        let seen = pages.clone();
+        let open: BrowserOpener = Arc::new(move |url: &str| {
+            seen.lock().unwrap().push(url.to_string());
+            Ok(())
+        });
+        (open, pages)
+    }
+
+    fn browser_sign_in(
+        state: &Arc<AppState>,
+        env: &Env,
+        open: BrowserOpener,
+    ) -> tokio::task::JoinHandle<Result<ServerAccountView, String>> {
+        let state = state.clone();
+        let (path, id) = (env.path.clone(), env.account.id.clone());
+        tokio::spawn(async move {
+            let login = Some(LOGIN.to_string());
+            oidc_sign_in_impl(&state, &path, &id, "okta-id", login, &open, TIMEOUT).await
+        })
+    }
+
+    async fn wait_for(what: &str, done: impl Fn() -> bool) {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !done() {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("{what}"));
+    }
+
+    async fn page_opens(pages: &Pages) {
+        wait_for("no browser opened", || !pages.lock().unwrap().is_empty()).await;
+    }
+
+    /// The identity provider sends the browser to the redirect the server was
+    /// given, with `query`.
+    async fn browser_returns(env: &Env, query: &str) {
+        let redirect = env
+            .fake
+            .with(|s| s.oidc_starts.last().unwrap().redirect_uri.clone());
+        reqwest::get(format!("{redirect}?{query}")).await.unwrap();
+    }
+
+    async fn signed_in_through_a_browser(env: &Env, state: &Arc<AppState>) -> ServerAccountView {
+        let (open, pages) = browser();
+        let signing_in = browser_sign_in(state, env, open);
+        page_opens(&pages).await;
+        browser_returns(env, &format!("code=idp-code&state={STATE}")).await;
+        signing_in.await.unwrap().unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_browser_sign_in_ends_signed_in_as_who_the_server_named() {
+        let env = browser_env().await;
+        let state = Arc::new(unlocked());
+
+        let view = signed_in_through_a_browser(&env, &state).await;
+
+        assert!(view.signed_in);
+        assert_eq!(view.email, OIDC_EMAIL);
+        assert_eq!(account_list_impl(&state, &env.path).unwrap()[0].email, OIDC_EMAIL);
+        let connections = list_connections_impl(&state, &env.path, &env.account.id).await;
+        assert_eq!(connections.unwrap()[0].id, "c1");
+        env.fake.with(|s| assert_eq!(s.refreshes, 0));
+    }
+
+    // What docs/desktop-clients.md asks of the request, and that the code comes
+    // back with the verifier its challenge was made from.
+    #[tokio::test]
+    async fn a_browser_sign_in_proves_it_began_the_login() {
+        let env = browser_env().await;
+        let state = Arc::new(unlocked());
+
+        signed_in_through_a_browser(&env, &state).await;
+
+        env.fake.with(|s| {
+            let start = &s.oidc_starts[0];
+            assert_eq!(start.tenant, TENANT);
+            assert_eq!(start.provider_id, "okta-id");
+            let port = start
+                .redirect_uri
+                .strip_prefix("http://127.0.0.1:")
+                .and_then(|rest| rest.strip_suffix("/callback"))
+                .unwrap_or_else(|| panic!("{}", start.redirect_uri));
+            assert!(port.parse::<u16>().unwrap() > 0);
+            assert_eq!(start.code_challenge.len(), 43);
+
+            let login = &s.oidc_logins[0];
+            assert_eq!(login.code, "idp-code");
+            assert_eq!(login.state, STATE);
+            assert_eq!(login.redirect_uri, start.redirect_uri);
+            let verifier = crate::oidc::PkceVerifier::from_string(login.code_verifier.clone());
+            assert_eq!(verifier.challenge(), start.code_challenge);
+        });
+    }
+
+    #[tokio::test]
+    async fn the_browser_opens_the_page_the_server_named() {
+        let env = browser_env().await;
+        let state = Arc::new(unlocked());
+        let (open, pages) = browser();
+        let signing_in = browser_sign_in(&state, &env, open);
+
+        page_opens(&pages).await;
+        browser_returns(&env, &format!("code=idp-code&state={STATE}")).await;
+        signing_in.await.unwrap().unwrap();
+
+        let want = env.fake.with(|s| s.oidc_authorization_url.clone());
+        assert_eq!(*pages.lock().unwrap(), vec![want]);
+    }
+
+    // Each try gets a new verifier and redirect: nothing of a failed one is reused.
+    #[tokio::test]
+    async fn every_browser_sign_in_is_a_new_login() {
+        let env = browser_env().await;
+        let state = Arc::new(unlocked());
+
+        signed_in_through_a_browser(&env, &state).await;
+        signed_in_through_a_browser(&env, &state).await;
+
+        env.fake.with(|s| {
+            assert_ne!(s.oidc_starts[0].code_challenge, s.oidc_starts[1].code_challenge);
+            assert_ne!(s.oidc_logins[0].code_verifier, s.oidc_logins[1].code_verifier);
+            assert_eq!(s.live_families(), 1);
+        });
+    }
+
+    // Someone at a browser can take minutes. Vault lock and reset must not wait
+    // on them, so that lock is taken only once the code is here.
+    #[tokio::test]
+    async fn the_vault_is_not_held_while_the_browser_is_open() {
+        let env = browser_env().await;
+        let state = Arc::new(unlocked());
+        let (open, pages) = browser();
+        let signing_in = browser_sign_in(&state, &env, open);
+        page_opens(&pages).await;
+
+        let meta = accounts::vault_meta_path(&env.path);
+        let locking = blocking(move || crate::connections::lock_vault_for_write(&meta));
+        let lock = tokio::time::timeout(Duration::from_secs(2), locking)
+            .await
+            .expect("the vault lock waited on the browser")
+            .unwrap();
+        drop(lock);
+
+        browser_returns(&env, &format!("code=idp-code&state={STATE}")).await;
+        assert!(signing_in.await.unwrap().unwrap().signed_in);
+    }
+
+    #[tokio::test]
+    async fn a_vault_locked_during_the_wait_sends_no_code() {
+        let env = browser_env().await;
+        let state = Arc::new(unlocked());
+        let (open, pages) = browser();
+        let signing_in = browser_sign_in(&state, &env, open);
+        page_opens(&pages).await;
+
+        *state.vault_key.lock().unwrap() = None;
+        browser_returns(&env, &format!("code=idp-code&state={STATE}")).await;
+
+        assert_eq!(signing_in.await.unwrap().unwrap_err(), "vault is locked");
+        env.fake.with(|s| assert!(s.oidc_logins.is_empty()));
+    }
+
+    // The code was issued for the server and tenant the sign-in began with, so
+    // it goes there, and the account no longer being theirs stores nothing.
+    #[tokio::test]
+    async fn an_account_edited_during_the_wait_is_not_signed_in() {
+        let env = browser_env().await;
+        let state = Arc::new(unlocked());
+        let (open, pages) = browser();
+        let signing_in = browser_sign_in(&state, &env, open);
+        page_opens(&pages).await;
+
+        accounts::update(&env.path, &KEY, |all| {
+            all[0].tenant = "globex".to_string();
+            Ok(())
+        })
+        .unwrap();
+        browser_returns(&env, &format!("code=idp-code&state={STATE}")).await;
+
+        let err = signing_in.await.unwrap().unwrap_err();
+        assert!(err.contains("changed"), "{err}");
+        assert_eq!(env.stored_token(), None);
+        env.fake.with(|s| assert_eq!(s.live_families(), 0));
+    }
+
+    #[tokio::test]
+    async fn a_forged_callback_never_reaches_the_server() {
+        let env = browser_env().await;
+        let state = Arc::new(unlocked());
+        let (open, pages) = browser();
+        let signing_in = browser_sign_in(&state, &env, open);
+        page_opens(&pages).await;
+
+        browser_returns(&env, "code=stolen&state=forged").await;
+
+        let err = signing_in.await.unwrap().unwrap_err();
+        assert_eq!(err, OidcError::StateMismatch.locale_key());
+        env.fake.with(|s| assert!(s.oidc_logins.is_empty()));
+        assert_eq!(env.stored_token(), None);
+    }
+
+    #[tokio::test]
+    async fn refusing_at_the_provider_ends_the_sign_in() {
+        let env = browser_env().await;
+        let state = Arc::new(unlocked());
+        let (open, pages) = browser();
+        let signing_in = browser_sign_in(&state, &env, open);
+        page_opens(&pages).await;
+
+        browser_returns(&env, &format!("error=access_denied&state={STATE}")).await;
+
+        let err = signing_in.await.unwrap().unwrap_err();
+        assert_eq!(err, OidcError::ConsentDenied.locale_key());
+        env.fake.with(|s| assert!(s.oidc_logins.is_empty()));
+    }
+
+    #[tokio::test]
+    async fn a_browser_that_never_returns_times_out() {
+        let env = browser_env().await;
+        let state = unlocked();
+        let (open, pages) = browser();
+
+        let err = oidc_sign_in_impl(
+            &state,
+            &env.path,
+            &env.account.id,
+            "okta-id",
+            None,
+            &open,
+            Duration::from_millis(50),
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(err, OidcError::TimedOut.locale_key());
+        assert_eq!(pages.lock().unwrap().len(), 1);
+        env.fake.with(|s| assert!(s.oidc_logins.is_empty()));
+    }
+
+    #[tokio::test]
+    async fn cancelling_ends_the_wait_for_the_browser() {
+        let env = browser_env().await;
+        let state = Arc::new(unlocked());
+        let (open, pages) = browser();
+        let signing_in = browser_sign_in(&state, &env, open);
+        page_opens(&pages).await;
+
+        cancel_oidc_login_impl(&state, LOGIN).unwrap();
+
+        let err = signing_in.await.unwrap().unwrap_err();
+        assert_eq!(err, OidcError::Cancelled.locale_key());
+        env.fake.with(|s| assert!(s.oidc_logins.is_empty()));
+        assert!(state.oidc_sessions.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn cancelling_while_the_server_answers_opens_no_browser() {
+        let env = browser_env().await;
+        env.fake.with(|s| s.oidc_start_delay = Duration::from_millis(200));
+        let state = Arc::new(unlocked());
+        let (open, pages) = browser();
+        let signing_in = browser_sign_in(&state, &env, open);
+        let started = env.fake.clone();
+        wait_for("the server was not asked", move || {
+            started.with(|s| !s.oidc_starts.is_empty())
+        })
+        .await;
+
+        cancel_oidc_login_impl(&state, LOGIN).unwrap();
+
+        let err = signing_in.await.unwrap().unwrap_err();
+        assert_eq!(err, OidcError::Cancelled.locale_key());
+        assert!(pages.lock().unwrap().is_empty());
+    }
+
+    // Rebuilding the request would rotate `state`, and the listener would refuse
+    // the login the user finishes.
+    #[tokio::test]
+    async fn the_browser_can_be_sent_back_to_the_same_login() {
+        let env = browser_env().await;
+        let state = Arc::new(unlocked());
+        let (open, pages) = browser();
+        let signing_in = browser_sign_in(&state, &env, open.clone());
+        page_opens(&pages).await;
+
+        reopen_oidc_login_impl(&state, LOGIN, &open).unwrap();
+
+        let opened = pages.lock().unwrap().clone();
+        assert_eq!(opened.len(), 2);
+        assert_eq!(opened[0], opened[1]);
+        env.fake.with(|s| assert_eq!(s.oidc_starts.len(), 1));
+        browser_returns(&env, &format!("code=idp-code&state={STATE}")).await;
+        assert!(signing_in.await.unwrap().unwrap().signed_in);
+    }
+
+    // The URL comes from the server, and the OS hands other schemes to whatever
+    // program claims them.
+    #[tokio::test]
+    async fn an_unsafe_page_from_a_server_is_never_opened() {
+        let env = browser_env().await;
+        let state = unlocked();
+        for url in [
+            "http://idp.acme.test/authorize",
+            "file:///c:/windows/system32/calc.exe",
+            "ms-msdt:/id",
+            "not a url",
+        ] {
+            env.fake.with(|s| s.oidc_authorization_url = url.to_string());
+            let (open, pages) = browser();
+
+            let err = oidc_sign_in_impl(
+                &state,
+                &env.path,
+                &env.account.id,
+                "okta-id",
+                None,
+                &open,
+                TIMEOUT,
+            )
+            .await
+            .unwrap_err();
+
+            assert_eq!(err, OidcError::InsecureEndpoint.locale_key(), "{url}");
+            assert!(pages.lock().unwrap().is_empty(), "{url}");
+        }
+    }
+
+    // A callback with no state would otherwise match an empty one.
+    #[tokio::test]
+    async fn a_server_that_issues_no_state_opens_no_browser() {
+        let env = browser_env().await;
+        env.fake.with(|s| s.oidc_state = Some(String::new()));
+        let state = unlocked();
+        let (open, pages) = browser();
+
+        let err = oidc_sign_in_impl(
+            &state,
+            &env.path,
+            &env.account.id,
+            "okta-id",
+            None,
+            &open,
+            TIMEOUT,
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(err, OidcError::StateMismatch.locale_key());
+        assert!(pages.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_browser_that_will_not_open_says_so() {
+        let env = browser_env().await;
+        let state = unlocked();
+        let open: BrowserOpener = Arc::new(|_: &str| Err(OidcError::BrowserLaunchFailed));
+
+        let err = oidc_sign_in_impl(
+            &state,
+            &env.path,
+            &env.account.id,
+            "okta-id",
+            None,
+            &open,
+            TIMEOUT,
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(err, OidcError::BrowserLaunchFailed.locale_key());
+    }
+
+    #[tokio::test]
+    async fn a_password_account_opens_no_browser() {
+        let env = Env::new().await;
+        let state = unlocked();
+        let (open, pages) = browser();
+
+        let err = oidc_sign_in_impl(
+            &state,
+            &env.path,
+            &env.account.id,
+            "okta-id",
+            None,
+            &open,
+            TIMEOUT,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(err.contains("signs in with a password"), "{err}");
+        assert!(pages.lock().unwrap().is_empty());
+        env.fake.with(|s| assert!(s.oidc_starts.is_empty()));
+    }
+
+    #[tokio::test]
+    async fn a_server_from_before_oidc_opens_no_browser() {
+        let env = browser_env().await;
+        env.fake.with(|s| s.oidc_unimplemented = true);
+        let state = unlocked();
+        let (open, pages) = browser();
+
+        let err = oidc_sign_in_impl(
+            &state,
+            &env.path,
+            &env.account.id,
+            "okta-id",
+            None,
+            &open,
+            TIMEOUT,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(err.contains("Update"), "{err}");
+        assert!(pages.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_identity_provider_calls_need_an_unlocked_vault() {
+        let env = browser_env().await;
+        let state = AppState::new();
+        let (open, pages) = browser();
+        let id = env.account.id.as_str();
+
+        let err = oidc_providers_impl(&state, &env.path, id).await.unwrap_err();
+        assert_eq!(err, "vault is locked");
+        let err = oidc_sign_in_impl(&state, &env.path, id, "okta-id", None, &open, TIMEOUT)
+            .await
+            .unwrap_err();
+        assert_eq!(err, "vault is locked");
+
+        assert!(pages.lock().unwrap().is_empty());
+        env.fake.with(|s| assert!(s.oidc_starts.is_empty()));
+    }
+
+    #[tokio::test]
+    async fn the_webview_gets_the_tenants_providers() {
+        let env = browser_env().await;
+        let state = unlocked();
+
+        let providers = oidc_providers_impl(&state, &env.path, &env.account.id)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            providers,
+            vec![OidcProviderView {
+                id: "okta-id".to_string(),
+                name: "Okta".to_string(),
+            }]
+        );
     }
 
     #[tokio::test]
@@ -1347,6 +1937,7 @@ mod tests {
         // Listed first, so it would be first in line for the accounts lock.
         accounts::update(&env.path, &KEY, |all| {
             let mut stuck = ServerAccountInput {
+                auth: Default::default(),
                 id: None,
                 name: "Hung".to_string(),
                 url: hung_url,
@@ -1540,6 +2131,7 @@ mod tests {
         });
         accounts::update(&env.path, &KEY, |all| {
             let mut stuck = ServerAccountInput {
+                auth: Default::default(),
                 id: None,
                 name: "Hung".to_string(),
                 url: hung_url,

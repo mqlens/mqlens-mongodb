@@ -6,7 +6,7 @@
 //! `internal/api/auth_handler.go` does. Counters let tests assert what reached
 //! the server.
 
-use crate::server::accounts::{self, ServerAccount, ServerAccountInput};
+use crate::server::accounts::{self, AuthMethod, ServerAccount, ServerAccountInput};
 use crate::server::channel::client;
 use crate::server::pb::mqlens::v1::auth_service_server::{AuthService, AuthServiceServer};
 use crate::server::pb::mqlens::v1::capability_service_server::{
@@ -37,8 +37,9 @@ use crate::server::pb::mqlens::v1::task_service_server::{TaskService, TaskServic
 use crate::server::pb::mqlens::v1::write_service_server::{WriteService, WriteServiceServer};
 use crate::server::pb::mqlens::v1::{
     login_request, ConnectionRef, GetConnectionRequest, ListConnectionsRequest,
-    ListConnectionsResponse, LoginRequest, LoginResponse, LogoutRequest, LogoutResponse, Principal,
-    RefreshRequest, WhoAmIRequest, WhoAmIResponse,
+    ListConnectionsResponse, ListOidcProvidersRequest, ListOidcProvidersResponse, LoginRequest,
+    LoginResponse, LogoutRequest, LogoutResponse, OidcCode, OidcProvider, Principal,
+    RefreshRequest, StartOidcLoginRequest, StartOidcLoginResponse, WhoAmIRequest, WhoAmIResponse,
 };
 use crate::server::pb::mqlens::v1::{
     start_restore_request, ArtifactChunk, CancelTaskRequest, CancelTaskResponse,
@@ -102,6 +103,7 @@ use tonic::{Code, Request, Response, Status};
 pub(crate) const TENANT: &str = "acme";
 pub(crate) const EMAIL: &str = "ops@acme.test";
 pub(crate) const PASSWORD: &str = "correct horse battery staple";
+pub(crate) const OIDC_EMAIL: &str = "sso.user@acme.test";
 pub(crate) const KEY: [u8; 32] = [7; 32];
 
 struct RefreshRecord {
@@ -137,6 +139,26 @@ pub(crate) struct FakeState {
     list_seen: u32,
     /// Held before a logout answers, to play a slow server.
     pub logout_delay: Duration,
+    /// What ListOidcProviders answers.
+    pub oidc_providers: Vec<OidcProvider>,
+    /// Plays a server from before OIDC sign-in, which answers neither call.
+    pub oidc_unimplemented: bool,
+    /// What StartOidcLogin was asked, in order.
+    pub oidc_starts: Vec<StartOidcLoginRequest>,
+    /// What StartOidcLogin answers with. `oidc_state` replaces the state it
+    /// would otherwise make up.
+    pub oidc_authorization_url: String,
+    pub oidc_state: Option<String>,
+    /// States not yet spent, with the request each came from.
+    oidc_pending: HashMap<String, StartOidcLoginRequest>,
+    /// Who an OIDC sign-in comes back as, which the client cannot choose.
+    pub oidc_email: String,
+    /// Each OidcCode that reached Login.
+    pub oidc_logins: Vec<OidcCode>,
+    /// A status the next OIDC Login answers with.
+    pub oidc_login_failure: Option<Status>,
+    /// How long StartOidcLogin takes to answer.
+    pub oidc_start_delay: Duration,
     /// Codes the next refreshes fail with, before touching the token.
     pub refresh_failures: Vec<Code>,
     /// Refresh RPCs that have started, including ones still waiting on delay.
@@ -375,6 +397,20 @@ impl Fake {
                 access: HashMap::new(),
                 access_ttl_secs: 3600,
                 refresh_delay: Duration::ZERO,
+                oidc_providers: vec![OidcProvider {
+                    id: "okta-id".to_string(),
+                    name: "Okta".to_string(),
+                }],
+                oidc_unimplemented: false,
+                oidc_starts: Vec::new(),
+                oidc_authorization_url: "https://idp.acme.test/authorize?client_id=mqlens"
+                    .to_string(),
+                oidc_state: None,
+                oidc_pending: HashMap::new(),
+                oidc_email: OIDC_EMAIL.to_string(),
+                oidc_logins: Vec::new(),
+                oidc_login_failure: None,
+                oidc_start_delay: Duration::ZERO,
                 login_delay: Duration::ZERO,
                 list_delay: Duration::ZERO,
                 list_hold_from: 0,
@@ -718,8 +754,81 @@ impl AuthService for Fake {
                 let family = state.next;
                 Ok(Response::new(state.issue(family)))
             }
+            Some(login_request::Login::Oidc(code)) => {
+                state.oidc_logins.push(code.clone());
+                if let Some(status) = state.oidc_login_failure.take() {
+                    return Err(status);
+                }
+                // What the server checks before it spends a state: the state
+                // came from it, for this tenant and redirect, and the verifier
+                // is the one behind its challenge.
+                let genuine = state.oidc_pending.remove(&code.state).is_some_and(|started| {
+                    started.tenant == message.tenant
+                        && started.redirect_uri == code.redirect_uri
+                        && started.code_challenge
+                            == crate::oidc::PkceVerifier::from_string(code.code_verifier.clone())
+                                .challenge()
+                });
+                if !genuine || code.code.is_empty() {
+                    return Err(Status::unauthenticated("invalid login"));
+                }
+                state.next += 1;
+                let family = state.next;
+                let mut response = state.issue(family);
+                if let Some(principal) = response.principal.as_mut() {
+                    principal.email = state.oidc_email.clone();
+                }
+                Ok(Response::new(response))
+            }
             _ => Err(Status::unauthenticated("invalid login")),
         }
+    }
+
+    async fn list_oidc_providers(
+        &self,
+        request: Request<ListOidcProvidersRequest>,
+    ) -> Result<Response<ListOidcProvidersResponse>, Status> {
+        let state = self.state.lock().unwrap();
+        if state.oidc_unimplemented {
+            return Err(Status::unimplemented("unknown method"));
+        }
+        let providers = if request.into_inner().tenant == TENANT {
+            state.oidc_providers.clone()
+        } else {
+            Vec::new()
+        };
+        Ok(Response::new(ListOidcProvidersResponse { providers }))
+    }
+
+    async fn start_oidc_login(
+        &self,
+        request: Request<StartOidcLoginRequest>,
+    ) -> Result<Response<StartOidcLoginResponse>, Status> {
+        let message = request.into_inner();
+        let delay = self.with(|s| {
+            if !s.oidc_unimplemented {
+                s.oidc_starts.push(message.clone());
+            }
+            s.oidc_start_delay
+        });
+        tokio::time::sleep(delay).await;
+        let mut state = self.state.lock().unwrap();
+        if state.oidc_unimplemented {
+            return Err(Status::unimplemented("unknown method"));
+        }
+        if !state.oidc_providers.iter().any(|p| p.id == message.provider_id) {
+            return Err(Status::not_found("no such identity provider"));
+        }
+        state.next += 1;
+        let issued = state
+            .oidc_state
+            .clone()
+            .unwrap_or_else(|| format!("state-{}", state.next));
+        state.oidc_pending.insert(issued.clone(), message);
+        Ok(Response::new(StartOidcLoginResponse {
+            authorization_url: state.oidc_authorization_url.clone(),
+            state: issued,
+        }))
     }
 
     async fn refresh(
@@ -1567,6 +1676,15 @@ pub(crate) struct Env {
 
 impl Env {
     pub(crate) async fn new() -> Self {
+        Self::with_sign_in(AuthMethod::Password, EMAIL).await
+    }
+
+    /// `new`, for an account that signs in through an identity provider.
+    pub(crate) async fn oidc() -> Self {
+        Self::with_sign_in(AuthMethod::Oidc, "").await
+    }
+
+    async fn with_sign_in(auth: AuthMethod, email: &str) -> Self {
         let fake = Fake::new();
         let url = fake.serve().await;
         let dir = tempfile::tempdir().unwrap();
@@ -1580,7 +1698,8 @@ impl Env {
                 name: "Acme".to_string(),
                 url,
                 tenant: TENANT.to_string(),
-                email: EMAIL.to_string(),
+                email: email.to_string(),
+                auth,
                 allow_insecure_http: false,
                 extra_ca_pem: None,
             },
