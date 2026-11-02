@@ -91,13 +91,17 @@ use crate::server::pb::mqlens::v1::{
 use crate::server::pb::mqlens::v1::{InsertManyRequest, InsertManyResponse, InsertRefusal};
 use crate::server::pb::mqlens::v1::{MongoshClientMsg, MongoshServerMsg};
 use crate::server::session::{unix_now, AccountSession, FileTokenStore, TokenStore};
+use http_body::Frame;
 use mongodb::bson::{doc, Document};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll};
 use std::time::Duration;
+use tonic::codegen::{http, Body, Bytes};
 use tonic::{Code, Request, Response, Status};
+use tower::util::MapResponseLayer;
 
 pub(crate) const TENANT: &str = "acme";
 pub(crate) const EMAIL: &str = "ops@acme.test";
@@ -189,6 +193,11 @@ pub(crate) struct FakeState {
     /// Ends every new shell at once with an error, as a mongosh that cannot
     /// start would.
     pub shell_start_failure: bool,
+    /// The next Find sends its first batch and is then reset, as a proxy resets
+    /// a stream when the node behind it is killed. `kill()` does this to a shell.
+    pub find_killed: bool,
+    /// Resets the stream that is next polled for a frame.
+    reset_stream: bool,
     /// Each Watch received, and how many have ended because the client let
     /// go. A watch opens with `watch_opening` as its resume token, then sends
     /// `watch_messages` and stays open; `watch_failure` refuses it instead.
@@ -366,6 +375,30 @@ pub(crate) struct Fake {
     state: Arc<Mutex<FakeState>>,
 }
 
+/// A response body that fails on request. hyper answers that by resetting the
+/// stream with INTERNAL_ERROR, which is what reaches a client when a proxy loses
+/// the node behind it. A handler cannot do this: tonic turns a handler's error
+/// into trailers.
+struct Resettable {
+    body: tonic::body::Body,
+    fake: Fake,
+}
+
+impl Body for Resettable {
+    type Data = Bytes;
+    type Error = Status;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, Status>>> {
+        if self.fake.with(|s| std::mem::take(&mut s.reset_stream)) {
+            return Poll::Ready(Some(Err(Status::internal("node killed"))));
+        }
+        Pin::new(&mut self.body).poll_frame(cx)
+    }
+}
+
 impl Fake {
     pub(crate) fn new() -> Self {
         Self {
@@ -469,6 +502,8 @@ impl Fake {
                 shell_input: Vec::new(),
                 shells_ended: 0,
                 shell_start_failure: false,
+                find_killed: false,
+                reset_stream: false,
                 watches: Vec::new(),
                 watches_ended: 0,
                 watch_opening: mongodb::bson::to_vec(&mongodb::bson::doc! { "_data": "opened" })
@@ -651,8 +686,17 @@ impl Fake {
     pub(crate) async fn serve(&self) -> String {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
+        let fake = self.clone();
         tokio::spawn(
             tonic::transport::Server::builder()
+                .layer(MapResponseLayer::new(
+                    move |response: http::Response<tonic::body::Body>| {
+                        response.map(|body| Resettable {
+                            body,
+                            fake: fake.clone(),
+                        })
+                    },
+                ))
                 .add_service(AuthServiceServer::new(self.clone()))
                 .add_service(ConnectionServiceServer::new(self.clone()))
                 .add_service(CapabilityServiceServer::new(self.clone()))
@@ -1174,14 +1218,21 @@ impl Fake {
             documents.truncate(limit);
         }
         let state = self.state.clone();
+        let killed = std::mem::take(&mut state.lock().unwrap().find_killed);
         let (tx, rx) = tokio::sync::mpsc::channel(1);
         tokio::spawn(async move {
-            for chunk in documents.chunks(size) {
+            for (sent, chunk) in documents.chunks(size).enumerate() {
                 tokio::time::sleep(delay).await;
                 let batch = FindBatch {
                     documents_ejson: Vec::new(),
                     documents_bson: chunk.iter().map(|d| d.clone().into()).collect(),
                 };
+                if killed && sent > 0 {
+                    // Long enough for what was sent to reach the client: a
+                    // reset drops whatever is still queued.
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    state.lock().unwrap().reset_stream = true;
+                }
                 if tx.send(Ok(batch)).await.is_err() {
                     state.lock().unwrap().streams_abandoned += 1;
                     return;
@@ -1655,12 +1706,13 @@ enum ShellReply {
     Nothing,
     Quit,
     Fail,
+    Kill,
 }
 
 /// A REPL just big enough for the session code: a quoted string echoes
 /// bare, as mongosh echoes an expression's value; `.break` prints nothing;
-/// `throw` goes to stderr; `quit()` ends the shell; anything else is
-/// "ran" back.
+/// `throw` goes to stderr; `quit()` ends the shell; `kill()` resets its
+/// stream; anything else is "ran" back.
 fn fake_repl(line: &str) -> ShellReply {
     let line = line.trim();
     if line.len() >= 2 && line.starts_with('\'') && line.ends_with('\'') {
@@ -1671,6 +1723,8 @@ fn fake_repl(line: &str) -> ShellReply {
         ShellReply::Quit
     } else if line == "fail()" {
         ShellReply::Fail
+    } else if line == "kill()" {
+        ShellReply::Kill
     } else if let Some(db) = line.strip_prefix("use ") {
         ShellReply::Stdout(format!("switched to db {db}\n"))
     } else if let Some(error) = line.strip_prefix("throw ") {
@@ -1731,6 +1785,11 @@ impl ShellService for Fake {
                         ShellReply::Fail => {
                             let _ = tx.send(Err(Status::internal("mongosh crashed"))).await;
                             break 'shell;
+                        }
+                        // The frame only wakes the body, which then resets.
+                        ShellReply::Kill => {
+                            fake.with(|s| s.reset_stream = true);
+                            MongoshServerMsg::default()
                         }
                     };
                     if tx.send(Ok(reply)).await.is_err() {

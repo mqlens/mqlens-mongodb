@@ -271,6 +271,31 @@ mod tests {
         assert!(again.contains("mongosh crashed"), "{again}");
     }
 
+    // A node killed under a shell takes that mongosh with it, so this session
+    // stays closed, for the reason the user can act on, and a new one starts.
+    #[tokio::test]
+    async fn a_shell_reset_by_the_server_can_be_started_again() {
+        let env = Env::new().await;
+        let (state, id) = admin(&env).await;
+        let info = start_mongosh_session_impl(&state, &id, "", "", "", "")
+            .await
+            .unwrap();
+
+        let err = run_mongosh_command_impl(&state, &info.session_id, "kill()")
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert_eq!(err, "mongosh session closed: MQLens Server is unavailable");
+
+        let again = start_mongosh_session_impl(&state, &id, "", "", "", "")
+            .await
+            .unwrap();
+        let out = run_mongosh_command_impl(&state, &again.session_id, "1")
+            .await
+            .unwrap();
+        assert_eq!(out.stdout, ["ran 1"]);
+    }
+
     // A shell that fails as it starts is not reported as started.
     #[tokio::test]
     async fn a_shell_that_fails_to_start_on_the_server_is_not_started() {
