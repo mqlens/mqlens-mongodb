@@ -385,7 +385,7 @@ pub struct IndexInfo {
     pub spec: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 pub struct MongoshCommandOutput {
     pub stdout: Vec<String>,
     pub stderr: Vec<String>,
@@ -623,6 +623,14 @@ async fn run_mongosh_command_on_session(
     command: &str,
 ) -> Result<MongoshCommandOutput, String> {
     let _command_guard = session.command_lock.lock().await;
+    run_mongosh_command_locked(session, command).await
+}
+
+/// A command on a session whose `command_lock` the caller holds.
+async fn run_mongosh_command_locked(
+    session: &MongoshSession,
+    command: &str,
+) -> Result<MongoshCommandOutput, String> {
     let marker = format!("{MONGOSH_MARKER_PREFIX}{}__", Uuid::new_v4().simple());
     let recovered = format!("{MONGOSH_MARKER_PREFIX}{}__", Uuid::new_v4().simple());
 
@@ -1245,24 +1253,53 @@ async fn register_and_prime_session(
     })
 }
 
-/// The one REPL line that runs a staged script file in the session.
+/// The one REPL line that runs a staged script file in the session, `path`
+/// being a JavaScript expression for the file.
 ///
 /// `load()` is what `mongosh --file` runs a file with, so the script behaves as
 /// it does one-shot: parsed whole, so a syntax error anywhere runs none of it,
 /// and stopped at the first statement that throws. Around it:
+/// - `quit()` and `exit()` end the script, as they do one-shot, and not the
+///   session it shares with the tab. Thrown as an `Error`, since mongosh wraps
+///   any other value and the catch could not tell it was ours.
 /// - `db` is put back where it was. A script's `use` changes nothing after a
 ///   one-shot run, and must not move a live session out from under its tab.
 /// - An unclosed brace reaches the REPL as its `Recoverable` wrapper, which it
 ///   prints as a parser stack dump; the SyntaxError inside is the report.
-/// - `if (…) {}` keeps `load()`'s `true` from being echoed as output.
-pub(crate) fn mongosh_load_line(path: &std::path::Path) -> String {
-    let path = serde_json::Value::from(path.to_string_lossy()).to_string();
+/// - The file is removed here, as a server shell's is out of this side's reach.
+/// - `if (…) {}` keeps `load()`'s `true` from being echoed as output, and the
+///   closing `undefined` does the same for what putting `db` back evaluates to.
+pub(crate) fn mongosh_load_line(path: &str) -> String {
     format!(
-        "{{ const before = db.getName(); try {{ if (load({path})) {{}} }} \
-         catch (e) {{ throw e?.constructor?.name === 'Recoverable' ? e.err : e }} \
-         finally {{ if (db.getName() !== before) db = db.getSiblingDB(before) }} }}"
+        "{{ const before = db.getName(), exits = [quit, exit], ended = new Error('quit'); \
+         quit = exit = () => {{ throw ended }}; try {{ if (load({path})) {{}} }} \
+         catch (e) {{ if (e !== ended) throw e?.constructor?.name === 'Recoverable' ? e.err : e }} \
+         finally {{ [quit, exit] = exits; \
+         if (db.getName() !== before) db = db.getSiblingDB(before); \
+         require('fs').rmSync({path}, {{ force: true }}) }} undefined }}"
     )
 }
+
+/// `text` as a JavaScript string literal on one REPL line. JSON leaves U+2028
+/// and U+2029 bare, and mongosh's readline ends a line at them.
+pub(crate) fn js_string(text: &str) -> String {
+    serde_json::Value::from(text)
+        .to_string()
+        .replace('\u{2028}', "\\u2028")
+        .replace('\u{2029}', "\\u2029")
+}
+
+/// How much of a script goes to a server shell on one REPL line. readline
+/// rescans the line it is building for every character it reads, so a line
+/// costs the square of its length: a 1 MiB one never finished, where this size
+/// stages 1 MiB in a third of a second. Evaluating each line is the cost of
+/// going much shorter: 4 KiB took three times as long.
+const MONGOSH_STAGE_CHUNK: usize = 16 * 1024;
+
+/// How many of those lines go in one command. The REPL answers each, and past a
+/// command's output cap the report of a write that failed would be dropped, so
+/// this leaves room for a prompt on every answer and an error after them.
+const MONGOSH_STAGE_BATCH: usize = crate::limits::MAX_MONGOSH_LINES / 4;
 
 /// A script staged in the temp dir for mongosh to read, removed when this is
 /// dropped: however the run ends, including a future dropped part-way through,
@@ -1287,7 +1324,7 @@ impl Drop for StagedScript {
     }
 }
 
-/// A multi-line script on a local session, run as one unit (#518).
+/// A multi-line script on a session, run as one unit (#518).
 ///
 /// Fed to the REPL a line at a time, a script is not one: a line opening with
 /// `.` (a chained `.limit(1)`) is taken for a REPL keyword, statements after a
@@ -1300,8 +1337,70 @@ async fn run_mongosh_script_on_session(
     session: &MongoshSession,
     script: &str,
 ) -> Result<MongoshCommandOutput, String> {
+    // One command to whatever waits on this lock, however many it takes to run.
+    let _command_guard = session.command_lock.lock().await;
+    let remote = matches!(*session.child.lock().await, MongoshProcess::Remote(_));
+    if remote {
+        return run_mongosh_script_on_server(session, script).await;
+    }
     let staged = StagedScript::write(script).await?;
-    run_mongosh_command_on_session(session, &mongosh_load_line(&staged.0)).await
+    let path = js_string(&staged.0.to_string_lossy());
+    run_mongosh_load_line(session, &path).await
+}
+
+/// A staged script's run. The line that loads it ends in `undefined`, for which
+/// the REPL prints a blank line that is no part of what the script printed.
+async fn run_mongosh_load_line(
+    session: &MongoshSession,
+    path: &str,
+) -> Result<MongoshCommandOutput, String> {
+    let mut output = run_mongosh_command_locked(session, &mongosh_load_line(path)).await?;
+    if output.stdout.last().is_some_and(String::is_empty) {
+        output.stdout.pop();
+    }
+    Ok(output)
+}
+
+/// A server's mongosh cannot read this machine's temp dir, so the script is staged in
+/// the server's, through the shell itself. Staging is a command of its own: what
+/// it prints is the REPL's and not the script's, and a file that stopped short
+/// must not run as far as it got.
+async fn run_mongosh_script_on_server(
+    session: &MongoshSession,
+    script: &str,
+) -> Result<MongoshCommandOutput, String> {
+    let path = format!(
+        "require('path').join(require('os').tmpdir(), 'mqlens-shell-{}.js')",
+        Uuid::new_v4().simple()
+    );
+    let chars: Vec<char> = script.chars().collect();
+    let stage: Vec<String> = chars
+        .chunks(MONGOSH_STAGE_CHUNK)
+        .map(|chunk| {
+            let chunk: String = chunk.iter().collect();
+            format!(
+                "require('fs').appendFileSync({path}, {}, {{ mode: 0o600 }})",
+                js_string(&chunk)
+            )
+        })
+        .collect();
+    for batch in stage.chunks(MONGOSH_STAGE_BATCH) {
+        let staged = run_mongosh_command_locked(session, &batch.join("\n")).await?;
+        let failure = staged
+            .stdout
+            .iter()
+            .chain(&staged.stderr)
+            .find(|line| line.contains("Uncaught"));
+        if let Some(failure) = failure {
+            let remove = format!("require('fs').rmSync({path}, {{ force: true }})");
+            run_mongosh_command_locked(session, &remove).await?;
+            return Ok(MongoshCommandOutput {
+                stdout: Vec::new(),
+                stderr: vec![failure.replace('\r', "")],
+            });
+        }
+    }
+    run_mongosh_load_line(session, &path).await
 }
 
 pub async fn run_mongosh_command_impl(
@@ -1312,10 +1411,7 @@ pub async fn run_mongosh_command_impl(
     let started = std::time::Instant::now();
     let session = get_mongosh_session(state, session_id)?;
     let connection_id = session.connection_id.clone();
-    // A server shell cannot read this machine's temp dir; it takes the script
-    // as typed, as it always has.
-    let local = matches!(*session.child.lock().await, MongoshProcess::Local(_));
-    let result = if local && command.contains('\n') {
+    let result = if command.contains('\n') {
         run_mongosh_script_on_session(&session, command).await
     } else {
         run_mongosh_command_on_session(&session, command).await
@@ -1352,6 +1448,12 @@ pub async fn run_mongosh_command_impl(
 /// that matters in practice, the current database, is passed in and applied
 /// with a leading `use`, exactly as the REPL session does on startup, so `db`
 /// still points where the tab expects. A script may `use` elsewhere itself.
+///
+/// A server connection has neither a URI nor a local mongosh to do that with.
+/// Its script runs in the tab's shell, `session_id`, as one unit all the same.
+/// A second shell per run would leave Stop nothing to end, and count against
+/// the shells a server allows; only the tab's has `await_mongosh_idle`, the tab
+/// sweeps and its signed-in session behind it.
 pub async fn run_mongosh_script_impl(
     state: &AppState,
     connection_id: &str,
@@ -1359,12 +1461,41 @@ pub async fn run_mongosh_script_impl(
     database: &str,
     mongosh_path: &str,
     script: &str,
+    session_id: Option<&str>,
 ) -> Result<MongoshCommandOutput, String> {
-    server::routes::refuse_deferred(state, "run_mongosh_script", &[connection_id])?;
     if write_guard::connection_mode(state, connection_id)? == connections::ConnectionMode::ReadOnly
     {
         return Err(write_guard::READ_ONLY_MSG.to_string());
     }
+    let audit = |started, result: &Result<MongoshCommandOutput, String>| {
+        crate::audit::maybe_record_result(
+            state,
+            Some(connection_id),
+            None,
+            None,
+            "run_mongosh_script",
+            crate::audit::OpClass::Shell,
+            Some("shell"),
+            started,
+            "mongosh",
+            Some(script),
+            result,
+        );
+    };
+
+    if let Some(conn) = state.server.remote(connection_id)? {
+        server::routes::require("run_mongosh_script", &conn)?;
+        let session = get_mongosh_session(state, session_id.unwrap_or_default())?;
+        // The guards above were for this connection, not the one it may be on.
+        if session.connection_id != connection_id {
+            return Err("mongosh session not found".to_string());
+        }
+        let started = std::time::Instant::now();
+        let result = run_mongosh_script_on_session(&session, script).await;
+        audit(started, &result);
+        return result;
+    }
+
     let is_mock = {
         let mocks = state.mocks.lock_safe()?;
         *mocks
@@ -1441,19 +1572,7 @@ pub async fn run_mongosh_script_impl(
     };
     drop(staged);
 
-    crate::audit::maybe_record_result(
-        state,
-        Some(connection_id),
-        None,
-        None,
-        "run_mongosh_script",
-        crate::audit::OpClass::Shell,
-        Some("shell"),
-        started,
-        "mongosh",
-        Some(script),
-        &result,
-    );
+    audit(started, &result);
     result
 }
 
@@ -2389,6 +2508,7 @@ async fn run_mongosh_script(
     database: String,
     mongosh_path: String,
     script: String,
+    session_id: Option<String>,
 ) -> Result<MongoshCommandOutput, String> {
     use tauri::Manager;
     // Exactly as `start_mongosh_session` does. An app-managed mongosh is not
@@ -2397,7 +2517,16 @@ async fn run_mongosh_script(
     // failed with "Failed to run mongosh" (#359 review).
     let app_data_dir = app_handle.path().app_data_dir().ok();
     let resolved_path = toolsetup::resolve_mongosh_executable(&mongosh_path, app_data_dir.as_deref());
-    run_mongosh_script_impl(&state, &connection_id, &uri, &database, &resolved_path, &script).await
+    run_mongosh_script_impl(
+        &state,
+        &connection_id,
+        &uri,
+        &database,
+        &resolved_path,
+        &script,
+        session_id.as_deref(),
+    )
+    .await
 }
 
 #[tauri::command]

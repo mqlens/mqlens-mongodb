@@ -3298,6 +3298,7 @@ mod tests {
             "test",
             fake.to_str().unwrap(),
             "print(1)",
+            None,
         )
         .await
         .unwrap_or_else(|e| panic!("fake mongosh should run: {e}"));
@@ -3470,14 +3471,29 @@ print(2)"], "the script was staged and sent");
     /// `use` inside the script would otherwise move the shell under the tab,
     /// which still shows (and runs its driver calls against) the old database.
     /// It also unwraps the REPL's `Recoverable` around an unclosed-brace error,
-    /// which otherwise prints as a parser stack dump.
+    /// which otherwise prints as a parser stack dump, turns a `quit()` into the
+    /// end of the script alone, and removes the file wherever it was staged.
     #[test]
-    fn the_load_line_restores_the_database_and_reports_a_plain_syntax_error() {
-        let line = crate::mongosh_load_line(std::path::Path::new(r"C:\Temp\it's.js"));
+    fn the_load_line_keeps_the_session_and_reports_a_plain_syntax_error() {
+        let path = r#""C:\\Temp\\it's.js""#;
+        let line = crate::mongosh_load_line(path);
         assert!(!line.contains('\n'));
-        assert!(line.contains(r#"load("C:\\Temp\\it's.js")"#), "{line}");
+        assert!(line.contains(&format!("load({path})")), "{line}");
+        assert!(line.contains(&format!("rmSync({path}, ")), "{line}");
         assert!(line.contains("db = db.getSiblingDB("), "{line}");
         assert!(line.contains("'Recoverable' ? e.err : e"), "{line}");
+        assert!(line.contains("quit = exit = "), "{line}");
+        assert!(line.contains("[quit, exit] = "), "{line}");
+    }
+
+    /// JSON leaves U+2028 and U+2029 bare, and mongosh's readline ends a line
+    /// at them, which cuts a string literal in two.
+    #[test]
+    fn a_js_string_stays_on_one_repl_line() {
+        assert_eq!(
+            crate::js_string("a\u{2028}b\u{2029}c\n\""),
+            r#""a\u2028b\u2029c\n\"""#
+        );
     }
 
     /// #188 security review Fix 2 (CRITICAL): `start_mongosh_session_impl`
