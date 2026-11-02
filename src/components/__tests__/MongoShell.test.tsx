@@ -576,9 +576,10 @@ describe('MongoShell Component', () => {
     expect(await screen.findByText('script result')).toBeInTheDocument();
   });
 
-  it('runs a multi-line script down the live session on an MQLens Server connection', async () => {
-    // One-shot scripts need a local mongosh and a URI; a server shell has
-    // neither, but its session runs on the server and takes the script.
+  it('runs a multi-line script as a script on an MQLens Server connection, in its live session', async () => {
+    // A server shell has no local mongosh or URI for a one-shot run. The script
+    // runs in the tab's session on the server, so it names that session: Stop,
+    // and everything else that ends a session, ends the script with it.
     render(
       <MongoShell connectionId="server-conn" connectionName="Orders" connectionUri="" server databaseName="orders" />
     );
@@ -589,13 +590,15 @@ describe('MongoShell Component', () => {
     fireEvent.click(screen.getByRole('button', { name: /^run$/i }));
 
     await waitFor(() =>
-      expect(mockInvoke).toHaveBeenCalledWith('run_mongosh_command', expect.objectContaining({
+      expect(mockInvoke).toHaveBeenCalledWith('run_mongosh_script', expect.objectContaining({
+        connectionId: 'server-conn',
         sessionId: 'shell-session-1',
-        command: script,
+        database: 'orders',
+        script,
       }))
     );
-    expect(mockInvoke.mock.calls.some((c) => c[0] === 'run_mongosh_script')).toBe(false);
-    expect(await screen.findByText('mongosh result')).toBeInTheDocument();
+    expect(mockInvoke.mock.calls.some((c) => c[0] === 'run_mongosh_command' && c[1]?.command === script)).toBe(false);
+    expect(await screen.findByText('script result')).toBeInTheDocument();
   });
 
   it('runs a multi-line script down the signed-in session on a MONGODB-OIDC connection (#518)', async () => {

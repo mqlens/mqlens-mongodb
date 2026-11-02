@@ -185,6 +185,11 @@ pub(crate) struct FakeState {
     /// sent, and how many shells have ended.
     pub shells: Vec<MongoshClientMsg>,
     pub shell_input: Vec<String>,
+    /// Every script the fake shell `load()`ed, as it read it.
+    pub shell_loaded: Vec<String>,
+    /// Fails a write of a staged script once it holds this many bytes, as a
+    /// full temp dir would.
+    pub shell_stage_room: Option<usize>,
     pub shells_ended: u32,
     /// Ends every new shell at once with an error, as a mongosh that cannot
     /// start would.
@@ -467,6 +472,8 @@ impl Fake {
                 gridfs_requests: Vec::new(),
                 shells: Vec::new(),
                 shell_input: Vec::new(),
+                shell_loaded: Vec::new(),
+                shell_stage_room: None,
                 shells_ended: 0,
                 shell_start_failure: false,
                 watches: Vec::new(),
@@ -1655,12 +1662,14 @@ enum ShellReply {
     Nothing,
     Quit,
     Fail,
+    /// Busy until the client goes, as mongosh is on a long statement.
+    Busy,
 }
 
 /// A REPL just big enough for the session code: a quoted string echoes
 /// bare, as mongosh echoes an expression's value; `.break` prints nothing;
-/// `throw` goes to stderr; `quit()` ends the shell; anything else is
-/// "ran" back.
+/// `throw` goes to stderr; `quit()` ends the shell; `sleep()` never
+/// returns; anything else is "ran" back.
 fn fake_repl(line: &str) -> ShellReply {
     let line = line.trim();
     if line.len() >= 2 && line.starts_with('\'') && line.ends_with('\'') {
@@ -1671,6 +1680,8 @@ fn fake_repl(line: &str) -> ShellReply {
         ShellReply::Quit
     } else if line == "fail()" {
         ShellReply::Fail
+    } else if line == "sleep()" {
+        ShellReply::Busy
     } else if let Some(db) = line.strip_prefix("use ") {
         ShellReply::Stdout(format!("switched to db {db}\n"))
     } else if let Some(error) = line.strip_prefix("throw ") {
@@ -1678,6 +1689,45 @@ fn fake_repl(line: &str) -> ShellReply {
     } else {
         ShellReply::Stdout(format!("ran {line}\n"))
     }
+}
+
+/// The text a line appends to the staged script, if it is such a line. Parsed
+/// as the JSON string it must be: a raw newline or quote in it does not parse.
+fn fake_staged_chunk(line: &str) -> Option<String> {
+    let args = line
+        .strip_prefix("require('fs').appendFileSync(")?
+        .strip_suffix(", { mode: 0o600 })")?;
+    let text = &args[args.find(", \"")? + 2..];
+    Some(serde_json::from_str(text).expect("a staged chunk is a JSON string"))
+}
+
+/// What `load()` of `script` does: parsed whole, so a line that does not
+/// parse runs nothing, and stopped at its first throw, reported on stdout
+/// as mongosh reports it. A `quit()` ends the shell unless the line that
+/// loaded it guards against that. A run that ends well leaves the blank line
+/// the REPL prints for `undefined`.
+fn fake_load(script: &str, guarded: bool) -> Vec<ShellReply> {
+    if script.lines().any(|line| line.contains("not javascript")) {
+        return vec![ShellReply::Stdout("Uncaught SyntaxError\n".to_string())];
+    }
+    let mut replies = Vec::new();
+    for line in script.lines() {
+        match fake_repl(line) {
+            ShellReply::Quit if guarded => break,
+            ShellReply::Stdout(text) => replies.push(ShellReply::Stdout(text)),
+            ShellReply::Stderr(text) => {
+                replies.push(ShellReply::Stdout(text));
+                return replies;
+            }
+            ShellReply::Nothing => {}
+            ending => {
+                replies.push(ending);
+                return replies;
+            }
+        }
+    }
+    replies.push(ShellReply::Stdout("\n".to_string()));
+    replies
 }
 
 #[tonic::async_trait]
@@ -1712,29 +1762,51 @@ impl ShellService for Fake {
                 return;
             }
             let mut pending = std::mem::take(&mut first.input).to_vec();
+            let mut staged = String::new();
             'shell: loop {
                 while let Some(end) = pending.iter().position(|b| *b == b'\n') {
                     let line = String::from_utf8_lossy(&pending[..end]).into_owned();
                     pending.drain(..=end);
                     fake.with(|s| s.shell_input.push(line.clone()));
-                    let reply = match fake_repl(&line) {
-                        ShellReply::Stdout(text) => MongoshServerMsg {
-                            output: text.into_bytes().into(),
-                            ..Default::default()
-                        },
-                        ShellReply::Stderr(text) => MongoshServerMsg {
-                            stderr: text.into_bytes().into(),
-                            ..Default::default()
-                        },
-                        ShellReply::Nothing => continue,
-                        ShellReply::Quit => break 'shell,
-                        ShellReply::Fail => {
-                            let _ = tx.send(Err(Status::internal("mongosh crashed"))).await;
+                    let replies = if let Some(chunk) = fake_staged_chunk(&line) {
+                        let room = fake.with(|s| s.shell_stage_room).unwrap_or(usize::MAX);
+                        if staged.len() + chunk.len() > room {
+                            vec![ShellReply::Stdout("Uncaught Error: ENOSPC\n".to_string())]
+                        } else {
+                            staged.push_str(&chunk);
+                            vec![ShellReply::Stdout("\n".to_string())]
+                        }
+                    } else if line.contains("load(") {
+                        let script = std::mem::take(&mut staged);
+                        fake.with(|s| s.shell_loaded.push(script.clone()));
+                        fake_load(&script, line.contains("quit = exit ="))
+                    } else {
+                        vec![fake_repl(&line)]
+                    };
+                    for reply in replies {
+                        let reply = match reply {
+                            ShellReply::Stdout(text) => MongoshServerMsg {
+                                output: text.into_bytes().into(),
+                                ..Default::default()
+                            },
+                            ShellReply::Stderr(text) => MongoshServerMsg {
+                                stderr: text.into_bytes().into(),
+                                ..Default::default()
+                            },
+                            ShellReply::Nothing => continue,
+                            ShellReply::Quit => break 'shell,
+                            ShellReply::Fail => {
+                                let _ = tx.send(Err(Status::internal("mongosh crashed"))).await;
+                                break 'shell;
+                            }
+                            ShellReply::Busy => {
+                                while let Ok(Some(_)) = input.message().await {}
+                                break 'shell;
+                            }
+                        };
+                        if tx.send(Ok(reply)).await.is_err() {
                             break 'shell;
                         }
-                    };
-                    if tx.send(Ok(reply)).await.is_err() {
-                        break 'shell;
                     }
                 }
                 match input.message().await {

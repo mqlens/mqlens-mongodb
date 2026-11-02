@@ -1217,14 +1217,17 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   // `quit()` inside it just ends the run instead of tearing down the session
   // (#344 shell reliability). It is one-shot, so it does not need the warm
   // session; the current database is passed so `db` still points at the tab's.
+  // A server shell has no local mongosh to do that with, so the script runs in
+  // its session on the server, which ends with it whatever ends that session.
   const runMongoshScriptOnce = async (script: string) => {
-    if (mongoshPath === null || !connectionUri) return false;
+    if (mongoshPath === null || (!server && !connectionUri)) return false;
     const output = await invoke<MongoshCommandOutput>('run_mongosh_script', {
       connectionId,
       uri: connectionUri,
       database: currentDb,
       mongoshPath,
       script,
+      sessionId,
     });
     appendCommandOutput(output);
     setTab('console');
@@ -1282,11 +1285,10 @@ export const MongoShell: React.FC<MongoShellProps> = ({
         setTab('console');
         return;
       }
-      // A server shell has no local mongosh for a one-shot run; its session
-      // takes the script instead. So does an OIDC one: a one-shot mongosh is a
-      // new process with no token, and would open a browser sign-in every run
+      // An OIDC shell's session takes the script instead: a one-shot mongosh is
+      // a new process with no token, and would open a browser sign-in every run
       // (#518). The backend runs it there as one unit, as `--file` would.
-      const ranExternally = raw.includes('\n') && !server && !isOidcUri(connectionUri)
+      const ranExternally = raw.includes('\n') && !isOidcUri(connectionUri)
         ? await runMongoshScriptOnce(raw)
         : await runExternalMongoshCommand(raw);
       // Whatever follows — a driver call for a recognised command, or nothing —

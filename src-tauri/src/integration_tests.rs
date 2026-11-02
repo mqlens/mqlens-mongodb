@@ -1727,6 +1727,10 @@ mod integration {
             let out = run(&state, &session, &format!("print(db.getName());\nprint(\"{tick}\");")).await;
             assert!(out.contains(&db) && out.contains(tick) && !out.contains(other), "{out}");
         }
+
+        // What a script printed, and nothing of the REPL's around it.
+        let out = run(&state, &session, "print(\"one\");\nprint(\"two\");").await;
+        assert_eq!(out, "one\ntwo");
         cleanup(&state, &id, &db).await;
     }
 
@@ -1780,14 +1784,19 @@ mod integration {
     }
 
     #[tokio::test]
-    async fn it_shell_quit_ends_the_session_and_runs_nothing_after_it() {
+    async fn it_shell_quit_ends_the_script_and_keeps_the_session() {
         let Some((state, id, db, session)) = shell().await else { return };
 
-        let quit = run_mongosh_command_impl(&state, &session, "print(\"ending\");\nquit();\ndb.mqlens_522_fixture.insertOne({ _id: \"after-quit\" });").await;
-
-        assert!(quit.err().is_some_and(|e| e.contains("session closed")));
+        for quit in ["quit()", "quit(3)", "exit()", "(() => quit())()"] {
+            let out = run(&state, &session, &format!("print(\"ending\");\n{quit};\ndb.mqlens_522_fixture.insertOne({{ _id: \"after-quit\" }});")).await;
+            assert!(out.contains("ending") && !out.contains("Error"), "{quit}: {out}");
+            assert_usable(&state, &session, &db).await;
+        }
         assert!(fixture_ids(&state, &id, &db).await.is_empty(), "the statement after quit() ran");
-        let _ = stop_mongosh_session_impl(&state, &session).await;
+
+        // And `quit` is the shell's own again afterwards.
+        let out = run(&state, &session, "typeof quit.help").await;
+        assert!(!out.contains("undefined"), "{out}");
         cleanup(&state, &id, &db).await;
     }
 

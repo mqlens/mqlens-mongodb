@@ -41,8 +41,9 @@ mod e2e {
         delete_gridfs_file_impl, delete_many_impl, download_gridfs_file_impl, drop_collection_impl,
         execute_aggregate_impl, execute_mql_query_impl, insert_document_impl,
         list_collections_impl, list_databases_impl, list_gridfs_files_impl, list_indexes_impl,
-        run_mongosh_command_impl, start_collection_export_impl, start_mongosh_session_impl,
-        stop_mongosh_session_impl, update_document_impl, upload_gridfs_file_impl, AppState,
+        run_mongosh_command_impl, run_mongosh_script_impl, start_collection_export_impl,
+        start_mongosh_session_impl, stop_mongosh_session_impl, update_document_impl,
+        upload_gridfs_file_impl, AppState,
     };
     use futures::FutureExt;
     use mongodb::bson::{doc, Document};
@@ -622,6 +623,117 @@ mod e2e {
                 stop_mongosh_session_impl(st, &info.session_id)
                     .await
                     .unwrap();
+            })
+        })
+        .await;
+    }
+
+    // A script runs in the tab's shell on the server's mongosh as it would
+    // one-shot: read whole, and stopped at its first throw. The shell outlives
+    // whatever the script does, and nothing is left in the temp dir there.
+    #[tokio::test]
+    async fn a_script_runs_on_the_server_as_one_unit() {
+        if var("MQLENS_TEST_SERVER_SHELL").as_deref() != Some("1") {
+            return;
+        }
+        let Some(w) = World::new().await else { return };
+        w.run(|w| {
+            Box::pin(async move {
+                let st = &w.state;
+                let session = start_mongosh_session_impl(st, &w.remote, "", &w.db, "", "")
+                    .await
+                    .map_err(|e| e.to_string())
+                    .unwrap_or_else(|e| panic!("start the server shell: {e}"));
+                let session = session.session_id;
+                let run = |script: String| {
+                    let session = session.clone();
+                    async move {
+                        run_mongosh_script_impl(st, &w.remote, "", &w.db, "", &script, Some(&session))
+                            .await
+                            .map_err(|e| e.to_string())
+                            .unwrap_or_else(|e| panic!("{script:?}: {e}"))
+                    }
+                };
+                let count = || async {
+                    w.client()
+                        .database(&w.db)
+                        .collection::<Document>("scripted")
+                        .count_documents(doc! {})
+                        .await
+                        .unwrap()
+                };
+                let on_the_database = || async {
+                    let out = run_mongosh_command_impl(st, &session, "db.getName()")
+                        .await
+                        .map_err(|e| e.to_string())
+                        .unwrap_or_else(|e| panic!("the shell no longer answers: {e}"));
+                    assert!(out.stdout.iter().any(|l| l.ends_with(&w.db)), "{:?}", out.stdout);
+                };
+                // Counted from here: a run ended by Stop leaves its file.
+                let staged_files = || async {
+                    let staged = "require('fs').readdirSync(require('os').tmpdir()).filter(f => f.startsWith('mqlens-shell-')).length";
+                    run_mongosh_command_impl(st, &session, staged)
+                        .await
+                        .map_err(|e| e.to_string())
+                        .unwrap()
+                        .stdout
+                };
+                let files_before = staged_files().await;
+
+                // Lines opening with "." are REPL keywords when fed one at a time.
+                let out = run("db.scripted.insertMany([{ a: 1 }, { a: 2 }])\nconst top = db.scripted.find()\n  .sort({ a: -1 })\n  .limit(1)\n  .toArray()\nprint('top', top[0].a)".to_string()).await;
+                assert_eq!(out.stdout, ["top 2"]);
+                assert!(out.stderr.is_empty(), "{:?}", out.stderr);
+                assert_eq!(count().await, 2);
+
+                // Text a REPL line could not carry, staged and read back whole.
+                let out = run("print('a\u{2028}b\u{2029}c'.length)\nprint('\\\"é\\\\')".to_string()).await;
+                assert_eq!(out.stdout.first().map(String::as_str), Some("5"), "{out:?}");
+                assert_eq!(out.stdout.last().map(String::as_str), Some("\"é\\"), "{out:?}");
+
+                // Past 1 MiB, which a single REPL line never gets through, and
+                // past what one staging command carries.
+                let size = (crate::MONGOSH_STAGE_BATCH + 1) * crate::MONGOSH_STAGE_CHUNK;
+                let long = format!("const long = '{}'\nprint('long', long.length)", "x".repeat(size));
+                let out = run(long).await;
+                assert_eq!(out.stdout, [format!("long {size}")]);
+
+                // A syntax error anywhere runs none of it.
+                let out = run("db.scripted.insertOne({ a: 3 })\nconst bad = ;\ndb.scripted.insertOne({ a: 4 })".to_string()).await;
+                assert!(out.stdout.join("\n").contains("SyntaxError"), "{out:?}");
+                assert_eq!(count().await, 2, "a script that failed to parse wrote");
+                on_the_database().await;
+
+                // A throw ends it there.
+                let out = run("print('before')\nthrow new Error('mqlens-intentional')\ndb.scripted.insertOne({ a: 5 })".to_string()).await;
+                assert_eq!(out.stdout.first().map(String::as_str), Some("before"), "{out:?}");
+                assert!(out.stdout.join("\n").contains("mqlens-intentional"), "{out:?}");
+                assert_eq!(count().await, 2, "the statement after the throw ran");
+                on_the_database().await;
+
+                // quit() ends the script, and only the script.
+                let out = run("print('ending')\nquit()\ndb.scripted.insertOne({ a: 6 })".to_string()).await;
+                assert_eq!(out.stdout, ["ending"]);
+                assert!(out.stderr.is_empty(), "{out:?}");
+                assert_eq!(count().await, 2, "the statement after quit() ran");
+                on_the_database().await;
+
+                // The tab stays on its database, with nothing echoed for it.
+                let out = run("db = db.getSiblingDB('admin')\nprint('on', db.getName())".to_string()).await;
+                assert_eq!(out.stdout, ["on admin"]);
+                on_the_database().await;
+
+                assert_eq!(staged_files().await, files_before, "a script left its file behind");
+
+                // Stop ends the shell, and the script with it.
+                let (stopped, _) = tokio::join!(
+                    run_mongosh_script_impl(st, &w.remote, "", &w.db, "", "sleep(60000)\nprint(1)", Some(&session)),
+                    async {
+                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                        stop_mongosh_session_impl(st, &session).await.unwrap();
+                    }
+                );
+                assert!(stopped.is_err());
             })
         })
         .await;

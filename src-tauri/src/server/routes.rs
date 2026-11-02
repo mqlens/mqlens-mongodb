@@ -49,8 +49,6 @@ pub(crate) struct CommandRoute {
 const TASKS: &str = "Long-running tasks are not available on MQLens Server connections yet";
 const INDEX_OPTIONS: &str =
     "Hiding an index and making it unique in place are not available on MQLens Server connections yet";
-const ONE_SHOT_SCRIPTS: &str =
-    "One-shot mongosh scripts are not available on MQLens Server connections; use the shell";
 
 pub(crate) const ROUTES: &[CommandRoute] = &[
     // Metadata
@@ -529,8 +527,11 @@ pub(crate) const ROUTES: &[CommandRoute] = &[
     },
     CommandRoute {
         command: "run_mongosh_script",
-        serve: Serve::Deferred {
-            reason: ONE_SHOT_SCRIPTS,
+        serve: Serve::Rpc {
+            procedures: &["/mqlens.v1.ShellService/MongoshSession"],
+            class: OpClass::Admin,
+            since: 2,
+            adapter: true,
         },
     },
     CommandRoute {
@@ -881,17 +882,36 @@ mod tests {
     fn a_deferred_command_refuses_any_remote_connection_with_its_reason() {
         let state = with_remote("r1");
         assert_eq!(
-            refuse_deferred(&state, "run_mongosh_script", &["local", "r1"]),
-            Err(ONE_SHOT_SCRIPTS.to_string())
+            refuse_deferred(&state, "set_index_option", &["local", "r1"]),
+            Err(INDEX_OPTIONS.to_string())
         );
         assert_eq!(
-            refuse_deferred(&state, "run_mongosh_script", &["r1"]),
-            Err(ONE_SHOT_SCRIPTS.to_string())
+            refuse_deferred(&state, "set_index_option", &["r1"]),
+            Err(INDEX_OPTIONS.to_string())
         );
         assert_eq!(
             refuse_deferred(&state, "start_collection_copy", &["local"]),
             Ok(())
         );
+    }
+
+    // A script runs over the shell's stream, so it is the shell's to allow:
+    // every server the shell works on, and only the roles that may use it.
+    #[test]
+    fn a_script_needs_what_the_shell_needs() {
+        let route = |command| ROUTES.iter().find(|r| r.command == command).unwrap();
+        let script = route("run_mongosh_script");
+        assert!(command_available(script, &conn(&["admin"], 2)));
+        for connection in [
+            conn(&["read", "write", "ddl"], crate::server::remote::API_VERSIONS.1),
+            conn(&["admin"], 1),
+        ] {
+            assert_eq!(
+                check(script, &connection),
+                check(route("start_mongosh_session"), &connection)
+            );
+            assert!(!command_available(script, &connection));
+        }
     }
 
     // Every deferred command refuses a remote connection itself, by name, so
