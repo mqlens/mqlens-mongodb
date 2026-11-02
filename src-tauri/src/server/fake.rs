@@ -187,8 +187,9 @@ pub(crate) struct FakeState {
     pub shell_input: Vec<String>,
     /// Every script the fake shell `load()`ed, as it read it.
     pub shell_loaded: Vec<String>,
-    /// Fails every write of a staged script, as a full temp dir would.
-    pub shell_stage_failure: bool,
+    /// Fails a write of a staged script once it holds this many bytes, as a
+    /// full temp dir would.
+    pub shell_stage_room: Option<usize>,
     pub shells_ended: u32,
     /// Ends every new shell at once with an error, as a mongosh that cannot
     /// start would.
@@ -472,7 +473,7 @@ impl Fake {
                 shells: Vec::new(),
                 shell_input: Vec::new(),
                 shell_loaded: Vec::new(),
-                shell_stage_failure: false,
+                shell_stage_room: None,
                 shells_ended: 0,
                 shell_start_failure: false,
                 watches: Vec::new(),
@@ -1768,11 +1769,12 @@ impl ShellService for Fake {
                     pending.drain(..=end);
                     fake.with(|s| s.shell_input.push(line.clone()));
                     let replies = if let Some(chunk) = fake_staged_chunk(&line) {
-                        if fake.with(|s| s.shell_stage_failure) {
+                        let room = fake.with(|s| s.shell_stage_room).unwrap_or(usize::MAX);
+                        if staged.len() + chunk.len() > room {
                             vec![ShellReply::Stdout("Uncaught Error: ENOSPC\n".to_string())]
                         } else {
                             staged.push_str(&chunk);
-                            Vec::new()
+                            vec![ShellReply::Stdout("\n".to_string())]
                         }
                     } else if line.contains("load(") {
                         let script = std::mem::take(&mut staged);

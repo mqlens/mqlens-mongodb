@@ -1296,6 +1296,11 @@ pub(crate) fn js_string(text: &str) -> String {
 /// going much shorter: 4 KiB took three times as long.
 const MONGOSH_STAGE_CHUNK: usize = 16 * 1024;
 
+/// How many of those lines go in one command. The REPL answers each, and past a
+/// command's output cap the report of a write that failed would be dropped, so
+/// this leaves room for a prompt on every answer and an error after them.
+const MONGOSH_STAGE_BATCH: usize = crate::limits::MAX_MONGOSH_LINES / 4;
+
 /// A script staged in the temp dir for mongosh to read, removed when this is
 /// dropped: however the run ends, including a future dropped part-way through,
 /// which would skip a removal written after its `await`. Best effort: a
@@ -1379,19 +1384,21 @@ async fn run_mongosh_script_on_server(
             )
         })
         .collect();
-    let staged = run_mongosh_command_locked(session, &stage.join("\n")).await?;
-    let failure = staged
-        .stdout
-        .iter()
-        .chain(&staged.stderr)
-        .find(|line| line.contains("Uncaught"));
-    if let Some(failure) = failure {
-        let remove = format!("require('fs').rmSync({path}, {{ force: true }})");
-        run_mongosh_command_locked(session, &remove).await?;
-        return Ok(MongoshCommandOutput {
-            stdout: Vec::new(),
-            stderr: vec![failure.replace('\r', "")],
-        });
+    for batch in stage.chunks(MONGOSH_STAGE_BATCH) {
+        let staged = run_mongosh_command_locked(session, &batch.join("\n")).await?;
+        let failure = staged
+            .stdout
+            .iter()
+            .chain(&staged.stderr)
+            .find(|line| line.contains("Uncaught"));
+        if let Some(failure) = failure {
+            let remove = format!("require('fs').rmSync({path}, {{ force: true }})");
+            run_mongosh_command_locked(session, &remove).await?;
+            return Ok(MongoshCommandOutput {
+                stdout: Vec::new(),
+                stderr: vec![failure.replace('\r', "")],
+            });
+        }
     }
     run_mongosh_load_line(session, &path).await
 }

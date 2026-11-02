@@ -691,10 +691,12 @@ mod e2e {
                 assert_eq!(out.stdout.first().map(String::as_str), Some("5"), "{out:?}");
                 assert_eq!(out.stdout.last().map(String::as_str), Some("\"é\\"), "{out:?}");
 
-                // Past 1 MiB, which a single REPL line never gets through.
-                let long = format!("const long = '{}'\nprint('long', long.length)", "x".repeat(1 << 20));
+                // Past 1 MiB, which a single REPL line never gets through, and
+                // past what one staging command carries.
+                let size = (crate::MONGOSH_STAGE_BATCH + 1) * crate::MONGOSH_STAGE_CHUNK;
+                let long = format!("const long = '{}'\nprint('long', long.length)", "x".repeat(size));
                 let out = run(long).await;
-                assert_eq!(out.stdout, ["long 1048576"]);
+                assert_eq!(out.stdout, [format!("long {size}")]);
 
                 // A syntax error anywhere runs none of it.
                 let out = run("db.scripted.insertOne({ a: 3 })\nconst bad = ;\ndb.scripted.insertOne({ a: 4 })".to_string()).await;

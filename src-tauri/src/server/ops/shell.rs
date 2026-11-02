@@ -283,7 +283,7 @@ mod tests {
     async fn a_script_that_cannot_be_staged_does_not_run() {
         let env = Env::new().await;
         let (state, id, session) = shell(&env).await;
-        env.fake.with(|s| s.shell_stage_failure = true);
+        env.fake.with(|s| s.shell_stage_room = Some(50 * 1024));
         let text = "x".repeat(100 * 1024);
 
         let out = script(&state, &id, &session, &text).await.unwrap();
@@ -294,6 +294,25 @@ mod tests {
         assert!(!sent.iter().any(|l| l.contains("load(")), "{sent:?}");
         assert!(sent.iter().any(|l| l.contains("rmSync(")), "the partial file stayed");
         assert_usable(&env, &state, &session).await;
+    }
+
+    // The REPL answers every write, and what a command prints is capped. The
+    // report of a late write must not be what the cap drops: nothing else says
+    // the file stopped short.
+    #[tokio::test]
+    async fn a_write_that_fails_late_in_a_large_script_is_still_seen() {
+        let env = Env::new().await;
+        let (state, id, session) = shell(&env).await;
+        let writes = crate::limits::MAX_MONGOSH_LINES + 50;
+        let text = "x".repeat(writes * crate::MONGOSH_STAGE_CHUNK);
+        env.fake.with(|s| s.shell_stage_room = Some(text.len() - 1));
+
+        let out = script(&state, &id, &session, &text).await.unwrap();
+
+        assert_eq!(out.stderr, ["Uncaught Error: ENOSPC"]);
+        assert!(env.fake.with(|s| s.shell_loaded.is_empty()));
+        let sent = env.fake.with(|s| s.shell_input.clone());
+        assert!(sent.iter().any(|l| l.contains("rmSync(")), "the partial file stayed");
     }
 
     #[tokio::test]
