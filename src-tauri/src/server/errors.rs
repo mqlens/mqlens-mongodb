@@ -7,6 +7,7 @@
 //! carries the server's correlation id when there is one: that id finds the
 //! request in the server's audit log.
 
+use std::error::Error;
 use tonic::{Code, Status};
 
 /// The metadata key the server sends its correlation id under. gRPC metadata
@@ -41,6 +42,10 @@ pub(crate) fn describe(status: &Status) -> String {
             with_detail("MQLens Server did not answer in time", "")
         }
         Code::Cancelled => "The request to MQLens Server was cancelled".to_string(),
+        // A killed node sends no status: the proxy in front of it resets the
+        // stream. The code tonic picks for that depends on its features, so only
+        // the reset itself tells this from an error the server sent.
+        _ if stream_reset(status) => "MQLens Server is unavailable".to_string(),
         code if message.is_empty() => format!("MQLens Server error: {}", code.description()),
         _ => message.to_string(),
     };
@@ -76,18 +81,22 @@ pub(crate) fn is_unauthenticated(status: &Status) -> bool {
     status.code() == Code::Unauthenticated
 }
 
-/// Whether the status is tonic reporting its own expired deadline. On a real
-/// call the TimeoutExpired sits under a transport error, so the whole source
-/// chain is searched.
+/// The errors under a status. On a real call the cause sits under transport
+/// errors, so what it was takes the whole source chain to find out.
+fn sources(status: &Status) -> impl Iterator<Item = &(dyn Error + 'static)> {
+    std::iter::successors(Error::source(status), |error| (*error).source())
+}
+
+/// Whether the status is tonic reporting its own expired deadline.
 fn deadline_expired(status: &Status) -> bool {
-    let mut source = std::error::Error::source(status);
-    while let Some(error) = source {
-        if error.is::<tonic::TimeoutExpired>() {
-            return true;
-        }
-        source = error.source();
-    }
-    false
+    sources(status).any(|error| error.is::<tonic::TimeoutExpired>())
+}
+
+/// Whether the call ended because HTTP/2 reset its stream.
+fn stream_reset(status: &Status) -> bool {
+    sources(status)
+        .filter_map(|error| error.downcast_ref::<h2::Error>())
+        .any(h2::Error::is_reset)
 }
 
 fn with_detail(text: &str, message: &str) -> String {
@@ -105,6 +114,12 @@ fn detail(message: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::server::channel::client;
+    use crate::server::fake::{Env, PASSWORD};
+    use crate::server::pb::mqlens::v1::data_service_client::DataServiceClient;
+    use crate::server::pb::mqlens::v1::FindRequest;
+    use crate::server::session::AccountSession;
+    use std::sync::Arc;
     use tonic::metadata::MetadataValue;
 
     fn with_id(mut status: Status, id: &str) -> Status {
@@ -112,6 +127,60 @@ mod tests {
             .metadata_mut()
             .insert(CORRELATION_KEY, MetadataValue::try_from(id).unwrap());
         status
+    }
+
+    /// What a client gets when the node behind the proxy is killed mid-Find: a
+    /// real RST_STREAM on a real connection, after the first batch got through.
+    /// `h2` has no public way to build such an error by hand.
+    async fn reset_mid_stream() -> Status {
+        let env = Env::new().await;
+        env.fake.with(|s| {
+            s.documents = (0..3).map(|i| mongodb::bson::doc! { "_id": i }).collect();
+            s.batch_size = 1;
+            s.find_killed = true;
+        });
+        let session = match AccountSession::sign_in(&env.account, PASSWORD, env.store()).await {
+            Ok(session) => session,
+            Err(e) => panic!("sign in failed: {e}"),
+        };
+        let request = FindRequest {
+            connection_id: "c1".to_string(),
+            ..Default::default()
+        };
+        let mut stream = session
+            .open_stream(request, |channel, request| async move {
+                client!(DataServiceClient, channel).find(request).await
+            })
+            .await
+            .unwrap();
+        assert!(matches!(stream.message().await, Ok(Some(_))));
+        stream.message().await.unwrap_err()
+    }
+
+    #[tokio::test]
+    async fn a_reset_stream_reads_as_an_unavailable_server() {
+        assert_eq!(
+            describe(&reset_mid_stream().await),
+            "MQLens Server is unavailable"
+        );
+    }
+
+    // `cargo test` switches on tonic's `server` feature, which turns this reset
+    // into Internal. The app is built without it, and there the same reset is
+    // Unknown, so the code says nothing either way.
+    #[tokio::test]
+    async fn a_reset_stream_reads_the_same_without_the_server_feature() {
+        let mut status = Status::unknown("error reading a body from connection");
+        status.set_source(Arc::new(reset_mid_stream().await));
+        assert_eq!(describe(&status), "MQLens Server is unavailable");
+    }
+
+    #[tokio::test]
+    async fn a_reset_stream_keeps_the_correlation_id() {
+        assert_eq!(
+            describe(&with_id(reset_mid_stream().await, "corr-7")),
+            "MQLens Server is unavailable (MQLens Server correlation id: corr-7)"
+        );
     }
 
     #[test]
@@ -156,6 +225,14 @@ mod tests {
         assert_eq!(
             describe(&Status::not_found("collection not found")),
             "collection not found"
+        );
+        assert_eq!(
+            describe(&Status::internal("cursor state corrupted")),
+            "cursor state corrupted"
+        );
+        assert_eq!(
+            describe(&Status::unknown("unrecognized mongosh reply")),
+            "unrecognized mongosh reply"
         );
     }
 
