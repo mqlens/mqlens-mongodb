@@ -17,6 +17,21 @@ service AdminService {
   rpc ListGrants(ListGrantsRequest) returns (ListGrantsResponse);
   rpc GrantConnection(GrantConnectionRequest) returns (AdminAck);
   rpc RevokeConnection(RevokeConnectionRequest) returns (AdminAck);
+  // What this server runs with. Its configuration is its environment, so this
+  // cannot change while it runs. Needs API version 10.
+  rpc GetServerSettings(GetServerSettingsRequest) returns (GetServerSettingsResponse);
+  // Identity providers, from API version 11. A tenant may have several.
+  rpc ListOidcConfigs(ListOidcConfigsRequest) returns (ListOidcConfigsResponse);
+  rpc CreateOidcConfig(CreateOidcConfigRequest) returns (CreateOidcConfigResponse);
+  rpc UpdateOidcConfig(UpdateOidcConfigRequest) returns (AdminAck);
+  rpc DeleteOidcConfig(DeleteOidcConfigRequest) returns (AdminAck);
+  // Fetches an issuer's discovery document, saved or not.
+  rpc TestOidcDiscovery(TestOidcDiscoveryRequest) returns (TestOidcDiscoveryResponse);
+  // Lets an existing user sign in through a provider. Their first sign-in with a
+  // verified email claims the link.
+  rpc LinkOidcUser(LinkOidcUserRequest) returns (AdminAck);
+  // Removes the link and ends the user's sessions.
+  rpc UnlinkOidcUser(UnlinkOidcUserRequest) returns (AdminAck);
 }
 
 message AdminAck {}
@@ -61,6 +76,7 @@ message AdminUser {
   string kind = 3;
   repeated string roles = 4;
   string status = 5;
+  repeated string oidc_provider_ids = 6; // identity providers this user can sign in through
 }
 message ListUsersRequest {}
 message ListUsersResponse {
@@ -71,6 +87,9 @@ message CreateUserRequest {
   string email = 1;
   string password = 2;
   repeated string roles = 3;
+  // Makes a user with no password, who signs in through this provider. From API
+  // version 11.
+  string oidc_provider_id = 4;
 }
 message CreateUserResponse {
   string id = 1;
@@ -138,4 +157,111 @@ message RevokeConnectionRequest {
   string connection_id = 1;
   string principal_type = 2;
   string principal_id = 3;
+}
+
+// A program the server runs. path is the one found, or, when found is false,
+// the one it was told to run, and what needs it fails.
+message ServerTool {
+  string name = 1;
+  string path = 2;
+  bool found = 3;
+}
+
+message GetServerSettingsRequest {}
+
+// An allow-list: no secret is here, nor whether one is set. Durations are as
+// Go prints them, which their variables accept: "15m0s".
+message GetServerSettingsResponse {
+  string server_version = 1;
+  uint32 min_api_version = 2;
+  uint32 max_api_version = 3;
+  string data_dir = 4;
+  string listen_addr = 5;
+  bool tls_enabled = 6;
+  // Empty when metrics are off.
+  string metrics_addr = 7;
+  string drain_delay = 8;
+  string session_ttl = 9;
+  string refresh_ttl = 10;
+  repeated ServerTool tools = 11;
+  // How many tasks a tenant may run at once.
+  uint32 task_limit = 12;
+  // How many finished tasks' files a user may keep.
+  uint32 task_keep = 13;
+  // How many tasks a user keeps a record of.
+  uint32 task_retain = 14;
+}
+
+// Gives role to a user whose claim holds value. An empty claim means the
+// config's groups claim. role is viewer, operator or admin, never owner.
+message OidcRoleMapping {
+  string claim = 1;
+  string value = 2;
+  string role = 3;
+}
+
+// What an identity provider's admin can change.
+message OidcSettings {
+  string name = 1; // shown on the sign-in page
+  string client_id = 2;
+  // Asked for besides openid, email and profile, such as groups.
+  repeated string scopes = 3;
+  string groups_claim = 4; // empty => groups
+  repeated OidcRoleMapping role_mappings = 5;
+  // Held by everyone this provider signs in. Empty, a user no mapping
+  // matches is refused.
+  string default_role = 6;
+  bool jit_provisioning = 7; // create a user at their first sign-in
+  // Accept an email without email_verified, for an IdP that never sends it.
+  bool allow_unverified_email = 8;
+  // How long after a sign-in its session can be refreshed and its groups
+  // count. 0 => 12.
+  int32 session_hours = 9;
+}
+
+message OidcConfig {
+  string id = 1;
+  string issuer = 2; // fixed once created: subjects mean nothing under another
+  bool has_client_secret = 3; // the secret itself is never returned
+  OidcSettings settings = 4;
+  int64 created_at = 5;
+}
+message ListOidcConfigsRequest {}
+message ListOidcConfigsResponse {
+  repeated OidcConfig configs = 1;
+}
+
+message CreateOidcConfigRequest {
+  string issuer = 1;
+  string client_secret = 2; // sealed server-side; empty for a public client
+  OidcSettings settings = 3;
+}
+message CreateOidcConfigResponse {
+  string id = 1;
+}
+
+message UpdateOidcConfigRequest {
+  string id = 1;
+  optional string client_secret = 2; // unset keeps it, empty clears it
+  OidcSettings settings = 3;
+}
+
+message DeleteOidcConfigRequest {
+  string id = 1;
+}
+
+message TestOidcDiscoveryRequest {
+  string issuer = 1;
+}
+message TestOidcDiscoveryResponse {
+  bool ok = 1;
+  string error = 2;
+}
+message LinkOidcUserRequest {
+  string user_id = 1;
+  string provider_id = 2;
+}
+message UnlinkOidcUserRequest {
+  string user_id = 1;
+  string provider_id = 2;
 }

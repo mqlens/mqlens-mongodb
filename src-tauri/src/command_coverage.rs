@@ -162,6 +162,8 @@ const LOCAL_COMMANDS: &[&str] = &[
     "server_account_save",
     "server_account_delete",
     "server_sign_in",
+    "server_oidc_providers",
+    "server_oidc_sign_in",
     "server_sign_out",
     "server_connection_mode_set", // a local preference in the accounts file
     "server_list_connections",

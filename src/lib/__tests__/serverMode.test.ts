@@ -86,6 +86,7 @@ describe('server commands', () => {
       url: 'https://mqlens.acme.test',
       tenant: 'acme',
       email: 'ops@acme.test',
+      auth: 'password' as const,
       allowInsecureHttp: false,
     };
     await listServerAccounts();

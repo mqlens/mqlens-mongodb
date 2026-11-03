@@ -52,6 +52,13 @@ export interface E2EState {
   settings: Record<string, unknown>;
   profiles: ProfileSeed[];
   serverAccounts: ServerAccountSeed[];
+  /**
+   * A human OIDC login (#430) waiting on a browser, keyed by `loginId`. This
+   * fake can't observe a real browser or socket, so it never completes a login
+   * on its own: an entry only ever answers Cancel, which is all the e2e suite
+   * here exercises (Rust tests cover the real listener).
+   */
+  pendingOidcLogins: Map<string, () => void>;
   workspace: unknown;
   workspaceOps: unknown[];
   servers: Record<string, Server>;
@@ -148,6 +155,7 @@ export function createState(seed: Seed): E2EState {
     settings: structuredClone(seed.settings ?? {}),
     profiles: structuredClone(seed.profiles ?? []),
     serverAccounts: structuredClone(seed.serverAccounts ?? []),
+    pendingOidcLogins: new Map(),
     workspace: seed.workspace ?? null,
     workspaceOps: [],
     servers: Object.fromEntries(Object.entries(servers).map(([uri, server]) => [uri, toServer(server)])),

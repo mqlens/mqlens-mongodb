@@ -4,13 +4,18 @@ import { invoke } from '@tauri-apps/api/core';
 import type { ConnectionMode } from './connection';
 import type { ConnectionEntry } from '../workspace/workspaceStore';
 
+/** How an account signs in. `oidc` is through an identity provider, in the system browser. */
+export type AuthMethod = 'password' | 'oidc';
+
 /** An MQLens Server account as the backend shows it: never a token. */
 export interface ServerAccountView {
   id: string;
   name: string;
   url: string;
   tenant: string;
+  /** Empty for an `oidc` account until someone signs in: the server says who it is. */
   email: string;
+  auth: AuthMethod;
   allowInsecureHttp: boolean;
   extraCaPem?: string | null;
   signedIn: boolean;
@@ -27,8 +32,15 @@ export interface ServerAccountInput {
   url: string;
   tenant: string;
   email: string;
+  auth: AuthMethod;
   allowInsecureHttp: boolean;
   extraCaPem?: string | null;
+}
+
+/** One of the identity providers an account's tenant can sign in through. */
+export interface OidcProviderView {
+  id: string;
+  name: string;
 }
 
 export interface AccountDeleteResult {
@@ -81,6 +93,13 @@ export const deleteServerAccount = (id: string) =>
   invoke<AccountDeleteResult>('server_account_delete', { id });
 export const signInToServer = (accountId: string, password: string) =>
   invoke<ServerAccountView>('server_sign_in', { accountId, password });
+export const listOidcProviders = (accountId: string) =>
+  invoke<OidcProviderView[]>('server_oidc_providers', { accountId });
+/** Opens the system browser and waits for the sign-in; `loginId` names it to cancel or reopen. */
+export const signInThroughBrowser = (accountId: string, providerId: string, loginId: string) =>
+  invoke<ServerAccountView>('server_oidc_sign_in', { accountId, providerId, loginId });
+export const cancelOidcLogin = (loginId: string) => invoke<void>('cancel_oidc_login', { loginId });
+export const reopenOidcLogin = (loginId: string) => invoke<void>('reopen_oidc_login', { loginId });
 export const signOutOfServer = (accountId: string) =>
   invoke<SignOutResult>('server_sign_out', { accountId });
 export const listServerConnections = (accountId: string) =>

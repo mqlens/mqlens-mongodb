@@ -138,6 +138,7 @@ pub(crate) fn test_identity() -> crate::server::accounts::ServerAccount {
         url: "https://mqlens.acme.test".to_string(),
         tenant: "acme".to_string(),
         email: "ops@acme.test".to_string(),
+        auth: Default::default(),
         allow_insecure_http: false,
         extra_ca_pem: None,
     }

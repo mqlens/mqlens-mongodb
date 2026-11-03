@@ -70,6 +70,9 @@ pub struct AdminUser {
     pub roles: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     #[prost(string, tag="5")]
     pub status: ::prost::alloc::string::String,
+    /// identity providers this user can sign in through
+    #[prost(string, repeated, tag="6")]
+    pub oidc_provider_ids: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ListUsersRequest {
@@ -87,6 +90,10 @@ pub struct CreateUserRequest {
     pub password: ::prost::alloc::string::String,
     #[prost(string, repeated, tag="3")]
     pub roles: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Makes a user with no password, who signs in through this provider. From API
+    /// version 11.
+    #[prost(string, tag="4")]
+    pub oidc_provider_id: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CreateUserResponse {
@@ -189,6 +196,178 @@ pub struct RevokeConnectionRequest {
     #[prost(string, tag="3")]
     pub principal_id: ::prost::alloc::string::String,
 }
+/// A program the server runs. path is the one found, or, when found is false,
+/// the one it was told to run, and what needs it fails.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ServerTool {
+    #[prost(string, tag="1")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub path: ::prost::alloc::string::String,
+    #[prost(bool, tag="3")]
+    pub found: bool,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct GetServerSettingsRequest {
+}
+/// An allow-list: no secret is here, nor whether one is set. Durations are as
+/// Go prints them, which their variables accept: "15m0s".
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetServerSettingsResponse {
+    #[prost(string, tag="1")]
+    pub server_version: ::prost::alloc::string::String,
+    #[prost(uint32, tag="2")]
+    pub min_api_version: u32,
+    #[prost(uint32, tag="3")]
+    pub max_api_version: u32,
+    #[prost(string, tag="4")]
+    pub data_dir: ::prost::alloc::string::String,
+    #[prost(string, tag="5")]
+    pub listen_addr: ::prost::alloc::string::String,
+    #[prost(bool, tag="6")]
+    pub tls_enabled: bool,
+    /// Empty when metrics are off.
+    #[prost(string, tag="7")]
+    pub metrics_addr: ::prost::alloc::string::String,
+    #[prost(string, tag="8")]
+    pub drain_delay: ::prost::alloc::string::String,
+    #[prost(string, tag="9")]
+    pub session_ttl: ::prost::alloc::string::String,
+    #[prost(string, tag="10")]
+    pub refresh_ttl: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag="11")]
+    pub tools: ::prost::alloc::vec::Vec<ServerTool>,
+    /// How many tasks a tenant may run at once.
+    #[prost(uint32, tag="12")]
+    pub task_limit: u32,
+    /// How many finished tasks' files a user may keep.
+    #[prost(uint32, tag="13")]
+    pub task_keep: u32,
+    /// How many tasks a user keeps a record of.
+    #[prost(uint32, tag="14")]
+    pub task_retain: u32,
+}
+/// Gives role to a user whose claim holds value. An empty claim means the
+/// config's groups claim. role is viewer, operator or admin, never owner.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct OidcRoleMapping {
+    #[prost(string, tag="1")]
+    pub claim: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub value: ::prost::alloc::string::String,
+    #[prost(string, tag="3")]
+    pub role: ::prost::alloc::string::String,
+}
+/// What an identity provider's admin can change.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct OidcSettings {
+    /// shown on the sign-in page
+    #[prost(string, tag="1")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub client_id: ::prost::alloc::string::String,
+    /// Asked for besides openid, email and profile, such as groups.
+    #[prost(string, repeated, tag="3")]
+    pub scopes: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// empty => groups
+    #[prost(string, tag="4")]
+    pub groups_claim: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag="5")]
+    pub role_mappings: ::prost::alloc::vec::Vec<OidcRoleMapping>,
+    /// Held by everyone this provider signs in. Empty, a user no mapping
+    /// matches is refused.
+    #[prost(string, tag="6")]
+    pub default_role: ::prost::alloc::string::String,
+    /// create a user at their first sign-in
+    #[prost(bool, tag="7")]
+    pub jit_provisioning: bool,
+    /// Accept an email without email_verified, for an IdP that never sends it.
+    #[prost(bool, tag="8")]
+    pub allow_unverified_email: bool,
+    /// How long after a sign-in its session can be refreshed and its groups
+    /// count. 0 => 12.
+    #[prost(int32, tag="9")]
+    pub session_hours: i32,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct OidcConfig {
+    #[prost(string, tag="1")]
+    pub id: ::prost::alloc::string::String,
+    /// fixed once created: subjects mean nothing under another
+    #[prost(string, tag="2")]
+    pub issuer: ::prost::alloc::string::String,
+    /// the secret itself is never returned
+    #[prost(bool, tag="3")]
+    pub has_client_secret: bool,
+    #[prost(message, optional, tag="4")]
+    pub settings: ::core::option::Option<OidcSettings>,
+    #[prost(int64, tag="5")]
+    pub created_at: i64,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ListOidcConfigsRequest {
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ListOidcConfigsResponse {
+    #[prost(message, repeated, tag="1")]
+    pub configs: ::prost::alloc::vec::Vec<OidcConfig>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CreateOidcConfigRequest {
+    #[prost(string, tag="1")]
+    pub issuer: ::prost::alloc::string::String,
+    /// sealed server-side; empty for a public client
+    #[prost(string, tag="2")]
+    pub client_secret: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="3")]
+    pub settings: ::core::option::Option<OidcSettings>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CreateOidcConfigResponse {
+    #[prost(string, tag="1")]
+    pub id: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct UpdateOidcConfigRequest {
+    #[prost(string, tag="1")]
+    pub id: ::prost::alloc::string::String,
+    /// unset keeps it, empty clears it
+    #[prost(string, optional, tag="2")]
+    pub client_secret: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(message, optional, tag="3")]
+    pub settings: ::core::option::Option<OidcSettings>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DeleteOidcConfigRequest {
+    #[prost(string, tag="1")]
+    pub id: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct TestOidcDiscoveryRequest {
+    #[prost(string, tag="1")]
+    pub issuer: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct TestOidcDiscoveryResponse {
+    #[prost(bool, tag="1")]
+    pub ok: bool,
+    #[prost(string, tag="2")]
+    pub error: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct LinkOidcUserRequest {
+    #[prost(string, tag="1")]
+    pub user_id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub provider_id: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct UnlinkOidcUserRequest {
+    #[prost(string, tag="1")]
+    pub user_id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub provider_id: ::prost::alloc::string::String,
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct LoginRequest {
     /// tenant slug
@@ -215,6 +394,9 @@ pub struct OidcCode {
     pub redirect_uri: ::prost::alloc::string::String,
     #[prost(string, tag="3")]
     pub code_verifier: ::prost::alloc::string::String,
+    /// from StartOidcLogin
+    #[prost(string, tag="4")]
+    pub state: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct LocalCreds {
@@ -256,6 +438,50 @@ pub struct WhoAmIRequest {
 pub struct WhoAmIResponse {
     #[prost(message, optional, tag="1")]
     pub principal: ::core::option::Option<Principal>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct OidcProvider {
+    #[prost(string, tag="1")]
+    pub id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub name: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ListOidcProvidersRequest {
+    /// tenant slug
+    #[prost(string, tag="1")]
+    pub tenant: ::prost::alloc::string::String,
+}
+/// An unknown tenant lists nothing, like a tenant with no providers.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ListOidcProvidersResponse {
+    #[prost(message, repeated, tag="1")]
+    pub providers: ::prost::alloc::vec::Vec<OidcProvider>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct StartOidcLoginRequest {
+    /// tenant slug
+    #[prost(string, tag="1")]
+    pub tenant: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub provider_id: ::prost::alloc::string::String,
+    /// Where the IdP sends the browser back: an http or https URL registered at the
+    /// IdP. A desktop client uses its loopback listener here.
+    #[prost(string, tag="3")]
+    pub redirect_uri: ::prost::alloc::string::String,
+    /// PKCE: base64url of the SHA-256 of a verifier the client keeps.
+    #[prost(string, tag="4")]
+    pub code_challenge: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct StartOidcLoginResponse {
+    /// open this in a browser
+    #[prost(string, tag="1")]
+    pub authorization_url: ::prost::alloc::string::String,
+    /// Must come back from the IdP unchanged, and goes into OidcCode. Good for ten
+    /// minutes, once.
+    #[prost(string, tag="2")]
+    pub state: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Principal {

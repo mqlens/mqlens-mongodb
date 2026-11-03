@@ -72,6 +72,10 @@ MQLENS_TEST_MONGO_URI=mongodb://localhost:27017 \
 Each test creates its own server connection and database, and removes both.
 Optional variables:
 
+- `MQLENS_TEST_SERVER_OIDC_PROVIDER` and `MQLENS_TEST_SERVER_OIDC_EMAIL`: check the
+  browser sign-in, against a provider on the tenant whose IdP approves without
+  asking, and who it signs in. This test needs only the server URL and tenant
+  besides, and no browser: it follows the IdP's redirects itself.
 - `MQLENS_TEST_SERVER_MONGO_URI`: the MongoDB as the server reaches it, when that
   differs from `MQLENS_TEST_MONGO_URI` (a server in a container, for example).
 - `MQLENS_TEST_SERVER_SHELL=1`: also check the shell, which needs `mongosh` on

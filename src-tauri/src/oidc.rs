@@ -482,6 +482,9 @@ pub const REDIRECT_PORT: u16 = 27097;
 /// The path of that redirect.
 const REDIRECT_PATH: &str = "/redirect";
 
+/// The path of the redirect an MQLens Server sign-in sends.
+const SERVER_REDIRECT_PATH: &str = "/callback";
+
 /// The port a login's listener binds. Tests bind ephemeral ports instead, so
 /// tests running in parallel don't contend for the one registered port. A
 /// compile-time switch, like `loopback_exception`, never a runtime one.
@@ -547,8 +550,22 @@ impl LoopbackListener {
     pub async fn bind(port: u16) -> Result<Self, OidcError> {
         let listeners = bind_loopback(port).await?;
         let port = listeners[0].local_addr().map_err(|_| OidcError::PortUnavailable)?.port();
-        let redirect_uri = redirect_uri_for(port);
+        Ok(Self::serve(listeners, redirect_uri_for(port), REDIRECT_PATH))
+    }
 
+    /// The listener for signing in to MQLens Server, which documents its own
+    /// redirect: a free port on `127.0.0.1` and nothing else, at
+    /// [`SERVER_REDIRECT_PATH`]. Otherwise it behaves as `bind`'s does.
+    pub async fn bind_callback() -> Result<Self, OidcError> {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .map_err(|_| OidcError::PortUnavailable)?;
+        let port = listener.local_addr().map_err(|_| OidcError::PortUnavailable)?.port();
+        let redirect_uri = format!("http://127.0.0.1:{port}{SERVER_REDIRECT_PATH}");
+        Ok(Self::serve(vec![listener], redirect_uri, SERVER_REDIRECT_PATH))
+    }
+
+    fn serve(listeners: Vec<tokio::net::TcpListener>, redirect_uri: String, path: &str) -> Self {
         let (result_tx, result_rx) = oneshot::channel::<CallbackParams>();
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(());
         let result_tx = std::sync::Arc::new(StdMutex::new(Some(result_tx)));
@@ -560,7 +577,7 @@ impl LoopbackListener {
         // parameters are in the body. A POST's query string is not read.
         let (get_tx, get_state) = (std::sync::Arc::clone(&result_tx), std::sync::Arc::clone(&handler_state));
         let router = axum::Router::new().route(
-            REDIRECT_PATH,
+            path,
             axum::routing::get(move |uri: axum::http::Uri| {
                 let result_tx = std::sync::Arc::clone(&get_tx);
                 let expected_state = std::sync::Arc::clone(&get_state);
@@ -588,12 +605,12 @@ impl LoopbackListener {
             });
         }
 
-        Ok(Self {
+        Self {
             redirect_uri,
             result_rx: StdMutex::new(Some(result_rx)),
             shutdown_tx: StdMutex::new(Some(shutdown_tx)),
             expected_state,
-        })
+        }
     }
 
     /// Tell the listener the `state` this login sent, before the browser is
@@ -1124,6 +1141,37 @@ async fn run_flow_inner(
     let response = exchange_code(&endpoints, &client_id, &code, &request.verifier, &redirect_uri, &http, choice, &request.nonce).await?;
     if let Some(cache) = &cache { cache.replace_async(&metadata, None, response.0.refresh_token.as_deref()).await; }
     Ok(response)
+}
+
+/// The authorization code the browser brings back to `listener`, for a sign-in
+/// that opened a browser itself. A callback that has already arrived wins any
+/// tie, as in `run_flow_inner`. A timeout or a cancel drops the listener, whose
+/// `Drop` releases the port.
+pub(crate) async fn wait_for_code(
+    listener: LoopbackListener,
+    state: &str,
+    session: &OidcSession,
+    timeout: std::time::Duration,
+) -> Result<String, OidcError> {
+    tokio::select! {
+        biased;
+        result = listener.wait(state) => result,
+        _ = tokio::time::sleep(timeout) => Err(OidcError::TimedOut),
+        _ = wait_for_cancel(session) => Err(OidcError::Cancelled),
+    }
+}
+
+/// Whether a URL a server sent may go to the system browser: HTTPS, or HTTP on
+/// this computer, which are the issuers MQLens Server accepts. Nothing else,
+/// because the OS hands any other scheme to whichever program claims it.
+pub(crate) fn require_browsable(url: &str) -> Result<(), OidcError> {
+    let parsed = reqwest::Url::parse(url).map_err(|_| OidcError::InsecureEndpoint)?;
+    let on_this_computer = parsed.host_str().is_some_and(crate::server::channel::is_loopback_host);
+    match parsed.scheme() {
+        "https" => Ok(()),
+        "http" if on_this_computer => Ok(()),
+        _ => Err(OidcError::InsecureEndpoint),
+    }
 }
 
 use futures::future::FutureExt as _;
@@ -1727,6 +1775,141 @@ mod tests {
         // The real callback still works afterwards.
         get(&format!("{base}/redirect?code=test-auth-code&state=state-abc")).await;
         assert_eq!(waiter.await.unwrap(), Ok("test-auth-code".to_string()));
+    }
+
+    // ---- the MQLens Server redirect ---------------------------------------
+
+    fn callback_port(listener: &LoopbackListener) -> u16 {
+        listener
+            .redirect_uri
+            .strip_prefix("http://127.0.0.1:")
+            .and_then(|rest| rest.strip_suffix("/callback"))
+            .and_then(|port| port.parse().ok())
+            .unwrap_or_else(|| panic!("got {}", listener.redirect_uri))
+    }
+
+    /// The address this machine reaches the network from, if it has one.
+    fn lan_ip() -> Option<std::net::IpAddr> {
+        let socket = std::net::UdpSocket::bind(("0.0.0.0", 0)).ok()?;
+        socket.connect(("192.0.2.1", 9)).ok()?;
+        let ip = socket.local_addr().ok()?.ip();
+        (!ip.is_loopback()).then_some(ip)
+    }
+
+    async fn is_closed(port: u16) -> bool {
+        for _ in 0..200 {
+            if tokio::net::TcpStream::connect(("127.0.0.1", port)).await.is_err() {
+                return true;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        false
+    }
+
+    /// `docs/desktop-clients.md` on the server: a free port, on `127.0.0.1`
+    /// and nothing else, answering at `/callback`.
+    #[tokio::test]
+    async fn a_server_sign_in_listens_on_127_0_0_1_alone() {
+        let listener = LoopbackListener::bind_callback().await.unwrap();
+        let port = callback_port(&listener);
+
+        assert!(tokio::net::TcpStream::connect(("127.0.0.1", port)).await.is_ok());
+        assert!(tokio::net::TcpStream::connect(("::1", port)).await.is_err(), "reachable on ::1");
+        if let Some(ip) = lan_ip() {
+            assert!(tokio::net::TcpStream::connect((ip, port)).await.is_err(), "reachable on {ip}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_server_sign_in_never_takes_the_port_mongodbs_tools_share() {
+        let taken = tokio::net::TcpListener::bind(("127.0.0.1", REDIRECT_PORT)).await;
+        let listener = LoopbackListener::bind_callback().await.unwrap();
+        assert_ne!(callback_port(&listener), REDIRECT_PORT);
+        drop(taken);
+    }
+
+    #[tokio::test]
+    async fn one_code_ends_a_server_sign_ins_listener() {
+        let listener = LoopbackListener::bind_callback().await.unwrap();
+        let (port, redirect) = (callback_port(&listener), listener.redirect_uri.clone());
+        listener.expect_state("state-abc");
+        let session = OidcSession::new(Arc::new(|_| {}));
+        let waiter = tokio::spawn(async move {
+            wait_for_code(listener, "state-abc", &session, std::time::Duration::from_secs(5)).await
+        });
+
+        let page = get(&format!("{redirect}?code=test-auth-code&state=state-abc")).await.text().await.unwrap();
+
+        assert_eq!(page, CALLBACK_SUCCESS_PAGE);
+        assert_eq!(waiter.await.unwrap(), Ok("test-auth-code".to_string()));
+        assert!(is_closed(port).await, "the listener outlived the code");
+    }
+
+    #[tokio::test]
+    async fn the_wrong_state_ends_a_server_sign_in_without_its_code() {
+        let listener = LoopbackListener::bind_callback().await.unwrap();
+        let (port, redirect) = (callback_port(&listener), listener.redirect_uri.clone());
+        listener.expect_state("state-abc");
+        let session = OidcSession::new(Arc::new(|_| {}));
+        let waiter = tokio::spawn(async move {
+            wait_for_code(listener, "state-abc", &session, std::time::Duration::from_secs(5)).await
+        });
+
+        let page = get(&format!("{redirect}?code=stolen&state=state-WRONG")).await.text().await.unwrap();
+
+        assert_eq!(page, CALLBACK_NOT_COMPLETED_PAGE);
+        assert_eq!(waiter.await.unwrap(), Err(OidcError::StateMismatch));
+        assert!(is_closed(port).await, "the listener outlived the refusal");
+    }
+
+    #[tokio::test]
+    async fn a_server_sign_ins_listener_closes_when_the_browser_never_returns() {
+        let listener = LoopbackListener::bind_callback().await.unwrap();
+        let port = callback_port(&listener);
+        let session = OidcSession::new(Arc::new(|_| {}));
+
+        let outcome = wait_for_code(listener, "state-abc", &session, std::time::Duration::from_millis(20)).await;
+
+        assert_eq!(outcome, Err(OidcError::TimedOut));
+        assert!(is_closed(port).await, "the listener outlived the timeout");
+    }
+
+    #[tokio::test]
+    async fn cancelling_closes_a_server_sign_ins_listener() {
+        let listener = LoopbackListener::bind_callback().await.unwrap();
+        let port = callback_port(&listener);
+        let session = OidcSession::new(Arc::new(|_| {}));
+        session.cancel();
+
+        let outcome = wait_for_code(listener, "state-abc", &session, std::time::Duration::from_secs(5)).await;
+
+        assert_eq!(outcome, Err(OidcError::Cancelled));
+        assert!(is_closed(port).await, "the listener outlived the cancel");
+    }
+
+    #[test]
+    fn only_a_secure_page_opens_from_a_servers_answer() {
+        for url in [
+            "https://idp.acme.test/authorize?x=1",
+            "HTTPS://idp.acme.test/authorize",
+            "http://127.0.0.1:8080/authorize",
+            "http://localhost:8080/authorize",
+            "http://[::1]:8080/authorize",
+        ] {
+            assert_eq!(require_browsable(url), Ok(()), "{url}");
+        }
+        for url in [
+            "http://idp.acme.test/authorize",
+            "http://127.0.0.1.evil.test/authorize",
+            "http://localhost@evil.test/authorize",
+            "file:///C:/Windows/System32/calc.exe",
+            "ms-msdt:/id PCWDiagnostic",
+            "javascript:alert(1)",
+            "//idp.acme.test/authorize",
+            "",
+        ] {
+            assert_eq!(require_browsable(url), Err(OidcError::InsecureEndpoint), "{url}");
+        }
     }
 
     // ---- the registered redirect (PR #433 review) ------------------------

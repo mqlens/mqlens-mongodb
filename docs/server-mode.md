@@ -17,19 +17,34 @@ these runs on the server instead of from your machine.
    - **Server URL**: `https://` is required. Plain `http://` is accepted only
      for a server on this machine (`localhost`, `127.0.0.1`, `::1`), unless
      you allow it for the account.
-   - **Tenant** and **Email**: your server account.
+   - **Tenant**: the tenant of your server account.
+   - **Sign-in method**: **Email and password**, or **Identity provider, in the
+     browser** if your server has one set up. Only the first asks for your
+     **Email**: with an identity provider, the server says who signed in.
    - **Extra CA certificate**: only needed for a server whose certificate your
      system does not trust.
-3. Sign in with your password.
+3. Choose **Sign in**. A password account asks for your password. Otherwise
+   your system browser opens at your identity provider, or MQLens asks which
+   one first if your tenant has several. **Open browser again** returns you to
+   the same sign-in, and **Cancel** ends it. It ends by itself after five
+   minutes.
 
 Your password is used to sign in and is never stored. The app keeps a refresh
-token in its encrypted vault, so you stay signed in across restarts.
+token in its encrypted vault, so you stay signed in across restarts. A session
+from an identity provider ends at the limit your server sets for that provider,
+12 hours by default, and you then sign in again.
+
+While the browser is open, the app listens on `127.0.0.1` alone, on a free port,
+for the one answer it is waiting for. The sign-in only goes ahead if that answer
+carries the `state` your server issued, and the app stops listening once it
+arrives or the sign-in ends. Your server exchanges the code, so the app never
+holds the provider's client secret.
 
 - **Locking the vault** signs this app out of every server and closes its
   server connections. Unlocking it resumes them without asking for your
   password again.
-- **Signing out**, or changing an account's URL, tenant or email, ends that
-  account's session on the server.
+- **Signing out**, or changing an account's URL, tenant, email or sign-in
+  method, ends that account's session on the server.
 
 ## Connecting
 

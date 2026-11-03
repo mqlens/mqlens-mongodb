@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useId, useState } from 'react';
+import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { ConnectionMode } from '@/lib/connection';
 import { useTranslation } from 'react-i18next';
 import { LogIn, LogOut, Pencil, Plus, Server, Trash2 } from 'lucide-react';
@@ -9,17 +9,24 @@ import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { PasswordInput } from './PasswordInput';
 import { useDialogs } from './dialogs/DialogProvider';
+import { describeConnectError } from '@/lib/describeConnectError';
 import {
+  cancelOidcLogin,
   connectToServer,
   deleteServerAccount,
+  listOidcProviders,
   listServerAccounts,
   listServerConnections,
+  reopenOidcLogin,
   saveServerAccount,
   serverConnectionMode,
   serverProfileId,
   setServerConnectionMode,
+  signInThroughBrowser,
   signInToServer,
   signOutOfServer,
+  type AuthMethod,
+  type OidcProviderView,
   type RemoteConnectionView,
   type ServerAccountInput,
   type ServerAccountView,
@@ -32,7 +39,8 @@ interface Props {
   activeProfileIds?: readonly string[];
 }
 
-const EMPTY: ServerAccountInput = { name: '', url: '', tenant: '', email: '', allowInsecureHttp: false, extraCaPem: null };
+const EMPTY: ServerAccountInput = { name: '', url: '', tenant: '', email: '', auth: 'password', allowInsecureHttp: false, extraCaPem: null };
+const LOGIN_CANCELLED = 'auth.oidc.errors.cancelled';
 
 // MQLens Server accounts: add, sign in, and open one of a server's connections.
 export const ServerAccountsPanel: React.FC<Props> = ({ onConnect, activeProfileIds = [] }) => {
@@ -43,6 +51,9 @@ export const ServerAccountsPanel: React.FC<Props> = ({ onConnect, activeProfileI
   const [form, setForm] = useState<ServerAccountInput | null>(null);
   const [signingIn, setSigningIn] = useState<string | null>(null);
   const [password, setPassword] = useState('');
+  const [providers, setProviders] = useState<{ accountId: string; list: OidcProviderView[] } | null>(null);
+  const [browserLogin, setBrowserLogin] = useState<{ accountId: string; loginId: string } | null>(null);
+  const liveLogin = useRef<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
@@ -53,7 +64,7 @@ export const ServerAccountsPanel: React.FC<Props> = ({ onConnect, activeProfileI
     try {
       await action();
     } catch (err) {
-      setError(String(err));
+      setError(describeConnectError(err, t));
     } finally {
       setBusy(false);
     }
@@ -75,6 +86,11 @@ export const ServerAccountsPanel: React.FC<Props> = ({ onConnect, activeProfileI
     refresh().catch((err) => setError(String(err)));
   }, [refresh]);
 
+  // Nobody is left to finish a login once the panel is gone.
+  useEffect(() => () => {
+    if (liveLogin.current) void cancelOidcLogin(liveLogin.current).catch(() => {});
+  }, []);
+
   const save = () =>
     run(async () => {
       if (!form) return;
@@ -93,6 +109,45 @@ export const ServerAccountsPanel: React.FC<Props> = ({ onConnect, activeProfileI
       setWarning(view.warning ?? null);
       setAccounts((prev) => prev.map((a) => (a.id === view.id ? view : a)));
       await loadRemotes(account.id);
+    });
+
+  const signInThrough = async (account: ServerAccountView, providerId: string) => {
+    const loginId = crypto.randomUUID();
+    liveLogin.current = loginId;
+    setBrowserLogin({ accountId: account.id, loginId });
+    const view = await signInThroughBrowser(account.id, providerId, loginId)
+      .catch((err) => {
+        if (err === LOGIN_CANCELLED) return null;
+        throw err;
+      })
+      .finally(() => {
+        liveLogin.current = null;
+        setBrowserLogin(null);
+      });
+    if (!view) return;
+    setWarning(view.warning ?? null);
+    setAccounts((prev) => prev.map((a) => (a.id === view.id ? view : a)));
+    await loadRemotes(account.id);
+  };
+
+  const beginSignIn = (account: ServerAccountView) => {
+    if (account.auth !== 'oidc') {
+      setPassword('');
+      setSigningIn(account.id);
+      return;
+    }
+    void run(async () => {
+      const list = await listOidcProviders(account.id);
+      if (list.length === 0) setError(t('serverAccounts.noProviders'));
+      else if (list.length === 1) await signInThrough(account, list[0].id);
+      else setProviders({ accountId: account.id, list });
+    });
+  };
+
+  const chooseProvider = (account: ServerAccountView, provider: OidcProviderView) =>
+    run(async () => {
+      setProviders(null);
+      await signInThrough(account, provider.id);
     });
 
   const signOut = (account: ServerAccountView) =>
@@ -168,7 +223,7 @@ export const ServerAccountsPanel: React.FC<Props> = ({ onConnect, activeProfileI
               <div className="min-w-0">
                 <div className="truncate text-sm font-medium">{account.name}</div>
                 <div className="truncate text-xs text-muted-foreground">
-                  {account.email} · {account.url}
+                  {[account.email, account.url].filter(Boolean).join(' · ')}
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-1">
@@ -183,7 +238,7 @@ export const ServerAccountsPanel: React.FC<Props> = ({ onConnect, activeProfileI
                     <LogOut size={13} /> {t('serverAccounts.signOut')}
                   </Button>
                 ) : (
-                  <Button size="sm" variant="ghost" disabled={busy} onClick={() => { setPassword(''); setSigningIn(account.id); }}>
+                  <Button size="sm" variant="ghost" disabled={busy} onClick={() => beginSignIn(account)}>
                     <LogIn size={13} /> {t('serverAccounts.signIn')}
                   </Button>
                 )}
@@ -217,6 +272,31 @@ export const ServerAccountsPanel: React.FC<Props> = ({ onConnect, activeProfileI
                 onSubmit={() => signIn(account)}
                 onCancel={() => { setPassword(''); setSigningIn(null); }}
               />
+            )}
+            {providers?.accountId === account.id && (
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                {providers.list.map((provider) => (
+                  <Button key={provider.id} size="sm" disabled={busy} onClick={() => chooseProvider(account, provider)}>
+                    {t('serverAccounts.signInWith', { name: provider.name })}
+                  </Button>
+                ))}
+                <Button size="sm" variant="ghost" onClick={() => setProviders(null)}>{t('common:cancel')}</Button>
+              </div>
+            )}
+            {browserLogin?.accountId === account.id && (
+              <div className="mt-2 flex items-center gap-2">
+                <span className="flex-1 text-xs text-muted-foreground">{t('serverAccounts.finishInBrowser')}</span>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => void reopenOidcLogin(browserLogin.loginId).catch((err) => setError(describeConnectError(err, t)))}
+                >
+                  {t('test.openBrowserAgain')}
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => void cancelOidcLogin(browserLogin.loginId).catch(() => {})}>
+                  {t('common:cancel')}
+                </Button>
+              </div>
             )}
             {account.signedIn && (
               <ul className="mt-2 space-y-1">
@@ -315,7 +395,8 @@ const AccountForm: React.FC<{
       />
     </div>
   );
-  const complete = value.name.trim() && value.url.trim() && value.tenant.trim() && value.email.trim();
+  const usesPassword = value.auth === 'password';
+  const complete = value.name.trim() && value.url.trim() && value.tenant.trim() && (!usesPassword || value.email.trim());
   return (
     <form
       className="space-y-2 rounded-md border p-3"
@@ -324,7 +405,20 @@ const AccountForm: React.FC<{
       {field('name', t('serverAccounts.name'))}
       {field('url', t('serverAccounts.url'), 'https://mqlens.example.com')}
       {field('tenant', t('serverAccounts.tenant'))}
-      {field('email', t('serverAccounts.email'))}
+      <div className="space-y-1">
+        <Label htmlFor={`${id}-auth`} className="text-xs">{t('serverAccounts.signInMethod')}</Label>
+        <select
+          id={`${id}-auth`}
+          className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+          disabled={identityLocked}
+          value={value.auth}
+          onChange={(e) => onChange({ ...value, auth: e.target.value as AuthMethod })}
+        >
+          <option value="password">{t('serverAccounts.signInMethodPassword')}</option>
+          <option value="oidc">{t('serverAccounts.signInMethodOidc')}</option>
+        </select>
+      </div>
+      {usesPassword && field('email', t('serverAccounts.email'))}
       {identityLocked && <p className="text-xs text-muted-foreground">{t('serverAccounts.identityLocked')}</p>}
       <div className="flex items-center gap-2">
         <Switch

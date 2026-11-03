@@ -20,6 +20,11 @@
 //!   needs mongodump and mongorestore on the server's host.
 //!
 //! Each test makes its own server connection and database, and removes both.
+//!
+//! `MQLENS_TEST_SERVER_OIDC_PROVIDER` opts in to the browser sign-in, on its
+//! own: the name of a provider on the tenant whose IdP approves without
+//! asking, and `MQLENS_TEST_SERVER_OIDC_EMAIL`, who it signs in. That needs
+//! only `MQLENS_TEST_SERVER_URL` and `MQLENS_TEST_SERVER_TENANT` besides.
 
 #[cfg(test)]
 mod e2e {
@@ -27,9 +32,13 @@ mod e2e {
         poll_change_stream_impl, start_change_stream_impl, stop_change_stream_impl, StreamPoll,
         StreamStatus,
     };
-    use crate::server::accounts::{self, ServerAccountInput};
+    use crate::oidc::BrowserOpener;
+    use crate::server::accounts::{self, AuthMethod, ServerAccountInput};
     use crate::server::channel::client;
-    use crate::server::commands::{server_connect_impl, sign_in_impl, token_store};
+    use crate::server::commands::{
+        list_connections_impl, oidc_providers_impl, oidc_sign_in_impl, server_connect_impl,
+        sign_in_impl, sign_out_impl, token_store,
+    };
     use crate::server::fake::{write_vault_meta, KEY};
     use crate::server::pb::mqlens::v1::admin_service_client::AdminServiceClient;
     use crate::server::pb::mqlens::v1::{
@@ -51,6 +60,7 @@ mod e2e {
     use std::panic::AssertUnwindSafe;
     use std::pin::Pin;
     use std::sync::Arc;
+    use std::time::Duration;
 
     fn var(name: &str) -> Option<String> {
         std::env::var(name).ok().filter(|v| !v.trim().is_empty())
@@ -60,6 +70,81 @@ mod e2e {
     /// missing one fails the run instead of skipping it unseen.
     fn required(name: &str) -> String {
         var(name).unwrap_or_else(|| panic!("MQLENS_TEST_SERVER_URL is set, so {name} must be too"))
+    }
+
+    /// A browser nobody is at: it follows the IdP's redirects, which end at the
+    /// sign-in's own redirect when the IdP approves without asking.
+    fn unattended_browser() -> BrowserOpener {
+        Arc::new(|url: &str| {
+            let url = url.to_string();
+            tokio::spawn(async move {
+                reqwest::get(url).await.expect("the identity provider answers");
+            });
+            Ok(())
+        })
+    }
+
+    // A real server and a real IdP: the code exchange, the session it gives,
+    // that session refreshing after a restart, and its end.
+    #[tokio::test]
+    async fn an_identity_provider_signs_in_through_the_browser() {
+        let Some(provider) = var("MQLENS_TEST_SERVER_OIDC_PROVIDER") else {
+            return;
+        };
+        let email = required("MQLENS_TEST_SERVER_OIDC_EMAIL");
+        let state = AppState::new();
+        *state.vault_key.lock().unwrap() = Some(KEY);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(accounts::ACCOUNTS_FILE_NAME);
+        write_vault_meta(&path, &KEY);
+        let (account, _) = accounts::save_account(
+            &path,
+            &KEY,
+            ServerAccountInput {
+                id: None,
+                name: "E2E OIDC".to_string(),
+                url: required("MQLENS_TEST_SERVER_URL"),
+                tenant: required("MQLENS_TEST_SERVER_TENANT"),
+                email: String::new(),
+                auth: AuthMethod::Oidc,
+                allow_insecure_http: false,
+                extra_ca_pem: None,
+            },
+        )
+        .unwrap();
+        let id = account.id.as_str();
+
+        let providers = oidc_providers_impl(&state, &path, id).await.unwrap();
+        let provider = providers
+            .iter()
+            .find(|p| p.name == provider)
+            .unwrap_or_else(|| panic!("{provider} is not among {providers:?}"));
+        let view = oidc_sign_in_impl(
+            &state,
+            &path,
+            id,
+            &provider.id,
+            None,
+            &unattended_browser(),
+            Duration::from_secs(30),
+        )
+        .await
+        .expect("sign in through the identity provider");
+        assert!(view.signed_in);
+        assert_eq!(view.email, email);
+        let first = accounts::find(&path, &KEY, id).unwrap().refresh_token;
+        assert!(first.is_some());
+        list_connections_impl(&state, &path, id).await.unwrap();
+
+        // As after a restart: nothing but the stored token to go on.
+        state.server.clear().await;
+        list_connections_impl(&state, &path, id).await.unwrap();
+        let stored = accounts::find(&path, &KEY, id).unwrap();
+        assert_ne!(stored.refresh_token, first, "the refresh token did not rotate");
+        assert_eq!(stored.email, email);
+
+        let signed_out = sign_out_impl(&state, &path, id).await.unwrap();
+        assert!(signed_out.ended_on_server);
     }
 
     /// One test's world: a local connection and a server connection to the
@@ -93,6 +178,7 @@ mod e2e {
                     url,
                     tenant: required("MQLENS_TEST_SERVER_TENANT"),
                     email: required("MQLENS_TEST_SERVER_EMAIL"),
+                    auth: Default::default(),
                     allow_insecure_http: false,
                     extra_ca_pem: None,
                 },
