@@ -311,7 +311,7 @@ pub async fn get_collection_options_impl(
         None => return Err(format!("Collection \"{}\" not found", collection)),
     };
     let validator = match &spec.options.validator {
-        Some(doc) => serde_json::to_string_pretty(doc)
+        Some(doc) => serde_json::to_string_pretty(&crate::db::ui_json(doc)?)
             .map_err(|e| format!("Failed to serialize validator: {}", e))?,
         None => "{}".to_string(),
     };

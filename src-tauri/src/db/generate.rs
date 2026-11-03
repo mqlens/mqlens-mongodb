@@ -647,14 +647,12 @@ const PREVIEW_MAX_DOCS: u8 = 10;
 const PREVIEW_DEFAULT_DOCS: u8 = 3;
 
 /// Stringify a generated document the same way `execute_mql_query_impl`
-/// stringifies query results (`serde_json::to_value` then
-/// `serde_json::to_string`) — not `into_relaxed_extjson()` — so previewed
+/// stringifies query results (`crate::db::ui_string`) — not
+/// `into_relaxed_extjson()` — so previewed
 /// documents render through the same EJSON-ish viewer path the rest of the
 /// app already uses for query/document output.
 fn doc_to_relaxed_json_string(doc: &Document) -> Result<String, String> {
-    let json_val: Value =
-        serde_json::to_value(doc).map_err(|e| format!("BSON to JSON error: {}", e))?;
-    serde_json::to_string(&json_val).map_err(|e| format!("Serialization error: {}", e))
+    crate::db::ui_string(doc)
 }
 
 /// Parse `template`, then generate `count` documents (capped at

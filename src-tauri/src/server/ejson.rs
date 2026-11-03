@@ -2,7 +2,7 @@
 //!
 //! A document read from a collection arrives from the server as raw BSON and is
 //! decoded by `doc_from_bson`, then rendered with `ui_json`, the rendering local
-//! mode uses (`serde_json::to_value(&doc)` in `db/query.rs`, `db/aggregate.rs`).
+//! mode uses (`db::ui_json`).
 //!
 //! `doc_from_bson` converts bson's raw document directly instead of using
 //! `bson::from_slice`, which is what the MongoDB driver, and so local mode,
@@ -21,6 +21,7 @@
 //! and documents in requests (`doc_to_wire`), and values such as explain plans
 //! (`doc_from_wire`), which are shown and never written back.
 
+pub(crate) use crate::db::{ui_json, ui_string};
 use mongodb::bson::{Bson, Document, RawDocument};
 
 /// Decodes a document the server sent as raw BSON, keeping every key and value
@@ -59,21 +60,11 @@ pub(crate) fn doc_to_wire(doc: &Document) -> String {
         .to_string()
 }
 
-/// The JSON local mode shows for a document.
-pub(crate) fn ui_json(doc: &Document) -> Result<serde_json::Value, String> {
-    serde_json::to_value(doc).map_err(|e| format!("BSON to JSON error: {}", e))
-}
-
-/// The string local mode returns for one result row.
-pub(crate) fn ui_string(doc: &Document) -> Result<String, String> {
-    serde_json::to_string(&ui_json(doc)?).map_err(|e| format!("BSON to JSON error: {}", e))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use base64::Engine;
-    use mongodb::bson::doc;
+    use mongodb::bson::{doc, spec::BinarySubtype, Binary};
 
     /// Written by the server's `TestWriteEJSONFixture`: one line per document,
     /// `{"bson": <base64 BSON bytes>, "canonical": <canonical Extended JSON>}`.
@@ -179,6 +170,35 @@ mod tests {
             let expected: serde_json::Value = serde_json::from_str(&case.canonical).unwrap();
             assert_eq!(sent, expected, "fixture line {}", case.line);
         }
+    }
+
+    // Binary reaches the viewer as `$binary` for every subtype, at any depth.
+    // bson's `Serialize` writes subtype 0 as bare bytes, which JSON can hold
+    // only as an array of numbers.
+    #[test]
+    fn binary_renders_as_extended_json_at_any_depth() {
+        let binary = |subtype| Binary {
+            subtype,
+            bytes: vec![1, 2, 3],
+        };
+        let generic = serde_json::json!({ "$binary": { "base64": "AQID", "subType": "00" } });
+        let user_defined = serde_json::json!({ "$binary": { "base64": "AQID", "subType": "80" } });
+
+        let got = ui_json(&doc! {
+            "generic": binary(BinarySubtype::Generic),
+            "userDefined": binary(BinarySubtype::UserDefined(0x80)),
+            "nested": { "list": [binary(BinarySubtype::Generic)] },
+        })
+        .unwrap();
+
+        assert_eq!(
+            got,
+            serde_json::json!({
+                "generic": generic,
+                "userDefined": user_defined,
+                "nested": { "list": [generic] },
+            })
+        );
     }
 
     // A stored sub-document with wrapper-shaped keys comes back unchanged only

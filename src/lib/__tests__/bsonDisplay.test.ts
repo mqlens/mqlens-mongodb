@@ -123,6 +123,26 @@ describe('plainBsonShape — the table view’s extended-JSON shapes', () => {
     expect(plainBsonShape({ $numberDouble: '1.5' })).toEqual({ text: '1.5', kind: 'number' });
   });
 
+  it('shows binary as the JSON view does, with the subtype in decimal', () => {
+    const generic = { $binary: { base64: 'aGk=', subType: '00' } };
+    const userDefined = { $binary: { base64: 'eA==', subType: '80' } };
+
+    expect(plainBsonShape(generic)).toEqual({ text: 'BinData(0, "aGk=")', kind: 'string' });
+    expect(tableValueText(userDefined)).toBe('BinData(128, "eA==")');
+    expect(tableValueText(generic)).toBe(bsonValueText(new Binary(Buffer.from('hi'), 0)));
+  });
+
+  it('leaves an ordinary sub-document named $binary alone', () => {
+    expect(plainBsonShape({ $binary: 'not a wrapper' })).toBeNull();
+  });
+
+  it('keeps a stored sub-document that has fields beside $binary whole', () => {
+    const stored = { $binary: { base64: 'AQID', subType: '00' }, other: 1 };
+
+    expect(plainBsonShape(stored)).toBeNull();
+    expect(tableValueText(stored)).toBe(JSON.stringify(stored));
+  });
+
   it('formats table dates locally and falls back safely for malformed dates', () => {
     const localString = plainBsonShape(
       { $date: '2026-08-27T10:00:00.000Z' },
