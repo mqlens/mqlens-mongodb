@@ -1525,6 +1525,7 @@ describe('App Component', () => {
       fireEvent.change(await screen.findByTestId('document-json-input'), {
         target: { value: '{"name":"second"}' },
       });
+      await waitFor(() => expect(screen.getByTestId('document-json-input')).toHaveValue('{"name":"second"}'));
 
       resolveInsert('"new-id"');
 
