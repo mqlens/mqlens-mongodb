@@ -14,7 +14,7 @@ const key = (init: Partial<KeyboardEvent> & { key: string }) => ({
 describe('tabCommandForKey on Windows/Linux', () => {
   it('maps the Ctrl chords', () => {
     expect(tabCommandForKey(key({ key: 'w', ctrlKey: true }), false)).toEqual({ type: 'close-tab' });
-    expect(tabCommandForKey(key({ key: 'W', ctrlKey: true, shiftKey: true }), false)).toEqual({ type: 'close-window' });
+    expect(tabCommandForKey(key({ key: 'W', ctrlKey: true, shiftKey: true }), false)).toBeNull();
     expect(tabCommandForKey(key({ key: 't', ctrlKey: true }), false)).toEqual({ type: 'new-tab' });
     expect(tabCommandForKey(key({ key: 'T', ctrlKey: true, shiftKey: true }), false)).toEqual({ type: 'reopen-closed-tab' });
     expect(tabCommandForKey(key({ key: 'Tab', ctrlKey: true }), false)).toEqual({ type: 'next-tab' });
@@ -42,9 +42,12 @@ describe('tabCommandForKey on Windows/Linux', () => {
 describe('tabCommandForKey on macOS', () => {
   it('leaves the chords the native menu owns to the menu', () => {
     expect(tabCommandForKey(key({ key: 'w', metaKey: true }), true)).toBeNull();
-    expect(tabCommandForKey(key({ key: 'W', metaKey: true, shiftKey: true }), true)).toBeNull();
     expect(tabCommandForKey(key({ key: 't', metaKey: true }), true)).toBeNull();
     expect(tabCommandForKey(key({ key: 'T', metaKey: true, shiftKey: true }), true)).toBeNull();
+  });
+
+  it('binds nothing to Cmd+Shift+W', () => {
+    expect(tabCommandForKey(key({ key: 'W', code: 'KeyW', metaKey: true, shiftKey: true }), true)).toBeNull();
   });
 
   it('handles the chords the menu does not list', () => {

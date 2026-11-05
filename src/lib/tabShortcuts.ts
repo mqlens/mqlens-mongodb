@@ -10,7 +10,6 @@
 
 export type TabCommand =
   | { type: 'close-tab' }
-  | { type: 'close-window' }
   | { type: 'new-tab' }
   | { type: 'reopen-closed-tab' }
   | { type: 'next-tab' }
@@ -21,7 +20,7 @@ export type TabCommand =
 
 export const TAB_COMMAND_EVENT = 'tab-command';
 
-const MENU_COMMANDS = ['close-tab', 'close-window', 'new-tab', 'reopen-closed-tab', 'open-settings'] as const;
+const MENU_COMMANDS = ['close-tab', 'new-tab', 'reopen-closed-tab', 'open-settings'] as const;
 
 /** The payload of a native menu `tab-command` event, or null for anything else. */
 export function tabCommandFromMenu(payload: unknown): TabCommand | null {
@@ -58,7 +57,7 @@ function matchKey(event: KeyLike, mac: boolean): TabCommand | null {
   if (mac && shiftKey && code === 'BracketLeft') return { type: 'prev-tab' };
 
   const letter = key.toLowerCase();
-  if (letter === 'w') return { type: shiftKey ? 'close-window' : 'close-tab' };
+  if (letter === 'w') return shiftKey ? null : { type: 'close-tab' };
   if (letter === 't') return { type: shiftKey ? 'reopen-closed-tab' : 'new-tab' };
   if (!shiftKey && (key === ',' || code === 'Comma')) return { type: 'open-settings' };
 

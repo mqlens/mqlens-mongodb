@@ -192,7 +192,6 @@ const LOCAL_COMMANDS: &[&str] = &[
     "spawn_saved_windows",
     "focus_window",
     "close_workspace_window",
-    "close_current_window",
     "update_check",
     "update_install",
 ];

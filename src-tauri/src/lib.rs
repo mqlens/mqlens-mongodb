@@ -4800,7 +4800,6 @@ pub fn run() {
             windows::spawn_saved_windows,
             windows::focus_window,
             windows::close_workspace_window,
-            windows::close_current_window,
             server_status,
             current_ops,
             repl_set_status,

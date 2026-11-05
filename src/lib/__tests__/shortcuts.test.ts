@@ -83,7 +83,7 @@ describe('tab shortcuts', () => {
     expect(formatShortcut(next, 'MacIntel')).toBe('⌃ Tab / ⌘ Shift ]');
     expect(formatShortcut(next, 'Win32')).toBe('Ctrl Tab / Ctrl PageDown');
     expect(formatShortcut(shortcutById('tab-close')!, 'MacIntel')).toBe('⌘ W');
-    expect(formatShortcut(shortcutById('window-close')!, 'Win32')).toBe('Ctrl Shift W');
+    expect(shortcutById('window-close')).toBeUndefined();
   });
 
   it('groups them under tabs', () => {

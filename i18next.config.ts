@@ -245,7 +245,6 @@ export default defineConfig({
       'shell:keyboardShortcuts.items.tab-prev',
       'shell:keyboardShortcuts.items.tab-select',
       'shell:keyboardShortcuts.items.tab-last',
-      'shell:keyboardShortcuts.items.window-close',
       'shell:keyboardShortcuts.items.open-settings',
       'common:typedNameConfirm.messageCollection',
       'common:typedNameConfirm.messageDatabase',

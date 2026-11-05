@@ -25,8 +25,6 @@ pub const TAB_MENU_ITEMS: &[(&str, &str, &str)] = &[
     ("close-tab", "Close Tab", "CmdOrCtrl+W"),
 ];
 
-pub const CLOSE_WINDOW_ACCELERATOR: &str = "CmdOrCtrl+Shift+W";
-
 pub const SETTINGS_ITEM: (&str, &str, &str) = ("open-settings", "Settings…", "CmdOrCtrl+,");
 
 #[derive(Debug, PartialEq, Eq)]
@@ -85,8 +83,8 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         .iter()
         .map(|(id, label, accel)| MenuItem::with_id(app, *id, *label, true, Some(*accel)))
         .collect::<tauri::Result<Vec<_>>>()?;
-    let close_window =
-        MenuItem::with_id(app, CLOSE_WINDOW_ID, "Close Window", true, Some(CLOSE_WINDOW_ACCELERATOR))?;
+    // No accelerator: MQLens never bound Cmd+Shift+W, and Cmd+W is Close Tab.
+    let close_window = MenuItem::with_id(app, CLOSE_WINDOW_ID, "Close Window", true, None::<&str>)?;
     let file_menu = Submenu::with_items(
         app,
         "File",
@@ -179,7 +177,7 @@ mod tests {
         let accels = TAB_MENU_ITEMS
             .iter()
             .map(|(_, _, accel)| *accel)
-            .chain([CLOSE_WINDOW_ACCELERATOR, SETTINGS_ITEM.2]);
+            .chain([SETTINGS_ITEM.2]);
         for accel in accels {
             assert!(
                 accel.parse::<muda::accelerator::Accelerator>().is_ok(),
@@ -192,6 +190,6 @@ mod tests {
     fn close_tab_owns_cmd_w() {
         let close_tab = TAB_MENU_ITEMS.iter().find(|(id, _, _)| *id == "close-tab").unwrap();
         assert_eq!(close_tab.2, "CmdOrCtrl+W");
-        assert_eq!(CLOSE_WINDOW_ACCELERATOR, "CmdOrCtrl+Shift+W");
+        assert!(TAB_MENU_ITEMS.iter().chain([&SETTINGS_ITEM]).all(|(_, _, a)| !a.contains("Shift+W")));
     }
 }

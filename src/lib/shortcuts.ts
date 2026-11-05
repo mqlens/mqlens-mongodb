@@ -165,13 +165,6 @@ export const KEYBOARD_SHORTCUTS: KeyboardShortcut[] = [
     keywords: 'jump go to last tab',
   },
   {
-    id: 'window-close',
-    group: 'tabs',
-    labelKey: 'keyboardShortcuts.items.window-close',
-    chords: [{ mod: true, shift: true, key: 'W' }],
-    keywords: 'close window',
-  },
-  {
     id: 'run-query',
     group: 'query-editor',
     labelKey: 'keyboardShortcuts.items.run-query',

@@ -291,6 +291,5 @@ describe('App as a secondary window (windowLabel() === "win-2") — Phase 3 Task
     await waitFor(() =>
       expect(mockInvoke).toHaveBeenCalledWith('close_workspace_window', { label: 'win-2', origin: 'win-2' })
     );
-    expect(mockInvoke).not.toHaveBeenCalledWith('close_current_window');
   });
 });
