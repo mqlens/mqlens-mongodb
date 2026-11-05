@@ -73,6 +73,8 @@ interface DocumentEditModalProps {
    *  with it (#326 review). Read-only says so, rather than quietly dropping the
    *  keystrokes. */
   frozen?: boolean;
+  /** Set to a function that commits queued keys now; it returns whether any were queued. */
+  flushHandleRef?: React.MutableRefObject<(() => boolean) | null>;
 }
 
 export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
@@ -86,6 +88,7 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
   error = null,
   saving = false,
   frozen = false,
+  flushHandleRef,
 }) => {
   const { t } = useTranslation('documents');
   const [uncontrolledJson, setUncontrolledJson] = useState(initialJson);
@@ -133,6 +136,16 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
     if (!isOpen) flushDraft();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
+
+  useEffect(() => {
+    if (!flushHandleRef) return;
+    const flush = () => flushDraft(true) !== null;
+    flushHandleRef.current = flush;
+    return () => {
+      if (flushHandleRef.current === flush) flushHandleRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flushHandleRef]);
 
   useEffect(() => () => {
     clearTimeout(timerRef.current);

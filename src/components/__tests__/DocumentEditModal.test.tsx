@@ -171,6 +171,28 @@ describe('DocumentEditModal — an edit belongs to its tab (#277)', () => {
     expect(onJsonChange).toHaveBeenCalledWith('{ "a": 9 }');
   });
 
+  it('hands queued keys to the edit they were typed into when the edit switches', () => {
+    // App keys the dialog by edit id, so switching edits unmounts the old one.
+    const first = vi.fn();
+    const second = vi.fn();
+    const { rerender } = render(<DocumentEditModal key="a" {...props} json='{ "a": 1 }' onJsonChange={first} />);
+    fireEvent.change(screen.getByTestId('document-json-input'), { target: { value: '{ "a": 7 }' } });
+    rerender(<DocumentEditModal key="b" {...props} json='{ "b": 1 }' onJsonChange={second} />);
+    expect(first).toHaveBeenCalledWith('{ "a": 7 }');
+    expect(second).not.toHaveBeenCalled();
+  });
+
+  it('commits queued keys through the flush handle and reports whether there were any', () => {
+    const onJsonChange = vi.fn();
+    const handle: { current: (() => boolean) | null } = { current: null };
+    render(<DocumentEditModal {...props} json='{ "a": 1 }' onJsonChange={onJsonChange} flushHandleRef={handle} />);
+    expect(handle.current?.()).toBe(false);
+    fireEvent.change(screen.getByTestId('document-json-input'), { target: { value: '{ "a": 3 }' } });
+    expect(handle.current?.()).toBe(true);
+    expect(onJsonChange).toHaveBeenCalledWith('{ "a": 3 }');
+    expect(handle.current?.()).toBe(false);
+  });
+
   it('saves keys typed just before Save, without waiting for the pause', () => {
     const onSave = vi.fn();
     const onJsonChange = vi.fn();
