@@ -58,7 +58,7 @@ rand = "0.10"
 # built on rand 0.10 (3.x was rand 0.8, 4.x rand 0.9), so the two move together.
 fake = "5"
 base64 = "0.23"
-rust_xlsxwriter = "0.101.0"
+rust_xlsxwriter = "0.102.0"
 tempfile = "3.27.0"
 sha2 = "0.11.0"
 zip = "9.0.5"
