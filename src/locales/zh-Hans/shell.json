@@ -226,13 +226,14 @@
     "noConnection": "没有活动连接。连接到 MongoDB 集群即可浏览 Collection 并运行查询。"
   },
   "keyboardShortcuts": {
-    "description": "用于导航、查询、侧边栏、缩放和命令面板的全局快捷键。",
+    "description": "用于导航、标签页与窗口、查询、侧边栏、缩放和命令面板的全局快捷键。",
     "empty": "没有符合搜索条件的快捷键。",
     "groups": {
       "command-palette": "命令面板",
       "navigation": "导航",
       "query-editor": "查询编辑器",
       "sidebar": "侧边栏",
+      "tabs": "标签页与窗口",
       "zoom": "缩放"
     },
     "items": {
@@ -244,6 +245,15 @@
       "run-query": "运行当前查询",
       "sidebar-search": "聚焦侧边栏搜索框",
       "submit-dialog": "提交多行对话框（导入 URI、输入框）",
+      "tab-close": "关闭当前标签页",
+      "tab-last": "跳转到最后一个标签页",
+      "tab-new": "新建标签页（打开当前集合，否则打开快速开始）",
+      "tab-next": "显示下一个标签页",
+      "tab-prev": "显示上一个标签页",
+      "tab-reopen": "重新打开最近关闭的标签页",
+      "tab-select": "跳转到第 1–8 个标签页",
+      "window-close": "关闭窗口",
+      "open-settings": "打开设置",
       "zoom-in": "放大界面",
       "zoom-in-out": "放大或缩小界面",
       "zoom-out": "缩小界面",

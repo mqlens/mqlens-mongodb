@@ -89,6 +89,9 @@ h2 = "0.4"
 zeroize = "1"
 
 [dev-dependencies]
+# Parses the app menu accelerators in tests; Tauri drops one that fails to
+# parse without an error. Already locked via tauri, so this adds no crate.
+muda = { version = "0.20", default-features = false }
 tiny_http = "0.12.0"
 # Matches capability window patterns in tests the way Tauri's ACL does.
 glob = "0.3"

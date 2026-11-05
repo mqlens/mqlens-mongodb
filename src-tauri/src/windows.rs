@@ -411,6 +411,13 @@ pub async fn close_workspace_window(
     Ok(())
 }
 
+/// Ctrl+Shift+W on Windows/Linux (macOS routes it through the app menu).
+/// `.close()` runs the same `CloseRequested` path as the OS close button.
+#[tauri::command]
+pub fn close_current_window(window: tauri::WebviewWindow) -> Result<(), String> {
+    window.close().map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

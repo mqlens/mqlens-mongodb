@@ -264,4 +264,33 @@ describe('App as a secondary window (windowLabel() === "win-2") — Phase 3 Task
     expect(warn).toHaveBeenCalledWith('listening for connections-changed failed', expect.anything());
     warn.mockRestore();
   });
+
+  it('Ctrl+W on the last tab closes the tab, and the emptied window closes itself', async () => {
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'load_app_settings') return Promise.resolve({});
+      if (cmd === 'workspace_get') {
+        return Promise.resolve({
+          revision: 1,
+          windows: [
+            { id: 'main', focusedPaneId: 'pane-1', splitTree: { kind: 'pane', id: 'pane-1', tabIds: [], activeTabId: null } },
+            { id: 'win-2', focusedPaneId: 'pane-1', splitTree: { kind: 'pane', id: 'pane-1', tabIds: ['tasks'], activeTabId: 'tasks' } },
+          ],
+          tabs: [{ id: 'tasks', type: 'tasks', profileId: '', profileName: '', db: '', collection: '' }],
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderWithProviders(<App />);
+    await screen.findByTestId('tab-content-tasks');
+    expect(mockInvoke).not.toHaveBeenCalledWith('close_workspace_window', expect.anything());
+
+    fireEvent.keyDown(window, { key: 'w', code: 'KeyW', ctrlKey: true });
+
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith('close_workspace_window', { label: 'win-2', origin: 'win-2' })
+    );
+    expect(mockInvoke).not.toHaveBeenCalledWith('close_current_window');
+  });
 });

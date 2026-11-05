@@ -78,6 +78,7 @@ import {
   windowLabel,
   subscribeWorkspaceChanged,
   subscribeConnectionsChanged,
+  subscribeTabCommand,
   setConnectionMeta,
   connectionList,
   detachTabToNewWindow,
@@ -109,6 +110,9 @@ import {
 import { ReconnectBanner } from './workspace/ReconnectBanner';
 import { collectionTabsMatching } from './workspace/collectionTabs';
 import { uniqueCollectionTabId } from './workspace/tabId';
+import { rememberClosedTab, takeClosedTab, type ClosedTab } from './workspace/closedTabs';
+import { tabCommandForKey, tabCommandFromMenu, targetTabId, type TabCommand } from './lib/tabShortcuts';
+import { isMacPlatform } from './lib/shortcuts';
 import { ContextMenu, type ContextMenuItem } from './components/ContextMenu';
 import { CreateViewView } from './components/CreateViewView';
 import { ValidationRulesView } from './components/ValidationRulesView';
@@ -693,6 +697,7 @@ function Workspace() {
   const tabChatCache = useRef(
     new Map<string, { messages: ChatMessage[]; isOpen: boolean; chatId?: string }>()
   );
+  const closedTabsRef = useRef<ClosedTab<QueryTab, BuilderState>[]>([]);
   // Workspace-store mirroring plumbing (Phase 2 Task 5). Mirroring starts
   // DISABLED — the restore effect below is the only thing allowed to turn it
   // on, once workspace_get has resolved (snapshot applied or none found).
@@ -1671,16 +1676,9 @@ function Workspace() {
     }
   };
 
-  const handleDuplicateTab = (sourceTabId: string) => {
-    const src = tabs.find((t) => t.id === sourceTabId && t.type === 'collection');
-    if (!src) return;
-
-    const baseId = `${src.connectionId}.${src.db}.${src.collection}`;
-    const tabId = uniqueCollectionTabId(baseId, tabs.map((t) => t.id));
-
-    let def: QueryDef | null;
+  const lastQueryDefOf = (src: QueryTab): QueryDef | null => {
     try {
-      def = src.lastAggregate
+      return src.lastAggregate
         ? { queryType: 'aggregate', pipeline: src.lastAggregate }
         : src.lastQuery
           ? {
@@ -1693,8 +1691,17 @@ function Workspace() {
             }
           : null;
     } catch {
-      def = null; // corrupted persisted query — fall back to the default find
+      return null; // corrupted persisted query — fall back to the default find
     }
+  };
+
+  const handleDuplicateTab = (sourceTabId: string) => {
+    const src = tabs.find((t) => t.id === sourceTabId && t.type === 'collection');
+    if (!src) return;
+
+    const baseId = `${src.connectionId}.${src.db}.${src.collection}`;
+    const tabId = uniqueCollectionTabId(baseId, tabs.map((t) => t.id));
+    const def = lastQueryDefOf(src);
 
     const newTab: QueryTab = {
       id: tabId,
@@ -2805,6 +2812,13 @@ function Workspace() {
       }
     }
     if (action.type === 'close_tab') {
+      const closing = tabs.find(t => t.id === action.tabId);
+      if (closing) {
+        closedTabsRef.current = rememberClosedTab(closedTabsRef.current, {
+          tab: closing,
+          builderState: tabBuilderStateCache.current.get(action.tabId),
+        });
+      }
       tabBuilderStateCache.current.delete(action.tabId);
       tabChatCache.current.delete(action.tabId);
       clearChatRequest(action.tabId);
@@ -3257,6 +3271,102 @@ function Workspace() {
     const next = p.tabIds[(i + dir + p.tabIds.length) % p.tabIds.length];
     dispatchWorkspace({ type: 'set_active', paneId: p.id, tabId: next });
   };
+
+  const reopenClosedTab = () => {
+    const { entry, history } = takeClosedTab(closedTabsRef.current, (tab) =>
+      tab.type === 'settings' || tab.type === 'tasks' || tab.type === 'activity'
+        || activeConnections.some(c => c.id === tab.connectionId)
+    );
+    closedTabsRef.current = history;
+    if (!entry) return;
+    const { tab: closed, builderState } = entry;
+    if (tabs.some(t => t.id === closed.id)) {
+      dispatchWorkspace({ type: 'open_tab', tabId: closed.id });
+      return;
+    }
+    if (builderState) tabBuilderStateCache.current.set(closed.id, builderState);
+    const isCollection = closed.type === 'collection';
+    // Drafts die with the tab on purpose (#326), so a reopened tab starts clean.
+    const reopened: QueryTab = {
+      ...closed,
+      results: [],
+      loading: isCollection,
+      error: null,
+      explainResult: null,
+      documentEdit: undefined,
+      pagerRequest: undefined,
+      totalCount: undefined,
+      countLoading: false,
+    };
+    setTabs(prev => [...prev, reopened]);
+    dispatchWorkspace({ type: 'open_tab', tabId: reopened.id }, { tab: reopened });
+    if (isCollection) {
+      void loadTabResults(reopened.id, reopened.connectionId, reopened.db, reopened.collection, lastQueryDefOf(reopened));
+    }
+  };
+
+  const runTabCommand = (command: TabCommand) => {
+    switch (command.type) {
+      case 'close-tab':
+        if (!activeTabId) return;
+        // Main always falls back to Quick Start, so closing a lone Quick Start
+        // would only flash it away and back.
+        if (isMainWindow && tabs.length === 1 && activeTabId === QUICK_START_TAB_ID) return;
+        closeTabById(activeTabId);
+        return;
+      case 'close-window':
+        invoke('close_current_window').catch(console.warn);
+        return;
+      case 'new-tab': {
+        const active = tabs.find(t => t.id === activeTabId);
+        if (active?.type === 'collection') {
+          void handleSelectCollection(active.connectionId, active.db, active.collection, undefined, { newTab: true });
+        } else {
+          openQuickStartTab();
+        }
+        return;
+      }
+      case 'reopen-closed-tab':
+        reopenClosedTab();
+        return;
+      case 'open-settings':
+        handleOpenSettingsTab();
+        return;
+      default: {
+        if (!focusedPane) return;
+        const target = targetTabId(focusedPane.tabIds, focusedPane.activeTabId, command);
+        if (target && target !== focusedPane.activeTabId) {
+          dispatchWorkspace({ type: 'set_active', paneId: focusedPane.id, tabId: target });
+        }
+      }
+    }
+  };
+  const runTabCommandRef = useRef(runTabCommand);
+  runTabCommandRef.current = runTabCommand;
+
+  useEffect(() => {
+    const mac = isMacPlatform();
+    const onKey = (e: KeyboardEvent) => {
+      const command = tabCommandForKey(e, mac);
+      if (!command) return;
+      e.preventDefault();
+      runTabCommandRef.current(command);
+    };
+    window.addEventListener('keydown', onKey);
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    subscribeTabCommand((payload) => {
+      const command = tabCommandFromMenu(payload);
+      if (command) runTabCommandRef.current(command);
+    })
+      .then((fn) => (cancelled ? fn() : (unlisten = fn)))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      window.removeEventListener('keydown', onKey);
+      unlisten?.();
+    };
+  }, []);
 
   const openQuickStartTab = () => {
     const alreadyOpen = tabs.some(t => t.id === QUICK_START_TAB_ID);

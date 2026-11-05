@@ -5842,3 +5842,117 @@ describe('quick-connect toast translates OIDC error keys (#430)', () => {
     expect(screen.queryByText(/auth\.oidc\.errors\.cancelled/)).not.toBeInTheDocument();
   });
 });
+
+describe('tab shortcuts', () => {
+  const tasksAndActivity = {
+    revision: 1,
+    windows: [
+      {
+        id: 'main',
+        focusedPaneId: 'pane-1',
+        splitTree: { kind: 'pane', id: 'pane-1', tabIds: ['tasks', 'activity'], activeTabId: 'activity' },
+      },
+    ],
+    tabs: [
+      { id: 'tasks', type: 'tasks', profileId: '', profileName: '', db: '', collection: '' },
+      { id: 'activity', type: 'activity', profileId: '', profileName: '', db: '', collection: '' },
+    ],
+  };
+
+  const appliedOps = () =>
+    mockInvoke.mock.calls
+      .filter(([cmd]) => cmd === 'workspace_apply')
+      .map(([, args]) => (args as { op: Record<string, unknown> }).op);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    eventListeners.clear();
+    resetUpdateTabStateDebounce();
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'load_app_settings') return Promise.resolve({});
+      if (cmd === 'workspace_get') return Promise.resolve(tasksAndActivity);
+      return Promise.resolve([]);
+    });
+  });
+
+  async function renderRestored() {
+    renderWithProviders(<App />);
+    await screen.findByTestId('tab-content-activity');
+  }
+
+  it('Ctrl+W closes the active tab, not the window', async () => {
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    await renderRestored();
+
+    fireEvent.keyDown(window, { key: 'w', code: 'KeyW', ctrlKey: true });
+
+    await waitFor(() => expect(screen.queryByTestId('tab-content-activity')).not.toBeInTheDocument());
+    expect(appliedOps()).toContainEqual(expect.objectContaining({ type: 'close_tab', tab_id: 'activity' }));
+    expect(mockInvoke).not.toHaveBeenCalledWith('close_current_window');
+    expect(screen.getByTestId('tab-content-tasks')).toBeInTheDocument();
+  });
+
+  it('the native menu tab-command closes the active tab too', async () => {
+    const { waitFor } = await import('@testing-library/react');
+    await renderRestored();
+
+    fireMockEvent('tab-command', 'close-tab');
+
+    await waitFor(() => expect(screen.queryByTestId('tab-content-activity')).not.toBeInTheDocument());
+  });
+
+  it('Ctrl+Shift+T reopens the tab Ctrl+W closed', async () => {
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    await renderRestored();
+
+    fireEvent.keyDown(window, { key: 'w', code: 'KeyW', ctrlKey: true });
+    await waitFor(() => expect(screen.queryByTestId('tab-content-activity')).not.toBeInTheDocument());
+    fireEvent.keyDown(window, { key: 'T', code: 'KeyT', ctrlKey: true, shiftKey: true });
+
+    expect(await screen.findByTestId('tab-content-activity')).toBeInTheDocument();
+    expect(appliedOps()).toContainEqual(
+      expect.objectContaining({ type: 'open_tab', tab_id: 'activity', tab: expect.objectContaining({ type: 'activity' }) })
+    );
+  });
+
+  it('Ctrl+1 and Ctrl+Tab switch tabs in the focused pane', async () => {
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    await renderRestored();
+
+    fireEvent.keyDown(window, { key: '1', code: 'Digit1', ctrlKey: true });
+    await waitFor(() =>
+      expect(appliedOps()).toContainEqual(expect.objectContaining({ type: 'set_active', tab_id: 'tasks' }))
+    );
+
+    fireEvent.keyDown(window, { key: 'Tab', code: 'Tab', ctrlKey: true });
+    await waitFor(() =>
+      expect(appliedOps().filter((op) => op.type === 'set_active').at(-1)).toMatchObject({ tab_id: 'activity' })
+    );
+  });
+
+  it('Ctrl+Shift+W asks the backend to close this window', async () => {
+    const { fireEvent } = await import('@testing-library/react');
+    await renderRestored();
+
+    fireEvent.keyDown(window, { key: 'W', code: 'KeyW', ctrlKey: true, shiftKey: true });
+
+    expect(mockInvoke).toHaveBeenCalledWith('close_current_window');
+    expect(screen.getByTestId('tab-content-activity')).toBeInTheDocument();
+  });
+
+  it('closing the lone Quick Start tab in main is a no-op', async () => {
+    const { fireEvent } = await import('@testing-library/react');
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'load_app_settings') return Promise.resolve({});
+      if (cmd === 'workspace_get') return Promise.resolve(null);
+      return Promise.resolve([]);
+    });
+    renderWithProviders(<App />);
+    await screen.findByTestId('quickstart-tab');
+
+    fireEvent.keyDown(window, { key: 'w', code: 'KeyW', ctrlKey: true });
+
+    expect(appliedOps()).not.toContainEqual(expect.objectContaining({ type: 'close_tab' }));
+    expect(screen.getByTestId('quickstart-tab')).toBeInTheDocument();
+  });
+});
