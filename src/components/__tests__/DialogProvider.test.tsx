@@ -3,6 +3,9 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { useState } from 'react';
 import { DialogProvider, useDialogs } from '../dialogs/DialogProvider';
 
+const askMock = vi.hoisted(() => vi.fn());
+vi.mock('@tauri-apps/plugin-dialog', () => ({ ask: askMock }));
+
 // A small consumer that exercises the hook and records each promise's result.
 function Harness() {
   const d = useDialogs();
@@ -217,5 +220,40 @@ describe('DialogProvider — single modal', () => {
     fireEvent.click(screen.getByText('go-confirm'));
     await screen.findByTestId('dialog-overlay');
     expect(screen.getAllByTestId('dialog-overlay')).toHaveLength(1);
+  });
+});
+
+describe('DialogProvider — native confirm in the desktop app', () => {
+  beforeEach(() => {
+    askMock.mockReset();
+    (globalThis as { isTauri?: boolean }).isTauri = true;
+  });
+  afterEach(() => {
+    delete (globalThis as { isTauri?: boolean }).isTauri;
+  });
+
+  it('asks the OS and resolves its answer, without an in-page dialog', async () => {
+    askMock.mockResolvedValue(true);
+    renderHarness();
+    fireEvent.click(screen.getByText('go-confirm-destructive'));
+    await waitFor(() => expect(screen.getByTestId('result')).toHaveTextContent('true'));
+    expect(askMock).toHaveBeenCalledWith('Drop it', expect.objectContaining({ kind: 'warning', okLabel: 'Confirm', cancelLabel: 'Cancel' }));
+    expect(screen.queryByTestId('dialog-confirm')).toBeNull();
+  });
+
+  it('falls back to the in-page dialog when the OS dialog fails', async () => {
+    askMock.mockRejectedValue(new Error('no dialog'));
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    renderHarness();
+    fireEvent.click(screen.getByText('go-confirm'));
+    fireEvent.click(await screen.findByTestId('dialog-confirm'));
+    await waitFor(() => expect(screen.getByTestId('result')).toHaveTextContent('true'));
+  });
+
+  it('keeps prompts in-page', async () => {
+    renderHarness();
+    fireEvent.click(screen.getByText('go-prompt'));
+    expect(await screen.findByTestId('dialog-confirm')).toBeInTheDocument();
+    expect(askMock).not.toHaveBeenCalled();
   });
 });
