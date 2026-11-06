@@ -591,7 +591,7 @@ export const buildUri = (s: typeof BLANK_CONN) => {
     creds = `${u}${p}@`;
   }
   const params = [];
-  if (s.topology === 'replicaSet' && s.replicaSetName) params.push(`replicaSet=${s.replicaSetName}`);
+  if (s.topology === 'replicaSet' && s.replicaSetName) params.push(`replicaSet=${encodeURIComponent(s.replicaSetName)}`);
   // directConnection only makes sense for a single-host, non-SRV standalone.
   if (s.topology === 'standalone' && s.directConnection && !isSrv && s.hosts.filter(h => h.host).length <= 1)
     params.push('directConnection=true');
@@ -1929,9 +1929,12 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       const found = await invoke<{ set_name: string | null; hosts: string[] }>('discover_replica_set', {
         uri: buildUri(editorState),
       });
-      if (found.set_name) {
+      // The reply comes from the server, so only plain host:port members are
+      // taken; anything else could carry URI syntax into the saved string.
+      const members = found.hosts.filter((h) => /^[A-Za-z0-9.-]+:\d{1,5}$/.test(h));
+      if (found.set_name && members.length) {
         const setName = found.set_name;
-        setEditorState((prev) => ({ ...prev, replicaSetName: setName, hosts: textToHosts(found.hosts.join(',')) }));
+        setEditorState((prev) => ({ ...prev, replicaSetName: setName, hosts: textToHosts(members.join(',')) }));
       } else {
         setDiscoverNote(t('form.discoverNoSet'));
       }
@@ -2625,9 +2628,11 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                             size="sm"
                             className="h-7 gap-1 text-xs"
                             data-testid="discover-members-btn"
-                            disabled={discovering || !editorState.hosts.some(h => h.host.trim())}
+                            // An SSH tunnel reaches one host only, and Discover
+                            // would go around it straight to the seed.
+                            disabled={discovering || editorState.sshEnabled || !editorState.hosts.some(h => h.host.trim())}
                             onClick={handleDiscover}
-                            title={t('form.discoverTitle')}
+                            title={editorState.sshEnabled ? t('form.discoverNoSsh') : t('form.discoverTitle')}
                           >
                             <RefreshCw size={12} className={cn(discovering && 'animate-spin')} /> {t('form.discover')}
                           </Button>

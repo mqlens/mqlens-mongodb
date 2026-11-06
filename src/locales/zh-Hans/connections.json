@@ -201,6 +201,7 @@
     "custom": "自定义",
     "discover": "发现",
     "discoverNoSet": "该服务器不是副本集成员。",
+    "discoverNoSsh": "通过 SSH 隧道无法使用“发现”，因为隧道只能连到一台主机。",
     "discoverTitle": "向一个成员查询副本集名称和全部成员",
     "displayName": "显示名称",
     "folder": "文件夹",

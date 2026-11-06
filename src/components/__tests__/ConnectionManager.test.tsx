@@ -3818,3 +3818,45 @@ describe('replica set and sharded members', () => {
     expect(screen.queryByTestId('member-host-0')).toBeNull();
   });
 });
+
+describe('Discover cannot be steered by what a server reports', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  it('encodes the replica set name so it cannot add URI options', () => {
+    const uri = buildUri({ ...baseConn, topology: 'replicaSet', replicaSetName: 'rs0&tlsAllowInvalidCertificates=true' });
+    expect(uri).toContain('replicaSet=rs0%26tlsAllowInvalidCertificates%3Dtrue');
+    expect(uri).not.toContain('&tlsAllowInvalidCertificates=true');
+    expect(parseUriIntoFields(uri).replicaSetName).toBe('rs0&tlsAllowInvalidCertificates=true');
+  });
+
+  it('drops reported members that are not a plain host:port', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'discover_replica_set') {
+        return Promise.resolve({ set_name: 'rs0', hosts: ['ok.example:27017', 'evil.example/?tls=false:1', 'u@x.example:27017', 'noport.example'], arbiters: [] });
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: /new\.\.\./i }));
+    await pickSelectOption('topology-select', /^replica set$/i);
+    fireEvent.click(screen.getByRole('button', { name: /discover/i }));
+
+    await waitFor(() => expect(screen.getByTestId('member-host-0')).toHaveValue('ok.example'));
+    expect(screen.queryByTestId('member-host-1')).toBeNull();
+  });
+
+  it('is unavailable while an SSH tunnel is on, since it would bypass the tunnel', async () => {
+    mockInvoke.mockImplementation((cmd: string) => (cmd === 'load_connection_profiles' ? Promise.resolve([]) : Promise.reject(new Error(cmd))));
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: /new\.\.\./i }));
+    await pickSelectOption('topology-select', /^replica set$/i);
+    fireEvent.click(screen.getByRole('button', { name: /ssh tunnel/i }));
+    fireEvent.click(screen.getByLabelText(/enable ssh tunnel/i));
+    fireEvent.click(screen.getByRole('button', { name: /^server$/i }));
+    expect(screen.getByRole('button', { name: /discover/i })).toBeDisabled();
+  });
+});

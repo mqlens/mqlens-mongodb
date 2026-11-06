@@ -203,6 +203,7 @@
     "custom": "Eigene",
     "discover": "Ermitteln",
     "discoverNoSet": "Dieser Server ist kein Mitglied eines Replica Sets.",
+    "discoverNoSsh": "Ermitteln ist über einen SSH-Tunnel nicht verfügbar, da er nur einen Host erreicht.",
     "discoverTitle": "Ein Mitglied nach dem Namen des Replica Sets und allen Mitgliedern fragen",
     "displayName": "Anzeigename",
     "folder": "Ordner",

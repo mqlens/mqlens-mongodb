@@ -203,6 +203,7 @@
     "custom": "Custom",
     "discover": "Discover",
     "discoverNoSet": "That server is not a replica set member.",
+    "discoverNoSsh": "Discover is not available through an SSH tunnel, which reaches one host only.",
     "discoverTitle": "Ask a member for the replica set name and the full member list",
     "displayName": "Display Name",
     "folder": "Folder",
