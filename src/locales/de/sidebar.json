@@ -27,6 +27,7 @@
     "createIndex": "Index erstellen",
     "createView": "View erstellen",
     "deleteIndex": "Index löschen",
+    "deleteSelected": "Auswahl löschen ({{n}})",
     "destructiveActions": "Verwalten",
     "disconnect": "Trennen",
     "dropCollection": "Collection löschen",
@@ -45,8 +46,8 @@
     "notOnServer": "Auf MQLens Server noch nicht verfügbar",
     "open": "Öffnen",
     "openCollection": "Collection öffnen",
-    "openInNewTab": "In neuem Tab öffnen",
     "openIndexesView": "Indexübersicht öffnen",
+    "openInNewTab": "In neuem Tab öffnen",
     "openShell": "mongosh-Shell öffnen",
     "pasteHere": "Hier einfügen",
     "pinToSidebar": "An Seitenleiste anheften",
@@ -65,6 +66,24 @@
     "watchDeployment": "Deployment-Änderungen beobachten…"
   },
   "dialogs": {
+    "bulkDrop": {
+      "collectionsIn": "Collections der Datenbank {{db}} ({{n}})",
+      "confirm_one": "{{count}} Objekt löschen",
+      "confirm_other": "{{count}} Objekte löschen",
+      "covered": "Werden mit ihrer Datenbank gelöscht, nicht einzeln: {{names}}",
+      "databases": "Datenbanken ({{n}})",
+      "dropped": "Gelöscht",
+      "excluded": "System-Namespaces werden nie gesammelt gelöscht und übersprungen: {{names}}",
+      "failed": "Fehlgeschlagen",
+      "running": "Wird gelöscht…",
+      "summaryFailed": "{{failed}} von {{n}} fehlgeschlagen. Die übrigen wurden gelöscht.",
+      "summaryOk_one": "Gelöscht.",
+      "summaryOk_other": "Alle {{count}} gelöscht.",
+      "title_one": "{{count}} Objekt löschen",
+      "title_other": "{{count}} Objekte löschen",
+      "typeCount": "Zur Bestätigung {{n}} eingeben.",
+      "warning": "Dadurch werden die Daten auf {{connection}} dauerhaft gelöscht. Dies kann nicht rückgängig gemacht werden."
+    },
     "dropCollection": {
       "title": "Collection löschen"
     },

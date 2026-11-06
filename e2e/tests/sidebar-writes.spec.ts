@@ -111,3 +111,41 @@ test.describe('After a drop', () => {
     await expect(sidebar(page).getByText('email_1', { exact: true })).toHaveCount(0);
   });
 });
+
+test.describe('Deleting several at once (#543)', () => {
+  test('drops what was confirmed, reports the one that failed, and skips system databases', async ({ app, page }) => {
+    await connectStaging(app, page);
+    await expandCollections(page, 'sales_db');
+    for (const row of [
+      sidebar(page).getByText('products', { exact: true }),
+      sidebar(page).getByText('transactions', { exact: true }),
+      sidebar(page).getByRole('button', { name: 'Database user_analytics' }),
+      sidebar(page).getByRole('button', { name: 'Database admin' }),
+    ]) {
+      await row.click({ modifiers: ['ControlOrMeta'] });
+      await dismissHoverCards(page);
+    }
+
+    await sidebar(page).getByText('products', { exact: true }).click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Manage', exact: true }).press('ArrowRight');
+    await page.getByRole('menuitem', { name: 'Delete selected (3)', exact: true }).click();
+    const dialog = page.getByTestId('bulk-drop-dialog');
+    await expect(dialog).toContainText('cannot be undone');
+    await expect(dialog.getByTestId('bulk-drop-excluded')).toContainText('admin');
+
+    await app.failNext('drop_collection', 'not authorized on sales_db to execute command');
+    await dialog.getByTestId('bulk-drop-confirm-input').fill('3');
+    await dialog.getByTestId('bulk-drop-confirm').click();
+    await expect(dialog.getByTestId('bulk-drop-summary')).toHaveText(/1 of 3 failed/);
+    await expect(dialog).toContainText('not authorized on sales_db');
+    expect((await app.calls('drop_database')).map((c) => c.args.database)).toEqual(['user_analytics']);
+    expect((await app.calls('drop_collection')).map((c) => c.args.collection)).toEqual(['products', 'transactions']);
+    await dialog.getByTestId('bulk-drop-close').click();
+
+    // The tree shows what is left: the failed collection, and admin untouched.
+    await expect(sidebar(page).getByRole('button', { name: 'Database user_analytics' })).toHaveCount(0);
+    await expect(sidebar(page).getByText('transactions', { exact: true })).toHaveCount(0);
+    await expect(sidebar(page).getByText('products', { exact: true })).toBeVisible();
+    await expect(sidebar(page).getByRole('button', { name: 'Database admin' })).toBeVisible();
+  });
+});
