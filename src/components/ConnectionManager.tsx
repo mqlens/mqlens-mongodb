@@ -172,6 +172,7 @@ const BLANK_CONN = {
   tlsCa: '',
   tlsClientCert: '',
   tlsClientKey: '',
+  tlsKeyPassword: '',
   tlsAllowInvalidHosts: false,
   tlsAllowInvalidCerts: false,
   sshEnabled: false,
@@ -221,7 +222,8 @@ const READ_PREFERENCE_MODES = ['primary', 'primaryPreferred', 'secondary', 'seco
  */
 const FORM_URI_OPTIONS = new Set([
   'replicaset', 'directconnection', 'tls', 'ssl', 'tlscafile', 'sslcertificateauthorityfile',
-  'tlscertificatekeyfile', 'sslclientcertificatekeyfile', 'tlsinsecure', 'tlsallowinvalidcertificates',
+  'tlscertificatekeyfile', 'sslclientcertificatekeyfile', 'tlscertificatekeyfilepassword',
+  'sslclientcertificatekeypassword', 'tlsinsecure', 'tlsallowinvalidcertificates',
   'tlsallowinvalidhostnames', 'authmechanism', 'authsource', 'authmechanismproperties',
   'readpreference', 'readpreferencetags', 'compressors', 'appname', 'connecttimeoutms',
   'serverselectiontimeoutms', 'sockettimeoutms', 'maxidletimems', 'maxpoolsize', 'retrywrites',
@@ -367,6 +369,7 @@ export const parseUriIntoFields = (uri: string) => {
   let tlsMode = 'off';
   let tlsCa = '';
   let tlsClientCert = '';
+  let tlsKeyPassword = '';
   let tlsAllowInvalidCerts = false;
   let tlsAllowInvalidHosts = false;
   let authMethod = 'none';
@@ -424,6 +427,7 @@ export const parseUriIntoFields = (uri: string) => {
       tlsMode = 'system';
     }
     tlsClientCert = param('tlsCertificateKeyFile') || param('sslClientCertificateKeyFile') || '';
+    tlsKeyPassword = param('tlsCertificateKeyFilePassword') || param('sslClientCertificateKeyPassword') || '';
     // tlsInsecure implies both allow-invalid relaxations.
     const insecure = /(?:^|&)tlsInsecure=true/i.test(query);
     tlsAllowInvalidCerts = insecure || /(?:^|&)tlsAllowInvalidCertificates=true/i.test(query);
@@ -549,6 +553,7 @@ export const parseUriIntoFields = (uri: string) => {
     tlsMode,
     tlsCa,
     tlsClientCert,
+    tlsKeyPassword,
     tlsAllowInvalidCerts,
     tlsAllowInvalidHosts,
     defaultDb,
@@ -599,7 +604,10 @@ export const buildUri = (s: typeof BLANK_CONN) => {
   if (s.tlsMode !== 'off') params.push('tls=true');
   // Custom CA file (and optional client cert/key file) must be passed to the driver.
   if (s.tlsMode === 'file' && s.tlsCa) params.push(`tlsCAFile=${encodeURIComponent(s.tlsCa)}`);
-  if (s.tlsMode !== 'off' && s.tlsClientCert) params.push(`tlsCertificateKeyFile=${encodeURIComponent(s.tlsClientCert)}`);
+  if (s.tlsMode !== 'off' && s.tlsClientCert) {
+    params.push(`tlsCertificateKeyFile=${encodeURIComponent(s.tlsClientCert)}`);
+    if (s.tlsKeyPassword) params.push(`tlsCertificateKeyFilePassword=${encodeURIComponent(s.tlsKeyPassword)}`);
+  }
   if (s.tlsAllowInvalidHosts) params.push('tlsAllowInvalidHostnames=true');
   if (s.tlsAllowInvalidCerts) params.push('tlsAllowInvalidCertificates=true');
   if (s.authMethod === 'scram-1') params.push('authMechanism=SCRAM-SHA-1');
@@ -2980,6 +2988,41 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                   )}
 
                   {editorState.tlsMode !== 'off' && (
+                    <div className="flex flex-col gap-1 border-t border-border pt-2.5">
+                      <Label htmlFor="tls-client-cert">{t('tls.clientCert')}</Label>
+                      <div className="flex gap-1.5">
+                        <Input
+                          id="tls-client-cert"
+                          type="text"
+                          value={editorState.tlsClientCert}
+                          onChange={e => setEditorState(prev => ({ ...prev, tlsClientCert: e.target.value }))}
+                          placeholder="/path/to/client.pem"
+                          className="flex-1 font-mono"
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          data-testid="client-cert-browse"
+                          onClick={() => pickTlsFile('tlsClientCert')}
+                        >
+                          {t('actions.browse')}
+                        </Button>
+                      </div>
+                      <Label htmlFor="tls-key-password" className="mt-1.5">{t('tls.keyPassword')}</Label>
+                      <Input
+                        id="tls-key-password"
+                        type="password"
+                        autoComplete="off"
+                        value={editorState.tlsKeyPassword}
+                        onChange={e => setEditorState(prev => ({ ...prev, tlsKeyPassword: e.target.value }))}
+                        disabled={!editorState.tlsClientCert}
+                      />
+                      <span className="text-[10px] text-muted-foreground">{t('tls.keyPasswordHelp')}</span>
+                    </div>
+                  )}
+
+                  {editorState.tlsMode !== 'off' && (
                     <div className="flex flex-col gap-2 border-t border-border pt-2.5">
                       <Label>{t('tls.certValidation')}</Label>
                       <label className="flex items-center gap-2 text-[11px]">
@@ -3254,15 +3297,15 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                   <h4 className="mt-2 border-t border-border pt-2.5 text-ui-2xs font-semibold uppercase tracking-wide text-muted-foreground">{t('advanced.timeoutsSection')}</h4>
                   <div className="grid grid-cols-2 gap-2">
                     {([
-                      ['connectTimeout', 'advanced.connectTimeout', '10000'],
-                      ['serverSelectionTimeout', 'advanced.serverSelectionTimeout', '30000'],
-                      ['socketTimeout', 'advanced.socketTimeout', '0'],
-                      ['maxIdleTime', 'advanced.maxIdleTime', '0'],
-                      ['maxPoolSize', 'advanced.maxPoolSize', '100'],
-                      ['appName', 'advanced.appName', 'MQLens'],
-                    ] as const).map(([field, labelKey, placeholder]) => (
+                      ['connectTimeout', t('advanced.connectTimeout'), '10000'],
+                      ['serverSelectionTimeout', t('advanced.serverSelectionTimeout'), '30000'],
+                      ['socketTimeout', t('advanced.socketTimeout'), '0'],
+                      ['maxIdleTime', t('advanced.maxIdleTime'), '0'],
+                      ['maxPoolSize', t('advanced.maxPoolSize'), '100'],
+                      ['appName', t('advanced.appName'), 'MQLens'],
+                    ] as const).map(([field, label, placeholder]) => (
                       <div key={field} className="flex flex-col gap-1">
-                        <Label htmlFor={`adv-${field}`}>{t(labelKey)}</Label>
+                        <Label htmlFor={`adv-${field}`}>{label}</Label>
                         <Input
                           id={`adv-${field}`}
                           type="text"
@@ -3279,11 +3322,11 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                   <h4 className="mt-2 border-t border-border pt-2.5 text-ui-2xs font-semibold uppercase tracking-wide text-muted-foreground">{t('advanced.writesSection')}</h4>
                   <div className="grid grid-cols-2 gap-2">
                     {([
-                      ['retryWrites', 'advanced.retryWrites', 'retry-writes-select'],
-                      ['journal', 'advanced.journal', 'journal-select'],
-                    ] as const).map(([field, labelKey, testId]) => (
+                      ['retryWrites', t('advanced.retryWrites'), 'retry-writes-select'],
+                      ['journal', t('advanced.journal'), 'journal-select'],
+                    ] as const).map(([field, label, testId]) => (
                       <div key={field} className="flex flex-col gap-1">
-                        <Label>{t(labelKey)}</Label>
+                        <Label>{label}</Label>
                         <Select value={editorState[field]} onValueChange={(v) => setEditorState(prev => ({ ...prev, [field]: v }))}>
                           <SelectTrigger data-testid={testId} className="h-8 text-xs">
                             <SelectValue />

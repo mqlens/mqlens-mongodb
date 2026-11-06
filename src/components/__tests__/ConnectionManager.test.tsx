@@ -3906,3 +3906,53 @@ describe('a saved connection without its password', () => {
     expect(onConnect).not.toHaveBeenCalled();
   });
 });
+
+describe('a client certificate with an encrypted key', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  it('reads the key passphrase, under either name, into its own field', () => {
+    for (const name of ['tlsCertificateKeyFilePassword', 'sslClientCertificateKeyPassword']) {
+      const f = parseUriIntoFields(`mongodb://h:27017/?tls=true&tlsCertificateKeyFile=%2Fc.pem&${name}=k%20p`);
+      expect(f.tlsClientCert).toBe('/c.pem');
+      expect(f.tlsKeyPassword).toBe('k p');
+      expect(f.extraOptions).toBe('');
+    }
+  });
+
+  it('writes the passphrase only beside a client certificate with TLS on', () => {
+    const withCert = buildUri({ ...baseConn, tlsMode: 'system', tlsClientCert: '/c.pem', tlsKeyPassword: 'k p' });
+    expect(withCert).toContain('tlsCertificateKeyFilePassword=k%20p');
+    expect(buildUri({ ...baseConn, tlsMode: 'system', tlsKeyPassword: 'k p' })).not.toContain('tlsCertificateKeyFilePassword');
+    expect(buildUri({ ...baseConn, tlsMode: 'off', tlsClientCert: '/c.pem', tlsKeyPassword: 'k p' })).not.toContain('tlsCertificateKeyFilePassword');
+  });
+
+  it('sets the client certificate and its passphrase on the TLS tab', async () => {
+    let savedProfile: any = null;
+    const profile = { id: 'p-tls', name: 'Secure', uri: 'mongodb://h1:27017/?tls=true' };
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([profile]);
+      if (cmd === 'save_connection_profile') {
+        savedProfile = args.profile;
+        return Promise.resolve();
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+    fireEvent.click((await screen.findAllByText('Secure'))[0]);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^tls \/ ssl$/i }));
+    fireEvent.change(screen.getByLabelText(/client certificate/i), { target: { value: '/keys/client.pem' } });
+    const passphrase = screen.getByLabelText(/key passphrase/i);
+    expect(passphrase).toHaveAttribute('type', 'password');
+    fireEvent.change(passphrase, { target: { value: 'hunter2' } });
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => expect(savedProfile).not.toBeNull());
+    expect(savedProfile.uri).toContain('tlsCertificateKeyFile=%2Fkeys%2Fclient.pem');
+    expect(savedProfile.uri).toContain('tlsCertificateKeyFilePassword=hunter2');
+  });
+});

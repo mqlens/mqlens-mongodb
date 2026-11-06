@@ -242,6 +242,10 @@
   "list": {
     "colorDotTitle": "Connection color"
   },
+  "passwordPrompt": {
+    "message": "This connection was saved without its password. It is used for this connection only and is not saved.",
+    "title": "Password for {{name}}"
+  },
   "profile": {
     "connectedActive": "Connected (Active)",
     "connectionUri": "Connection URI",
@@ -349,15 +353,14 @@
     "allowInvalidHosts": "Allow invalid hostnames",
     "caFilePath": "CA File Path",
     "certValidation": "Certificate Validation",
+    "clientCert": "Client certificate (PEM with key)",
     "insecureTag": "(insecure)",
+    "keyPassword": "Key passphrase",
+    "keyPasswordHelp": "Only needed when the private key is encrypted. Stored in the vault with the connection.",
     "mode": "SSL / TLS Certificate Mode",
     "modeFile": "Custom CA File Upload",
     "modeOff": "Off (Insecure Plaintext)",
     "modeSystem": "System Root CA Certificates",
     "validationWarning": "Disabling certificate validation exposes the connection to man-in-the-middle attacks. Enable only for trusted/self-signed test servers."
-  },
-  "passwordPrompt": {
-    "message": "This connection was saved without its password. It is used for this connection only and is not saved.",
-    "title": "Password for {{name}}"
   }
 }
