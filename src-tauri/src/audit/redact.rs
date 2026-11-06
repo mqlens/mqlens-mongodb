@@ -5,8 +5,48 @@ pub const MAX_ARGS_BYTES: usize = 64 * 1024;
 
 /// Redact connection URIs and obvious password fields from free text.
 pub fn redact_text(input: &str) -> String {
-    let without_uri = scrub_mongodb_uris(input);
+    let without_uri = redact_secret_uri_options(&scrub_mongodb_uris(input));
     scrub_password_json_fields(&without_uri)
+}
+
+/// URI options whose values are secrets in their own right (lowercase, with `=`).
+const SECRET_URI_OPTIONS: &[&str] = &[
+    "proxypassword=",
+    "tlscertificatekeyfilepassword=",
+    "sslclientcertificatekeypassword=",
+    "sslpemkeypassword=",
+];
+
+/// Replace the value of every secret URI option — the SOCKS5 proxy password
+/// and each client-key passphrase spelling — with `***`, wherever it appears
+/// after `?`, `&` or `;`.
+pub fn redact_secret_uri_options(input: &str) -> String {
+    let lower = input.to_ascii_lowercase();
+    let bytes = input.as_bytes();
+    let mut out = String::with_capacity(input.len());
+    let mut i = 0;
+    while i < input.len() {
+        if i > 0 && matches!(bytes[i - 1], b'?' | b'&' | b';') {
+            if let Some(key) = SECRET_URI_OPTIONS.iter().find(|k| lower[i..].starts_with(*k)) {
+                out.push_str(&input[i..i + key.len()]);
+                out.push_str("***");
+                i += key.len();
+                // The value ends at the next option, the fragment, or whatever
+                // closes the URI in surrounding text.
+                while i < input.len()
+                    && !matches!(bytes[i], b'&' | b';' | b'#' | b'"' | b'\'' | b'`' | b')')
+                    && !bytes[i].is_ascii_whitespace()
+                {
+                    i += 1;
+                }
+                continue;
+            }
+        }
+        let ch = input[i..].chars().next().unwrap();
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
 }
 
 fn scrub_mongodb_uris(input: &str) -> String {
@@ -291,6 +331,11 @@ mod tests {
 
     #[test]
     fn scrubs_password_json_fields() {
+        let raw = "connect('mongodb://h/?tlsCertificateKeyFilePassword=kp9&proxyPassword=pp9&w=1')";
+        let out = redact_text(raw);
+        assert!(!out.contains("kp9") && !out.contains("pp9"), "URI option secret leaked: {out}");
+        assert!(out.contains("w=1"), "other options kept: {out}");
+
         let raw = r#"{"password":"hunter2","filter":{"x":1}}"#;
         let out = redact_text(raw);
         assert!(!out.contains("hunter2"), "password value leaked: {out}");

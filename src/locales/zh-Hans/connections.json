@@ -360,5 +360,17 @@
   "passwordPrompt": {
     "message": "此连接保存时未包含密码。密码仅用于本次连接，不会被保存。",
     "title": "{{name}} 的密码"
+  },
+  "view": {
+    "table": "表格视图",
+    "tree": "树状视图"
+  },
+  "table": {
+    "lastConnected": "上次连接",
+    "name": "名称",
+    "never": "从未",
+    "none": "无",
+    "security": "安全",
+    "server": "服务器"
   }
 }

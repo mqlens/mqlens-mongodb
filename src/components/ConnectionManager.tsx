@@ -6,7 +6,10 @@ import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
 import {
   buildExportAllUris,
   buildExportUri,
+  connectionSummary,
+  maskUriPassword,
   parseConnectionImportFile,
+  readLastConnected,
   resolveImportUri,
   uriWithAskedPassword,
   type ImportedConnection,
@@ -22,7 +25,7 @@ import { formatShortcut, shortcutById } from '@/lib/shortcuts';
 import {
   Plus, X, Server, Play, Edit3, Trash2, Check, AlertCircle, RefreshCw,
   Folder, FolderPlus, FolderOpen, Search, ChevronRight,
-  Copy, ExternalLink, ShieldAlert, Eye, EyeOff, LayoutGrid, ClipboardPaste, Pipette
+  Copy, ExternalLink, ShieldAlert, Eye, EyeOff, LayoutGrid, ClipboardPaste, Pipette, ListTree, Table2, ArrowUp, ArrowDown
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -230,6 +233,9 @@ const FORM_URI_OPTIONS = new Set([
   'loadbalanced', 'w', 'wtimeoutms', 'journal', 'proxyhost', 'proxyport', 'proxyusername', 'proxypassword',
 ]);
 
+const VIEW_KEY = 'mqlens.connectionManager.view';
+type TableSortKey = 'name' | 'server' | 'security' | 'lastConnected';
+
 /** Percent-encode an option value but keep the `:` and `,` that tag sets and mechanism properties are built from. */
 const encodeOptionValue = (value: string) =>
   encodeURIComponent(value).replace(/%3A/gi, ':').replace(/%2C/gi, ',');
@@ -284,11 +290,6 @@ const TABS = [
   { id: 'proxy', labelKey: 'tabs.proxy', icon: RefreshCw },
   { id: 'adv', labelKey: 'tabs.advanced', icon: LayoutGrid },
 ];
-
-// Replace the password in a mongodb URI (//user:PASSWORD@host) with dots, so the
-// connection string can be shown without exposing the credential.
-export const maskUriPassword = (uri: string): string =>
-  uri.replace(/(\/\/[^/:@\s]+:)([^@/\s]+)(@)/, (_m, a, _p, c) => `${a}••••••${c}`);
 
 // Turn a raw mongodb driver error (often a huge "server selection timeout" with
 // the full topology dump) into a concise root-cause headline + actionable hint.
@@ -810,6 +811,14 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   const [profiles, setProfiles] = useState<ConnectionProfile[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [view, setView] = useState<'tree' | 'table'>(() => {
+    try {
+      return localStorage.getItem(VIEW_KEY) === 'table' ? 'table' : 'tree';
+    } catch {
+      return 'tree';
+    }
+  });
+  const [sort, setSort] = useState<{ key: TableSortKey; dir: 1 | -1 }>({ key: 'name', dir: 1 });
   const [folderFilter, setFolderFilter] = useState<string>('all');
   
   // Folder tree management states
@@ -1987,6 +1996,38 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     });
   }, [profiles, searchQuery, folderFilter, profileFolderMap]);
 
+  const chooseView = (next: 'tree' | 'table') => {
+    setView(next);
+    try {
+      localStorage.setItem(VIEW_KEY, next);
+    } catch {
+      /* the choice just isn't remembered */
+    }
+  };
+
+  // Re-read on open so a connect made since the last open shows.
+  const lastConnected = useMemo(() => (isOpen ? readLastConnected() : {}), [isOpen]);
+  const tableRows = useMemo(() => {
+    const rows = filteredProfiles.map(p => {
+      const summary = connectionSummary(p.uri);
+      const security = [
+        [summary.user, summary.mechanism].filter(Boolean).join(' · '),
+        summary.tls ? 'TLS' : '',
+        p.ssh?.enabled ? 'SSH' : '',
+      ].filter(Boolean).join(', ');
+      return { profile: p, server: summary.server, security, at: lastConnected[p.id] ?? 0 };
+    });
+    const value = (r: (typeof rows)[number]) =>
+      sort.key === 'name' ? r.profile.name : sort.key === 'server' ? r.server : sort.key === 'security' ? r.security : r.at;
+    return rows.sort((a, b) => {
+      const x = value(a), y = value(b);
+      return (typeof x === 'number' ? x - (y as number) : x.localeCompare(y as string, undefined, { sensitivity: 'base' })) * sort.dir;
+    });
+  }, [filteredProfiles, lastConnected, sort]);
+  // A new column starts ascending, except dates, which start with the most recent.
+  const sortBy = (key: TableSortKey) =>
+    setSort(prev => (prev.key === key ? { key, dir: prev.dir === 1 ? -1 : 1 } : { key, dir: key === 'lastConnected' ? -1 : 1 }));
+
   const toggleFolderExpand = (folderId: string) => {
     setExpandedFolders(prev => ({ ...prev, [folderId]: !prev[folderId] }));
   };
@@ -2053,6 +2094,22 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
             <Server size={12} className="text-primary" />
             <span>{t('serverAccounts.title')}</span>
           </Button>
+          <div className="flex items-center rounded-md border border-border">
+            {([['tree', ListTree, t('view.tree')], ['table', Table2, t('view.table')]] as const).map(([v, Icon, label]) => (
+              <Button
+                key={v}
+                variant={view === v ? 'secondary' : 'ghost'}
+                size="icon"
+                className="h-8 w-8"
+                aria-label={label}
+                title={label}
+                aria-pressed={view === v}
+                onClick={() => chooseView(v)}
+              >
+                <Icon size={13} />
+              </Button>
+            ))}
+          </div>
           {selectedId && (
             <>
               <div className="mx-1 h-4 w-px bg-border" />
@@ -2218,7 +2275,52 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
           {/* Right connection preview panel */}
           <ScrollArea className="min-h-0 flex-1 bg-background">
             <div className="flex min-h-full flex-col p-6 lg:p-8">
-            {selectedProfile ? (
+            {view === 'table' && profiles.length > 0 ? (
+              <table data-testid="connection-table" className="w-full table-fixed border-collapse text-ui-xs">
+                <thead>
+                  <tr className="border-b border-border text-left">
+                    {([
+                      ['name', t('table.name')],
+                      ['server', t('table.server')],
+                      ['security', t('table.security')],
+                      ['lastConnected', t('table.lastConnected')],
+                    ] as const).map(([key, label]) => (
+                      <th
+                        key={key}
+                        className="py-1.5 pr-2 font-medium text-muted-foreground"
+                        aria-sort={sort.key === key ? (sort.dir === 1 ? 'ascending' : 'descending') : undefined}
+                      >
+                        <button type="button" className="inline-flex items-center gap-1 hover:text-foreground" onClick={() => sortBy(key)}>
+                          {label}
+                          {sort.key === key && (sort.dir === 1 ? <ArrowUp size={11} aria-hidden /> : <ArrowDown size={11} aria-hidden />)}
+                        </button>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {tableRows.map(({ profile: p, server, security, at }) => (
+                    <tr
+                      key={p.id}
+                      className={cn('cursor-default border-b border-border/60 hover:bg-muted/40', p.id === selectedId && 'bg-primary/10')}
+                      aria-selected={p.id === selectedId}
+                      onClick={() => handleSelect(p.id)}
+                      onDoubleClick={handleConnectClick}
+                    >
+                      <td className="py-1.5 pr-2">
+                        <span className="flex min-w-0 items-center gap-1.5">
+                          <ConnectionColorDot color={p.color_tag} />
+                          <span data-testid="connection-row-name" className="truncate">{p.name || t('sidebar.unnamedConnection')}</span>
+                        </span>
+                      </td>
+                      <td className="truncate py-1.5 pr-2 font-mono">{server}</td>
+                      <td className="truncate py-1.5 pr-2">{security || t('table.none')}</td>
+                      <td className="truncate py-1.5 tabular-nums text-muted-foreground">{at ? new Date(at).toLocaleString() : t('table.never')}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : selectedProfile ? (
               <div className="flex flex-1 flex-col">
                 <div className="flex-1">
                   <div className="mb-4 flex items-center gap-3 border-b border-border pb-3">

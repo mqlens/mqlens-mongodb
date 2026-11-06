@@ -10,6 +10,9 @@ import {
   stripUriSecrets,
   validateMongoUri,
   needsPasswordPrompt,
+  connectionSummary,
+  readLastConnected,
+  recordLastConnected,
   withPassword,
 } from '../connection';
 
@@ -407,5 +410,47 @@ describe('asking for a password that was not saved', () => {
       'mongodb://alice:p%40ss%3A%2Fw@db:27017/shop?tls=true',
     );
     expect(withPassword('mongodb+srv://alice@cluster.example.net', 'x')).toBe('mongodb+srv://alice:x@cluster.example.net');
+  });
+});
+
+describe('what the connection table shows', () => {
+  it('summarises a URI without its password', () => {
+    expect(connectionSummary('mongodb://alice:s3cret@h1:27017,h2:27018/app?tls=true&authMechanism=SCRAM-SHA-1')).toEqual({
+      server: 'h1:27017, h2:27018',
+      user: 'alice',
+      mechanism: 'SCRAM-SHA-1',
+      tls: true,
+    });
+    expect(connectionSummary('mongodb+srv://cluster0.example.net/')).toEqual({
+      server: 'cluster0.example.net (SRV)',
+      user: '',
+      mechanism: '',
+      tls: true,
+    });
+    expect(connectionSummary('mongodb://localhost')).toEqual({ server: 'localhost', user: '', mechanism: '', tls: false });
+  });
+
+  it('remembers when each profile last connected', () => {
+    localStorage.clear();
+    recordLastConnected('p1', 1000);
+    recordLastConnected('p2', 2000);
+    recordLastConnected('p1', 3000);
+    expect(readLastConnected()).toEqual({ p1: 3000, p2: 2000 });
+  });
+
+  it('reads damaged storage as nothing recorded', () => {
+    localStorage.setItem('mqlens.lastConnected', '{not json');
+    expect(readLastConnected()).toEqual({});
+  });
+});
+
+describe('maskUriPassword hides secret options too', () => {
+  it('masks the proxy password and every client-key passphrase spelling', () => {
+    const masked = maskUriPassword(
+      'mongodb://h:27017/?tls=true&tlsCertificateKeyFilePassword=kp1&proxyPassword=pp&sslClientCertificateKeyPassword=kp2&sslPEMKeyPassword=kp3&appName=x',
+    );
+    expect(masked).toBe(
+      'mongodb://h:27017/?tls=true&tlsCertificateKeyFilePassword=••••••&proxyPassword=••••••&sslClientCertificateKeyPassword=••••••&sslPEMKeyPassword=••••••&appName=x',
+    );
   });
 });

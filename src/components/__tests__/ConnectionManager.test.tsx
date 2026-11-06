@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ReactElement } from 'react';
-import { render as rtlRender, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { render as rtlRender, screen, fireEvent, waitFor, act, within, cleanup } from '@testing-library/react';
 import {
   ConnectionManager,
   buildUri,
@@ -3954,5 +3954,59 @@ describe('a client certificate with an encrypted key', () => {
     await waitFor(() => expect(savedProfile).not.toBeNull());
     expect(savedProfile.uri).toContain('tlsCertificateKeyFile=%2Fkeys%2Fclient.pem');
     expect(savedProfile.uri).toContain('tlsCertificateKeyFilePassword=hunter2');
+  });
+});
+
+describe('the connection table', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  const profiles = [
+    { id: 'p-b', name: 'Billing', uri: 'mongodb://bob:pw@billing.db:27017/?authMechanism=SCRAM-SHA-256' },
+    { id: 'p-a', name: 'Analytics', uri: 'mongodb+srv://an.example.net/' },
+    { id: 'p-c', name: 'Cache', uri: 'mongodb://localhost:27017' },
+  ];
+  const mount = () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve(profiles);
+      if (cmd === 'load_connection_folders') return Promise.resolve([]);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+  };
+  const names = () => within(screen.getByTestId('connection-table')).getAllByTestId('connection-row-name').map(el => el.textContent);
+
+  it('lists every connection with its server and security, never a password', async () => {
+    localStorage.setItem('mqlens.lastConnected', JSON.stringify({ 'p-b': Date.now() - 60_000 }));
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: /table view/i }));
+    const table = screen.getByTestId('connection-table');
+    expect(names()).toEqual(['Analytics', 'Billing', 'Cache']);
+    expect(within(table).getByText('billing.db:27017')).toBeInTheDocument();
+    expect(within(table).getByText(/an\.example\.net \(SRV\)/)).toBeInTheDocument();
+    expect(within(table).getByText(/bob · SCRAM-SHA-256/)).toBeInTheDocument();
+    expect(table.textContent).not.toContain('pw@');
+    expect(within(table).getAllByText(/never/i)).toHaveLength(2);
+  });
+
+  it('sorts by a column header and reverses on a second click', async () => {
+    localStorage.setItem('mqlens.lastConnected', JSON.stringify({ 'p-c': 3000, 'p-a': 1000 }));
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: /table view/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^name/i }));
+    expect(names()).toEqual(['Cache', 'Billing', 'Analytics']);
+    fireEvent.click(screen.getByRole('button', { name: /last connected/i }));
+    // Most recent first; never-connected last.
+    expect(names()).toEqual(['Cache', 'Analytics', 'Billing']);
+  });
+
+  it('remembers the chosen view', async () => {
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: /table view/i }));
+    cleanup();
+    mount();
+    expect(await screen.findByTestId('connection-table')).toBeInTheDocument();
   });
 });

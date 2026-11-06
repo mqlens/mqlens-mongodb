@@ -332,3 +332,17 @@ test.describe('Saved without its password', () => {
     await expect(banner).toHaveCount(0);
   });
 });
+
+test.describe('Connection table', () => {
+  test('shows when each connection last connected', async ({ app, page }) => {
+    await openStagingWith(app);
+    await page.getByRole('button', { name: 'Connect to Staging', exact: true }).click();
+    await expect(sidebar(page).getByRole('button', { name: 'Connection Staging' })).toBeVisible();
+
+    await page.getByRole('button', { name: 'New connection', exact: true }).first().click();
+    await page.getByRole('button', { name: 'Table view', exact: true }).click();
+    const row = page.getByTestId('connection-table').getByRole('row').filter({ hasText: 'Staging' });
+    await expect(row).toContainText('staging.example:27017');
+    await expect(row).not.toContainText('Never');
+  });
+});

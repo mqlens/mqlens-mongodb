@@ -56,7 +56,9 @@ export type ExportFolderInfo = {
 };
 
 // Query params whose values are secrets in their own right.
-const SECRET_PARAM_KEYS = /^(proxyPassword|tlsCertificateKeyFilePassword|sslClientCertificateKeyPassword)$/i;
+const SECRET_PARAM_KEYS = /^(proxyPassword|tlsCertificateKeyFilePassword|sslClientCertificateKeyPassword|sslPEMKeyPassword)$/i;
+// The value of a secret option inside a URI, for display masks.
+const SECRET_OPTION_VALUE = /([?&;](?:proxyPassword|tlsCertificateKeyFilePassword|sslClientCertificateKeyPassword|sslPEMKeyPassword)=)[^&;#]*/gi;
 
 const isSecretParam = (param: string): boolean => {
   const key = param.split('=')[0];
@@ -349,9 +351,47 @@ export function resolveImportUri(raw: string): ImportUriResult {
   return { ok: true, uri: result.connections[0].uri };
 }
 
-/** Display mask: replace the auth password with bullets without changing the URI. */
+/** What the connection table shows for a URI: never its password. */
+export const connectionSummary = (uri: string) => {
+  const m = uri.match(/^mongodb(\+srv)?:\/\/(?:([^:@/?#]*)(?::[^@/?#]*)?@)?([^/?#]*)[^?#]*(?:\?([^#]*))?/i);
+  const srv = !!m?.[1];
+  const query = (m?.[4] ?? '').replace(/;/g, '&');
+  const param = (name: string) => query.match(new RegExp(`(?:^|&)${name}=([^&]*)`, 'i'))?.[1];
+  const hosts = (m?.[3] ?? '').split(',').filter(Boolean).join(', ');
+  return {
+    server: srv ? `${hosts} (SRV)` : hosts,
+    user: m?.[2] ? decodeURIComponent(m[2]) : '',
+    mechanism: param('authMechanism') ?? '',
+    // SRV turns TLS on unless the URI turns it off.
+    tls: srv ? !/(?:^|&)(?:tls|ssl)=false/i.test(query) : /(?:^|&)(?:tls|ssl)=true/i.test(query),
+  };
+};
+
+const LAST_CONNECTED_KEY = 'mqlens.lastConnected';
+
+/** When each profile last connected on this device, by profile id (ms since epoch). */
+export const readLastConnected = (): Record<string, number> => {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(LAST_CONNECTED_KEY) ?? '{}');
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+};
+
+export const recordLastConnected = (profileId: string, at = Date.now()) => {
+  try {
+    localStorage.setItem(LAST_CONNECTED_KEY, JSON.stringify({ ...readLastConnected(), [profileId]: at }));
+  } catch {
+    /* storage unavailable: the table shows "Never" */
+  }
+};
+
+/** Display mask: replace the auth password and secret options with bullets without changing the URI. */
 export function maskUriPassword(uri: string): string {
-  return uri.replace(/(\/\/[^/:@\s]+:)([^@/\s]+)(@)/, (_m, a, _p, c) => `${a}••••••${c}`);
+  return uri
+    .replace(/(\/\/[^/:@\s]+:)([^@/\s]+)(@)/, (_m, a, _p, c) => `${a}••••••${c}`)
+    .replace(SECRET_OPTION_VALUE, '$1••••••');
 }
 
 /** Format every saved connection as JSON, preserving folder structure for MQLens / Studio 3T transfer. */

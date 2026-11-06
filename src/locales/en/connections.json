@@ -324,6 +324,14 @@
     "username": "SSH Username"
   },
   "subtitle": "Manage saved MongoDB profiles and folders",
+  "table": {
+    "lastConnected": "Last connected",
+    "name": "Name",
+    "never": "Never",
+    "none": "None",
+    "security": "Security",
+    "server": "Server"
+  },
   "tabs": {
     "advanced": "Advanced",
     "auth": "Authentication",
@@ -362,5 +370,9 @@
     "modeOff": "Off (Insecure Plaintext)",
     "modeSystem": "System Root CA Certificates",
     "validationWarning": "Disabling certificate validation exposes the connection to man-in-the-middle attacks. Enable only for trusted/self-signed test servers."
+  },
+  "view": {
+    "table": "Table view",
+    "tree": "Tree view"
   }
 }

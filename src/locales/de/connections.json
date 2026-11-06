@@ -362,5 +362,17 @@
   "passwordPrompt": {
     "message": "Diese Verbindung wurde ohne Passwort gespeichert. Es gilt nur für diese Verbindung und wird nicht gespeichert.",
     "title": "Passwort für {{name}}"
+  },
+  "view": {
+    "table": "Tabellenansicht",
+    "tree": "Baumansicht"
+  },
+  "table": {
+    "lastConnected": "Zuletzt verbunden",
+    "name": "Name",
+    "never": "Nie",
+    "none": "Keine",
+    "security": "Sicherheit",
+    "server": "Server"
   }
 }

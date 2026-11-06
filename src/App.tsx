@@ -130,7 +130,7 @@ import { clearNamespaceIndex, loadNamespaceIndex, matchesNamespaceScope } from '
 import { CHECK_UPDATE_EVENT } from './components/UpdatePrompt';
 import { confirmByTypedName } from './lib/typedNameConfirm';
 import { detectAggregateWriteStage } from './lib/aggregateWriteStage';
-import { uriWithAskedPassword, type ConnectionProfile } from './lib/connection';
+import { recordLastConnected, uriWithAskedPassword, type ConnectionProfile } from './lib/connection';
 import { save, open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
@@ -869,6 +869,7 @@ function Workspace() {
     viaMcp?: boolean,
     mode?: ActiveConnection['mode']
   ) => {
+    if (!viaMcp) recordLastConnected(profileId);
     setActiveConnections((prev) => {
       if (prev.some((c) => c.id === id)) return prev;
       if (!viaMcp && prev.some((c) => c.profileId === profileId)) return prev;
