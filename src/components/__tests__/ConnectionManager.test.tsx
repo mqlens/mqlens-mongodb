@@ -464,7 +464,7 @@ describe('buildUri TLS handling (C8)', () => {
 
 describe('buildUri timeouts + proxy (M2)', () => {
   it('emits connectTimeoutMS and serverSelectionTimeoutMS from the fields', () => {
-    const uri = buildUri({ ...baseConn, connectTimeout: 8000, serverSelectionTimeout: 12000 });
+    const uri = buildUri({ ...baseConn, connectTimeout: '8000', serverSelectionTimeout: '12000' });
     expect(uri).toContain('connectTimeoutMS=8000');
     expect(uri).toContain('serverSelectionTimeoutMS=12000');
   });
@@ -3637,5 +3637,113 @@ describe('OIDC refresh-token persistence (#439)', () => {
     expect(screen.getByRole('checkbox', { name: 'Remember login in encrypted vault' })).toBeChecked();
     fireEvent.click(screen.getByRole('button', { name: 'Forget saved login' }));
     await waitFor(() => expect(calls.find(c => c.cmd === 'forget_oidc_login')?.args).toEqual({ profileId: 'remembered' }));
+  });
+});
+
+describe('URI options survive an edit and are editable on the Advanced tab', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  // Options as a sorted multiset, so the test does not depend on the order
+  // buildUri writes them in.
+  const optionsOf = (uri: string) => (uri.split('?')[1] ?? '').split('&').filter(Boolean).sort();
+
+  it('rebuilds every option a saved URI carried, including ones the form does not know', () => {
+    const uri =
+      'mongodb://alice:pw@h1:27017,h2:27017/shop?replicaSet=rs0&authSource=admin&authMechanism=SCRAM-SHA-256' +
+      '&readPreference=secondary&readPreferenceTags=dc:ny,rack:1&readPreferenceTags=' +
+      '&compressors=zlib&appName=reports&connectTimeoutMS=5000&serverSelectionTimeoutMS=8000' +
+      '&socketTimeoutMS=60000&maxIdleTimeMS=120000&maxPoolSize=20&retryWrites=false' +
+      '&w=majority&wtimeoutMS=2500&journal=true' +
+      '&proxyHost=socks.internal&proxyPort=1081&proxyUsername=bob&proxyPassword=pp' +
+      '&zlibCompressionLevel=6&maxConnecting=4';
+    const rebuilt = buildUri({ ...baseConn, ...parseUriIntoFields(uri) });
+    expect(optionsOf(rebuilt)).toEqual(optionsOf(uri));
+  });
+
+  it('keeps authMechanismProperties it has no field for', () => {
+    const uri = 'mongodb://svc%40REALM@kdc.example.com:27017/?authMechanism=GSSAPI&authSource=$external' +
+      '&authMechanismProperties=SERVICE_NAME:mongo,CANONICALIZE_HOST_NAME:true';
+    const rebuilt = buildUri({ ...baseConn, ...parseUriIntoFields(uri) });
+    expect(optionsOf(rebuilt)).toEqual(optionsOf(uri));
+  });
+
+  it('does not add appName or timeouts to a saved URI that had none', () => {
+    const rebuilt = buildUri({ ...baseConn, ...parseUriIntoFields('mongodb://h1:27017/?directConnection=true') });
+    expect(optionsOf(rebuilt)).toEqual(['directConnection=true']);
+  });
+
+  it('keeps the read preference of a saved profile when only its name is edited', async () => {
+    let savedProfile: any = null;
+    const profile = { id: 'p-rp', name: 'Reports', uri: 'mongodb://h1:27017/?readPreference=secondary&retryWrites=false' };
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([profile]);
+      if (cmd === 'save_connection_profile') {
+        savedProfile = args.profile;
+        return Promise.resolve();
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+    await waitFor(() => expect(screen.getAllByText('Reports')[0]).toBeInTheDocument());
+    fireEvent.click(screen.getAllByText('Reports')[0]);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    fireEvent.change(screen.getByLabelText(/display name/i), { target: { value: 'Reports 2' } });
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => expect(savedProfile).not.toBeNull());
+    expect(optionsOf(savedProfile.uri)).toEqual(['readPreference=secondary', 'retryWrites=false']);
+  });
+
+  it('writes the read preference, timeouts, pool and write concern set on the Advanced tab', async () => {
+    let savedProfile: any = null;
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'save_connection_profile') {
+        savedProfile = args.profile;
+        return Promise.resolve();
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: /new\.\.\./i }));
+    fireEvent.click(screen.getByRole('button', { name: /^advanced$/i }));
+
+    await pickSelectOption('read-preference-select', /^nearest$/i);
+    fireEvent.change(screen.getByLabelText(/read preference tags/i), { target: { value: 'dc:ny\n\n' } });
+    fireEvent.change(screen.getByLabelText(/socket timeout/i), { target: { value: '45000' } });
+    fireEvent.change(screen.getByLabelText(/max pool size/i), { target: { value: '50' } });
+    fireEvent.change(screen.getByLabelText(/max idle time/i), { target: { value: '90000' } });
+    await pickSelectOption('retry-writes-select', /^off$/i);
+    fireEvent.change(screen.getByLabelText(/write concern \(w\)/i), { target: { value: 'majority' } });
+    fireEvent.change(screen.getByLabelText(/write timeout/i), { target: { value: '1000' } });
+    await pickSelectOption('journal-select', /^on$/i);
+    fireEvent.click(screen.getByLabelText(/load balanced/i));
+    fireEvent.change(screen.getByLabelText(/additional uri options/i), { target: { value: 'maxConnecting=3' } });
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => expect(savedProfile).not.toBeNull());
+    expect(optionsOf(savedProfile.uri)).toEqual(expect.arrayContaining([
+      'readPreference=nearest',
+      'readPreferenceTags=dc:ny',
+      'socketTimeoutMS=45000',
+      'maxPoolSize=50',
+      'maxIdleTimeMS=90000',
+      'retryWrites=false',
+      'w=majority',
+      'wtimeoutMS=1000',
+      'journal=true',
+      'loadBalanced=true',
+      'maxConnecting=3',
+      'appName=MQLens',
+      'connectTimeoutMS=10000',
+      'serverSelectionTimeoutMS=30000',
+    ]));
+    // Blank lines are skipped; an empty tag set is written as {} instead.
+    expect(optionsOf(savedProfile.uri).filter((o) => o.startsWith('readPreferenceTags'))).toEqual(['readPreferenceTags=dc:ny']);
   });
 });

@@ -188,9 +188,20 @@ const BLANK_CONN = {
   proxyPass: '',
   defaultDb: '',
   readPreference: 'primary',
+  readPreferenceTags: '',
   appName: 'MQLens',
-  connectTimeout: 10000,
-  serverSelectionTimeout: 30000,
+  connectTimeout: '10000',
+  serverSelectionTimeout: '30000',
+  socketTimeout: '',
+  maxIdleTime: '',
+  maxPoolSize: '',
+  retryWrites: 'default',
+  loadBalanced: false,
+  writeConcernW: '',
+  wtimeout: '',
+  journal: 'default',
+  extraOptions: '',
+  authMechanismExtraProps: '',
   compression: 'none',
   // Stored profile data, not UI copy — intentionally English in every locale (i18n out of scope).
   name: 'New Connection',
@@ -199,6 +210,26 @@ const BLANK_CONN = {
   mcpEnabled: false,
   connectionMode: 'normal' as ConnectionMode,
 };
+
+const READ_PREFERENCE_MODES = ['primary', 'primaryPreferred', 'secondary', 'secondaryPreferred', 'nearest'];
+
+/**
+ * URI options (lowercase) the editor's fields own: `parseUriIntoFields` reads
+ * them and `buildUri` writes them back, sometimes under their modern name
+ * (`ssl` as `tls`). Any other option rides through `extraOptions` untouched.
+ */
+const FORM_URI_OPTIONS = new Set([
+  'replicaset', 'directconnection', 'tls', 'ssl', 'tlscafile', 'sslcertificateauthorityfile',
+  'tlscertificatekeyfile', 'sslclientcertificatekeyfile', 'tlsinsecure', 'tlsallowinvalidcertificates',
+  'tlsallowinvalidhostnames', 'authmechanism', 'authsource', 'authmechanismproperties',
+  'readpreference', 'readpreferencetags', 'compressors', 'appname', 'connecttimeoutms',
+  'serverselectiontimeoutms', 'sockettimeoutms', 'maxidletimems', 'maxpoolsize', 'retrywrites',
+  'loadbalanced', 'w', 'wtimeoutms', 'journal', 'proxyhost', 'proxyport', 'proxyusername', 'proxypassword',
+]);
+
+/** Percent-encode an option value but keep the `:` and `,` that tag sets and mechanism properties are built from. */
+const encodeOptionValue = (value: string) =>
+  encodeURIComponent(value).replace(/%3A/gi, ':').replace(/%2C/gi, ',');
 
 /** Connection mode editor options (#188 Task 1) — segmented control in the server panel. */
 const CONNECTION_MODE_OPTIONS: { value: ConnectionMode; labelKey: string; descriptionKey: string }[] = [
@@ -346,7 +377,32 @@ export const parseUriIntoFields = (uri: string) => {
   let authDb = 'admin';
   let awsSessionToken = '';
   let kerberosServiceName = '';
+  let authMechanismExtraProps = '';
   let query = '';
+  // The Advanced and Proxy fields. Blank means "not in the URI": a saved
+  // connection that never set appName or a timeout must not gain one on edit.
+  const options = {
+    readPreference: 'primary',
+    readPreferenceTags: '',
+    compression: 'none',
+    appName: '',
+    connectTimeout: '',
+    serverSelectionTimeout: '',
+    socketTimeout: '',
+    maxIdleTime: '',
+    maxPoolSize: '',
+    retryWrites: 'default',
+    loadBalanced: false,
+    writeConcernW: '',
+    wtimeout: '',
+    journal: 'default',
+    proxyEnabled: false,
+    proxyHost: '',
+    proxyPort: '1080',
+    proxyUser: '',
+    proxyPass: '',
+    extraOptions: '',
+  };
   if (m) {
     authUser = m[1] ? decodeURIComponent(m[1]) : '';
     authPass = m[2] ? decodeURIComponent(m[2]) : '';
@@ -415,7 +471,55 @@ export const parseUriIntoFields = (uri: string) => {
       const value = entry.slice(at + 1);
       if (key === 'AWS_SESSION_TOKEN') awsSessionToken = value;
       else if (key === 'SERVICE_NAME') kerberosServiceName = value;
+      else if (entry) authMechanismExtraProps += (authMechanismExtraProps ? ',' : '') + entry;
     }
+
+    const parts = query.split('&').filter(Boolean);
+    const values = (name: string) =>
+      parts
+        .filter((p) => p.split('=')[0].toLowerCase() === name.toLowerCase())
+        .map((p) => decodeURIComponent(p.slice(p.indexOf('=') + 1)));
+    const one = (name: string) => values(name)[0] ?? '';
+    const readPreference = one('readPreference');
+    if (READ_PREFERENCE_MODES.includes(readPreference)) options.readPreference = readPreference;
+    // One tag set per line, in priority order; the empty set is spelled {}.
+    options.readPreferenceTags = values('readPreferenceTags').map((v) => v || '{}').join('\n');
+    const compressors = one('compressors');
+    if (compressors === 'snappy' || compressors === 'zlib') options.compression = compressors;
+    options.appName = one('appName');
+    options.connectTimeout = one('connectTimeoutMS');
+    options.serverSelectionTimeout = one('serverSelectionTimeoutMS');
+    options.socketTimeout = one('socketTimeoutMS');
+    options.maxIdleTime = one('maxIdleTimeMS');
+    options.maxPoolSize = one('maxPoolSize');
+    const flag = (v: string) => (v === 'true' || v === 'false' ? v : 'default');
+    options.retryWrites = flag(one('retryWrites'));
+    options.loadBalanced = one('loadBalanced') === 'true';
+    options.writeConcernW = one('w');
+    options.wtimeout = one('wtimeoutMS');
+    options.journal = flag(one('journal'));
+    options.proxyHost = one('proxyHost');
+    options.proxyEnabled = !!options.proxyHost;
+    options.proxyPort = one('proxyPort') || '1080';
+    options.proxyUser = one('proxyUsername');
+    options.proxyPass = one('proxyPassword');
+    // Everything the form has no field for is carried through as written, so
+    // editing a saved connection never drops an option (buildUri appends it).
+    const representable: Record<string, (v: string) => boolean> = {
+      readpreference: (v) => READ_PREFERENCE_MODES.includes(v),
+      compressors: (v) => v === 'snappy' || v === 'zlib',
+      retrywrites: (v) => v === 'true' || v === 'false',
+      journal: (v) => v === 'true' || v === 'false',
+      loadbalanced: (v) => v === 'true',
+    };
+    options.extraOptions = parts
+      .filter((p) => {
+        const key = p.split('=')[0].toLowerCase();
+        if (!FORM_URI_OPTIONS.has(key)) return true;
+        const check = representable[key];
+        return check ? !check(decodeURIComponent(p.slice(p.indexOf('=') + 1))) : false;
+      })
+      .join('&');
   }
   const hosts = hostStr.split(',').map((h) => {
     const [host, port] = h.split(':');
@@ -439,6 +543,8 @@ export const parseUriIntoFields = (uri: string) => {
     authDb,
     awsSessionToken,
     kerberosServiceName,
+    authMechanismExtraProps,
+    ...options,
     tlsMode,
     tlsCa,
     tlsClientCert,
@@ -529,18 +635,37 @@ export const buildUri = (s: typeof BLANK_CONN) => {
     if (s.authDb !== implied) params.push(`authSource=${encodeURIComponent(s.authDb)}`);
   }
   // Mechanism-specific properties (M5).
+  const mechanismProps = [];
   if (s.authMethod === 'aws' && s.awsSessionToken) {
-    params.push(`authMechanismProperties=AWS_SESSION_TOKEN:${encodeURIComponent(s.awsSessionToken)}`);
+    mechanismProps.push(`AWS_SESSION_TOKEN:${encodeURIComponent(s.awsSessionToken)}`);
   }
   if (s.authMethod === 'kerberos' && s.kerberosServiceName) {
-    params.push(`authMechanismProperties=SERVICE_NAME:${encodeURIComponent(s.kerberosServiceName)}`);
+    mechanismProps.push(`SERVICE_NAME:${encodeURIComponent(s.kerberosServiceName)}`);
   }
-  if (s.readPreference !== 'primary') params.push(`readPreference=${s.readPreference}`);
+  if (s.authMethod !== 'none' && s.authMechanismExtraProps) mechanismProps.push(encodeOptionValue(s.authMechanismExtraProps));
+  if (mechanismProps.length) params.push(`authMechanismProperties=${mechanismProps.join(',')}`);
+  if (s.readPreference !== 'primary') {
+    params.push(`readPreference=${s.readPreference}`);
+    for (const line of (s.readPreferenceTags ?? '').split('\n').map((l) => l.trim()).filter(Boolean)) {
+      params.push(`readPreferenceTags=${line === '{}' ? '' : encodeOptionValue(line)}`);
+    }
+  }
   if (s.compression !== 'none') params.push(`compressors=${s.compression}`);
   if (s.appName) params.push(`appName=${encodeURIComponent(s.appName)}`);
-  // Timeouts (M2): honor the user's configured connect/server-selection windows.
-  if (s.connectTimeout) params.push(`connectTimeoutMS=${s.connectTimeout}`);
-  if (s.serverSelectionTimeout) params.push(`serverSelectionTimeoutMS=${s.serverSelectionTimeout}`);
+  // Timeouts (M2) and the rest of the Advanced tab; blank leaves the driver default.
+  const numeric: [string, string | undefined][] = [
+    ['connectTimeoutMS', s.connectTimeout],
+    ['serverSelectionTimeoutMS', s.serverSelectionTimeout],
+    ['socketTimeoutMS', s.socketTimeout],
+    ['maxIdleTimeMS', s.maxIdleTime],
+    ['maxPoolSize', s.maxPoolSize],
+  ];
+  for (const [key, value] of numeric) if (value?.trim()) params.push(`${key}=${encodeURIComponent(value.trim())}`);
+  if (s.retryWrites && s.retryWrites !== 'default') params.push(`retryWrites=${s.retryWrites}`);
+  if (s.loadBalanced) params.push('loadBalanced=true');
+  if (s.writeConcernW?.trim()) params.push(`w=${encodeURIComponent(s.writeConcernW.trim())}`);
+  if (s.wtimeout?.trim()) params.push(`wtimeoutMS=${encodeURIComponent(s.wtimeout.trim())}`);
+  if (s.journal && s.journal !== 'default') params.push(`journal=${s.journal}`);
   // SOCKS5 proxy (M2): the MongoDB driver only supports SOCKS5 proxy URI options.
   if (s.proxyEnabled && s.proxyHost) {
     params.push(`proxyHost=${encodeURIComponent(s.proxyHost)}`);
@@ -548,6 +673,8 @@ export const buildUri = (s: typeof BLANK_CONN) => {
     if (s.proxyUser) params.push(`proxyUsername=${encodeURIComponent(s.proxyUser)}`);
     if (s.proxyPass) params.push(`proxyPassword=${encodeURIComponent(s.proxyPass)}`);
   }
+  const extra = (s.extraOptions ?? '').trim().replace(/^[?&]+/, '');
+  if (extra) params.push(extra);
   const dbPath = s.defaultDb ? `/${s.defaultDb}` : '';
   const scheme = isSrv ? 'mongodb+srv' : 'mongodb';
   return `${scheme}://${creds}${hosts}${dbPath}${params.length ? '?' + params.join('&') : ''}`;
@@ -2983,6 +3110,129 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                         </SelectContent>
                       </Select>
                     </div>
+                  </div>
+
+                  <h4 className="mt-2 border-t border-border pt-2.5 text-ui-2xs font-semibold uppercase tracking-wide text-muted-foreground">{t('advanced.readSection')}</h4>
+                  <div className="flex gap-2">
+                    <div className="flex flex-1 flex-col gap-1">
+                      <Label>{t('advanced.readPreference')}</Label>
+                      <Select value={editorState.readPreference} onValueChange={(v) => setEditorState(prev => ({ ...prev, readPreference: v }))}>
+                        <SelectTrigger data-testid="read-preference-select" className="h-8 text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className={NESTED_SELECT_Z}>
+                          {/* MongoDB's own mode names, the same in every language. */}
+                          {READ_PREFERENCE_MODES.map((mode) => (
+                            <SelectItem key={mode} value={mode}>{mode}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="flex flex-1 flex-col gap-1">
+                      <Label htmlFor="adv-read-tags">{t('advanced.readPreferenceTags')}</Label>
+                      <textarea
+                        id="adv-read-tags"
+                        rows={2}
+                        value={editorState.readPreferenceTags}
+                        disabled={editorState.readPreference === 'primary'}
+                        onChange={e => setEditorState(prev => ({ ...prev, readPreferenceTags: e.target.value }))}
+                        placeholder={'dc:ny,rack:1\n{}'}
+                        className="w-full resize-y rounded-md border border-input bg-background px-3 py-1 font-mono text-ui-xs shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                      />
+                      <p className="m-0 text-[10px] text-muted-foreground">{t('advanced.readPreferenceTagsHelp')}</p>
+                    </div>
+                  </div>
+
+                  <h4 className="mt-2 border-t border-border pt-2.5 text-ui-2xs font-semibold uppercase tracking-wide text-muted-foreground">{t('advanced.timeoutsSection')}</h4>
+                  <div className="grid grid-cols-2 gap-2">
+                    {([
+                      ['connectTimeout', 'advanced.connectTimeout', '10000'],
+                      ['serverSelectionTimeout', 'advanced.serverSelectionTimeout', '30000'],
+                      ['socketTimeout', 'advanced.socketTimeout', '0'],
+                      ['maxIdleTime', 'advanced.maxIdleTime', '0'],
+                      ['maxPoolSize', 'advanced.maxPoolSize', '100'],
+                      ['appName', 'advanced.appName', 'MQLens'],
+                    ] as const).map(([field, labelKey, placeholder]) => (
+                      <div key={field} className="flex flex-col gap-1">
+                        <Label htmlFor={`adv-${field}`}>{t(labelKey)}</Label>
+                        <Input
+                          id={`adv-${field}`}
+                          type="text"
+                          inputMode={field === 'appName' ? undefined : 'numeric'}
+                          value={editorState[field]}
+                          onChange={e => setEditorState(prev => ({ ...prev, [field]: e.target.value }))}
+                          placeholder={placeholder}
+                          className={field === 'appName' ? undefined : 'font-mono'}
+                        />
+                      </div>
+                    ))}
+                  </div>
+
+                  <h4 className="mt-2 border-t border-border pt-2.5 text-ui-2xs font-semibold uppercase tracking-wide text-muted-foreground">{t('advanced.writesSection')}</h4>
+                  <div className="grid grid-cols-2 gap-2">
+                    {([
+                      ['retryWrites', 'advanced.retryWrites', 'retry-writes-select'],
+                      ['journal', 'advanced.journal', 'journal-select'],
+                    ] as const).map(([field, labelKey, testId]) => (
+                      <div key={field} className="flex flex-col gap-1">
+                        <Label>{t(labelKey)}</Label>
+                        <Select value={editorState[field]} onValueChange={(v) => setEditorState(prev => ({ ...prev, [field]: v }))}>
+                          <SelectTrigger data-testid={testId} className="h-8 text-xs">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent className={NESTED_SELECT_Z}>
+                            <SelectItem value="default">{t('advanced.driverDefault')}</SelectItem>
+                            <SelectItem value="true">{t('advanced.on')}</SelectItem>
+                            <SelectItem value="false">{t('advanced.off')}</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    ))}
+                    <div className="flex flex-col gap-1">
+                      <Label htmlFor="adv-w">{t('advanced.writeConcernW')}</Label>
+                      <Input
+                        id="adv-w"
+                        type="text"
+                        value={editorState.writeConcernW}
+                        onChange={e => setEditorState(prev => ({ ...prev, writeConcernW: e.target.value }))}
+                        placeholder="majority"
+                        className="font-mono"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <Label htmlFor="adv-wtimeout">{t('advanced.wtimeout')}</Label>
+                      <Input
+                        id="adv-wtimeout"
+                        type="text"
+                        inputMode="numeric"
+                        value={editorState.wtimeout}
+                        onChange={e => setEditorState(prev => ({ ...prev, wtimeout: e.target.value }))}
+                        placeholder="0"
+                        className="font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="mt-2 flex items-center gap-2 border-t border-border pt-2.5">
+                    <input
+                      type="checkbox"
+                      id="adv-load-balanced"
+                      checked={editorState.loadBalanced}
+                      onChange={e => setEditorState(prev => ({ ...prev, loadBalanced: e.target.checked }))}
+                    />
+                    <Label htmlFor="adv-load-balanced" className="text-[11px] font-medium">{t('advanced.loadBalanced')}</Label>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <Label htmlFor="adv-extra">{t('advanced.extraOptions')}</Label>
+                    <Input
+                      id="adv-extra"
+                      type="text"
+                      value={editorState.extraOptions}
+                      onChange={e => setEditorState(prev => ({ ...prev, extraOptions: e.target.value }))}
+                      placeholder="maxConnecting=2&zlibCompressionLevel=6"
+                      className="font-mono"
+                    />
+                    <p className="m-0 text-[10px] text-muted-foreground">{t('advanced.extraOptionsHelp')}</p>
                   </div>
                 </div>
               )}
