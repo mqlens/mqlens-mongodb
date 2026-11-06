@@ -1719,7 +1719,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
           id: generateUUID(),
           name,
           uri: connection.uri,
-          ssh: null,
+          ssh: connection.ssh ?? null,
           color_tag: null,
           mcp_enabled: false,
         };

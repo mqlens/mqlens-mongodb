@@ -44,6 +44,8 @@ export type ImportedConnection = {
   uri: string;
   /** Folder name to place the connection in; omitted/null means root. */
   folder?: string | null;
+  /** An SSH tunnel carried in an MQLens JSON export. */
+  ssh?: SshConfig;
 };
 
 export type ParseConnectionsResult =
@@ -226,6 +228,22 @@ function parseTextConnections(text: string, out: ImportedConnection[]): void {
   }
 }
 
+/** An exported SSH tunnel read back, or null when it is not one MQLens can use. */
+function sshFromJson(value: unknown): SshConfig | null {
+  if (!value || typeof value !== 'object') return null;
+  const ssh = value as { host?: unknown; port?: unknown; user?: unknown; auth?: { type?: unknown; path?: unknown; password?: unknown; passphrase?: unknown } };
+  if (typeof ssh.host !== 'string' || !ssh.host || typeof ssh.user !== 'string') return null;
+  const str = (v: unknown) => (typeof v === 'string' ? v : '');
+  const a = ssh.auth ?? {};
+  const auth: SshConfig['auth'] | null =
+    a.type === 'agent' ? { type: 'agent' }
+    : a.type === 'password' ? { type: 'password', password: str(a.password) }
+    : a.type === 'key' && typeof a.path === 'string' ? { type: 'key', path: a.path, ...(a.passphrase ? { passphrase: str(a.passphrase) } : {}) }
+    : null;
+  if (!auth) return null;
+  return { enabled: true, host: ssh.host, port: Number(ssh.port) || 22, user: ssh.user, auth };
+}
+
 /**
  * Robo 3T's robo3t.json stores a connection as fields, not a URI: host and
  * port (or replica set members), the first enabled credential, and SSL. Its
@@ -287,10 +305,12 @@ function collectConnectionsFromJson(value: unknown, out: ImportedConnection[], i
   if (uri) {
     const normalized = normalizeUriCandidate(uri);
     if (normalized) {
+      const ssh = sshFromJson(obj.ssh);
       out.push({
         name: name || deriveNameFromUri(normalized),
         uri: normalized,
         folder,
+        ...(ssh ? { ssh } : {}),
       });
       return;
     }
@@ -432,18 +452,26 @@ export function maskUriPassword(uri: string): string {
 
 /** Format every saved connection as JSON, preserving folder structure for MQLens / Studio 3T transfer. */
 export function buildExportAllUris(
-  profiles: Array<Pick<ConnectionProfile, 'id' | 'name' | 'uri'> | Pick<ConnectionProfile, 'name' | 'uri'>>,
+  profiles: Array<Pick<ConnectionProfile, 'name' | 'uri'> & Partial<Pick<ConnectionProfile, 'id' | 'ssh'>>>,
   options: ExportUriOptions,
   folderInfo?: ExportFolderInfo,
 ): string {
-  type ExportConnection = { name: string; uri: string };
+  type ExportSsh = Omit<SshConfig, 'enabled' | 'auth'> & { auth: Record<string, string> };
+  type ExportConnection = { name: string; uri: string; ssh?: ExportSsh };
   type ExportFolder = { name: string; connections: ExportConnection[] };
 
+  // The tunnel's password or key passphrase goes only where URI passwords do.
+  const exportSsh = ({ enabled: _enabled, auth, ...rest }: SshConfig): ExportSsh => {
+    if (options.includePassword || auth.type === 'agent') return { ...rest, auth: { ...auth } };
+    return { ...rest, auth: auth.type === 'key' ? { type: 'key', path: auth.path } : { type: 'password' } };
+  };
+
   const toExportConnection = (
-    profile: Pick<ConnectionProfile, 'name' | 'uri'>,
+    profile: Pick<ConnectionProfile, 'name' | 'uri' | 'ssh'>,
   ): ExportConnection => ({
     name: profile.name,
     uri: buildExportUri(profile.uri, options),
+    ...(profile.ssh?.enabled ? { ssh: exportSsh(profile.ssh) } : {}),
   });
 
   if (!folderInfo || folderInfo.folders.length === 0) {

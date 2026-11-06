@@ -516,3 +516,42 @@ describe('importing from other MongoDB tools', () => {
     ] });
   });
 });
+
+describe('exporting and importing SSH tunnel settings', () => {
+  const tunnelled = {
+    id: 'p-ssh',
+    name: 'Behind bastion',
+    uri: 'mongodb://app:pw@10.0.0.5:27017/',
+    ssh: { enabled: true, host: 'bastion.example', port: 2222, user: 'ops', auth: { type: 'key' as const, path: '/keys/id_ed25519', passphrase: 'kp' } },
+  };
+
+  it('writes the tunnel into the JSON export, without its secrets by default', () => {
+    const out = JSON.parse(buildExportAllUris([tunnelled], { includePassword: false, includeSettings: true }));
+    expect(out.connections[0].ssh).toEqual({ host: 'bastion.example', port: 2222, user: 'ops', auth: { type: 'key', path: '/keys/id_ed25519' } });
+    const withSecrets = JSON.parse(buildExportAllUris([tunnelled], { includePassword: true, includeSettings: true }));
+    expect(withSecrets.connections[0].ssh.auth).toEqual({ type: 'key', path: '/keys/id_ed25519', passphrase: 'kp' });
+  });
+
+  it('leaves out a tunnel that is switched off', () => {
+    const off = { ...tunnelled, ssh: { ...tunnelled.ssh, enabled: false } };
+    expect(JSON.parse(buildExportAllUris([off], { includePassword: false, includeSettings: true })).connections[0].ssh).toBeUndefined();
+  });
+
+  it('reads the tunnel back on import', () => {
+    const text = buildExportAllUris([tunnelled], { includePassword: false, includeSettings: true });
+    expect(parseConnectionImportFile(text)).toEqual({
+      ok: true,
+      connections: [{
+        name: 'Behind bastion',
+        uri: 'mongodb://app@10.0.0.5:27017/',
+        folder: null,
+        ssh: { enabled: true, host: 'bastion.example', port: 2222, user: 'ops', auth: { type: 'key', path: '/keys/id_ed25519' } },
+      }],
+    });
+  });
+
+  it('ignores an ssh entry it cannot use', () => {
+    const text = JSON.stringify({ connections: [{ name: 'x', uri: 'mongodb://h', ssh: { host: 'b', auth: { type: 'telnet' } } }] });
+    expect(parseConnectionImportFile(text)).toEqual({ ok: true, connections: [{ name: 'x', uri: 'mongodb://h', folder: null }] });
+  });
+});
