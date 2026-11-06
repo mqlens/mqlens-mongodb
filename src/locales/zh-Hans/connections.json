@@ -4,6 +4,7 @@
     "browse": "浏览…",
     "connect": "连接",
     "connecting": "正在连接…",
+    "copyUri": "复制 URI（不含密钥）",
     "create": "创建",
     "delete": "删除",
     "duplicate": "复制副本",
@@ -15,6 +16,7 @@
     "import": "导入",
     "importAll": "全部导入",
     "importUri": "导入 URI",
+    "moveToFolder": "移动到文件夹",
     "new": "新建…",
     "newFolder": "新建文件夹",
     "showPassword": "显示密码",
@@ -189,7 +191,12 @@
   },
   "folder": {
     "closeDialogAria": "关闭文件夹对话框",
+    "delete": "删除文件夹",
+    "deleteMessage": "删除文件夹“{{name}}”？其中的连接会保留并移到根级。",
+    "deleteTitle": "删除文件夹",
     "nameLabel": "文件夹名称",
+    "rename": "重命名文件夹",
+    "renameTitle": "重命名文件夹",
     "root": "（根目录）"
   },
   "form": {

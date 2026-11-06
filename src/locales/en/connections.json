@@ -4,6 +4,7 @@
     "browse": "Browse…",
     "connect": "Connect",
     "connecting": "Connecting...",
+    "copyUri": "Copy URI (without secrets)",
     "create": "Create",
     "delete": "Delete",
     "duplicate": "Duplicate",
@@ -15,6 +16,7 @@
     "import": "Import",
     "importAll": "Import all",
     "importUri": "Import URI",
+    "moveToFolder": "Move to folder",
     "new": "New...",
     "newFolder": "New Folder",
     "showPassword": "Show password",
@@ -191,7 +193,12 @@
   },
   "folder": {
     "closeDialogAria": "Close folder dialog",
+    "delete": "Delete folder",
+    "deleteMessage": "Delete the folder \"{{name}}\"? Its connections are kept and move to the root.",
+    "deleteTitle": "Delete folder",
     "nameLabel": "Folder Name",
+    "rename": "Rename folder",
+    "renameTitle": "Rename folder",
     "root": "(root)"
   },
   "form": {

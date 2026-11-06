@@ -10,6 +10,7 @@ import {
   maskUriPassword,
   parseConnectionImportFile,
   readLastConnected,
+  stripUriSecrets,
   resolveImportUri,
   uriWithAskedPassword,
   type ImportedConnection,
@@ -25,8 +26,18 @@ import { formatShortcut, shortcutById } from '@/lib/shortcuts';
 import {
   Plus, X, Server, Play, Edit3, Trash2, Check, AlertCircle, RefreshCw,
   Folder, FolderPlus, FolderOpen, Search, ChevronRight,
-  Copy, ExternalLink, ShieldAlert, Eye, EyeOff, LayoutGrid, ClipboardPaste, Pipette, ListTree, Table2, ArrowUp, ArrowDown
+  Copy, ExternalLink, ShieldAlert, Eye, EyeOff, LayoutGrid, ClipboardPaste, Pipette, ListTree, Table2, ArrowUp, ArrowDown, Pencil, ClipboardCopy, FolderInput
 } from 'lucide-react';
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -2033,6 +2044,111 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   const sortBy = (key: TableSortKey) =>
     setSort(prev => (prev.key === key ? { key, dir: prev.dir === 1 ? -1 : 1 } : { key, dir: key === 'lastConnected' ? -1 : 1 }));
 
+  const moveToFolder = (profileId: string, folderId: string) => {
+    const map = { ...profileFolderMap };
+    if (folderId) map[profileId] = folderId;
+    else delete map[profileId];
+    saveFoldersToStorage(folders, map);
+  };
+
+  const handleRenameFolder = async (folder: FolderNode) => {
+    const name = await prompt({
+      title: t('folder.renameTitle'),
+      defaultValue: folder.name,
+      confirmLabel: t('folder.rename'),
+      validate: (v) => {
+        const next = v.trim().toLowerCase();
+        if (!next) return t('errors.folderNameRequired');
+        return folders.some(f => f.id !== folder.id && f.name.toLowerCase() === next) ? t('errors.folderNameExists') : null;
+      },
+    });
+    if (name === null) return;
+    saveFoldersToStorage(folders.map(f => (f.id === folder.id ? { ...f, name: name.trim() } : f)), profileFolderMap);
+  };
+
+  // Deleting a folder never deletes connections: they move to the root.
+  const handleDeleteFolder = async (folder: FolderNode) => {
+    const ok = await confirm({
+      title: t('folder.deleteTitle'),
+      message: t('folder.deleteMessage', { name: folder.name }),
+      confirmLabel: t('actions.delete'),
+      destructive: true,
+    });
+    if (!ok) return;
+    const map = Object.fromEntries(Object.entries(profileFolderMap).filter(([, f]) => f !== folder.id));
+    saveFoldersToStorage(folders.filter(f => f.id !== folder.id), map);
+  };
+
+  // The profile being dragged; a ref, so a drop works without reading dataTransfer.
+  const dragProfileId = useRef<string | null>(null);
+  const dragProps = (profileId: string) => ({
+    draggable: true,
+    onDragStart: (e: React.DragEvent) => {
+      dragProfileId.current = profileId;
+      e.dataTransfer?.setData('text/plain', profileId);
+    },
+    onDragEnd: () => { dragProfileId.current = null; },
+  });
+  const dropProps = (folderId: string) => ({
+    'data-folder-id': folderId || 'root',
+    onDragOver: (e: React.DragEvent) => { if (dragProfileId.current) e.preventDefault(); },
+    onDrop: (e: React.DragEvent) => {
+      const id = dragProfileId.current;
+      dragProfileId.current = null;
+      if (!id) return;
+      e.preventDefault();
+      e.stopPropagation();
+      moveToFolder(id, folderId);
+    },
+  });
+
+  const profileMenu = (p: ConnectionProfile, row: React.ReactElement) => {
+    const isActive = activeConnections.some(c => c.profileId === p.id);
+    const current = profileFolderMap[p.id] || '';
+    return (
+      <ContextMenu key={p.id}>
+        <ContextMenuTrigger asChild onContextMenu={() => handleSelect(p.id)}>{row}</ContextMenuTrigger>
+        <ContextMenuContent className={NESTED_SELECT_Z}>
+          <ContextMenuItem disabled={isActive || loading} onClick={handleConnectClick}>
+            <Play size={12} />
+            <span>{t('actions.connect')}</span>
+          </ContextMenuItem>
+          <ContextMenuItem onClick={() => handleEditClick(p.id)}>
+            <Edit3 size={12} />
+            <span>{t('actions.edit')}</span>
+          </ContextMenuItem>
+          <ContextMenuItem onClick={() => handleDuplicateClick(p.id)}>
+            <Copy size={12} />
+            <span>{t('actions.duplicate')}</span>
+          </ContextMenuItem>
+          <ContextMenuItem onClick={() => void navigator.clipboard?.writeText(stripUriSecrets(p.uri)).catch(() => {})}>
+            <ClipboardCopy size={12} />
+            <span>{t('actions.copyUri')}</span>
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuSub>
+            <ContextMenuSubTrigger>
+              <FolderInput size={12} />
+              <span>{t('actions.moveToFolder')}</span>
+              <ChevronRight size={12} className="ml-auto" />
+            </ContextMenuSubTrigger>
+            <ContextMenuSubContent className={NESTED_SELECT_Z}>
+              <ContextMenuItem disabled={!current} onClick={() => moveToFolder(p.id, '')}>{t('folder.root')}</ContextMenuItem>
+              {folders.map(f => (
+                <ContextMenuItem key={f.id} disabled={current === f.id} onClick={() => moveToFolder(p.id, f.id)}>{f.name}</ContextMenuItem>
+              ))}
+            </ContextMenuSubContent>
+          </ContextMenuSub>
+          <ContextMenuSeparator />
+          <ContextMenuItem className="text-destructive focus:text-destructive" onClick={() => handleDelete(p.id)}>
+            <Trash2 size={12} />
+            <span>{t('actions.delete')}</span>
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
+    );
+  };
+
   const toggleFolderExpand = (folderId: string) => {
     setExpandedFolders(prev => ({ ...prev, [folderId]: !prev[folderId] }));
   };
@@ -2195,16 +2311,19 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
             </div>
 
             <ScrollArea className="min-h-0 flex-1">
-            <div className="p-2">
+            <div className="min-h-full p-2" {...dropProps('')}>
               {folders.map(folder => {
                 const isExpanded = expandedFolders[folder.id];
                 const folderProfiles = filteredProfiles.filter(p => profileFolderMap[p.id] === folder.id);
 
                 return (
                   <div key={folder.id}>
+                    <ContextMenu>
+                    <ContextMenuTrigger asChild>
                     <div
                       className={treeRowClass()}
                       onClick={() => toggleFolderExpand(folder.id)}
+                      {...dropProps(folder.id)}
                     >
                       <ChevronRight
                         size={12}
@@ -2218,18 +2337,30 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                       <span className="min-w-0 truncate">{folder.name}</span>
                       <span className="shrink-0 text-ui-2xs tabular-nums text-muted-foreground">({folderProfiles.length})</span>
                     </div>
+                    </ContextMenuTrigger>
+                    <ContextMenuContent className={NESTED_SELECT_Z}>
+                      <ContextMenuItem onClick={() => handleRenameFolder(folder)}>
+                        <Pencil size={12} />
+                        <span>{t('folder.rename')}</span>
+                      </ContextMenuItem>
+                      <ContextMenuItem className="text-destructive focus:text-destructive" onClick={() => handleDeleteFolder(folder)}>
+                        <Trash2 size={12} />
+                        <span>{t('folder.delete')}</span>
+                      </ContextMenuItem>
+                    </ContextMenuContent>
+                    </ContextMenu>
 
                     {isExpanded && (
                       <div className="ml-3 border-l border-sidebar-border pl-1.5">
                         {folderProfiles.map(p => {
                           const isSel = p.id === selectedId;
                           const isActive = activeConnections.some(c => c.profileId === p.id);
-                          return (
+                          return profileMenu(p,
                             <div
-                              key={p.id}
                               className={treeRowClass(isSel)}
                               onClick={() => handleSelect(p.id)}
                               onDoubleClick={handleConnectClick}
+                              {...dragProps(p.id)}
                             >
                               <ConnectionColorDot color={p.color_tag} />
                               <Server size={12} className={cn('shrink-0', isSel ? 'text-primary' : 'text-muted-foreground')} />
@@ -2255,12 +2386,12 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
               {filteredProfiles.filter(p => !profileFolderMap[p.id]).map(p => {
                 const isSel = p.id === selectedId;
                 const isActive = activeConnections.some(c => c.profileId === p.id);
-                return (
+                return profileMenu(p,
                   <div
-                    key={p.id}
                     className={cn(treeRowClass(isSel), 'my-0.5')}
                     onClick={() => handleSelect(p.id)}
                     onDoubleClick={handleConnectClick}
+                    {...dragProps(p.id)}
                   >
                     <ConnectionColorDot color={p.color_tag} />
                     <Server size={12} className={cn('shrink-0', isSel ? 'text-primary' : 'text-muted-foreground')} />
@@ -2304,13 +2435,13 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                   </tr>
                 </thead>
                 <tbody>
-                  {tableRows.map(({ profile: p, server, security, at }) => (
+                  {tableRows.map(({ profile: p, server, security, at }) => profileMenu(p,
                     <tr
-                      key={p.id}
                       className={cn('cursor-default border-b border-border/60 hover:bg-muted/40', p.id === selectedId && 'bg-primary/10')}
                       aria-selected={p.id === selectedId}
                       onClick={() => handleSelect(p.id)}
                       onDoubleClick={handleConnectClick}
+                      {...dragProps(p.id)}
                     >
                       <td className="py-1.5 pr-2">
                         <span className="flex min-w-0 items-center gap-1.5">

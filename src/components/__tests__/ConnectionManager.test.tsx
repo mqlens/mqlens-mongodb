@@ -4014,3 +4014,75 @@ describe('the connection table', () => {
     expect(await screen.findByTestId('connection-table')).toBeInTheDocument();
   });
 });
+
+describe('connection and folder context menus', () => {
+  const profiles = [
+    { id: 'p-1', name: 'Orders', uri: 'mongodb://ann:pw@orders.db:27017/?authMechanism=SCRAM-SHA-256' },
+    { id: 'p-2', name: 'Logs', uri: 'mongodb://logs.db:27017' },
+  ];
+  const folders = [
+    { id: 'f-prod', name: 'Production', parentId: null },
+    { id: 'f-old', name: 'Old', parentId: null },
+  ];
+  const storedMap = () => JSON.parse(localStorage.getItem('mqlens_profile_folders') ?? '{}');
+  const storedFolders = () => JSON.parse(localStorage.getItem('mqlens_folders') ?? '[]');
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    localStorage.setItem('mqlens_folders', JSON.stringify(folders));
+    localStorage.setItem('mqlens_profile_folders', JSON.stringify({ 'p-2': 'f-old' }));
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve(profiles);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+  });
+
+  const mount = () => render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+  const row = async (name: string) => (await screen.findAllByText(name))[0];
+
+  it('copies a connection URI without its password', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    mount();
+    fireEvent.contextMenu(await row('Orders'));
+    fireEvent.click(await screen.findByRole('menuitem', { name: /copy uri/i }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('mongodb://ann@orders.db:27017/?authMechanism=SCRAM-SHA-256'));
+  });
+
+  it('moves a connection to a folder from its menu', async () => {
+    mount();
+    fireEvent.contextMenu(await row('Orders'));
+    fireEvent.click(await screen.findByRole('menuitem', { name: /move to folder/i }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Production' }));
+    await waitFor(() => expect(storedMap()).toEqual({ 'p-1': 'f-prod', 'p-2': 'f-old' }));
+  });
+
+  it('moves a connection to a folder by dragging it there', async () => {
+    mount();
+    const source = (await row('Orders')).closest('[draggable="true"]')!;
+    fireEvent.dragStart(source);
+    fireEvent.drop(screen.getByText('Production').closest('[data-folder-id]')!);
+    await waitFor(() => expect(storedMap()['p-1']).toBe('f-prod'));
+  });
+
+  it('renames a folder', async () => {
+    mount();
+    fireEvent.contextMenu(await row('Production'));
+    fireEvent.click(await screen.findByRole('menuitem', { name: /rename folder/i }));
+    const input = await screen.findByTestId('dialog-input');
+    fireEvent.change(input, { target: { value: 'Prod EU' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(storedFolders().find((f: any) => f.id === 'f-prod').name).toBe('Prod EU'));
+  });
+
+  it('deletes a folder and keeps its connections at the root', async () => {
+    mount();
+    fireEvent.contextMenu(await row('Old'));
+    fireEvent.click(await screen.findByRole('menuitem', { name: /delete folder/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^delete$/i }));
+    await waitFor(() => expect(storedFolders().map((f: any) => f.id)).toEqual(['f-prod']));
+    expect(storedMap()).toEqual({});
+    expect(await row('Logs')).toBeInTheDocument();
+  });
+});

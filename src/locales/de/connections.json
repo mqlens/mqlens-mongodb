@@ -4,6 +4,7 @@
     "browse": "Durchsuchen…",
     "connect": "Verbinden",
     "connecting": "Verbinde...",
+    "copyUri": "URI kopieren (ohne Geheimnisse)",
     "create": "Erstellen",
     "delete": "Löschen",
     "duplicate": "Duplizieren",
@@ -15,6 +16,7 @@
     "import": "Importieren",
     "importAll": "Alle importieren",
     "importUri": "URI importieren",
+    "moveToFolder": "In Ordner verschieben",
     "new": "Neu...",
     "newFolder": "Neuer Ordner",
     "showPassword": "Passwort anzeigen",
@@ -191,7 +193,12 @@
   },
   "folder": {
     "closeDialogAria": "Ordnerdialog schließen",
+    "delete": "Ordner löschen",
+    "deleteMessage": "Ordner „{{name}}“ löschen? Seine Verbindungen bleiben erhalten und werden in die oberste Ebene verschoben.",
+    "deleteTitle": "Ordner löschen",
     "nameLabel": "Ordnername",
+    "rename": "Ordner umbenennen",
+    "renameTitle": "Ordner umbenennen",
     "root": "(kein Ordner)"
   },
   "form": {
