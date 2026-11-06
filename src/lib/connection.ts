@@ -84,6 +84,40 @@ export const stripUriSecrets = (uri: string): string => {
   return kept.length ? `${out.slice(0, qIdx)}?${kept.join('&')}` : out.slice(0, qIdx);
 };
 
+// Userinfo of a mongodb URI: user, then an optional `:password`, before `@`.
+const USERINFO = /^(mongodb(?:\+srv)?:\/\/)([^:/@?#]+)(:[^@/?#]*)?@/i;
+// Mechanisms that authenticate without a password (certificate, ticket, browser).
+const PASSWORDLESS_MECHANISM = /[?&]authMechanism=(MONGODB-X509|GSSAPI|MONGODB-OIDC)(&|$)/i;
+
+/**
+ * Whether connecting `uri` needs a password the profile does not hold: a
+ * user with no `:password` at all, under a mechanism that sends one. A saved
+ * `user:@` is an explicit empty password and is left alone.
+ */
+export const needsPasswordPrompt = (uri: string): boolean => {
+  const m = uri.match(USERINFO);
+  return !!m && m[3] === undefined && !PASSWORDLESS_MECHANISM.test(uri);
+};
+
+/** `uri` with `password` (percent-encoded) added to its userinfo. */
+export const withPassword = (uri: string, password: string): string =>
+  uri.replace(USERINFO, (_m, scheme, user) => `${scheme}${user}:${encodeURIComponent(password)}@`);
+
+/**
+ * The URI to connect a saved profile with: its own, or — when it was saved
+ * without its password — with the one the user types now, which is never
+ * stored. `null` when the user cancels.
+ */
+export const uriWithAskedPassword = async (
+  uri: string,
+  ask: (opts: { title: string; message: string; password: boolean; confirmLabel: string }) => Promise<string | null>,
+  text: { title: string; message: string; confirmLabel: string },
+): Promise<string | null> => {
+  if (!needsPasswordPrompt(uri)) return uri;
+  const password = await ask({ ...text, password: true });
+  return password === null ? null : withPassword(uri, password);
+};
+
 /**
  * Build the URI string an Export action writes to the clipboard or a file.
  * Excluding settings drops the whole query string (hosts and the default db

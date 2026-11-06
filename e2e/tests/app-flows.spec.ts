@@ -294,3 +294,41 @@ test.describe('App-wide actions', () => {
     await expect(strip(page).getByText('customers', { exact: true })).toHaveCount(0);
   });
 });
+
+test.describe('Saved without its password', () => {
+  const NO_PASSWORD = { id: 'p-ask', name: 'Ask', uri: 'mongodb://alice@staging.example:27017/?authMechanism=SCRAM-SHA-256' };
+  const WITH_PASSWORD = 'mongodb://alice:s3cret@staging.example:27017/?authMechanism=SCRAM-SHA-256';
+
+  test('quick connect asks for the password and connects with it', async ({ app, page }) => {
+    await app.open({ profiles: [NO_PASSWORD], servers: { [STAGING_URI]: SAMPLE_SERVER } });
+    await page.getByRole('button', { name: 'Connect to Ask', exact: true }).click();
+    const input = page.getByTestId('dialog-input');
+    await expect(input).toHaveAttribute('type', 'password');
+    const connected = await callFrom(app, 'connect_db', async () => {
+      await input.fill('s3cret');
+      await input.press('Enter');
+    });
+    expect(connected).toMatchObject({ uri: WITH_PASSWORD });
+  });
+
+  test('reconnect asks too, and cancelling leaves the banner', async ({ app, page }) => {
+    await app.open({
+      profiles: [NO_PASSWORD],
+      servers: { [STAGING_URI]: SAMPLE_SERVER },
+      workspace: savedWorkspace([collectionTab('p-ask', 'Ask', 'sales_db', 'customers')]),
+    });
+    const banner = page.getByTestId('reconnect-banner');
+    await banner.getByRole('button', { name: 'Reconnect Ask' }).click();
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(banner).toBeVisible();
+    expect(await app.calls('connect_db')).toHaveLength(0);
+
+    await banner.getByRole('button', { name: 'Reconnect Ask' }).click();
+    const connected = await callFrom(app, 'connect_db', async () => {
+      await page.getByTestId('dialog-input').fill('s3cret');
+      await page.getByTestId('dialog-input').press('Enter');
+    });
+    expect(connected).toMatchObject({ uri: WITH_PASSWORD });
+    await expect(banner).toHaveCount(0);
+  });
+});

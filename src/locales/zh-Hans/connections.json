@@ -353,5 +353,9 @@
     "tenant": "租户",
     "title": "MQLens Server",
     "url": "服务器 URL"
+  },
+  "passwordPrompt": {
+    "message": "此连接保存时未包含密码。密码仅用于本次连接，不会被保存。",
+    "title": "{{name}} 的密码"
   }
 }

@@ -3860,3 +3860,49 @@ describe('Discover cannot be steered by what a server reports', () => {
     expect(screen.getByRole('button', { name: /discover/i })).toBeDisabled();
   });
 });
+
+describe('a saved connection without its password', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  const profile = { id: 'p-nopw', name: 'Ask me', uri: 'mongodb://alice@db.example:27017/?authMechanism=SCRAM-SHA-256' };
+  const mount = (onConnect = vi.fn()) => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([profile]);
+      if (cmd === 'connect_db') return Promise.resolve('conn-1');
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={onConnect} />);
+    return onConnect;
+  };
+
+  it('asks for the password at connect and does not keep it', async () => {
+    const onConnect = mount();
+    fireEvent.click((await screen.findAllByText('Ask me'))[0]);
+    fireEvent.click(screen.getByRole('button', { name: /^connect$/i }));
+
+    const input = await screen.findByTestId('dialog-input');
+    expect(input).toHaveAttribute('type', 'password');
+    fireEvent.change(input, { target: { value: 'p@ss' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    await waitFor(() => expect(onConnect).toHaveBeenCalled());
+    expect(mockInvoke).toHaveBeenCalledWith('connect_db', expect.objectContaining({ uri: 'mongodb://alice:p%40ss@db.example:27017/?authMechanism=SCRAM-SHA-256' }));
+    // The session is recorded under the saved URI, not one carrying the password.
+    expect(onConnect.mock.calls[0][2]).toBe(profile.uri);
+  });
+
+  it('does not connect when the password prompt is cancelled', async () => {
+    const onConnect = mount();
+    fireEvent.click((await screen.findAllByText('Ask me'))[0]);
+    fireEvent.click(screen.getByRole('button', { name: /^connect$/i }));
+    await screen.findByTestId('dialog-input');
+    fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+
+    await waitFor(() => expect(screen.queryByTestId('dialog-input')).toBeNull());
+    expect(mockInvoke).not.toHaveBeenCalledWith('connect_db', expect.anything());
+    expect(onConnect).not.toHaveBeenCalled();
+  });
+});

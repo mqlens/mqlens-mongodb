@@ -36,6 +36,8 @@ export interface PromptRequest {
   destructive?: boolean;
   /** Render a multi-line textarea instead of a single-line input. */
   multiline?: boolean;
+  /** Mask the input, for a password. */
+  password?: boolean;
 }
 
 export interface ChooseRequest {
@@ -140,6 +142,7 @@ export const DialogModal: React.FC<DialogModalProps> = ({ request, onResolve }) 
               ) : (
                 <Input
                   ref={inputRef as React.RefObject<HTMLInputElement>}
+                  type={request.password ? 'password' : 'text'}
                   className="dialog-input"
                   data-testid="dialog-input"
                   value={value}

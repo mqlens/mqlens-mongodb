@@ -130,7 +130,7 @@ import { clearNamespaceIndex, loadNamespaceIndex, matchesNamespaceScope } from '
 import { CHECK_UPDATE_EVENT } from './components/UpdatePrompt';
 import { confirmByTypedName } from './lib/typedNameConfirm';
 import { detectAggregateWriteStage } from './lib/aggregateWriteStage';
-import type { ConnectionProfile } from './lib/connection';
+import { uriWithAskedPassword, type ConnectionProfile } from './lib/connection';
 import { save, open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
@@ -1173,6 +1173,15 @@ function Workspace() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // A profile saved without its password asks for it here, every time; the
+  // answer goes to this one connect and is never stored.
+  const askMissingPassword = (profile: ConnectionProfile) =>
+    uriWithAskedPassword(profile.uri, prompt, {
+      title: t('connections:passwordPrompt.title', { name: profile.name }),
+      message: t('connections:passwordPrompt.message'),
+      confirmLabel: t('connections:actions.connect'),
+    });
+
   const handleQuickConnect = async (profile: ConnectionProfile): Promise<string | null> => {
     const existing = activeConnections.find(
       (c) =>
@@ -1184,8 +1193,10 @@ function Workspace() {
         (c.name === profile.name && !isEphemeralProfileId(c.profileId)),
     );
     if (existing) return existing.id;
+    const uri = await askMissingPassword(profile);
+    if (uri === null) return null;
     try {
-      const id = await invoke<string>('connect_db', { uri: profile.uri, ssh: profile.ssh ?? null, oidc: profile.oidc ?? null, profileId: profile.id });
+      const id = await invoke<string>('connect_db', { uri, ssh: profile.ssh ?? null, oidc: profile.oidc ?? null, profileId: profile.id });
       addActiveConnection(id, profile.name, profile.uri, profile.id, profile.color_tag ?? undefined, undefined, profile.connection_mode ?? 'normal');
       // Announce this fresh id to every other window (Phase 3 Task 6) — see
       // `setConnectionMeta`'s doc comment for why every connect path calls it.
@@ -4010,7 +4021,12 @@ function Workspace() {
           return;
         }
 
-        newId = await invoke<string>('connect_db', { uri: profile.uri, ssh: profile.ssh ?? null, oidc: profile.oidc ?? null, profileId: profile.id });
+        const uri = await askMissingPassword(profile);
+        if (uri === null) {
+          patchReconnectState(profileId, { busy: false });
+          return;
+        }
+        newId = await invoke<string>('connect_db', { uri, ssh: profile.ssh ?? null, oidc: profile.oidc ?? null, profileId: profile.id });
         addActiveConnection(newId, profileName, profile.uri, profile.id, profile.color_tag ?? undefined, undefined, profile.connection_mode ?? 'normal');
         // Announce this fresh id to every other window (Phase 3 Task 6) —
         // see `setConnectionMeta`'s doc comment. Deliberately NOT called on

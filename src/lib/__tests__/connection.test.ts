@@ -9,6 +9,8 @@ import {
   resolveImportUri,
   stripUriSecrets,
   validateMongoUri,
+  needsPasswordPrompt,
+  withPassword,
 } from '../connection';
 
 describe('stripUriSecrets', () => {
@@ -379,5 +381,31 @@ describe('buildExportAllUris', () => {
       ],
       connections: [],
     });
+  });
+});
+
+describe('asking for a password that was not saved', () => {
+  it('asks when a password mechanism has a user and no password', () => {
+    expect(needsPasswordPrompt('mongodb://alice@db:27017/')).toBe(true);
+    expect(needsPasswordPrompt('mongodb://alice@db:27017/?authMechanism=SCRAM-SHA-1')).toBe(true);
+    expect(needsPasswordPrompt('mongodb://alice@db:27017/?authMechanism=PLAIN&authSource=$external')).toBe(true);
+    expect(needsPasswordPrompt('mongodb+srv://AKIA@cluster.example.net/?authMechanism=MONGODB-AWS')).toBe(true);
+  });
+
+  it('does not ask when there is a password, no user, or a passwordless mechanism', () => {
+    expect(needsPasswordPrompt('mongodb://alice:pw@db:27017/')).toBe(false);
+    expect(needsPasswordPrompt('mongodb://alice:@db:27017/')).toBe(false);
+    expect(needsPasswordPrompt('mongodb://db:27017/')).toBe(false);
+    expect(needsPasswordPrompt('mongodb://CN=me@db:27017/?authMechanism=MONGODB-X509')).toBe(false);
+    expect(needsPasswordPrompt('mongodb://svc%40REALM@db:27017/?authMechanism=GSSAPI')).toBe(false);
+    expect(needsPasswordPrompt('mongodb://me@db:27017/?authMechanism=MONGODB-OIDC')).toBe(false);
+    expect(needsPasswordPrompt('mongodb://db:27017/?note=a@b')).toBe(false);
+  });
+
+  it('puts the typed password into the userinfo, encoded', () => {
+    expect(withPassword('mongodb://alice@db:27017/shop?tls=true', 'p@ss:/w')).toBe(
+      'mongodb://alice:p%40ss%3A%2Fw@db:27017/shop?tls=true',
+    );
+    expect(withPassword('mongodb+srv://alice@cluster.example.net', 'x')).toBe('mongodb+srv://alice:x@cluster.example.net');
   });
 });

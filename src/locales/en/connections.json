@@ -355,5 +355,9 @@
     "modeOff": "Off (Insecure Plaintext)",
     "modeSystem": "System Root CA Certificates",
     "validationWarning": "Disabling certificate validation exposes the connection to man-in-the-middle attacks. Enable only for trusted/self-signed test servers."
+  },
+  "passwordPrompt": {
+    "message": "This connection was saved without its password. It is used for this connection only and is not saved.",
+    "title": "Password for {{name}}"
   }
 }

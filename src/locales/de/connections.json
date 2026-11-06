@@ -355,5 +355,9 @@
     "tenant": "Mandant",
     "title": "MQLens Server",
     "url": "Server-URL"
+  },
+  "passwordPrompt": {
+    "message": "Diese Verbindung wurde ohne Passwort gespeichert. Es gilt nur für diese Verbindung und wird nicht gespeichert.",
+    "title": "Passwort für {{name}}"
   }
 }

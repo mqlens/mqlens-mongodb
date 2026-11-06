@@ -8,6 +8,7 @@ import {
   buildExportUri,
   parseConnectionImportFile,
   resolveImportUri,
+  uriWithAskedPassword,
   type ImportedConnection,
   type ImportParseErrorCode,
 } from '@/lib/connection';
@@ -1531,6 +1532,13 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       return;
     }
 
+    const uri = await uriWithAskedPassword(profile.uri, prompt, {
+      title: t('passwordPrompt.title', { name: profile.name }),
+      message: t('passwordPrompt.message'),
+      confirmLabel: t('actions.connect'),
+    });
+    if (uri === null) return;
+
     // See `handleEditorConnect`'s `loginId` comment: minted only for OIDC,
     // since `connect_db` streams no phases Cancel/Reopen could otherwise key on.
     const loginId = isOidcUri(profile.uri) ? generateUUID() : null;
@@ -1538,7 +1546,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     setError(null);
     setConnectLoginId(loginId);
     try {
-      const connId = await invoke<string>('connect_db', { uri: profile.uri, ssh: profile.ssh ?? null, oidc: profile.oidc ?? null, loginId, profileId: profile.id });
+      const connId = await invoke<string>('connect_db', { uri, ssh: profile.ssh ?? null, oidc: profile.oidc ?? null, loginId, profileId: profile.id });
       onConnect(connId, profile.name, profile.uri, profile.id, profile.color_tag ?? undefined, profile.connection_mode ?? 'normal');
     } catch (err: any) {
       setError(describeConnectError(err, t));
