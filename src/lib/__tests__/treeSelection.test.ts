@@ -66,8 +66,8 @@ describe('tree selection', () => {
   });
 
   it('a plain click clears the selection but becomes the range anchor', () => {
-    let s = toggleItem(emptySelection(), 'c1', db('a'));
-    s = clearToAnchor('c1', db('b'));
+    // clearToAnchor drops whatever was selected before; it takes no selection in.
+    let s = clearToAnchor('c1', db('b'));
     expect(s.keys.size).toBe(0);
     s = selectRange(s, 'c1', [db('a'), db('b'), db('c')], db('c'));
     expect([...s.keys]).toEqual([db('b'), db('c')]);

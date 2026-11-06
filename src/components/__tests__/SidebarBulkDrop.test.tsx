@@ -3,8 +3,15 @@ import type { ComponentProps } from 'react';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { Sidebar } from '../Sidebar';
 import { DialogProvider } from '../dialogs/DialogProvider';
+import { planBulkDrop } from '@/lib/bulkDrop';
 
 vi.mock('../theme/ThemePicker', () => ({ ThemePicker: () => null }));
+
+// The real planner, counted: how often the tree works out a plan per render.
+vi.mock('@/lib/bulkDrop', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bulkDrop')>();
+  return { ...actual, planBulkDrop: vi.fn(actual.planBulkDrop) };
+});
 
 const mockInvoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({
@@ -287,6 +294,20 @@ describe('Sidebar: bulk delete of databases and collections (#543)', () => {
 
     const dialog = await openBulkDialog(screen.getByText('notes'), 2);
     expect(within(dialog).queryByText('leads')).toBeNull();
+  });
+
+  it('works out the plan once per selection change, not once per selected row', async () => {
+    renderSidebar();
+    await expandCollections('crm');
+    await expandCollections('logs');
+    for (const name of ['leads', 'notes', 'events']) {
+      fireEvent.click(screen.getByText(name), { ctrlKey: true });
+    }
+    fireEvent.click(await dbRow('shop'), { ctrlKey: true });
+    vi.mocked(planBulkDrop).mockClear();
+    fireEvent.click(await dbRow('admin'), { ctrlKey: true });
+    // Five rows are selected now; re-planning per row would be five or more.
+    expect(vi.mocked(planBulkDrop).mock.calls.length).toBeLessThanOrEqual(1);
   });
 
   it('a plain click clears the selection', async () => {

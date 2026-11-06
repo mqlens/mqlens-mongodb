@@ -1487,19 +1487,29 @@ export const Sidebar: React.FC<SidebarProps> = ({
     'data-selected': isRowSelected(connId, key),
   });
 
-  const bulkSelectionFor = (connId: string, key: string) => {
-    if (!isRowSelected(connId, key)) return null;
+  // Worked out once per selection change: every selected row's menu reads it,
+  // so planning per row would cost rows × selection on each render.
+  const bulkSelection = React.useMemo(() => {
+    const connId = selection.connectionId;
+    if (!connId || selection.keys.size < 2) return null;
+    const dbs = new Set(databases[connId] ?? []);
+    const names = new Map<string, Set<string>>();
+    const collsIn = (db: string) => {
+      if (!names.has(db)) names.set(db, new Set((collections[`${connId}/${db}`] ?? []).map((c) => c.name)));
+      return names.get(db)!;
+    };
     // Only what the tree still lists: a selected row may have been dropped since.
     const keys = [...selection.keys].filter((k) => {
       const { db, coll } = parseItemKey(k);
-      if (!(databases[connId] ?? []).includes(db)) return false;
-      return coll === undefined || (collections[`${connId}/${db}`] ?? []).some((c) => c.name === coll);
+      return dbs.has(db) && (coll === undefined || collsIn(db).has(coll));
     });
     const plan = planBulkDrop(keys);
     // Counted in drops, the number the dialog asks to be typed.
     const drops = planOperationCount(plan);
     return drops >= 2 ? { plan, drops } : null;
-  };
+  }, [selection, databases, collections]);
+
+  const bulkSelectionFor = (connId: string, key: string) => (isRowSelected(connId, key) ? bulkSelection : null);
 
   const handleBulkDrop = (connectionId: string, plan: BulkDropPlan) => {
     // Same refusal, same place, as the single-item drops.

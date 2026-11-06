@@ -54,8 +54,9 @@ const StepStatus: React.FC<{ step: BulkDropStep }> = ({ step }) => {
 
 const StepRow: React.FC<{ step: BulkDropStep }> = ({ step }) => (
   <li className="flex flex-col py-0.5">
-    <div className="flex items-center justify-between gap-2">
-      <span className="min-w-0 truncate font-mono">{step.coll ?? step.db}</span>
+    <div className="flex items-start justify-between gap-2">
+      {/* Wrapped in full: two long names with one prefix must not look the same. */}
+      <span className="min-w-0 break-all font-mono">{step.coll ?? step.db}</span>
       <StepStatus step={step} />
     </div>
     {step.error && <span className="break-words text-destructive">{step.error}</span>}
@@ -113,10 +114,11 @@ export const BulkDropDialog: React.FC<BulkDropDialogProps> = ({ connectionName, 
             </DialogDescription>
           </DialogHeader>
 
-          <div className="max-h-72 space-y-3 overflow-y-auto rounded-md border p-2 text-xs">
+          {/* Everything that grows with the selection scrolls here, so the field and buttons stay on screen. */}
+          <div className="max-h-72 space-y-3 overflow-y-auto rounded-md border p-2 text-xs" data-testid="bulk-drop-list">
             {dbSteps.length > 0 && (
               <section>
-                <h4 className="font-semibold">{t('dialogs.bulkDrop.databases', { n: dbSteps.length })}</h4>
+                <h4 className="break-all font-semibold">{t('dialogs.bulkDrop.databases', { n: dbSteps.length })}</h4>
                 <ul className="pl-2">
                   {dbSteps.map((s) => (
                     <StepRow key={s.db} step={s} />
@@ -126,7 +128,7 @@ export const BulkDropDialog: React.FC<BulkDropDialogProps> = ({ connectionName, 
             )}
             {collGroups.map((g) => (
               <section key={g.db}>
-                <h4 className="font-semibold">
+                <h4 className="break-all font-semibold">
                   {t('dialogs.bulkDrop.collectionsIn', { db: g.db, n: g.steps.length })}
                 </h4>
                 <ul className="pl-2">
@@ -136,20 +138,19 @@ export const BulkDropDialog: React.FC<BulkDropDialogProps> = ({ connectionName, 
                 </ul>
               </section>
             ))}
+            {plan.covered.length > 0 && (
+              <p className="break-all text-muted-foreground" data-testid="bulk-drop-covered">
+                {t('dialogs.bulkDrop.covered', {
+                  names: plan.covered.flatMap((g) => g.names.map((n) => `${g.db}.${n}`)).join(', '),
+                })}
+              </p>
+            )}
+            {plan.excluded.length > 0 && (
+              <p className="break-all text-muted-foreground" data-testid="bulk-drop-excluded">
+                {t('dialogs.bulkDrop.excluded', { names: plan.excluded.join(', ') })}
+              </p>
+            )}
           </div>
-
-          {plan.covered.length > 0 && (
-            <p className="text-xs text-muted-foreground" data-testid="bulk-drop-covered">
-              {t('dialogs.bulkDrop.covered', {
-                names: plan.covered.flatMap((g) => g.names.map((n) => `${g.db}.${n}`)).join(', '),
-              })}
-            </p>
-          )}
-          {plan.excluded.length > 0 && (
-            <p className="text-xs text-muted-foreground" data-testid="bulk-drop-excluded">
-              {t('dialogs.bulkDrop.excluded', { names: plan.excluded.join(', ') })}
-            </p>
-          )}
 
           {phase === 'confirm' ? (
             <label className="flex flex-col gap-1 text-xs">
