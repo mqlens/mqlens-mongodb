@@ -7,7 +7,19 @@ import { MONITORING_READS } from '@/lib/serverMode';
 import { isNamespaceBusy, type PendingSave } from '../lib/namespaceBusy';
 import { confirmByTypedName } from '../lib/typedNameConfirm';
 import { fuzzyMatch } from '../lib/fuzzyMatch';
-import { type CollectionSelection, emptySelection, toggleCollection, selectionScope } from '@/lib/collectionSelection';
+import {
+  type TreeSelection,
+  emptySelection,
+  itemKey,
+  parseItemKey,
+  toggleItem,
+  selectRange,
+  clearToAnchor,
+  selectedCollectionsIn,
+  isMultiSelectToggle,
+} from '@/lib/treeSelection';
+import { type BulkDropPlan, type BulkDropStep, planBulkDrop, planOperationCount, runBulkDrop } from '@/lib/bulkDrop';
+import { BulkDropDialog } from './BulkDropDialog';
 import {
   type FolderNode,
   FOLDERS_CHANGED_EVENT,
@@ -536,7 +548,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [expandedCollections, setExpandedCollections] = useState<{ [connectionDbCollKey: string]: boolean }>({});
   const [expandedIndexesFolders, setExpandedIndexesFolders] = useState<{ [connectionDbCollKey: string]: boolean }>({});
 
-  const [selection, setSelection] = useState<CollectionSelection>(emptySelection());
+  const [selection, setSelection] = useState<TreeSelection>(emptySelection());
+  const [bulkDrop, setBulkDrop] = useState<{ connectionId: string; plan: BulkDropPlan } | null>(null);
 
   const [pinnedItems, setPinnedItems] = useState<PinnedItem[]>(() => loadPinnedCollections());
   const [favoriteItems, setFavoriteItems] = useState<FavoriteItem[]>(() => loadFavoriteItems());
@@ -1107,38 +1120,34 @@ export const Sidebar: React.FC<SidebarProps> = ({
     ) {
       return;
     }
-    const isMock = connectionId.startsWith('mock') || conn?.uri.startsWith('mongodb://mock');
 
-    const clearActiveIfDropped = () => {
-      if (
-        activeCollection?.connectionId === connectionId &&
-        activeCollection?.db === dbName &&
-        activeCollection?.collection === collName
-      ) {
-        onSelectCollection('', '', '');
-      }
-    };
+    try {
+      await dropCollectionNow(connectionId, dbName, collName, confirmed);
+      if (!isMockConnection(connectionId)) await handleRefreshDb(connectionId, dbName);
+      onNamespaceMutated?.(connectionId);
+      toast(t('toasts.dropCollectionSuccess', { name: collName }), 'success');
+    } catch (err) {
+      toast(t('toasts.dropCollectionFailed', { error: `${err}` }), 'error');
+    }
+  };
 
-    if (isMock) {
+  /** The drop itself, once every check and confirmation has passed. Throws on failure. */
+  const dropCollectionNow = async (connectionId: string, dbName: string, collName: string, confirmed: boolean) => {
+    if (isMockConnection(connectionId)) {
       const key = `${connectionId}/${dbName}`;
       setCollections((prev) => ({
         ...prev,
         [key]: (prev[key] || []).filter((c) => c.name !== collName),
       }));
-      clearActiveIfDropped();
-      onNamespaceMutated?.(connectionId);
-      toast(t('toasts.dropCollectionSuccess', { name: collName }), 'success');
-      return;
-    }
-
-    try {
+    } else {
       await invoke('drop_collection', { id: connectionId, database: dbName, collection: collName, confirmed });
-      clearActiveIfDropped();
-      await handleRefreshDb(connectionId, dbName);
-      onNamespaceMutated?.(connectionId);
-      toast(t('toasts.dropCollectionSuccess', { name: collName }), 'success');
-    } catch (err) {
-      toast(t('toasts.dropCollectionFailed', { error: `${err}` }), 'error');
+    }
+    if (
+      activeCollection?.connectionId === connectionId &&
+      activeCollection?.db === dbName &&
+      activeCollection?.collection === collName
+    ) {
+      onSelectCollection('', '', '');
     }
   };
 
@@ -1261,70 +1270,66 @@ export const Sidebar: React.FC<SidebarProps> = ({
     ) {
       return;
     }
-    const isMock = connectionId.startsWith('mock') || conn?.uri.startsWith('mongodb://mock');
-
-    const clearLocalDatabase = () => {
-      const dbKey = `${connectionId}/${dbName}`;
-      setDatabases((prev) => ({
-        ...prev,
-        [connectionId]: (prev[connectionId] || []).filter((db) => db !== dbName),
-      }));
-      setCollections((prev) => {
-        const next = { ...prev };
-        delete next[dbKey];
-        return next;
-      });
-      setIndexes((prev) => {
-        const next = { ...prev };
-        Object.keys(next).forEach((key) => {
-          if (key.startsWith(`${connectionId}/${dbName}/`)) delete next[key];
-        });
-        return next;
-      });
-      setExpandedDbs((prev) => {
-        const next = { ...prev };
-        delete next[dbKey];
-        return next;
-      });
-      setExpandedCollectionsFolders((prev) => {
-        const next = { ...prev };
-        Object.keys(next).forEach((key) => {
-          if (key.startsWith(`${connectionId}/${dbName}/`)) delete next[key];
-        });
-        return next;
-      });
-      setExpandedCollections((prev) => {
-        const next = { ...prev };
-        Object.keys(next).forEach((key) => {
-          if (key.startsWith(`${connectionId}/${dbName}/`)) delete next[key];
-        });
-        return next;
-      });
-      setExpandedIndexesFolders((prev) => {
-        const next = { ...prev };
-        Object.keys(next).forEach((key) => {
-          if (key.startsWith(`${connectionId}/${dbName}/`)) delete next[key];
-        });
-        return next;
-      });
-      onDatabaseDropped?.(connectionId, dbName);
-      onNamespaceMutated?.(connectionId);
-    };
-
-    if (isMock) {
-      clearLocalDatabase();
-      toast(t('toasts.dropDatabaseSuccess', { name: dbName }), 'success');
-      return;
-    }
 
     try {
-      await invoke('drop_database', { id: connectionId, database: dbName, confirmed });
-      clearLocalDatabase();
-      await loadDatabases(connectionId);
+      await dropDatabaseNow(connectionId, dbName, confirmed);
+      if (!isMockConnection(connectionId)) await loadDatabases(connectionId);
       toast(t('toasts.dropDatabaseSuccess', { name: dbName }), 'success');
     } catch (err) {
       toast(t('toasts.dropDatabaseFailed', { error: `${err}` }), 'error');
     }
+  };
+
+  /** The drop itself, once every check and confirmation has passed. Throws on failure. */
+  const dropDatabaseNow = async (connectionId: string, dbName: string, confirmed: boolean) => {
+    if (!isMockConnection(connectionId)) {
+      await invoke('drop_database', { id: connectionId, database: dbName, confirmed });
+    }
+    const dbKey = `${connectionId}/${dbName}`;
+    setDatabases((prev) => ({
+      ...prev,
+      [connectionId]: (prev[connectionId] || []).filter((db) => db !== dbName),
+    }));
+    setCollections((prev) => {
+      const next = { ...prev };
+      delete next[dbKey];
+      return next;
+    });
+    setIndexes((prev) => {
+      const next = { ...prev };
+      Object.keys(next).forEach((key) => {
+        if (key.startsWith(`${connectionId}/${dbName}/`)) delete next[key];
+      });
+      return next;
+    });
+    setExpandedDbs((prev) => {
+      const next = { ...prev };
+      delete next[dbKey];
+      return next;
+    });
+    setExpandedCollectionsFolders((prev) => {
+      const next = { ...prev };
+      Object.keys(next).forEach((key) => {
+        if (key.startsWith(`${connectionId}/${dbName}/`)) delete next[key];
+      });
+      return next;
+    });
+    setExpandedCollections((prev) => {
+      const next = { ...prev };
+      Object.keys(next).forEach((key) => {
+        if (key.startsWith(`${connectionId}/${dbName}/`)) delete next[key];
+      });
+      return next;
+    });
+    setExpandedIndexesFolders((prev) => {
+      const next = { ...prev };
+      Object.keys(next).forEach((key) => {
+        if (key.startsWith(`${connectionId}/${dbName}/`)) delete next[key];
+      });
+      return next;
+    });
+    onDatabaseDropped?.(connectionId, dbName);
+    onNamespaceMutated?.(connectionId);
   };
 
   const handleRenameDatabase = async (connectionId: string, dbName: string) => {
@@ -1449,11 +1454,126 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const selectedNamesFor = (connId: string, dbName: string, collName: string): string[] => {
-    const scope = selectionScope(connId, dbName);
-    if (selection.scope === scope && selection.names.has(collName)) {
-      return [...selection.names];
+    const names = selectedCollectionsIn(selection, connId, dbName);
+    return names.includes(collName) ? names : [collName];
+  };
+
+  const isRowSelected = (connId: string, key: string) =>
+    selection.connectionId === connId && selection.keys.has(key);
+
+  // Shift+click ranges over the rows as the tree shows them right now, so
+  // collapsed folders and filtered-out names are never swept in.
+  const visibleTreeKeys = (connId: string) =>
+    Array.from(document.querySelectorAll<HTMLElement>('[data-tree-key]'))
+      .filter((el) => el.dataset.treeConn === connId)
+      .map((el) => el.dataset.treeKey!);
+
+  /** A database or collection row's click: Shift ranges, Cmd/Ctrl toggles, anything else is `plainClick`. */
+  const handleRowClick = (e: React.MouseEvent, connId: string, key: string, plainClick: () => void) => {
+    if (e.shiftKey || isMultiSelectToggle(e)) {
+      e.preventDefault();
+      e.stopPropagation();
+      const visible = e.shiftKey ? visibleTreeKeys(connId) : [];
+      setSelection((s) => (e.shiftKey ? selectRange(s, connId, visible, key) : toggleItem(s, connId, key)));
+      return;
     }
-    return [collName];
+    setSelection(clearToAnchor(connId, key));
+    plainClick();
+  };
+
+  const selectableRowProps = (connId: string, key: string) => ({
+    'data-tree-conn': connId,
+    'data-tree-key': key,
+    'data-selected': isRowSelected(connId, key),
+  });
+
+  // Worked out once per selection change: every selected row's menu reads it,
+  // so planning per row would cost rows × selection on each render.
+  const bulkSelection = React.useMemo(() => {
+    const connId = selection.connectionId;
+    if (!connId || selection.keys.size < 2) return null;
+    const dbs = new Set(databases[connId] ?? []);
+    const names = new Map<string, Set<string>>();
+    const collsIn = (db: string) => {
+      if (!names.has(db)) names.set(db, new Set((collections[`${connId}/${db}`] ?? []).map((c) => c.name)));
+      return names.get(db)!;
+    };
+    // Only what the tree still lists: a selected row may have been dropped since.
+    const keys = [...selection.keys].filter((k) => {
+      const { db, coll } = parseItemKey(k);
+      return dbs.has(db) && (coll === undefined || collsIn(db).has(coll));
+    });
+    const plan = planBulkDrop(keys);
+    // Counted in drops, the number the dialog asks to be typed.
+    const drops = planOperationCount(plan);
+    return drops >= 2 ? { plan, drops } : null;
+  }, [selection, databases, collections]);
+
+  const bulkSelectionFor = (connId: string, key: string) => (isRowSelected(connId, key) ? bulkSelection : null);
+
+  const handleBulkDrop = (connectionId: string, plan: BulkDropPlan) => {
+    // Same refusal, same place, as the single-item drops.
+    if (activeConnections.find((c) => c.id === connectionId)?.mode === 'read_only') {
+      toast(t('toasts.readOnlyBlocked'), 'error');
+      return;
+    }
+    setBulkDrop({ connectionId, plan });
+  };
+
+  const runBulkDropFor = async (
+    connectionId: string,
+    plan: BulkDropPlan,
+    onUpdate: (steps: BulkDropStep[]) => void,
+  ) => {
+    // The dialog's typed count is the confirmation a confirm_destructive connection asks for.
+    const confirmed = activeConnections.find((c) => c.id === connectionId)?.mode === 'confirm_destructive';
+    const busy = (dbName: string, collName?: string) => {
+      if (isNamespaceBusy(pendingSaves ?? [], connectionId, dbName, collName)) {
+        throw new Error(t('toasts.namespaceBusyWithSave'));
+      }
+    };
+    const steps = await runBulkDrop(
+      plan,
+      {
+        dropDatabase: async (dbName) => {
+          busy(dbName);
+          await dropDatabaseNow(connectionId, dbName, confirmed);
+        },
+        dropCollection: async (dbName, collName) => {
+          busy(dbName, collName);
+          await dropCollectionNow(connectionId, dbName, collName, confirmed);
+        },
+      },
+      onUpdate,
+    );
+    if (!isMockConnection(connectionId)) {
+      if (plan.databases.length) await loadDatabases(connectionId);
+      for (const g of plan.collections) await handleRefreshDb(connectionId, g.db);
+    }
+    onNamespaceMutated?.(connectionId);
+    setSelection(emptySelection());
+    return steps;
+  };
+
+  /** "Delete selected" for a row's Manage submenu, when the row is part of a selection of 2+. */
+  const renderBulkDropItem = (connId: string, key: string) => {
+    const bulk = bulkSelectionFor(connId, key);
+    if (!bulk) return null;
+    const needed = [
+      ...(bulk.plan.databases.length ? ['drop_database'] : []),
+      ...(bulk.plan.collections.length ? ['drop_collection'] : []),
+    ];
+    const blocked = needed.find((cmd) => isCommandBlocked?.(connId, cmd));
+    return (
+      <ContextMenuItem
+        className={cn(ctxItemClass, 'text-destructive focus:text-destructive')}
+        onClick={() => handleBulkDrop(connId, bulk.plan)}
+        {...(blocked ? gate(connId, blocked) : {})}
+      >
+        <Trash2 />
+        <span>{t('ctx.deleteSelected', { n: bulk.drops })}</span>
+      </ContextMenuItem>
+    );
   };
 
   const renderCollectionNode = (connId: string, dbName: string, collName: string) => {
@@ -1466,34 +1586,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
       activeCollection?.db === dbName &&
       activeCollection?.collection === collName &&
       !activeCollection?.indexName;
-    const isSelected = selection.scope === selectionScope(connId, dbName) && selection.names.has(collName);
+    const selectKey = itemKey(dbName, collName);
+    const isSelected = isRowSelected(connId, selectKey);
 
     return (
       <div key={collName}>
         <ContextMenu>
           <ContextMenuTrigger asChild>
             <div
-              onClick={(e) => {
-                if (e.metaKey || e.ctrlKey) {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setSelection((s) => toggleCollection(s, connId, dbName, collName));
-                } else {
+              {...selectableRowProps(connId, selectKey)}
+              onClick={(e) =>
+                handleRowClick(e, connId, selectKey, () => {
                   onSelectCollection(connId, dbName, collName);
                   toggleCollectionNode(connId, dbName, collName);
-                }
-              }}
+                })
+              }
               onMouseDown={(e) => {
                 // detail === 1 is the first press of a potential double-click;
                 // capture BEFORE the click's open mutates the tab list. Skip
-                // cmd/ctrl (multi-select, not an open).
-                if (e.detail === 1 && !e.metaKey && !e.ctrlKey) {
+                // multi-select clicks: they never open.
+                if (e.detail === 1 && !e.shiftKey && !isMultiSelectToggle(e)) {
                   collectionWasOpenOnPressRef.current =
                     isCollectionOpen?.(connId, dbName, collName) ?? false;
                 }
               }}
               onDoubleClick={(e) => {
-                if (e.metaKey || e.ctrlKey) return; // cmd/ctrl is multi-select, not open
+                if (e.shiftKey || isMultiSelectToggle(e)) return; // multi-select, not open
                 e.preventDefault();
                 e.stopPropagation();
                 // Only open a NEW tab if the collection was ALREADY open before
@@ -1701,6 +1819,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       : t('ctx.dropCollection')}
                   </span>
                 </ContextMenuItem>
+                {renderBulkDropItem(connId, selectKey)}
               </ContextMenuSubContent>
             </ContextMenuSub>
           </ContextMenuContent>
@@ -2097,11 +2216,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         <ContextMenu>
                           <ContextMenuTrigger asChild>
                             <div
-                              className={treeRowClass()}
+                              className={cn(treeRowClass(), isRowSelected(conn.id, itemKey(dbName)) && 'bg-accent')}
                               role="button"
                               aria-expanded={isDbExpanded}
                               aria-label={t('tree.databaseAriaLabel', { name: dbName })}
-                              onClick={() => toggleDb(conn.id, dbName)}
+                              {...selectableRowProps(conn.id, itemKey(dbName))}
+                              onClick={(e) => handleRowClick(e, conn.id, itemKey(dbName), () => toggleDb(conn.id, dbName))}
                               {...statsHoverHandlers({ kind: 'database', connId: conn.id, db: dbName })}
                             >
                               <ChevronRight
@@ -2250,6 +2370,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                   <Trash2 />
                                   <span>{t('ctx.dropDatabase')}</span>
                                 </ContextMenuItem>
+                                {renderBulkDropItem(conn.id, itemKey(dbName))}
                               </ContextMenuSubContent>
                             </ContextMenuSub>
                           </ContextMenuContent>
@@ -2872,6 +2993,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
           )}
         </PopoverContent>
       </Popover>
+      {bulkDrop && (
+        <BulkDropDialog
+          connectionName={activeConnections.find((c) => c.id === bulkDrop.connectionId)?.name ?? ''}
+          plan={bulkDrop.plan}
+          run={(onUpdate) => runBulkDropFor(bulkDrop.connectionId, bulkDrop.plan, onUpdate)}
+          onClose={() => setBulkDrop(null)}
+        />
+      )}
     </aside>
     </EmptySpaceContextMenu>
   );

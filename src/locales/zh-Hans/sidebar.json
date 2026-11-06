@@ -27,6 +27,7 @@
     "createIndex": "创建索引",
     "createView": "创建 View",
     "deleteIndex": "删除索引",
+    "deleteSelected": "删除所选项（{{n}}）",
     "destructiveActions": "管理",
     "disconnect": "断开连接",
     "dropCollection": "删除 Collection",
@@ -45,8 +46,8 @@
     "notOnServer": "MQLens Server 暂不支持",
     "open": "打开",
     "openCollection": "打开 Collection",
-    "openInNewTab": "在新标签页中打开",
     "openIndexesView": "打开索引总览",
+    "openInNewTab": "在新标签页中打开",
     "openShell": "打开 mongosh 终端",
     "pasteHere": "粘贴到这里",
     "pinToSidebar": "固定到侧边栏",
@@ -65,6 +66,21 @@
     "watchDeployment": "监听整个部署的变更…"
   },
   "dialogs": {
+    "bulkDrop": {
+      "collectionsIn": "{{db}} 中的集合（{{n}}）",
+      "confirm_other": "删除 {{count}} 个对象",
+      "covered": "随其数据库一并删除，不单独删除：{{names}}",
+      "databases": "数据库（{{n}}）",
+      "dropped": "已删除",
+      "excluded": "系统命名空间不会被批量删除，将被跳过：{{names}}",
+      "failed": "失败",
+      "running": "正在删除…",
+      "summaryFailed": "{{n}} 个中有 {{failed}} 个失败，其余已删除。",
+      "summaryOk_other": "已全部删除（{{count}} 个）。",
+      "title_other": "删除 {{count}} 个对象",
+      "typeCount": "输入 {{n}} 以确认。",
+      "warning": "这将永久删除 {{connection}} 上的数据，且无法撤销。"
+    },
     "dropCollection": {
       "title": "删除 Collection"
     },

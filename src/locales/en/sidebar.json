@@ -27,6 +27,7 @@
     "createIndex": "Create Index",
     "createView": "Create View",
     "deleteIndex": "Delete Index",
+    "deleteSelected": "Delete selected ({{n}})",
     "destructiveActions": "Manage",
     "disconnect": "Disconnect",
     "dropCollection": "Drop Collection",
@@ -65,6 +66,24 @@
     "watchDeployment": "Watch deployment changes…"
   },
   "dialogs": {
+    "bulkDrop": {
+      "collectionsIn": "Collections in {{db}} ({{n}})",
+      "confirm_one": "Drop {{count}} object",
+      "confirm_other": "Drop {{count}} objects",
+      "covered": "Dropped with their database, not separately: {{names}}",
+      "databases": "Databases ({{n}})",
+      "dropped": "Dropped",
+      "excluded": "System namespaces are never bulk-deleted and will be skipped: {{names}}",
+      "failed": "Failed",
+      "running": "Dropping…",
+      "summaryFailed": "{{failed}} of {{n}} failed. The others were dropped.",
+      "summaryOk_one": "Dropped.",
+      "summaryOk_other": "All {{count}} dropped.",
+      "title_one": "Drop {{count}} object",
+      "title_other": "Drop {{count}} objects",
+      "typeCount": "Type {{n}} to confirm.",
+      "warning": "This permanently deletes the data on {{connection}}. It cannot be undone."
+    },
     "dropCollection": {
       "title": "Drop collection"
     },

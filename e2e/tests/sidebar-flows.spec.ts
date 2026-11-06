@@ -111,7 +111,7 @@ test.describe('Sidebar on a saved connection', () => {
     await expect(toast(page, 'rename not permitted')).toBeVisible();
   });
 
-  test('Ctrl+F searches, double-click opens another tab, Ctrl+click selects several', async ({ app, page, browserName }) => {
+  test('Ctrl+F searches, double-click opens another tab, Ctrl+click selects several', async ({ app, page }) => {
     await connectStaging(app, page);
     await expandCollections(page, 'sales_db');
     await dismissHoverCards(page);
@@ -129,12 +129,11 @@ test.describe('Sidebar on a saved connection', () => {
     await expect(page.getByTestId('workspace-tab-strip').getByText(/sales_db:customers$/)).toHaveCount(2);
 
     await dismissHoverCards(page);
-    // WebKit takes Ctrl+click as a right-click; the multi-select modifier there is Meta.
-    const select: Array<'Control' | 'Meta'> = browserName === 'webkit' ? ['Meta'] : ['Control'];
-    await sidebar(page).getByText('products', { exact: true }).click({ modifiers: select });
+    // Multi-select is Cmd+click on macOS and Ctrl+click elsewhere (#543).
+    await sidebar(page).getByText('products', { exact: true }).click({ modifiers: ['ControlOrMeta'] });
     // The row's stats card opens under a resting pointer and would cover the next row.
     await dismissHoverCards(page);
-    await sidebar(page).getByText('transactions', { exact: true }).click({ modifiers: select });
+    await sidebar(page).getByText('transactions', { exact: true }).click({ modifiers: ['ControlOrMeta'] });
     await dismissHoverCards(page);
     await menu(page, sidebar(page).getByText('transactions', { exact: true }), 'Copy to…');
     await expect(page.getByText(/Copy 2 collections/)).toBeVisible();
