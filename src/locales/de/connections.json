@@ -381,10 +381,10 @@
   },
   "table": {
     "lastConnected": "Zuletzt verbunden",
-    "name": "Name",
+    "name": "Verbindung",
     "never": "Nie",
     "none": "Keine",
     "security": "Sicherheit",
-    "server": "Server"
+    "server": "Host"
   }
 }
