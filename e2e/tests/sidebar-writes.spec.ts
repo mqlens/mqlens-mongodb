@@ -148,4 +148,48 @@ test.describe('Deleting several at once (#543)', () => {
     await expect(sidebar(page).getByText('products', { exact: true })).toBeVisible();
     await expect(sidebar(page).getByRole('button', { name: 'Database admin' })).toBeVisible();
   });
+
+  test('Shift+click picks a range; Escape cancels, Enter confirms', async ({ app, page }) => {
+    await connectStaging(app, page);
+    await expandCollections(page, 'sales_db');
+    const rows = sidebar(page).locator('[data-tree-key^=\'["sales_db",\']');
+    const count = await rows.count();
+    expect(count).toBeGreaterThanOrEqual(3);
+    await rows.first().click();
+    await dismissHoverCards(page);
+    await rows.last().click({ modifiers: ['Shift'] });
+    await dismissHoverCards(page);
+    await expect(sidebar(page).locator('[data-selected="true"]')).toHaveCount(count);
+
+    const openDialog = async () => {
+      await rows.last().click({ button: 'right' });
+      await page.getByRole('menuitem', { name: 'Manage', exact: true }).press('ArrowRight');
+      await page.getByRole('menuitem', { name: `Delete selected (${count})`, exact: true }).click();
+      return page.getByTestId('bulk-drop-dialog');
+    };
+    await (await openDialog()).press('Escape');
+    await expect(page.getByTestId('bulk-drop-dialog')).toHaveCount(0);
+    expect(await app.calls('drop_collection')).toHaveLength(0);
+
+    const dialog = await openDialog();
+    await dialog.getByTestId('bulk-drop-confirm-input').fill(String(count));
+    await dialog.getByTestId('bulk-drop-confirm-input').press('Enter');
+    await expect(dialog.getByTestId('bulk-drop-summary')).toBeVisible();
+    expect(await app.calls('drop_collection')).toHaveLength(count);
+  });
+
+  test('a read-only connection refuses a bulk delete', async ({ app, page }) => {
+    await connectStaging(app, page, {}, { connection_mode: 'read_only' });
+    await expandCollections(page, 'sales_db');
+    for (const name of ['products', 'transactions']) {
+      await sidebar(page).getByText(name, { exact: true }).click({ modifiers: ['ControlOrMeta'] });
+      await dismissHoverCards(page);
+    }
+    await sidebar(page).getByText('products', { exact: true }).click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Manage', exact: true }).press('ArrowRight');
+    await page.getByRole('menuitem', { name: 'Delete selected (2)', exact: true }).click();
+    await expect(toast(page, 'read-only')).toBeVisible();
+    await expect(page.getByTestId('bulk-drop-dialog')).toHaveCount(0);
+    expect(await app.calls('drop_collection')).toHaveLength(0);
+  });
 });
