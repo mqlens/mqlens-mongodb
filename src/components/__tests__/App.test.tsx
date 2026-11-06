@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, within } from '@testing-library/react';
 import { renderWithProviders } from '../../test/render-with-providers';
 import { resetUpdateTabStateDebounce } from '../../workspace/workspaceStore';
-import App, { tabLabelFor, tabTooltipFor, type QueryTab } from '../../App';
+import App, { closedTabSnapshot, tabLabelFor, tabTooltipFor, type QueryTab } from '../../App';
 
 describe('collection tab labels', () => {
   const t = ((key: string) => key) as any;
@@ -5840,5 +5840,227 @@ describe('quick-connect toast translates OIDC error keys (#430)', () => {
       expect(screen.getByText(/Could not connect to Prod Cluster: The login was cancelled\./)).toBeInTheDocument();
     });
     expect(screen.queryByText(/auth\.oidc\.errors\.cancelled/)).not.toBeInTheDocument();
+  });
+});
+
+describe('tab shortcuts', () => {
+  const tasksAndActivity = {
+    revision: 1,
+    windows: [
+      {
+        id: 'main',
+        focusedPaneId: 'pane-1',
+        splitTree: { kind: 'pane', id: 'pane-1', tabIds: ['tasks', 'activity'], activeTabId: 'activity' },
+      },
+    ],
+    tabs: [
+      { id: 'tasks', type: 'tasks', profileId: '', profileName: '', db: '', collection: '' },
+      { id: 'activity', type: 'activity', profileId: '', profileName: '', db: '', collection: '' },
+    ],
+  };
+
+  const appliedOps = () =>
+    mockInvoke.mock.calls
+      .filter(([cmd]) => cmd === 'workspace_apply')
+      .map(([, args]) => (args as { op: Record<string, unknown> }).op);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    eventListeners.clear();
+    resetUpdateTabStateDebounce();
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'load_app_settings') return Promise.resolve({});
+      if (cmd === 'workspace_get') return Promise.resolve(tasksAndActivity);
+      return Promise.resolve([]);
+    });
+  });
+
+  async function renderRestored() {
+    renderWithProviders(<App />);
+    await screen.findByTestId('tab-content-activity');
+  }
+
+  it('Ctrl+W closes the active tab, not the window', async () => {
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    await renderRestored();
+
+    fireEvent.keyDown(window, { key: 'w', code: 'KeyW', ctrlKey: true });
+
+    await waitFor(() => expect(screen.queryByTestId('tab-content-activity')).not.toBeInTheDocument());
+    expect(appliedOps()).toContainEqual(expect.objectContaining({ type: 'close_tab', tab_id: 'activity' }));
+    expect(screen.getByTestId('tab-content-tasks')).toBeInTheDocument();
+  });
+
+  it('the native menu tab-command closes the active tab too', async () => {
+    const { waitFor } = await import('@testing-library/react');
+    await renderRestored();
+
+    fireMockEvent('tab-command', 'close-tab');
+
+    await waitFor(() => expect(screen.queryByTestId('tab-content-activity')).not.toBeInTheDocument());
+  });
+
+  it('Ctrl+Shift+T reopens the tab Ctrl+W closed', async () => {
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    await renderRestored();
+
+    fireEvent.keyDown(window, { key: 'w', code: 'KeyW', ctrlKey: true });
+    await waitFor(() => expect(screen.queryByTestId('tab-content-activity')).not.toBeInTheDocument());
+    fireEvent.keyDown(window, { key: 'T', code: 'KeyT', ctrlKey: true, shiftKey: true });
+
+    expect(await screen.findByTestId('tab-content-activity')).toBeInTheDocument();
+    expect(appliedOps()).toContainEqual(
+      expect.objectContaining({ type: 'open_tab', tab_id: 'activity', tab: expect.objectContaining({ type: 'activity' }) })
+    );
+  });
+
+  it('Ctrl+1 and Ctrl+Tab switch tabs in the focused pane', async () => {
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    await renderRestored();
+
+    fireEvent.keyDown(window, { key: '1', code: 'Digit1', ctrlKey: true });
+    await waitFor(() =>
+      expect(appliedOps()).toContainEqual(expect.objectContaining({ type: 'set_active', tab_id: 'tasks' }))
+    );
+
+    fireEvent.keyDown(window, { key: 'Tab', code: 'Tab', ctrlKey: true });
+    await waitFor(() =>
+      expect(appliedOps().filter((op) => op.type === 'set_active').at(-1)).toMatchObject({ tab_id: 'activity' })
+    );
+  });
+
+  it('Ctrl+Shift+W is not bound: it closes neither the tab nor the window', async () => {
+    const { fireEvent } = await import('@testing-library/react');
+    await renderRestored();
+
+    fireEvent.keyDown(window, { key: 'W', code: 'KeyW', ctrlKey: true, shiftKey: true });
+
+    expect(appliedOps()).not.toContainEqual(expect.objectContaining({ type: 'close_tab' }));
+    expect(screen.getByTestId('tab-content-activity')).toBeInTheDocument();
+  });
+
+  it('Close Other Tabs feeds the closed-tab history too', async () => {
+    const { fireEvent, within, waitFor } = await import('@testing-library/react');
+    await renderRestored();
+
+    const tabStrip = screen.getByTestId('workspace-tab-strip');
+    fireEvent.contextMenu((await within(tabStrip).findByText('Tasks')).closest('div')!);
+    fireEvent.click(await screen.findByText('Close Other Tabs'));
+    await waitFor(() => expect(screen.queryByTestId('tab-content-activity')).not.toBeInTheDocument());
+
+    fireEvent.keyDown(window, { key: 'T', code: 'KeyT', ctrlKey: true, shiftKey: true });
+    expect(await screen.findByTestId('tab-content-activity')).toBeInTheDocument();
+  });
+
+  describe('a session-restored tab closed before it reconnected', () => {
+    const disconnected = {
+      revision: 1,
+      windows: [
+        {
+          id: 'main',
+          focusedPaneId: 'pane-1',
+          splitTree: {
+            kind: 'pane',
+            id: 'pane-1',
+            tabIds: ['profile:p1.sales_db.customers', 'profile:p1.sales_db.orders'],
+            activeTabId: 'profile:p1.sales_db.orders',
+          },
+        },
+      ],
+      tabs: ['customers', 'orders'].map((collection) => ({
+        id: `profile:p1.sales_db.${collection}`,
+        type: 'collection',
+        profileId: 'p1',
+        profileName: 'Prod Cluster',
+        db: 'sales_db',
+        collection,
+      })),
+    };
+
+    beforeEach(() => {
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'load_app_settings') return Promise.resolve({});
+        if (cmd === 'workspace_get') return Promise.resolve(disconnected);
+        if (cmd === 'load_connection_profiles') {
+          return Promise.resolve([{ id: 'p1', name: 'Prod Cluster', uri: 'mongodb://prod', ssh: null }]);
+        }
+        if (cmd === 'connect_db') return Promise.resolve('new-conn-1');
+        return Promise.resolve([]);
+      });
+    });
+
+    async function closeOrders() {
+      const { fireEvent, waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('tab-content-profile:p1.sales_db.orders');
+      fireEvent.keyDown(window, { key: 'w', code: 'KeyW', ctrlKey: true });
+      await waitFor(() =>
+        expect(screen.queryByTestId('tab-content-profile:p1.sales_db.orders')).not.toBeInTheDocument()
+      );
+    }
+
+    it('comes back with its Reconnect banner, persisted under its profile', async () => {
+      const { fireEvent, within } = await import('@testing-library/react');
+      await closeOrders();
+
+      fireEvent.keyDown(window, { key: 'T', code: 'KeyT', ctrlKey: true, shiftKey: true });
+
+      const content = await screen.findByTestId('tab-content-profile:p1.sales_db.orders');
+      expect(within(content).getByTestId('reconnect-banner')).toBeInTheDocument();
+      expect(appliedOps()).toContainEqual(expect.objectContaining({
+        type: 'open_tab',
+        tab_id: 'profile:p1.sales_db.orders',
+        tab: expect.objectContaining({ profileId: 'p1', profileName: 'Prod Cluster' }),
+      }));
+      expect(mockInvoke).not.toHaveBeenCalledWith('execute_mql_query', expect.anything());
+    });
+
+    it('comes back live when its profile reconnected in the meantime', async () => {
+      const { fireEvent, waitFor } = await import('@testing-library/react');
+      await closeOrders();
+      fireEvent.click(screen.getByRole('button', { name: /Reconnect Prod Cluster/ }));
+      await screen.findByTestId('tab-content-new-conn-1.sales_db.customers');
+
+      fireEvent.keyDown(window, { key: 'T', code: 'KeyT', ctrlKey: true, shiftKey: true });
+
+      expect(await screen.findByTestId('tab-content-new-conn-1.sales_db.orders')).toBeInTheDocument();
+      await waitFor(() =>
+        expect(mockInvoke).toHaveBeenCalledWith('execute_mql_query', expect.objectContaining({ id: 'new-conn-1', collection: 'orders' }))
+      );
+      expect(screen.queryByTestId('tab-content-profile:p1.sales_db.orders')).not.toBeInTheDocument();
+    });
+  });
+
+  it('keeps no results, plan or draft for a closed tab', () => {
+    const tab = {
+      id: 'c1.db.coll', type: 'collection', connectionId: 'c1', db: 'db', collection: 'coll',
+      results: [{ _id: 1 }], loading: false, error: 'boom', explainResult: '{}',
+      lastQuery: { filter: '{"a":1}', sort: '{}', projection: '{}', limit: 50, skip: 0 },
+      documentEdit: { mode: 'edit' }, pagerRequest: { limit: 50, skip: 0, revision: 1 },
+      totalCount: 9, countLoading: false, estimated: true, initialShellCommand: 'db.dropDatabase()',
+      columnWidths: { a: 120 },
+    } as unknown as QueryTab;
+
+    const snapshot = closedTabSnapshot(tab);
+
+    expect(Object.keys(snapshot).sort()).toEqual(
+      ['collection', 'columnWidths', 'connectionId', 'db', 'id', 'lastQuery', 'type']
+    );
+  });
+
+  it('closing the lone Quick Start tab in main is a no-op', async () => {
+    const { fireEvent } = await import('@testing-library/react');
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'load_app_settings') return Promise.resolve({});
+      if (cmd === 'workspace_get') return Promise.resolve(null);
+      return Promise.resolve([]);
+    });
+    renderWithProviders(<App />);
+    await screen.findByTestId('quickstart-tab');
+
+    fireEvent.keyDown(window, { key: 'w', code: 'KeyW', ctrlKey: true });
+
+    expect(appliedOps()).not.toContainEqual(expect.objectContaining({ type: 'close_tab' }));
+    expect(screen.getByTestId('quickstart-tab')).toBeInTheDocument();
   });
 });

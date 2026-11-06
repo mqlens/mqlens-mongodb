@@ -8,6 +8,7 @@ import type { RemoteConnectionInfo } from '../lib/serverMode';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
+import { TAB_COMMAND_EVENT } from '../lib/tabShortcuts';
 import type { WorkspaceAction } from './model';
 import { toProfileSpaceId, type PersistableConnection, type PersistedTab, type PersistedWorkspace } from './persistence';
 
@@ -128,6 +129,13 @@ export function subscribeWorkspaceChanged(
   listener: (payload: WorkspaceChangedPayload) => void
 ): Promise<UnlistenFn> {
   return listen<WorkspaceChangedPayload>('workspace-changed', (event) => listener(event.payload));
+}
+
+/** The native app menu's tab commands (macOS), addressed to this window only. */
+export function subscribeTabCommand(listener: (payload: unknown) => void): Promise<UnlistenFn> {
+  return listen(TAB_COMMAND_EVENT, (event) => listener(event.payload), {
+    target: { kind: 'WebviewWindow', label: windowLabel() },
+  });
 }
 
 /**
