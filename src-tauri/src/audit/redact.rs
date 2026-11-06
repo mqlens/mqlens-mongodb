@@ -5,22 +5,26 @@ pub const MAX_ARGS_BYTES: usize = 64 * 1024;
 
 /// Redact connection URIs and obvious password fields from free text.
 pub fn redact_text(input: &str) -> String {
-    let without_uri = redact_secret_uri_options(&scrub_mongodb_uris(input));
+    let without_uri = redact_secret_uri_options(&scrub_mongodb_uris(input), true);
     scrub_password_json_fields(&without_uri)
 }
 
-/// URI options whose values are secrets in their own right (lowercase, with `=`).
+/// URI options whose values are secrets in their own right (lowercase, with
+/// `=`): every spelling `normalize_mongodb_uri_options` accepts.
 const SECRET_URI_OPTIONS: &[&str] = &[
     "proxypassword=",
     "tlscertificatekeyfilepassword=",
+    "sslcertificatekeyfilepassword=",
     "sslclientcertificatekeypassword=",
     "sslpemkeypassword=",
 ];
 
 /// Replace the value of every secret URI option — the SOCKS5 proxy password
 /// and each client-key passphrase spelling — with `***`, wherever it appears
-/// after `?`, `&` or `;`.
-pub fn redact_secret_uri_options(input: &str) -> String {
+/// after `?`, `&` or `;`. In one URI only `&`, `;` and `#` end a value; in
+/// free text (`in_text`) so do quotes, `)` and whitespace, which is safe
+/// because the app percent-encodes those inside a passphrase it writes.
+pub fn redact_secret_uri_options(input: &str, in_text: bool) -> String {
     let lower = input.to_ascii_lowercase();
     let bytes = input.as_bytes();
     let mut out = String::with_capacity(input.len());
@@ -34,8 +38,9 @@ pub fn redact_secret_uri_options(input: &str) -> String {
                 // The value ends at the next option, the fragment, or whatever
                 // closes the URI in surrounding text.
                 while i < input.len()
-                    && !matches!(bytes[i], b'&' | b';' | b'#' | b'"' | b'\'' | b'`' | b')')
-                    && !bytes[i].is_ascii_whitespace()
+                    && !matches!(bytes[i], b'&' | b';' | b'#')
+                    && !(in_text
+                        && (matches!(bytes[i], b'"' | b'\'' | b'`' | b')') || bytes[i].is_ascii_whitespace()))
                 {
                     i += 1;
                 }

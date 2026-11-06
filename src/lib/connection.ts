@@ -56,9 +56,11 @@ export type ExportFolderInfo = {
 };
 
 // Query params whose values are secrets in their own right.
-const SECRET_PARAM_KEYS = /^(proxyPassword|tlsCertificateKeyFilePassword|sslClientCertificateKeyPassword|sslPEMKeyPassword)$/i;
+// Every spelling the backend normalises (connections.rs) is listed.
+const SECRET_PARAM_NAMES = 'proxyPassword|tlsCertificateKeyFilePassword|sslCertificateKeyFilePassword|sslClientCertificateKeyPassword|sslPEMKeyPassword';
+const SECRET_PARAM_KEYS = new RegExp(`^(${SECRET_PARAM_NAMES})$`, 'i');
 // The value of a secret option inside a URI, for display masks.
-const SECRET_OPTION_VALUE = /([?&;](?:proxyPassword|tlsCertificateKeyFilePassword|sslClientCertificateKeyPassword|sslPEMKeyPassword)=)[^&;#]*/gi;
+const SECRET_OPTION_VALUE = new RegExp(`([?&;](?:${SECRET_PARAM_NAMES})=)[^&;#]*`, 'gi');
 
 const isSecretParam = (param: string): boolean => {
   const key = param.split('=')[0];

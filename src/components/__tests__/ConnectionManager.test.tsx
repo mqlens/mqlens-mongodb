@@ -3923,6 +3923,10 @@ describe('a client certificate with an encrypted key', () => {
   });
 
   it('writes the passphrase only beside a client certificate with TLS on', () => {
+    // ' ( ) ! * ~ are left alone by encodeURIComponent but end a URI in
+    // free text, so redaction could stop inside the passphrase.
+    expect(buildUri({ ...baseConn, tlsMode: 'system', tlsClientCert: '/c.pem', tlsKeyPassword: "a'b(c)d!e*f~" }))
+      .toContain('tlsCertificateKeyFilePassword=a%27b%28c%29d%21e%2Af%7E');
     const withCert = buildUri({ ...baseConn, tlsMode: 'system', tlsClientCert: '/c.pem', tlsKeyPassword: 'k p' });
     expect(withCert).toContain('tlsCertificateKeyFilePassword=k%20p');
     expect(buildUri({ ...baseConn, tlsMode: 'system', tlsKeyPassword: 'k p' })).not.toContain('tlsCertificateKeyFilePassword');

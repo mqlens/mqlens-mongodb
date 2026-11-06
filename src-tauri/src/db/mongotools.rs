@@ -291,7 +291,7 @@ pub fn build_restore_args(o: &RestoreOptions) -> Result<Vec<String>, String> {
 /// unchanged when there is no userinfo or no password. Secret options
 /// (`proxyPassword`, client-key passphrases) are redacted too.
 pub fn redact_uri_password(uri: &str) -> String {
-    crate::audit::redact::redact_secret_uri_options(&redact_userinfo_password(uri))
+    crate::audit::redact::redact_secret_uri_options(&redact_userinfo_password(uri), false)
 }
 
 fn redact_userinfo_password(uri: &str) -> String {
@@ -1512,6 +1512,15 @@ mod tests {
 
     #[test]
     fn redacts_password_only_when_present() {
+        // Inside one URI only the option separators end a value.
+        assert_eq!(
+            redact_uri_password("mongodb://h/?tlsCertificateKeyFilePassword=a)b'c`d\"e&w=1"),
+            "mongodb://h/?tlsCertificateKeyFilePassword=***&w=1"
+        );
+        assert_eq!(
+            redact_uri_password("mongodb://h/?sslCertificateKeyFilePassword=kp"),
+            "mongodb://h/?sslCertificateKeyFilePassword=***"
+        );
         assert_eq!(
             redact_uri_password("mongodb://h/?tls=true&tlsCertificateKeyFilePassword=kp&proxyPassword=pp&appName=x"),
             "mongodb://h/?tls=true&tlsCertificateKeyFilePassword=***&proxyPassword=***&appName=x"

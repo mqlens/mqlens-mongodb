@@ -607,7 +607,12 @@ export const buildUri = (s: typeof BLANK_CONN) => {
   if (s.tlsMode === 'file' && s.tlsCa) params.push(`tlsCAFile=${encodeURIComponent(s.tlsCa)}`);
   if (s.tlsMode !== 'off' && s.tlsClientCert) {
     params.push(`tlsCertificateKeyFile=${encodeURIComponent(s.tlsClientCert)}`);
-    if (s.tlsKeyPassword) params.push(`tlsCertificateKeyFilePassword=${encodeURIComponent(s.tlsKeyPassword)}`);
+    // Also encode ' ( ) ! * ~ so no character of the secret can end the URI
+    // where log redaction reads it in free text.
+    if (s.tlsKeyPassword) {
+      const value = encodeURIComponent(s.tlsKeyPassword).replace(/[!'()*~]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+      params.push(`tlsCertificateKeyFilePassword=${value}`);
+    }
   }
   if (s.tlsAllowInvalidHosts) params.push('tlsAllowInvalidHostnames=true');
   if (s.tlsAllowInvalidCerts) params.push('tlsAllowInvalidCertificates=true');

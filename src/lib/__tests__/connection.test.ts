@@ -445,6 +445,10 @@ describe('what the connection table shows', () => {
 });
 
 describe('maskUriPassword hides secret options too', () => {
+  it('masks the sslCertificateKeyFilePassword spelling as well', () => {
+    expect(maskUriPassword('mongodb://h/?sslCertificateKeyFilePassword=kp')).toBe('mongodb://h/?sslCertificateKeyFilePassword=••••••');
+  });
+
   it('masks the proxy password and every client-key passphrase spelling', () => {
     const masked = maskUriPassword(
       'mongodb://h:27017/?tls=true&tlsCertificateKeyFilePassword=kp1&proxyPassword=pp&sslClientCertificateKeyPassword=kp2&sslPEMKeyPassword=kp3&appName=x',
