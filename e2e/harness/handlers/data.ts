@@ -403,6 +403,13 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
       if (!replSet?.isReplicaSet) return { set_name: null, hosts: [], arbiters: [] };
       return { set_name: replSet.set, hosts: (replSet.members ?? []).map((m) => m.name), arbiters: [] };
     },
+    // Export's SRV -> seed list: every SRV name resolves to three shards.
+    resolve_srv_seed_list: ({ uri }) => {
+      const m = String(uri).match(/^mongodb\+srv:\/\/([^/?]*@)?([^/?]+)(\/[^?]*)?/i);
+      if (!m) throw `not an SRV URI: ${String(uri)}`;
+      const hosts = [0, 1, 2].map((i) => `shard-0${i}.${m[2]}:27017`).join(',');
+      return `mongodb://${m[1] ?? ''}${hosts}${m[3] || '/'}?tls=true`;
+    },
     forget_oidc_login: () => undefined,
     cancel_oidc_login: ({ loginId }) => {
       const cancel = pendingOidcLogins.get(String(loginId));

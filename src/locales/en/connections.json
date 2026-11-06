@@ -179,6 +179,9 @@
     "saveAllTitle": "Save connection URIs",
     "saveTitle": "Save connection URI",
     "saveToFile": "Save to file…",
+    "seedList": "Convert SRV to a seed list",
+    "seedListDescription": "Look up the SRV record now and export the member hosts, for tools that cannot read mongodb+srv://.",
+    "seedListFailed": "Could not resolve the SRV record: {{error}}",
     "singleTitle": "Export connection URI",
     "sshNote": "This connection uses an SSH tunnel. Tunnel settings can’t be represented in a MongoDB URI and are not exported."
   },

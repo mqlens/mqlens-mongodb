@@ -860,6 +860,10 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   >(null);
   const [exportIncludePassword, setExportIncludePassword] = useState(false);
   const [exportIncludeSettings, setExportIncludeSettings] = useState(true);
+  // SRV -> seed list: resolved URIs by their SRV form, and the last lookup failure.
+  const [exportSeedList, setExportSeedList] = useState(false);
+  const [seedUris, setSeedUris] = useState<Record<string, string>>({});
+  const [seedError, setSeedError] = useState<string | null>(null);
   const [editorState, setEditorState] = useState<typeof BLANK_CONN>(BLANK_CONN);
   const [activeEditorTab, setActiveEditorTab] = useState('server');
   const [showPassword, setShowPassword] = useState(false);
@@ -1839,12 +1843,16 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   const openExportDialog = (uri: string, hasSsh: boolean) => {
     setExportIncludePassword(false);
     setExportIncludeSettings(true);
+    setExportSeedList(false);
+    setSeedError(null);
     setExportDialog({ mode: 'single', uri, hasSsh });
   };
 
   const openExportAllDialog = () => {
     setExportIncludePassword(false);
     setExportIncludeSettings(true);
+    setExportSeedList(false);
+    setSeedError(null);
     setExportDialog({ mode: 'all' });
   };
 
@@ -1853,11 +1861,32 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     includeSettings: exportIncludeSettings,
   };
 
+  const srvExportUris = !exportDialog
+    ? []
+    : (exportDialog.mode === 'all' ? profiles.map(p => p.uri) : [exportDialog.uri]).filter(u => /^mongodb\+srv:\/\//i.test(u));
+  const seeded = (uri: string) => (exportSeedList ? seedUris[uri] ?? uri : uri);
+
+  const toggleSeedList = async (on: boolean) => {
+    setExportSeedList(on);
+    setSeedError(null);
+    if (!on) return;
+    const resolved: Record<string, string> = {};
+    for (const uri of srvExportUris) {
+      if (seedUris[uri]) continue;
+      try {
+        resolved[uri] = await invoke<string>('resolve_srv_seed_list', { uri });
+      } catch (e) {
+        setSeedError(t('export.seedListFailed', { error: String(e) }));
+      }
+    }
+    setSeedUris(prev => ({ ...prev, ...resolved }));
+  };
+
   const exportPreview = !exportDialog
     ? ''
     : exportDialog.mode === 'all'
-      ? buildExportAllUris(profiles, exportOpts, { folders, profileFolderMap })
-      : buildExportUri(exportDialog.uri, exportOpts);
+      ? buildExportAllUris(profiles.map(p => ({ ...p, uri: seeded(p.uri) })), exportOpts, { folders, profileFolderMap })
+      : buildExportUri(seeded(exportDialog.uri), exportOpts);
 
   const handleExportSave = async () => {
     if (!exportDialog) return;
@@ -3919,6 +3948,23 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                 data-testid="export-include-settings"
               />
             </div>
+            {srvExportUris.length > 0 && (
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <Label htmlFor="export-seed-list" className="text-ui-xs">{t('export.seedList')}</Label>
+                  <p className="text-ui-2xs text-muted-foreground">{t('export.seedListDescription')}</p>
+                </div>
+                <Switch
+                  id="export-seed-list"
+                  checked={exportSeedList}
+                  onCheckedChange={(on) => void toggleSeedList(on)}
+                  data-testid="export-seed-list"
+                />
+              </div>
+            )}
+            {seedError && (
+              <p className="text-ui-2xs text-destructive" role="alert">{seedError}</p>
+            )}
             {exportDialog?.mode === 'single' && exportDialog.hasSsh && (
               <p className="text-ui-2xs text-muted-foreground" data-testid="export-ssh-note">
                 {t('export.sshNote')}

@@ -4755,6 +4755,7 @@ pub fn run() {
             server_connect,
             connections::test_connection_uri,
             discover::discover_replica_set,
+            discover::resolve_srv_seed_list,
             load_app_settings,
             save_app_settings,
             patch_app_settings,

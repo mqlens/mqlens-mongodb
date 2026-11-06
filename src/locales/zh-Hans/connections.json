@@ -177,6 +177,9 @@
     "saveAllTitle": "保存连接 URI",
     "saveTitle": "保存连接 URI",
     "saveToFile": "保存到文件…",
+    "seedList": "将 SRV 转换为种子列表",
+    "seedListDescription": "立即查询 SRV 记录并导出成员主机，供无法读取 mongodb+srv:// 的工具使用。",
+    "seedListFailed": "无法解析 SRV 记录：{{error}}",
     "singleTitle": "导出连接 URI",
     "sshNote": "此连接使用 SSH 隧道。隧道设置无法用 MongoDB URI 表示，因此不会被导出。"
   },

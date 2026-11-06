@@ -5,6 +5,10 @@
 
 use mongodb::bson::Document;
 use mongodb::options::ClientOptions;
+use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
+
+/// URI option values keep the RFC 3986 unreserved characters.
+const OPTION_VALUE: &AsciiSet = &NON_ALPHANUMERIC.remove(b'-').remove(b'_').remove(b'.').remove(b'~');
 use serde::Serialize;
 
 #[derive(Serialize, Debug, PartialEq, Default)]
@@ -59,6 +63,46 @@ pub async fn discover_replica_set(uri: String) -> Result<DiscoveredMembers, Stri
     Ok(members_from_hello(&hello))
 }
 
+/// The `mongodb://` form of a `mongodb+srv://` URI: its userinfo, path and
+/// options kept, the host replaced by the resolved `hosts`, and what SRV
+/// implies or DNS supplied — TLS, and the TXT record's replicaSet and
+/// authSource — added unless the URI set them itself.
+pub fn seed_list_uri(srv_uri: &str, hosts: &[String], repl_set: Option<&str>, auth_source: Option<&str>) -> String {
+    let rest = srv_uri.split_once("://").map_or(srv_uri, |(_, r)| r);
+    let (authority, tail) = rest.find(['/', '?']).map_or((rest, ""), |i| rest.split_at(i));
+    let userinfo = authority.rfind('@').map_or("", |i| &authority[..=i]);
+    let (path, query) = tail.split_once('?').unwrap_or((tail, ""));
+    let path = path.strip_prefix('/').unwrap_or(path);
+
+    let mut params: Vec<String> = query.split(['&', ';']).filter(|p| !p.is_empty()).map(str::to_string).collect();
+    let has = |params: &[String], keys: &[&str]| {
+        params.iter().any(|p| keys.iter().any(|k| p.split('=').next().is_some_and(|key| key.eq_ignore_ascii_case(k))))
+    };
+    if !has(&params, &["tls", "ssl"]) {
+        params.push("tls=true".into());
+    }
+    if let Some(set) = repl_set.filter(|_| !has(&params, &["replicaSet"])) {
+        params.push(format!("replicaSet={}", utf8_percent_encode(set, OPTION_VALUE)));
+    }
+    if let Some(source) = auth_source.filter(|_| !has(&params, &["authSource"])) {
+        params.push(format!("authSource={}", utf8_percent_encode(source, OPTION_VALUE)));
+    }
+    format!("mongodb://{userinfo}{}/{path}?{}", hosts.join(","), params.join("&"))
+}
+
+/// Resolve a `mongodb+srv://` URI's SRV and TXT records into a seed-list URI,
+/// for exporting to tools that cannot read SRV.
+#[tauri::command]
+pub async fn resolve_srv_seed_list(uri: String) -> Result<String, String> {
+    let normalized = crate::connections::normalize_mongodb_uri_options(&uri);
+    let options = ClientOptions::parse(&normalized)
+        .await
+        .map_err(|e| format!("Failed to resolve SRV record: {e}"))?;
+    let hosts: Vec<String> = options.hosts.iter().map(|h| h.to_string()).collect();
+    let source = options.credential.as_ref().and_then(|c| c.source.as_deref());
+    Ok(seed_list_uri(&uri, &hosts, options.repl_set_name.as_deref(), source))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -102,5 +146,24 @@ mod tests {
     fn a_standalone_reports_no_set() {
         let hello = doc! { "isWritablePrimary": true };
         assert_eq!(members_from_hello(&hello), DiscoveredMembers::default());
+    }
+
+    #[test]
+    fn an_srv_uri_becomes_its_seed_list_with_what_dns_added() {
+        let hosts = ["a.x.net:27017".to_string(), "b.x.net:27017".to_string()];
+        assert_eq!(
+            seed_list_uri("mongodb+srv://u:p%40w@cluster0.x.net/app?retryWrites=true", &hosts, Some("atlas-1"), Some("admin")),
+            "mongodb://u:p%40w@a.x.net:27017,b.x.net:27017/app?retryWrites=true&tls=true&replicaSet=atlas-1&authSource=admin"
+        );
+    }
+
+    #[test]
+    fn options_the_srv_uri_set_itself_win() {
+        let hosts = ["a.x.net:27017".to_string()];
+        assert_eq!(
+            seed_list_uri("mongodb+srv://c.x.net/?tls=false&authSource=db1&replicaSet=mine", &hosts, Some("atlas-1"), Some("admin")),
+            "mongodb://a.x.net:27017/?tls=false&authSource=db1&replicaSet=mine"
+        );
+        assert_eq!(seed_list_uri("mongodb+srv://c.x.net", &hosts, None, None), "mongodb://a.x.net:27017/?tls=true");
     }
 }

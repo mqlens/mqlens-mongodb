@@ -179,6 +179,9 @@
     "saveAllTitle": "Verbindungs-URIs speichern",
     "saveTitle": "Verbindungs-URI speichern",
     "saveToFile": "In Datei speichern…",
+    "seedList": "SRV in eine Seed-Liste umwandeln",
+    "seedListDescription": "Den SRV-Eintrag jetzt auflösen und die Mitglieds-Hosts exportieren, für Werkzeuge, die mongodb+srv:// nicht lesen können.",
+    "seedListFailed": "SRV-Eintrag konnte nicht aufgelöst werden: {{error}}",
     "singleTitle": "Verbindungs-URI exportieren",
     "sshNote": "Diese Verbindung verwendet einen SSH-Tunnel. Tunneleinstellungen lassen sich nicht in einer MongoDB-URI abbilden und werden nicht exportiert."
   },

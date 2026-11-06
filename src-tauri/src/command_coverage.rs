@@ -170,6 +170,7 @@ const LOCAL_COMMANDS: &[&str] = &[
     "server_connect", // connects through the server; no data touched yet
     "test_connection_uri", // ephemeral test connection, never tracked in connection_meta
     "discover_replica_set", // one unauthenticated hello to a seed member, never tracked
+    "resolve_srv_seed_list", // DNS SRV/TXT lookup for export, no connection
     "load_app_settings",
     "save_app_settings",
     "patch_app_settings",

@@ -4113,3 +4113,43 @@ describe('connection and folder context menus', () => {
     expect(await row('Logs')).toBeInTheDocument();
   });
 });
+
+describe('exporting an SRV connection as a seed list', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  const mount = (profile: { id: string; name: string; uri: string }, resolve: (uri: string) => Promise<string>) => {
+    mockInvoke.mockImplementation((cmd: string, args?: any) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([profile]);
+      if (cmd === 'resolve_srv_seed_list') return resolve(args.uri);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+  };
+  const preview = () => screen.getByTestId('export-uri-preview').textContent;
+
+  it('resolves the SRV record and exports the hosts, still without the password', async () => {
+    mount({ id: 'p-srv', name: 'Atlas', uri: 'mongodb+srv://u:pw@cluster0.x.net/app' }, async () => 'mongodb://u:pw@a.x.net:27017,b.x.net:27017/app?tls=true');
+    fireEvent.click(await screen.findByTestId('export-uri-btn'));
+    expect(preview()).toBe('mongodb+srv://u@cluster0.x.net/app');
+    fireEvent.click(screen.getByTestId('export-seed-list'));
+    await waitFor(() => expect(preview()).toBe('mongodb://u@a.x.net:27017,b.x.net:27017/app?tls=true'));
+    expect(mockInvoke).toHaveBeenCalledWith('resolve_srv_seed_list', { uri: 'mongodb+srv://u:pw@cluster0.x.net/app' });
+  });
+
+  it('says so and keeps the SRV form when the lookup fails', async () => {
+    mount({ id: 'p-srv', name: 'Atlas', uri: 'mongodb+srv://cluster0.x.net/' }, async () => { throw 'no such host'; });
+    fireEvent.click(await screen.findByTestId('export-uri-btn'));
+    fireEvent.click(screen.getByTestId('export-seed-list'));
+    expect(await screen.findByText(/could not resolve.*no such host/i)).toBeInTheDocument();
+    expect(preview()).toBe('mongodb+srv://cluster0.x.net/');
+  });
+
+  it('offers no conversion for a connection that is not SRV', async () => {
+    mount({ id: 'p-plain', name: 'Plain', uri: 'mongodb://h:27017' }, async () => '');
+    fireEvent.click(await screen.findByTestId('export-uri-btn'));
+    expect(screen.queryByTestId('export-seed-list')).toBeNull();
+  });
+});

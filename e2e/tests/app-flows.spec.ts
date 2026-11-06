@@ -346,3 +346,17 @@ test.describe('Connection table', () => {
     await expect(row).not.toContainText('Never');
   });
 });
+
+test.describe('Export as a seed list', () => {
+  test('turns an SRV connection into its member hosts', async ({ app, page }) => {
+    await app.open({ profiles: [{ id: 'p-atlas', name: 'Atlas', uri: 'mongodb+srv://ann:pw@cluster0.example.net/app' }] });
+    await page.getByRole('button', { name: 'New connection', exact: true }).first().click();
+    await page.getByTestId('export-uri-btn').click();
+    const preview = page.getByTestId('export-uri-preview');
+    await expect(preview).toHaveText('mongodb+srv://ann@cluster0.example.net/app');
+    await page.getByTestId('export-seed-list').click();
+    await expect(preview).toHaveText(
+      'mongodb://ann@shard-00.cluster0.example.net:27017,shard-01.cluster0.example.net:27017,shard-02.cluster0.example.net:27017/app?tls=true',
+    );
+  });
+});
