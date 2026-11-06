@@ -90,7 +90,15 @@ test.describe('Connection editor', () => {
 
   test('exports every saved URI, with passwords only when asked', async ({ app, page }) => {
     await app.open({
-      profiles: [{ id: 'p-reporting', name: 'Reporting', uri: 'mongodb://reporter:hunter2@reporting.example:27017/?authSource=admin' }],
+      profiles: [
+        { id: 'p-reporting', name: 'Reporting', uri: 'mongodb://reporter:hunter2@reporting.example:27017/?authSource=admin' },
+        {
+          id: 'p-tunnel',
+          name: 'Tunnel',
+          uri: 'mongodb://10.0.0.5:27017',
+          ssh: { enabled: true, host: 'bastion.example', port: 22, user: 'ops', auth: { type: 'password', password: 'tunnel-pw' } },
+        },
+      ],
     });
     await openManager(page);
 
@@ -99,9 +107,13 @@ test.describe('Connection editor', () => {
     const preview = dialog.getByTestId('export-uri-preview');
     await expect(preview).toContainText('reporting.example:27017');
     await expect(preview).not.toContainText('hunter2');
+    // The tunnel goes too, its password only where URI passwords do.
+    await expect(preview).toContainText('bastion.example');
+    await expect(preview).not.toContainText('tunnel-pw');
 
     await dialog.getByTestId('export-include-password').click();
     await expect(preview).toContainText('hunter2');
+    await expect(preview).toContainText('tunnel-pw');
   });
 });
 

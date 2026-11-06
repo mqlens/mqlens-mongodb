@@ -43,6 +43,39 @@ test.describe('Connection Manager', () => {
     expect(saved.map((profile) => profile.name)).toEqual(['Prod primary', 'Prod reporting', 'dev.example', 'Staging']);
   });
 
+  test('imports Robo 3T replica sets, and leaves out a tunnel MQLens cannot use', async ({ app, page }) => {
+    const file = '/exports/robo3t.json';
+    const connections = {
+      connections: [
+        {
+          connectionName: 'Robo set',
+          serverHost: 'robo-a.example',
+          serverPort: 27017,
+          replicaSet: { setName: 'rs-robo', members: ['robo-a.example:27017', 'robo-b.example:27017'] },
+        },
+        { name: 'Odd tunnel', uri: 'mongodb://odd.example:27017', ssh: 'bastion.example' },
+        { name: 'No host', uri: 'mongodb://nohost.example:27017', ssh: { user: 'ops', auth: { type: 'agent' } } },
+      ],
+    };
+    await app.open({ dialog: { open: file }, files: { [file]: JSON.stringify(connections) } });
+    await openManager(page);
+    await button(page, 'New...').click();
+
+    await page.getByTestId('import-uri-btn').click();
+    await page.getByTestId('import-from-file').click();
+    await page.getByTestId('dialog-confirm').click();
+
+    await expect.poll(async () => (await app.calls('save_connection_profile')).length).toBe(3);
+    const saved = (await app.calls('save_connection_profile')).map(
+      (call) => (call.args as { profile: { name: string; uri: string; ssh: unknown } }).profile,
+    );
+    expect(saved.map((profile) => [profile.name, profile.uri, profile.ssh])).toEqual([
+      ['Robo set', 'mongodb://robo-a.example:27017,robo-b.example:27017/?replicaSet=rs-robo', null],
+      ['Odd tunnel', 'mongodb://odd.example:27017', null],
+      ['No host', 'mongodb://nohost.example:27017', null],
+    ]);
+  });
+
   test('edits, duplicates and deletes a saved profile', async ({ app, page }) => {
     await app.open({
       profiles: [

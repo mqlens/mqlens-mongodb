@@ -306,3 +306,112 @@ test.describe('Profile tree', () => {
     await expect(tree(page).getByText('Staging', { exact: true })).toBeVisible();
   });
 });
+
+test.describe('Folders from their menus', () => {
+  const storedFolders = (page: Page) =>
+    page.evaluate(() => ({
+      folders: (JSON.parse(localStorage.getItem('mqlens_folders') ?? '[]') as Array<{ name: string }>).map((folder) => folder.name),
+      placement: JSON.parse(localStorage.getItem('mqlens_profile_folders') ?? '{}') as Record<string, string>,
+    }));
+
+  test('moves and drags connections into a folder, renames it, and deleting it keeps them', async ({ app, page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem('mqlens_folders', JSON.stringify([{ id: 'f-prod', name: 'Prod', parentId: null }]));
+    });
+    await openWithProfiles(app, page, [
+      { id: 'p-alpha', name: 'Alpha', uri: 'mongodb://alpha.example:27017' },
+      { id: 'p-beta', name: 'Beta', uri: 'mongodb://beta.example:27017' },
+    ]);
+
+    await tree(page).getByText('Alpha', { exact: true }).click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Move to folder' }).hover();
+    await page.getByRole('menuitem', { name: 'Prod', exact: true }).click();
+    await expect.poll(async () => (await storedFolders(page)).placement).toEqual({ 'p-alpha': 'f-prod' });
+
+    await tree(page).getByText('Beta', { exact: true }).dragTo(tree(page).getByText('Prod', { exact: true }));
+    await expect.poll(async () => (await storedFolders(page)).placement).toEqual({ 'p-alpha': 'f-prod', 'p-beta': 'f-prod' });
+
+    // Open the folder to reach Beta inside it.
+    await tree(page).getByText('Prod', { exact: true }).click();
+    await tree(page).getByText('Beta', { exact: true }).click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Move to folder' }).hover();
+    await page.getByRole('menuitem', { name: '(root)', exact: true }).click();
+    await expect.poll(async () => (await storedFolders(page)).placement).toEqual({ 'p-alpha': 'f-prod' });
+
+    await tree(page).getByText('Prod', { exact: true }).click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Rename' }).click();
+    await page.getByTestId('dialog-input').fill('Production');
+    await page.getByTestId('dialog-input').press('Enter');
+    await expect.poll(async () => (await storedFolders(page)).folders).toEqual(['Production']);
+
+    await tree(page).getByText('Production', { exact: true }).click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Delete' }).click();
+    await page.getByTestId('dialog-confirm').click();
+    await expect.poll(() => storedFolders(page)).toEqual({ folders: [], placement: {} });
+    await expect(tree(page).getByText('Alpha', { exact: true })).toBeVisible();
+    await expect(tree(page).getByText('Beta', { exact: true })).toBeVisible();
+  });
+});
+
+test.describe('Connection table sorting', () => {
+  test('a header sorts by its column, and a second click reverses it', async ({ app, page }) => {
+    await openWithProfiles(app, page, [
+      { id: 'p-alpha', name: 'Alpha', uri: 'mongodb://zulu.example:27017' },
+      { id: 'p-beta', name: 'Beta', uri: 'mongodb://alpha.example:27017' },
+    ]);
+    await button(page, 'Table view').click();
+    const table = page.getByTestId('connection-table');
+    const names = () => table.getByRole('row').evaluateAll((rows) => rows.slice(1).map((row) => row.querySelector('td')?.textContent?.trim()));
+    await expect.poll(names).toEqual(['Alpha', 'Beta']);
+
+    await table.getByRole('button', { name: 'Server' }).click();
+    await expect.poll(names).toEqual(['Beta', 'Alpha']);
+    await table.getByRole('button', { name: 'Server' }).click();
+    await expect.poll(names).toEqual(['Alpha', 'Beta']);
+  });
+});
+
+test.describe('Editor settings added for parity', () => {
+  const BASTION = { enabled: true, host: 'bastion.example', port: 2222, user: 'ops', auth: { type: 'key', path: '/keys/ops' } };
+
+  test('saves a client key passphrase, read preference tags, other mechanism properties and a reused tunnel', async ({ app, page }) => {
+    await openWithProfiles(app, page, [
+      {
+        id: 'p-krb',
+        name: 'Kerberos',
+        uri: 'mongodb://alice@krb.example:27017/?authMechanism=GSSAPI&authMechanismProperties=SERVICE_NAME:mongosvc,CANONICALIZE_HOST_NAME:forward&readPreference=secondary&readPreferenceTags=dc:ny&readPreferenceTags=',
+      },
+      { id: 'p-bastion', name: 'Bastion', uri: 'mongodb://10.0.0.5:27017', ssh: BASTION },
+    ]);
+    await editProfile(page, 'Kerberos');
+
+    await editorTab(page, 'TLS / SSL').click();
+    await page.getByRole('combobox').filter({ hasText: 'Off (Insecure Plaintext)' }).click();
+    await page.getByRole('option', { name: 'System Root CA Certificates' }).click();
+    await page.getByLabel(/client certificate/i).fill('/certs/client.pem');
+    await page.getByLabel(/key passphrase/i).fill("it's(secret)");
+
+    await editorTab(page, 'SSH Tunnel').click();
+    await page.getByLabel(/enable ssh tunnel/i).check();
+    await page.getByTestId('ssh-reuse-select').click();
+    await page.getByRole('option', { name: /Bastion/ }).click();
+
+    const saved = (await callFrom(app, 'save_connection_profile', () => button(page, 'Save').click())).profile as {
+      uri: string;
+      ssh: { host: string; port: number; user: string };
+    };
+    expect(saved.uri).toContain('tlsCertificateKeyFile=%2Fcerts%2Fclient.pem');
+    expect(saved.uri).toContain('tlsCertificateKeyFilePassword=it%27s%28secret%29');
+    expect(saved.uri).toContain('readPreferenceTags=dc:ny&readPreferenceTags=');
+    expect(decodeURIComponent(saved.uri)).toContain('CANONICALIZE_HOST_NAME:forward');
+    expect(saved.ssh).toMatchObject({ host: 'bastion.example', port: 2222, user: 'ops' });
+  });
+
+  test('says when an SRV record cannot be resolved for a seed list', async ({ app, page }) => {
+    await openWithProfiles(app, page, [{ id: 'p-atlas', name: 'Atlas', uri: 'mongodb+srv://cluster0.example.net/app' }]);
+    await app.failNext('resolve_srv_seed_list', 'no SRV records');
+    await page.getByTestId('export-uri-btn').click();
+    await page.getByTestId('export-seed-list').click();
+    await expect(page.getByRole('alert').filter({ hasText: 'Could not resolve the SRV record: no SRV records' })).toBeVisible();
+  });
+});

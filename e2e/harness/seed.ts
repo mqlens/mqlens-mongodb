@@ -36,6 +36,7 @@ export interface ProfileSeed {
   color_tag?: string | null;
   mcp_enabled?: boolean;
   connection_mode?: string;
+  ssh?: Record<string, unknown> | null;
 }
 
 /** What the monitoring commands report; any part left out comes from SAMPLE_MONITORING. */
