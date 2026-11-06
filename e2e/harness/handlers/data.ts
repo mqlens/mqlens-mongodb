@@ -394,6 +394,15 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
       send({ phase: 'ping', status: 'ok' });
       return null;
     },
+    // The editor's Discover button: the seeded server's replica set, as its
+    // `hello` reply would describe it.
+    discover_replica_set: ({ uri }) => {
+      const key = serverKeyFor(state, String(uri));
+      if (!key) throw `no server answers at ${String(uri)}`;
+      const replSet = state.monitoring[key]?.replSet as { isReplicaSet?: boolean; set?: string; members?: { name: string }[] } | undefined;
+      if (!replSet?.isReplicaSet) return { set_name: null, hosts: [], arbiters: [] };
+      return { set_name: replSet.set, hosts: (replSet.members ?? []).map((m) => m.name), arbiters: [] };
+    },
     forget_oidc_login: () => undefined,
     cancel_oidc_login: ({ loginId }) => {
       const cancel = pendingOidcLogins.get(String(loginId));

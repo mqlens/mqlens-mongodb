@@ -836,6 +836,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
 
   // Test Connection States
   const [testing, setTesting] = useState(false);
+  const [discovering, setDiscovering] = useState(false);
+  const [discoverNote, setDiscoverNote] = useState<string | null>(null);
   const [testProgress, setTestProgress] = useState(0);
   const [testSteps, setTestSteps] = useState<TestStep[]>([
     { key: 'parse', nameKey: 'test.stageParse', status: 'running' },
@@ -1919,6 +1921,30 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     }
   };
 
+  // Discover (replica set): ask a seed member for the set's name and members.
+  const handleDiscover = async () => {
+    setDiscovering(true);
+    setDiscoverNote(null);
+    try {
+      const found = await invoke<{ set_name: string | null; hosts: string[] }>('discover_replica_set', {
+        uri: buildUri(editorState),
+      });
+      if (found.set_name) {
+        const setName = found.set_name;
+        setEditorState((prev) => ({ ...prev, replicaSetName: setName, hosts: textToHosts(found.hosts.join(',')) }));
+      } else {
+        setDiscoverNote(t('form.discoverNoSet'));
+      }
+    } catch (err) {
+      setDiscoverNote(connectErrorText(err));
+    } finally {
+      setDiscovering(false);
+    }
+  };
+
+  const setMember = (index: number, patch: Partial<{ host: string; port: string }>) =>
+    setEditorState((prev) => ({ ...prev, hosts: prev.hosts.map((h, i) => (i === index ? { ...h, ...patch } : h)) }));
+
   const handleCancelTestLogin = () => { cancelOidcLogin(testLoginId); };
   const handleReopenTestLogin = () => {
     if (!testLoginId) return;
@@ -2545,7 +2571,75 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                   </div>
                   )}
 
-                  {editorState.topology !== 'uri' && (
+                  {(editorState.topology === 'replicaSet' || editorState.topology === 'sharded') && editorState.protocol !== 'mongodb+srv' ? (
+                    <div className="flex flex-col gap-1.5" data-testid="member-list">
+                      <Label>{editorState.topology === 'replicaSet' ? t('form.members') : t('form.routers')}</Label>
+                      {editorState.hosts.map((member, i) => (
+                        <div key={i} className="flex items-center gap-1.5">
+                          <Input
+                            type="text"
+                            data-testid={`member-host-${i}`}
+                            aria-label={t('form.memberHost', { index: i + 1 })}
+                            value={member.host}
+                            onChange={e => setMember(i, { host: e.target.value })}
+                            placeholder="db1.example.com"
+                            className="flex-[3] font-mono"
+                          />
+                          <Input
+                            type="text"
+                            inputMode="numeric"
+                            data-testid={`member-port-${i}`}
+                            aria-label={t('form.memberPort', { index: i + 1 })}
+                            value={member.port}
+                            onChange={e => setMember(i, { port: e.target.value })}
+                            placeholder="27017"
+                            className="flex-1 font-mono"
+                          />
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 shrink-0"
+                            disabled={editorState.hosts.length === 1}
+                            aria-label={t('form.removeMember', { host: member.host || i + 1 })}
+                            onClick={() => setEditorState(prev => ({ ...prev, hosts: prev.hosts.filter((_, j) => j !== i) }))}
+                          >
+                            <X size={13} />
+                          </Button>
+                        </div>
+                      ))}
+                      <div className="flex items-center gap-1.5">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-7 gap-1 text-xs"
+                          onClick={() => setEditorState(prev => ({ ...prev, hosts: [...prev.hosts, { host: '', port: '27017' }] }))}
+                        >
+                          <Plus size={12} /> {t('form.addMember')}
+                        </Button>
+                        {editorState.topology === 'replicaSet' && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-7 gap-1 text-xs"
+                            data-testid="discover-members-btn"
+                            disabled={discovering || !editorState.hosts.some(h => h.host.trim())}
+                            onClick={handleDiscover}
+                            title={t('form.discoverTitle')}
+                          >
+                            <RefreshCw size={12} className={cn(discovering && 'animate-spin')} /> {t('form.discover')}
+                          </Button>
+                        )}
+                      </div>
+                      {discoverNote && (
+                        <p className="m-0 flex items-center gap-1 text-[11px] text-warning" data-testid="discover-note">
+                          <AlertCircle size={12} /> {discoverNote}
+                        </p>
+                      )}
+                    </div>
+                  ) : editorState.topology !== 'uri' && (
                     <div className="flex flex-col gap-1">
                       <Label>
                         {t('form.hostList')} {editorState.protocol === 'mongodb+srv' ? t('form.hostListHostnameOnly') : t('form.hostListHostPort')}
@@ -2599,8 +2693,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
 
                     {editorState.topology === 'replicaSet' && (
                       <div className="flex flex-1 flex-col gap-1">
-                        <Label>{t('form.replicaSetName')}</Label>
+                        <Label htmlFor="replica-set-name">{t('form.replicaSetName')}</Label>
                         <Input
+                          id="replica-set-name"
                           type="text"
                           value={editorState.replicaSetName}
                           onChange={e => setEditorState(prev => ({ ...prev, replicaSetName: e.target.value }))}

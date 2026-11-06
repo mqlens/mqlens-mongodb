@@ -3747,3 +3747,74 @@ describe('URI options survive an edit and are editable on the Advanced tab', () 
     expect(optionsOf(savedProfile.uri).filter((o) => o.startsWith('readPreferenceTags'))).toEqual(['readPreferenceTags=dc:ny']);
   });
 });
+
+describe('replica set and sharded members', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  const openNewEditor = async () => {
+    let savedProfile: any = null;
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'save_connection_profile') {
+        savedProfile = args.profile;
+        return Promise.resolve();
+      }
+      if (cmd === 'discover_replica_set') {
+        return Promise.resolve({ set_name: 'rs-prod', hosts: ['a.example:27017', 'b.example:27018'], arbiters: ['c.example:27019'] });
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: /new\.\.\./i }));
+    return () => savedProfile;
+  };
+
+  it('edits replica set members one row at a time', async () => {
+    const saved = await openNewEditor();
+    await pickSelectOption('topology-select', /^replica set$/i);
+    fireEvent.change(screen.getByTestId('member-host-0'), { target: { value: 'm1.example' } });
+    fireEvent.click(screen.getByRole('button', { name: /add member/i }));
+    fireEvent.change(screen.getByTestId('member-host-1'), { target: { value: 'm2.example' } });
+    fireEvent.change(screen.getByTestId('member-port-1'), { target: { value: '27018' } });
+    fireEvent.click(screen.getByRole('button', { name: /add member/i }));
+    fireEvent.change(screen.getByTestId('member-host-2'), { target: { value: 'gone.example' } });
+    fireEvent.click(screen.getByRole('button', { name: /remove gone\.example/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => expect(saved()).not.toBeNull());
+    expect(saved().uri).toMatch(/^mongodb:\/\/m1\.example:27017,m2\.example:27018[/?]/);
+  });
+
+  it('fills the members and set name from Discover', async () => {
+    await openNewEditor();
+    await pickSelectOption('topology-select', /^replica set$/i);
+    fireEvent.change(screen.getByTestId('member-host-0'), { target: { value: 'seed.example' } });
+    fireEvent.click(screen.getByRole('button', { name: /discover/i }));
+
+    await waitFor(() => expect(screen.getByTestId('member-host-1')).toHaveValue('b.example'));
+    expect(mockInvoke).toHaveBeenCalledWith('discover_replica_set', { uri: expect.stringContaining('seed.example:27017') });
+    expect(screen.getByTestId('member-host-0')).toHaveValue('a.example');
+    expect(screen.getByTestId('member-port-1')).toHaveValue('27018');
+    expect(screen.queryByTestId('member-host-2')).toBeNull();
+    expect(screen.getByLabelText(/replica set name/i)).toHaveValue('rs-prod');
+  });
+
+  it('says so when Discover finds no replica set', async () => {
+    await openNewEditor();
+    mockInvoke.mockImplementation((cmd: string) =>
+      cmd === 'discover_replica_set' ? Promise.resolve({ set_name: null, hosts: [], arbiters: [] }) : Promise.resolve([]),
+    );
+    await pickSelectOption('topology-select', /^replica set$/i);
+    fireEvent.click(screen.getByRole('button', { name: /discover/i }));
+    expect(await screen.findByText(/not a replica set member/i)).toBeInTheDocument();
+  });
+
+  it('keeps the single host field for a standalone server', async () => {
+    await openNewEditor();
+    expect(screen.getByTestId('host-list')).toBeInTheDocument();
+    expect(screen.queryByTestId('member-host-0')).toBeNull();
+  });
+});
