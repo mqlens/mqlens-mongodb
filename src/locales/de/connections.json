@@ -292,6 +292,8 @@
     "password": "SSH-Passwort",
     "port": "SSH-Port",
     "privateKeyPath": "Pfad zum privaten Schlüssel",
+    "reuse": "Tunnel übernehmen von",
+    "reusePlaceholder": "Einer anderen Verbindung…",
     "srvWarning": "mongodb+srv:// kann nicht mit dem aktuellen Einzel-Host-SSH-Tunnel verwendet werden. Verwende stattdessen eine standardmäßige mongodb://-URI mit Hostnamen und Port eines bestimmten MongoDB-Knotens.",
     "username": "SSH-Benutzername"
   },

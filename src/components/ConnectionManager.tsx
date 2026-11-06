@@ -247,6 +247,22 @@ const FORM_URI_OPTIONS = new Set([
 const VIEW_KEY = 'mqlens.connectionManager.view';
 type TableSortKey = 'name' | 'server' | 'security' | 'lastConnected';
 
+/** A saved SSH tunnel as the editor's SSH tab fields. */
+const sshEditorFields = (ssh: SshConfig) => ({
+  sshEnabled: ssh.enabled,
+  sshHost: ssh.host,
+  sshPort: String(ssh.port),
+  sshUser: ssh.user,
+  sshAuth: ssh.auth.type,
+  sshKey: ssh.auth.type === 'key' ? ssh.auth.path : '',
+  sshPass:
+    ssh.auth.type === 'password'
+      ? ssh.auth.password
+      : ssh.auth.type === 'key'
+        ? ssh.auth.passphrase || ''
+        : '',
+});
+
 /** Percent-encode an option value but keep the `:` and `,` that tag sets and mechanism properties are built from. */
 const encodeOptionValue = (value: string) =>
   encodeURIComponent(value).replace(/%3A/gi, ':').replace(/%2C/gi, ',');
@@ -1070,23 +1086,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     const parsed = parseUriIntoFields(profile.uri);
 
     // Restore structured SSH config persisted with the profile.
-    const ssh = profile.ssh || null;
-    const sshFields = ssh
-      ? {
-          sshEnabled: ssh.enabled,
-          sshHost: ssh.host,
-          sshPort: String(ssh.port),
-          sshUser: ssh.user,
-          sshAuth: ssh.auth.type,
-          sshKey: ssh.auth.type === 'key' ? ssh.auth.path : '',
-          sshPass:
-            ssh.auth.type === 'password'
-              ? ssh.auth.password
-              : ssh.auth.type === 'key'
-                ? ssh.auth.passphrase || ''
-                : '',
-        }
-      : {};
+    const sshFields = profile.ssh ? sshEditorFields(profile.ssh) : {};
 
     const opened = {
       ...BLANK_CONN,
@@ -3330,6 +3330,27 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
 
                   {editorState.sshEnabled && (
                     <div className="flex flex-col gap-2 border-t border-border pt-2.5">
+                      {profiles.some(p => p.ssh?.enabled) && (
+                        <div className="flex flex-col gap-1">
+                          <Label>{t('ssh.reuse')}</Label>
+                          <Select
+                            value=""
+                            onValueChange={(id) => {
+                              const ssh = profiles.find(p => p.id === id)?.ssh;
+                              if (ssh) setEditorState(prev => ({ ...prev, ...sshEditorFields(ssh), sshEnabled: true }));
+                            }}
+                          >
+                            <SelectTrigger data-testid="ssh-reuse-select" className="h-8 text-xs">
+                              <SelectValue placeholder={t('ssh.reusePlaceholder')} />
+                            </SelectTrigger>
+                            <SelectContent className={NESTED_SELECT_Z}>
+                              {profiles.filter(p => p.ssh?.enabled).map(p => (
+                                <SelectItem key={p.id} value={p.id}>{`${p.name} (${p.ssh!.user}@${p.ssh!.host}:${p.ssh!.port})`}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
                       {(editorState.topology === 'uri'
                         ? /^mongodb\+srv:\/\//i.test(editorState.uri.trim())
                         : editorState.protocol === 'mongodb+srv') && (
@@ -3343,8 +3364,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                       )}
                       <div className="flex gap-2">
                         <div className="flex flex-[2] flex-col gap-1">
-                          <Label>{t('ssh.host')}</Label>
+                          <Label htmlFor="ssh-host">{t('ssh.host')}</Label>
                           <Input
+                            id="ssh-host"
                             type="text"
                             value={editorState.sshHost}
                             onChange={e => setEditorState(prev => ({ ...prev, sshHost: e.target.value }))}

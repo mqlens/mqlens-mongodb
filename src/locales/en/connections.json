@@ -330,6 +330,8 @@
     "password": "SSH Password",
     "port": "SSH Port",
     "privateKeyPath": "Private Key Path",
+    "reuse": "Use the tunnel of",
+    "reusePlaceholder": "Another connection…",
     "srvWarning": "mongodb+srv:// cannot be used with the current single-host SSH tunnel. Use a standard mongodb:// URI with a specific MongoDB node hostname and port instead.",
     "username": "SSH Username"
   },

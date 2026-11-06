@@ -4153,3 +4153,40 @@ describe('exporting an SRV connection as a seed list', () => {
     expect(screen.queryByTestId('export-seed-list')).toBeNull();
   });
 });
+
+describe("reusing another connection's SSH tunnel", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  const bastion = { enabled: true, host: 'bastion.example', port: 2222, user: 'ops', auth: { type: 'key', path: '/keys/ops', passphrase: 'kp' } };
+
+  it('copies the chosen tunnel into a new connection', async () => {
+    let savedProfile: any = null;
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      if (cmd === 'load_connection_profiles') {
+        return Promise.resolve([
+          { id: 'p-a', name: 'Orders', uri: 'mongodb://10.0.0.5:27017', ssh: bastion },
+          { id: 'p-b', name: 'Plain', uri: 'mongodb://localhost:27017' },
+        ]);
+      }
+      if (cmd === 'save_connection_profile') {
+        savedProfile = args.profile;
+        return Promise.resolve();
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: /new\.\.\./i }));
+    fireEvent.click(screen.getByRole('button', { name: /^ssh tunnel$/i }));
+    fireEvent.click(screen.getByLabelText(/enable ssh tunnel/i));
+    await pickSelectOption('ssh-reuse-select', /orders \(ops@bastion\.example:2222\)/i);
+    expect(screen.getByLabelText(/ssh server host/i)).toHaveValue('bastion.example');
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => expect(savedProfile).not.toBeNull());
+    expect(savedProfile.ssh).toEqual(bastion);
+  });
+});

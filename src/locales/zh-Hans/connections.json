@@ -290,6 +290,8 @@
     "password": "SSH 密码",
     "port": "SSH 端口",
     "privateKeyPath": "私钥路径",
+    "reuse": "使用以下连接的隧道",
+    "reusePlaceholder": "其他连接…",
     "srvWarning": "mongodb+srv:// 无法与当前的单主机 SSH 隧道一起使用。请改用包含特定 MongoDB 节点主机名和端口的标准 mongodb:// URI。",
     "username": "SSH 用户名"
   },
