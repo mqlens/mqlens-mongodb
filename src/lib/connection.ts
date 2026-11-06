@@ -226,6 +226,33 @@ function parseTextConnections(text: string, out: ImportedConnection[]): void {
   }
 }
 
+/**
+ * Robo 3T's robo3t.json stores a connection as fields, not a URI: host and
+ * port (or replica set members), the first enabled credential, and SSL. Its
+ * SSH settings are not carried over.
+ */
+function robo3tUri(obj: Record<string, unknown>): string | null {
+  if (typeof obj.serverHost !== 'string' || !obj.serverHost) return null;
+  const replicaSet = (obj.replicaSet ?? {}) as { setName?: unknown; members?: unknown };
+  const members = Array.isArray(replicaSet.members) ? replicaSet.members.filter((m): m is string => typeof m === 'string') : [];
+  const hosts = members.length ? members.join(',') : `${obj.serverHost}:${Number(obj.serverPort) || 27017}`;
+  const credentials = Array.isArray(obj.credentials) ? obj.credentials : [];
+  const cred = credentials.find((c) => c && typeof c === 'object' && (c as { enabled?: unknown }).enabled) as
+    | { userName?: string; userPassword?: string; databaseName?: string; mechanism?: string }
+    | undefined;
+  const userinfo = cred?.userName
+    ? `${encodeURIComponent(cred.userName)}${cred.userPassword ? `:${encodeURIComponent(cred.userPassword)}` : ''}@`
+    : '';
+  const params: string[] = [];
+  if (cred?.userName && cred.databaseName) params.push(`authSource=${encodeURIComponent(cred.databaseName)}`);
+  if (cred?.userName && cred.mechanism) params.push(`authMechanism=${encodeURIComponent(cred.mechanism)}`);
+  if ((obj.ssl as { enabled?: unknown } | undefined)?.enabled) params.push('tls=true');
+  if (members.length && typeof replicaSet.setName === 'string' && replicaSet.setName) {
+    params.push(`replicaSet=${encodeURIComponent(replicaSet.setName)}`);
+  }
+  return `mongodb://${userinfo}${hosts}/${params.length ? `?${params.join('&')}` : ''}`;
+}
+
 function collectConnectionsFromJson(value: unknown, out: ImportedConnection[], inheritedFolder?: string): void {
   if (typeof value === 'string') {
     const uri = normalizeUriCandidate(value);
@@ -243,12 +270,19 @@ function collectConnectionsFromJson(value: unknown, out: ImportedConnection[], i
   if (!value || typeof value !== 'object') return;
 
   const obj = value as Record<string, unknown>;
-  const name = pickString(obj, ['connectionName', 'name', 'title', 'label']);
+  const asRecord = (v: unknown) => (v && typeof v === 'object' ? (v as Record<string, unknown>) : {});
+  // Compass keeps the name in `favorite` and the URI in `connectionOptions`.
+  const name =
+    pickString(obj, ['connectionName', 'name', 'title', 'label'])
+    || pickString(asRecord(obj.favorite), ['name']);
   const folder =
     pickString(obj, ['folder', 'folderName', 'connectionFolder', 'group', 'groupName'])
     || inheritedFolder
     || null;
-  const uri = pickString(obj, ['uri', 'connectionString', 'connectionUri', 'url', 'connection_url']);
+  const uri =
+    pickString(obj, ['uri', 'connectionString', 'connectionUri', 'url', 'connection_url'])
+    || pickString(asRecord(obj.connectionOptions), ['connectionString'])
+    || robo3tUri(obj);
 
   if (uri) {
     const normalized = normalizeUriCandidate(uri);

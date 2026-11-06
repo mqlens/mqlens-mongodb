@@ -185,7 +185,7 @@
     "certificatesFilter": "证书",
     "importFileTitle": "从文件导入连接 URI",
     "jsonFilter": "JSON",
-    "jsonStudio3tFilter": "JSON / Studio 3T URI",
+    "jsonStudio3tFilter": "连接文件（Studio 3T、Compass、Robo 3T、JSON、URI）",
     "selectCertificateTitle": "选择证书文件",
     "textFilter": "文本"
   },

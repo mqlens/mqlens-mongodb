@@ -458,3 +458,61 @@ describe('maskUriPassword hides secret options too', () => {
     );
   });
 });
+
+describe('importing from other MongoDB tools', () => {
+  it('reads a Compass export, named by its favourite', () => {
+    const compass = JSON.stringify({
+      type: 'Compass Connections',
+      version: { $numberInt: '1' },
+      connections: [
+        {
+          id: 'c1',
+          connectionOptions: { connectionString: 'mongodb://ann@reports.db:27017/?authSource=admin' },
+          favorite: { name: 'Reports', color: 'color3' },
+        },
+        { id: 'c2', connectionOptions: { connectionString: 'mongodb+srv://cluster0.example.net/' } },
+      ],
+    });
+    expect(parseConnectionImportFile(compass)).toEqual({ ok: true, connections: [
+      { name: 'Reports', uri: 'mongodb://ann@reports.db:27017/?authSource=admin', folder: null },
+      { name: 'cluster0.example.net', uri: 'mongodb+srv://cluster0.example.net/', folder: null },
+    ] });
+  });
+
+  it('builds URIs from a robo3t.json, which stores fields rather than a URI', () => {
+    const robo = JSON.stringify({
+      connections: [
+        {
+          connectionName: 'Local',
+          serverHost: 'localhost',
+          serverPort: 27017,
+          credentials: [],
+          ssl: { enabled: false },
+        },
+        {
+          connectionName: 'Billing',
+          serverHost: 'billing.db',
+          serverPort: 27018,
+          credentials: [{ enabled: true, userName: 'bob', userPassword: 'p@ss', databaseName: 'admin', mechanism: 'SCRAM-SHA-256' }],
+          ssl: { enabled: true },
+        },
+        {
+          connectionName: 'Cluster',
+          serverHost: 'm1.db',
+          serverPort: 27017,
+          credentials: [{ enabled: false, userName: 'unused', userPassword: 'x', databaseName: 'admin' }],
+          replicaSet: { setName: 'rs0', members: ['m1.db:27017', 'm2.db:27017'] },
+        },
+      ],
+    });
+    expect(parseConnectionImportFile(robo)).toEqual({ ok: true, connections: [
+      { name: 'Local', uri: 'mongodb://localhost:27017/', folder: null },
+      {
+        name: 'Billing',
+        uri: 'mongodb://bob:p%40ss@billing.db:27018/?authSource=admin&authMechanism=SCRAM-SHA-256&tls=true',
+        folder: null,
+      },
+      { name: 'Cluster', uri: 'mongodb://m1.db:27017,m2.db:27017/?replicaSet=rs0', folder: null },
+    ] });
+  });
+});

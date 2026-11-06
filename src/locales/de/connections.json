@@ -187,7 +187,7 @@
     "certificatesFilter": "Zertifikate",
     "importFileTitle": "Verbindungs-URI aus Datei importieren",
     "jsonFilter": "JSON",
-    "jsonStudio3tFilter": "JSON / Studio 3T-URI",
+    "jsonStudio3tFilter": "Verbindungsdateien (Studio 3T, Compass, Robo 3T, JSON, URI)",
     "selectCertificateTitle": "Zertifikatsdatei auswählen",
     "textFilter": "Text"
   },
