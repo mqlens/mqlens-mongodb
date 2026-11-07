@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { DialogModal } from '../DialogModal';
 
 describe('DialogModal', () => {
@@ -44,5 +44,20 @@ describe('DialogModal', () => {
     );
     expect(screen.getByTestId('dialog-cancel')).toHaveTextContent('Zurück');
     expect(screen.getByTestId('dialog-confirm')).toHaveTextContent('Löschen');
+  });
+it('submits a password prompt as typed, spaces included', () => {
+    const onResolve = vi.fn();
+    render(<DialogModal request={{ type: 'prompt', title: 'Password', password: true }} onResolve={onResolve} />);
+    fireEvent.change(screen.getByTestId('dialog-input'), { target: { value: ' pass word ' } });
+    fireEvent.click(screen.getByTestId('dialog-confirm'));
+    expect(onResolve).toHaveBeenCalledWith(' pass word ');
+  });
+
+  it('still trims a plain text prompt', () => {
+    const onResolve = vi.fn();
+    render(<DialogModal request={{ type: 'prompt', title: 'Name' }} onResolve={onResolve} />);
+    fireEvent.change(screen.getByTestId('dialog-input'), { target: { value: '  Prod  ' } });
+    fireEvent.click(screen.getByTestId('dialog-confirm'));
+    expect(onResolve).toHaveBeenCalledWith('Prod');
   });
 });

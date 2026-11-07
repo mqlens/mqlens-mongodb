@@ -405,6 +405,11 @@ describe('asking for a password that was not saved', () => {
     expect(needsPasswordPrompt('mongodb://db:27017/?note=a@b')).toBe(false);
   });
 
+  it('reads a passwordless mechanism between ; separators too, as the driver does', () => {
+    expect(needsPasswordPrompt('mongodb://CN=me@db:27017/?authMechanism=MONGODB-X509;tls=true')).toBe(false);
+    expect(needsPasswordPrompt('mongodb://svc%40REALM@db:27017/?tls=true;authMechanism=GSSAPI')).toBe(false);
+  });
+
   it('puts the typed password into the userinfo, encoded', () => {
     expect(withPassword('mongodb://alice@db:27017/shop?tls=true', 'p@ss:/w')).toBe(
       'mongodb://alice:p%40ss%3A%2Fw@db:27017/shop?tls=true',

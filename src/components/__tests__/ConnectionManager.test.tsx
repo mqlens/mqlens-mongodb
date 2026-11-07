@@ -2673,6 +2673,31 @@ describe('URI import and export', () => {
     expect(saved[1].ssh).toBeNull();
   });
 
+  it('keeps the SSH tunnel of a single exported connection, which opens in the editor', async () => {
+    let savedProfile: any = null;
+    mockInvoke.mockImplementation((cmd: string, args?: any) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'save_connection_profile') {
+        savedProfile = args.profile;
+        return Promise.resolve();
+      }
+      return Promise.resolve([]);
+    });
+    setupClipboard();
+    mockOpenDialog.mockResolvedValue('/tmp/connections.json');
+    const ssh = { host: 'bastion.example', port: 2222, user: 'ops', auth: { type: 'key', path: '/keys/ops' } };
+    mockReadTextFile.mockResolvedValue(JSON.stringify({ connections: [{ name: 'Tunnelled', uri: 'mongodb://10.0.0.5:27017', ssh }] }));
+
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+    await openImportMenu();
+    fireEvent.click(await screen.findByTestId('import-from-file'));
+
+    await waitFor(() => expect(screen.getByLabelText(/display name/i)).toHaveValue('Tunnelled'));
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    await waitFor(() => expect(savedProfile).not.toBeNull());
+    expect(savedProfile.ssh).toMatchObject({ enabled: true, host: 'bastion.example', port: 2222, user: 'ops', auth: { type: 'key', path: '/keys/ops' } });
+  });
+
   it('imports multiple URIs from a Studio 3T-style export file', async () => {
     const saved: Array<{ name: string; uri: string }> = [];
     mockInvoke.mockImplementation((cmd: string, args?: any) => {

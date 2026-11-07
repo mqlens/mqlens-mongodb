@@ -75,7 +75,8 @@ export const DialogModal: React.FC<DialogModalProps> = ({ request, onResolve }) 
   const submitPrompt = () => {
     const r = request as PromptRequest;
     if (r.confirmEnabled && !r.confirmEnabled(value)) return;
-    const trimmed = value.trim();
+    // A password is taken as typed: spaces at either end can be part of it.
+    const trimmed = r.password ? value : value.trim();
     const err = r.validate ? r.validate(trimmed) : null;
     if (err) {
       setError(err);

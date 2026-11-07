@@ -93,7 +93,8 @@ export const stripUriSecrets = (uri: string): string => {
 // Userinfo of a mongodb URI: user, then an optional `:password`, before `@`.
 const USERINFO = /^(mongodb(?:\+srv)?:\/\/)([^:/@?#]+)(:[^@/?#]*)?@/i;
 // Mechanisms that authenticate without a password (certificate, ticket, browser).
-const PASSWORDLESS_MECHANISM = /[?&]authMechanism=(MONGODB-X509|GSSAPI|MONGODB-OIDC)(&|$)/i;
+// Options split on & or ;, as the driver reads them.
+const PASSWORDLESS_MECHANISM = /[?&;]authMechanism=(MONGODB-X509|GSSAPI|MONGODB-OIDC)([&;]|$)/i;
 
 /**
  * Whether connecting `uri` needs a password the profile does not hold: a

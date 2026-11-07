@@ -1697,6 +1697,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     if (connections.length === 1 && !connections[0].folder) {
       openEditorForImport();
       applyImportedUri(connections[0].uri, connections[0].name);
+      const ssh = connections[0].ssh;
+      if (ssh) setEditorState((prev) => ({ ...prev, ...sshEditorFields(ssh), sshEnabled: true }));
       return;
     }
 
