@@ -183,6 +183,8 @@ const BLANK_CONN = {
   oidcUseIdToken: false,
   oidcRememberLogin: false,
   tlsMode: 'off',
+  // The saved URI said tls=false (or ssl=false); kept while TLS stays off.
+  tlsOffExplicit: false,
   tlsCa: '',
   tlsClientCert: '',
   tlsClientKey: '',
@@ -395,6 +397,7 @@ export const parseUriIntoFields = (uri: string) => {
   let hostStr = isSrv ? 'localhost' : 'localhost:27017';
   let defaultDb = '';
   let tlsMode = 'off';
+  let tlsOffExplicit = false;
   let tlsCa = '';
   let tlsClientCert = '';
   let tlsKeyPassword = '';
@@ -454,6 +457,7 @@ export const parseUriIntoFields = (uri: string) => {
     } else if (/(?:^|&)(?:tls|ssl)=true/i.test(query)) {
       tlsMode = 'system';
     }
+    tlsOffExplicit = tlsMode === 'off' && /(?:^|&)(?:tls|ssl)=false/i.test(query);
     tlsClientCert = param('tlsCertificateKeyFile') || param('sslClientCertificateKeyFile') || '';
     tlsKeyPassword = param('tlsCertificateKeyFilePassword') || param('sslClientCertificateKeyPassword') || '';
     // tlsInsecure implies both allow-invalid relaxations.
@@ -579,6 +583,7 @@ export const parseUriIntoFields = (uri: string) => {
     authMechanismExtraProps,
     ...options,
     tlsMode,
+    tlsOffExplicit,
     tlsCa,
     tlsClientCert,
     tlsKeyPassword,
@@ -630,6 +635,7 @@ export const buildUri = (s: typeof BLANK_CONN) => {
   if (s.topology === 'standalone' && s.directConnection && !isSrv && s.hosts.filter(h => h.host).length <= 1)
     params.push('directConnection=true');
   if (s.tlsMode !== 'off') params.push('tls=true');
+  else if (s.tlsOffExplicit) params.push('tls=false');
   // Custom CA file (and optional client cert/key file) must be passed to the driver.
   if (s.tlsMode === 'file' && s.tlsCa) params.push(`tlsCAFile=${encodeURIComponent(s.tlsCa)}`);
   if (s.tlsMode !== 'off' && s.tlsClientCert) {
@@ -1995,12 +2001,16 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
 
   // Discover (replica set): ask a seed member for the set's name and members.
   const handleDiscover = async () => {
+    // A reply for an editor that has since closed (and maybe reopened on
+    // another connection) is dropped, as a connect's is.
+    const attempt = connectAttemptRef.current;
     setDiscovering(true);
     setDiscoverNote(null);
     try {
       const found = await invoke<{ set_name: string | null; hosts: string[] }>('discover_replica_set', {
         uri: buildUri(editorState),
       });
+      if (attempt !== connectAttemptRef.current) return;
       // The reply comes from the server, so only plain host:port members are
       // taken; anything else could carry URI syntax into the saved string.
       const members = found.hosts.filter((h) => /^[A-Za-z0-9.-]+:\d{1,5}$/.test(h));
@@ -2011,7 +2021,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
         setDiscoverNote(t('form.discoverNoSet'));
       }
     } catch (err) {
-      setDiscoverNote(connectErrorText(err));
+      if (attempt === connectAttemptRef.current) setDiscoverNote(connectErrorText(err));
     } finally {
       setDiscovering(false);
     }

@@ -3715,6 +3715,15 @@ describe('URI options survive an edit and are editable on the Advanced tab', () 
     expect(optionsOf(rebuilt)).toEqual(optionsOf(uri));
   });
 
+  it('keeps an explicit tls=false or ssl=false, which an SRV connection needs to stay off', () => {
+    for (const uri of ['mongodb+srv://cluster0.example.net/app?tls=false', 'mongodb://h1:27017/?ssl=false']) {
+      expect(buildUri({ ...baseConn, ...parseUriIntoFields(uri) })).toMatch(/[?&](tls|ssl)=false/);
+    }
+    // Turning TLS on in the form drops the override.
+    const on = buildUri({ ...baseConn, ...parseUriIntoFields('mongodb+srv://cluster0.example.net/app?tls=false'), tlsMode: 'system' });
+    expect(on).not.toMatch(/=false/);
+  });
+
   it('keeps authMechanismProperties it has no field for', () => {
     const uri = 'mongodb://svc%40REALM@kdc.example.com:27017/?authMechanism=GSSAPI&authSource=$external' +
       '&authMechanismProperties=SERVICE_NAME:mongo,CANONICALIZE_HOST_NAME:true';
@@ -3852,6 +3861,27 @@ describe('replica set and sharded members', () => {
     expect(screen.getByTestId('member-port-1')).toHaveValue('27018');
     expect(screen.queryByTestId('member-host-2')).toBeNull();
     expect(screen.getByLabelText(/replica set name/i)).toHaveValue('rs-prod');
+  });
+
+  it('drops a Discover reply that arrives after its editor closed', async () => {
+    await openNewEditor();
+    let reply: (value: unknown) => void = () => {};
+    mockInvoke.mockImplementation((cmd: string) =>
+      cmd === 'discover_replica_set' ? new Promise((resolve) => { reply = resolve; }) : Promise.resolve([]),
+    );
+    await pickSelectOption('topology-select', /^replica set$/i);
+    fireEvent.change(screen.getByTestId('member-host-0'), { target: { value: 'seed-a.example' } });
+    fireEvent.click(screen.getByRole('button', { name: /discover/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+
+    // Another editor is open by the time connection A's reply comes back.
+    fireEvent.click(await screen.findByRole('button', { name: /new\.\.\./i }));
+    await pickSelectOption('topology-select', /^replica set$/i);
+    fireEvent.change(screen.getByTestId('member-host-0'), { target: { value: 'seed-b.example' } });
+    await act(async () => reply({ set_name: 'rs-a', hosts: ['a.example:27017'], arbiters: [] }));
+
+    expect(screen.getByTestId('member-host-0')).toHaveValue('seed-b.example');
+    expect(screen.getByLabelText(/replica set name/i)).not.toHaveValue('rs-a');
   });
 
   it('says so when Discover finds no replica set', async () => {

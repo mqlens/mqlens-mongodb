@@ -415,9 +415,15 @@ export const connectionSummary = (uri: string) => {
   const query = (m?.[4] ?? '').replace(/;/g, '&');
   const param = (name: string) => query.match(new RegExp(`(?:^|&)${name}=([^&]*)`, 'i'))?.[1];
   const hosts = (m?.[3] ?? '').split(',').filter(Boolean).join(', ');
+  let user = m?.[2] ?? '';
+  try {
+    user = decodeURIComponent(user);
+  } catch {
+    // A malformed escape is shown as written rather than failing the render.
+  }
   return {
     server: srv ? `${hosts} (SRV)` : hosts,
-    user: m?.[2] ? decodeURIComponent(m[2]) : '',
+    user,
     mechanism: param('authMechanism') ?? '',
     // SRV turns TLS on unless the URI turns it off.
     tls: srv ? !/(?:^|&)(?:tls|ssl)=false/i.test(query) : /(?:^|&)(?:tls|ssl)=true/i.test(query),

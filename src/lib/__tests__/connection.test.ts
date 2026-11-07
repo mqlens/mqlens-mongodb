@@ -435,6 +435,10 @@ describe('what the connection table shows', () => {
     expect(connectionSummary('mongodb://localhost')).toEqual({ server: 'localhost', user: '', mechanism: '', tls: false });
   });
 
+  it('shows a username with a malformed escape as written instead of throwing', () => {
+    expect(connectionSummary('mongodb://user%ZZ@h1:27017/').user).toBe('user%ZZ');
+  });
+
   it('remembers when each profile last connected', () => {
     localStorage.clear();
     recordLastConnected('p1', 1000);

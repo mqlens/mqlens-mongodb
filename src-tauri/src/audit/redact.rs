@@ -34,14 +34,25 @@ pub fn redact_secret_uri_options(input: &str, in_text: bool) -> String {
             if let Some(key) = SECRET_URI_OPTIONS.iter().find(|k| lower[i..].starts_with(*k)) {
                 out.push_str(&input[i..i + key.len()]);
                 out.push_str("***");
+                // In free text, a URI written inside a quoted string ends only
+                // at that string's closing quote: typed shell text need not
+                // percent-encode the passphrase, so `)`, spaces or the other
+                // quote marks may be part of it.
+                let quote = if in_text { enclosing_quote(&lower, bytes, i) } else { None };
                 i += key.len();
                 // The value ends at the next option, the fragment, or whatever
                 // closes the URI in surrounding text.
-                while i < input.len()
-                    && !matches!(bytes[i], b'&' | b';' | b'#')
-                    && !(in_text
-                        && (matches!(bytes[i], b'"' | b'\'' | b'`' | b')') || bytes[i].is_ascii_whitespace()))
-                {
+                while i < input.len() && !matches!(bytes[i], b'&' | b';' | b'#') {
+                    let ends = match quote {
+                        Some(q) => bytes[i] == q && bytes[i - 1] != b'\\',
+                        None => {
+                            in_text
+                                && (matches!(bytes[i], b'"' | b'\'' | b'`' | b')') || bytes[i].is_ascii_whitespace())
+                        }
+                    };
+                    if ends {
+                        break;
+                    }
                     i += 1;
                 }
                 continue;
@@ -52,6 +63,14 @@ pub fn redact_secret_uri_options(input: &str, in_text: bool) -> String {
         i += ch.len_utf8();
     }
     out
+}
+
+/// The quote mark opening the string that holds the URI around `at`: the
+/// character just before the nearest preceding `mongodb` scheme, if it is one.
+fn enclosing_quote(lower: &str, bytes: &[u8], at: usize) -> Option<u8> {
+    let scheme = lower[..at].rfind("mongodb")?;
+    let before = *bytes.get(scheme.checked_sub(1)?)?;
+    matches!(before, b'"' | b'\'' | b'`').then_some(before)
 }
 
 fn scrub_mongodb_uris(input: &str) -> String {
@@ -446,6 +465,25 @@ mod tests {
             assert!(!out.contains(leak), "leaked {leak:?} from {raw}: {out}");
         }
         assert!(out.contains("failed:"), "prefix must survive: {out}");
+    }
+
+    #[test]
+    fn a_quoted_secret_option_is_masked_to_its_closing_quote() {
+        // Shell text arrives as typed, so the passphrase need not be
+        // percent-encoded: a `)`, a space or the other quote mark inside
+        // the quoted URI must not end the value early.
+        for (raw, tail) in [
+            ("connect('mongodb://h/?tlsCertificateKeyFilePassword=a)bSECRET')", "bSECRET"),
+            ("connect(\"mongodb://h/?proxyPassword=a b'SECRET&w=1\")", "SECRET"),
+            ("connect(`mongodb://h/?sslPEMKeyPassword=x\\`ySECRET`)", "ySECRET"),
+        ] {
+            let out = redact_text(raw);
+            assert!(!out.contains(tail), "leaked {tail:?} from {raw}: {out}");
+        }
+        // Outside quotes the old terminators still apply, and what follows stays.
+        let out = redact_text("uri=mongodb://h/?proxyPassword=pw) next");
+        assert!(out.ends_with("proxyPassword=***) next"), "{out}");
+        assert!(redact_text("connect('mongodb://h/?proxyPassword=pw&w=1')").ends_with("proxyPassword=***&w=1')"));
     }
 
     #[test]
