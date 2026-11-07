@@ -1,4 +1,6 @@
 import React, { createContext, useCallback, useContext, useRef, useState } from 'react';
+import { ask } from '@tauri-apps/plugin-dialog';
+import { useTranslation } from 'react-i18next';
 import { Toaster } from '@/components/ui/sonner';
 import { ToastStack, Toast, ToastKind, type ToastOptions } from './ToastStack';
 import { DialogModal, ModalRequest } from './DialogModal';
@@ -52,6 +54,10 @@ export function useDialogs(): DialogApi {
   return ctx;
 }
 
+// Read directly: `isTauri()` from @tauri-apps/api/core is absent from the
+// tests' module mocks, and the e2e harness fakes IPC without setting this.
+const hasNativeDialogs = () => Boolean((globalThis as { isTauri?: boolean }).isTauri);
+
 interface ActiveModal {
   request: ModalRequest;
   resolve: (value: boolean | string | null) => void;
@@ -61,6 +67,7 @@ export const DialogProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [modal, setModal] = useState<ActiveModal | null>(null);
   const nextId = useRef(0);
+  const { t } = useTranslation('common');
 
   const removeToast = useCallback((id: number) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
@@ -88,8 +95,20 @@ export const DialogProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   );
 
   const confirm = useCallback(
-    (opts: ConfirmOptions) => openModal({ type: 'confirm', ...opts }) as Promise<boolean>,
-    [openModal],
+    (opts: ConfirmOptions): Promise<boolean> => {
+      const inPage = () => openModal({ type: 'confirm', ...opts }) as Promise<boolean>;
+      if (!hasNativeDialogs()) return inPage();
+      return ask(opts.message ?? opts.title, {
+        title: opts.message ? opts.title : undefined,
+        kind: opts.destructive ? 'warning' : 'info',
+        okLabel: opts.confirmLabel ?? t('confirm'),
+        cancelLabel: opts.cancelLabel ?? t('cancel'),
+      }).catch((err) => {
+        console.warn('native confirm failed, using the in-page dialog', err);
+        return inPage();
+      });
+    },
+    [openModal, t],
   );
   const prompt = useCallback(
     (opts: PromptOptions) => openModal({ type: 'prompt', ...opts }) as Promise<string | null>,
