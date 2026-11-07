@@ -721,7 +721,10 @@ export const buildUri = (s: typeof BLANK_CONN) => {
     if (s.proxyUser) params.push(`proxyUsername=${encodeURIComponent(s.proxyUser)}`);
     if (s.proxyPass) params.push(`proxyPassword=${encodeURIComponent(s.proxyPass)}`);
   }
-  const extra = (s.extraOptions ?? '').trim().replace(/^[?&]+/, '');
+  // A kept option gives way when a form control now writes the same key.
+  const keyOf = (p: string) => p.split('=')[0].toLowerCase().replace(/^ssl$/, 'tls');
+  const owned = new Set(params.map(keyOf));
+  const extra = (s.extraOptions ?? '').trim().replace(/^[?&]+/, '').split('&').filter((p) => p && !owned.has(keyOf(p))).join('&');
   if (extra) params.push(extra);
   const dbPath = s.defaultDb ? `/${s.defaultDb}` : '';
   const scheme = isSrv ? 'mongodb+srv' : 'mongodb';
@@ -2453,6 +2456,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
           <ScrollArea className="min-h-0 flex-1 bg-background">
             <div className="flex min-h-full flex-col p-6 lg:p-8">
             {view === 'table' && profiles.length > 0 ? (
+              <>
               <table data-testid="connection-table" className="w-full table-fixed border-collapse text-ui-xs">
                 <thead>
                   <tr className="border-b border-border text-left">
@@ -2497,6 +2501,29 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                   ))}
                 </tbody>
               </table>
+              {/* The details panel shows these in tree view; a connect started
+                  from a row still needs its error and login controls. */}
+              {(error || (connectLoginId && !showEditDialog)) && (
+                <div data-testid="connect-feedback" className="mt-4 flex flex-col gap-2">
+                  {error && (
+                    <div className="flex items-center gap-1.5 rounded border border-destructive/30 bg-destructive/10 p-2 text-[11px] text-destructive">
+                      <AlertCircle size={12} />
+                      <span>{error}</span>
+                    </div>
+                  )}
+                  {connectLoginId && !showEditDialog && (
+                    <div className="flex justify-end gap-2">
+                      <Button type="button" variant="outline" size="sm" data-testid="connect-cancel-login" onClick={handleCancelConnectLogin}>
+                        {t('test.cancelLogin')}
+                      </Button>
+                      <Button type="button" variant="outline" size="sm" data-testid="connect-reopen-login" onClick={handleReopenConnectLogin}>
+                        {t('test.openBrowserAgain')}
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )}
+              </>
             ) : selectedProfile ? (
               <div className="flex flex-1 flex-col">
                 <div className="flex-1">

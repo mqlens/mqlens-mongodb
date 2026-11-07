@@ -357,8 +357,8 @@ mod tests {
     fn scrubs_password_json_fields() {
         let raw = "connect('mongodb://h/?tlsCertificateKeyFilePassword=kp9&proxyPassword=pp9&w=1')";
         let out = redact_text(raw);
-        assert!(!out.contains("kp9") && !out.contains("pp9"), "URI option secret leaked: {out}");
-        assert!(out.contains("w=1"), "other options kept: {out}");
+        assert!(!out.contains("kp9") && !out.contains("pp9"), "URI option secret leaked");
+        assert!(out.contains("w=1"), "other options kept");
 
         let raw = r#"{"password":"hunter2","filter":{"x":1}}"#;
         let out = redact_text(raw);
@@ -478,11 +478,11 @@ mod tests {
             ("connect(`mongodb://h/?sslPEMKeyPassword=x\\`ySECRET`)", "ySECRET"),
         ] {
             let out = redact_text(raw);
-            assert!(!out.contains(tail), "leaked {tail:?} from {raw}: {out}");
+            assert!(!out.contains(tail), "leaked {tail:?}");
         }
         // Outside quotes the old terminators still apply, and what follows stays.
         let out = redact_text("uri=mongodb://h/?proxyPassword=pw) next");
-        assert!(out.ends_with("proxyPassword=***) next"), "{out}");
+        assert!(out.ends_with("proxyPassword=***) next"));
         assert!(redact_text("connect('mongodb://h/?proxyPassword=pw&w=1')").ends_with("proxyPassword=***&w=1')"));
     }
 

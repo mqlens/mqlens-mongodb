@@ -3724,6 +3724,15 @@ describe('URI options survive an edit and are editable on the Advanced tab', () 
     expect(on).not.toMatch(/=false/);
   });
 
+  it('lets a form control replace a kept option instead of writing it twice', () => {
+    const lb = buildUri({ ...baseConn, ...parseUriIntoFields('mongodb://h1:27017/?loadBalanced=false'), loadBalanced: true });
+    expect(optionsOf(lb).filter((o) => o.startsWith('loadBalanced'))).toEqual(['loadBalanced=true']);
+    const zip = buildUri({ ...baseConn, ...parseUriIntoFields('mongodb://h1:27017/?compressors=zstd'), compression: 'zlib' });
+    expect(optionsOf(zip).filter((o) => o.startsWith('compressors'))).toEqual(['compressors=zlib']);
+    // Left alone, the kept value still rides through.
+    expect(buildUri({ ...baseConn, ...parseUriIntoFields('mongodb://h1:27017/?compressors=zstd') })).toContain('compressors=zstd');
+  });
+
   it('keeps authMechanismProperties it has no field for', () => {
     const uri = 'mongodb://svc%40REALM@kdc.example.com:27017/?authMechanism=GSSAPI&authSource=$external' +
       '&authMechanismProperties=SERVICE_NAME:mongo,CANONICALIZE_HOST_NAME:true';
@@ -4086,6 +4095,19 @@ describe('the connection table', () => {
     fireEvent.click(screen.getByRole('button', { name: /last connected/i }));
     // Most recent first; never-connected last.
     expect(names()).toEqual(['Cache', 'Analytics', 'Billing']);
+  });
+
+  it('says why a connect from a table row failed', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve(profiles);
+      if (cmd === 'load_connection_folders') return Promise.resolve([]);
+      if (cmd === 'connect_db') return Promise.reject('server selection timed out');
+      return Promise.resolve([]);
+    });
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: /table view/i }));
+    fireEvent.doubleClick(within(screen.getByTestId('connection-table')).getByText('Cache'));
+    expect(await screen.findByTestId('connect-feedback')).toHaveTextContent(/timed out/i);
   });
 
   it('remembers the chosen view', async () => {
