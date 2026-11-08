@@ -488,6 +488,10 @@
       "dismiss": "Verwerfen",
       "offline": "Du bist offline. Verbinde dich mit dem Internet und versuche es erneut.",
       "uptodate": "Du bist auf der neuesten Version."
+    },
+    "whatsNew": {
+      "link": "Neuerungen ansehen",
+      "message": "Auf MQLens {{version}} aktualisiert."
     }
   },
   "vaultGate": {
@@ -495,6 +499,12 @@
       "resetLink": "Passwort vergessen? Zurücksetzen (löscht alle gespeicherten Zugangsdaten)",
       "setup": "Erstellen & entsperren",
       "unlock": "Entsperren"
+    },
+    "biometricOffer": {
+      "description": "Nutze die biometrische Entsperrung dieses Geräts (Touch ID, Face ID oder Windows Hello), statt dein Master-Passwort einzugeben. Du kannst sie unter Einstellungen → Sicherheit wieder ausschalten.",
+      "enable": "Biometrische Entsperrung einschalten",
+      "skip": "Nicht jetzt",
+      "title": "Beim nächsten Mal ohne Passwort entsperren?"
     },
     "biometry": {
       "faceId": "Face ID verwenden",

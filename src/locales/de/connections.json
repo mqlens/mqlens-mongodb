@@ -130,7 +130,7 @@
     "tabsAria": "Bereiche der Verbindungseinstellungen"
   },
   "empty": {
-    "message": "Wähle eine Verbindung aus der Seitenleiste oder klicke in der Symbolleiste auf \"Neu…\", um eine zu erstellen."
+    "message": "Klicke in der Symbolleiste auf \"Neu...\", um eine Verbindung hinzuzufügen, oder wähle eine gespeicherte aus der Liste links."
   },
   "errors": {
     "alreadyActive": "Diese Verbindung ist bereits aktiv",

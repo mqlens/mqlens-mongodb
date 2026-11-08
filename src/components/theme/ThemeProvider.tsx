@@ -190,7 +190,8 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (config.mode !== "system") return;
-    const mq = window.matchMedia("(prefers-color-scheme: light)");
+    const mq = window.matchMedia?.("(prefers-color-scheme: light)");
+    if (!mq) return;
     const handler = () => applyThemeEverywhere(config);
     mq.addEventListener("change", handler);
     return () => mq.removeEventListener("change", handler);

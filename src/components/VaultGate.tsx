@@ -16,6 +16,7 @@ import {
   resetVault,
   biometricStatus,
   biometricUnlock,
+  biometricEnable,
   notifyVaultUnlocked,
   type VaultStatus,
   type BiometricStatus,
@@ -41,6 +42,8 @@ export const VaultGate: React.FC<VaultGateProps> = ({ children }) => {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [bio, setBio] = useState<BiometricStatus | null>(null);
+  // Set right after first-run setup when this device could unlock with biometrics.
+  const [offerBio, setOfferBio] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -108,7 +111,9 @@ export const VaultGate: React.FC<VaultGateProps> = ({ children }) => {
     try {
       if (isSetup) {
         await initializeVault(password);
-        setStatus('unlocked');
+        const b = await biometricStatus().catch(() => null);
+        if (b?.available && !b.enrolled) setOfferBio(true);
+        else setStatus('unlocked');
       } else {
         const next = await unlockVault(password);
         setStatus(next);
@@ -132,6 +137,19 @@ export const VaultGate: React.FC<VaultGateProps> = ({ children }) => {
     }
   };
 
+  const enableBiometric = async () => {
+    setError('');
+    setBusy(true);
+    try {
+      await biometricEnable();
+      setStatus('unlocked');
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const doReset = async () => {
     if (!window.confirm(t('vaultGate.confirmReset'))) return;
     setError('');
@@ -147,6 +165,49 @@ export const VaultGate: React.FC<VaultGateProps> = ({ children }) => {
       setError(String(e));
     }
   };
+
+  if (offerBio) {
+    return (
+      <div
+        className="flex min-h-screen items-center justify-center bg-background p-4"
+        data-testid="vault-biometric-offer"
+      >
+        <Card className="w-full max-w-md">
+          <CardHeader>
+            <CardTitle>{t('vaultGate.biometricOffer.title')}</CardTitle>
+            <CardDescription>{t('vaultGate.biometricOffer.description')}</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {error && (
+              <div className="text-sm text-destructive" data-testid="vault-error">
+                {error}
+              </div>
+            )}
+            <Button
+              type="button"
+              className="w-full"
+              data-testid="vault-biometric-enable"
+              disabled={busy}
+              onClick={enableBiometric}
+              autoFocus
+            >
+              {t('vaultGate.biometricOffer.enable')}
+            </Button>
+            <Button
+              type="button"
+              variant="link"
+              className="h-auto w-full p-0 text-sm text-muted-foreground"
+              data-testid="vault-biometric-skip"
+              disabled={busy}
+              onClick={() => setStatus('unlocked')}
+            >
+              {t('vaultGate.biometricOffer.skip')}
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -166,7 +227,8 @@ export const VaultGate: React.FC<VaultGateProps> = ({ children }) => {
             placeholder={t('vaultGate.placeholders.masterPassword')}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && !isSetup && submit()}
+            onKeyDown={(e) => e.key === 'Enter' && submit()}
+            autoFocus
           />
           {isSetup && (
             <PasswordInput
@@ -174,6 +236,7 @@ export const VaultGate: React.FC<VaultGateProps> = ({ children }) => {
               placeholder={t('vaultGate.placeholders.confirmPassword')}
               value={confirm}
               onChange={(e) => setConfirm(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && submit()}
             />
           )}
           {error && (

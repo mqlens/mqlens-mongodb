@@ -104,8 +104,9 @@ fn default_preset_id() -> String {
     "mqlens-dark".to_string()
 }
 
+/// Follow the OS light/dark setting until the user picks a mode.
 fn default_theme_mode() -> String {
-    "dark".to_string()
+    "system".to_string()
 }
 
 fn default_font_sans() -> String {
@@ -1377,7 +1378,8 @@ mod appearance_default_tests {
     fn fresh_settings_carry_the_default_appearance() {
         let appearance = AppSettings::default().appearance;
         assert_eq!(appearance.preset_id, "mqlens-dark");
-        assert_eq!(appearance.mode, "dark");
+        // Follows the OS until the user picks a mode.
+        assert_eq!(appearance.mode, "system");
         assert_eq!(appearance.font_sans, "Inter");
         assert_eq!(appearance.font_mono, "JetBrains Mono");
         assert_eq!(appearance.font_size, 13);

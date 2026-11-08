@@ -79,9 +79,10 @@ export interface ThemePreset {
   tokens: Record<TokenName, string>;
 }
 
+// "system" until the user picks a mode, so a first run matches the OS.
 export const DEFAULT_THEME_CONFIG: ThemeConfig = {
   presetId: "mqlens-dark",
-  mode: "dark",
+  mode: "system",
   overrides: {},
   fonts: {
     sans: "Inter",
@@ -178,7 +179,7 @@ export function migrateLegacyTheme(): ThemeConfig {
   return {
     ...DEFAULT_THEME_CONFIG,
     presetId: legacyTheme === "light" ? "mqlens-light" : "mqlens-dark",
-    mode: legacyTheme === "light" ? "light" : "dark",
+    mode: legacyTheme === "light" ? "light" : legacyTheme ? "dark" : "system",
     spacingDensity: legacyDensity || "cozy",
   };
 }

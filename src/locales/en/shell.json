@@ -545,6 +545,10 @@
       "dismiss": "Dismiss",
       "offline": "You’re offline. Connect to the internet and try again.",
       "uptodate": "You’re on the latest version."
+    },
+    "whatsNew": {
+      "link": "See what’s new",
+      "message": "Updated to MQLens {{version}}."
     }
   },
   "vaultGate": {
@@ -552,6 +556,12 @@
       "resetLink": "Forgot password? Reset (deletes all saved credentials)",
       "setup": "Create & unlock",
       "unlock": "Unlock"
+    },
+    "biometricOffer": {
+      "description": "Use this device’s biometric unlock (Touch ID, Face ID or Windows Hello) instead of typing your master password. You can turn it off in Settings → Security.",
+      "enable": "Turn on biometric unlock",
+      "skip": "Not now",
+      "title": "Unlock without the password next time?"
     },
     "biometry": {
       "faceId": "Use Face ID",
