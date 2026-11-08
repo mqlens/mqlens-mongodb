@@ -94,8 +94,17 @@ export const stripUriSecrets = (uri: string): string => {
 // Userinfo of a mongodb URI: user, then an optional `:password`, before `@`.
 const USERINFO = /^(mongodb(?:\+srv)?:\/\/)([^:/@?#]+)(:[^@/?#]*)?@/i;
 // Mechanisms that authenticate without a password (certificate, ticket, browser).
-// Options split on & or ;, as the driver reads them.
-const PASSWORDLESS_MECHANISM = /[?&;]authMechanism=(MONGODB-X509|GSSAPI|MONGODB-OIDC)([&;]|$)/i;
+// Options split on & or ;, as the driver reads them, and the value is decoded.
+const MECHANISM_OPTION = /[?&;]authMechanism=([^&;#]*)/i;
+const PASSWORDLESS_MECHANISM = /^(MONGODB-X509|GSSAPI|MONGODB-OIDC)$/i;
+const isPasswordlessMechanism = (uri: string): boolean => {
+  const raw = uri.match(MECHANISM_OPTION)?.[1] ?? '';
+  try {
+    return PASSWORDLESS_MECHANISM.test(decodeURIComponent(raw));
+  } catch {
+    return PASSWORDLESS_MECHANISM.test(raw);
+  }
+};
 
 /**
  * Whether connecting `uri` needs a password the profile does not hold: a
@@ -104,7 +113,7 @@ const PASSWORDLESS_MECHANISM = /[?&;]authMechanism=(MONGODB-X509|GSSAPI|MONGODB-
  */
 export const needsPasswordPrompt = (uri: string): boolean => {
   const m = uri.match(USERINFO);
-  return !!m && m[3] === undefined && !PASSWORDLESS_MECHANISM.test(uri);
+  return !!m && m[3] === undefined && !isPasswordlessMechanism(uri);
 };
 
 /** `uri` with `password` (percent-encoded) added to its userinfo. */

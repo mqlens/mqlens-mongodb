@@ -416,6 +416,12 @@ describe('asking for a password that was not saved', () => {
     expect(needsPasswordPrompt('mongodb://svc%40REALM@db:27017/?tls=true;authMechanism=GSSAPI')).toBe(false);
   });
 
+  it('decodes a percent-encoded mechanism name before deciding', () => {
+    expect(needsPasswordPrompt('mongodb://alice@db:27017/?authMechanism=MONGODB%2DOIDC')).toBe(false);
+    expect(needsPasswordPrompt('mongodb://alice@db:27017/?authMechanism=SCRAM%2DSHA%2D256')).toBe(true);
+    expect(needsPasswordPrompt('mongodb://alice@db:27017/?authMechanism=GSSAPI%')).toBe(true);
+  });
+
   it('puts the typed password into the userinfo, encoded', () => {
     expect(withPassword('mongodb://alice@db:27017/shop?tls=true', 'p@ss:/w')).toBe(
       'mongodb://alice:p%40ss%3A%2Fw@db:27017/shop?tls=true',
