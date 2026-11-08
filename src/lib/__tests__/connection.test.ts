@@ -17,6 +17,12 @@ import {
 } from '../connection';
 
 describe('stripUriSecrets', () => {
+  it('removes secret options separated by ; as well as &', () => {
+    expect(stripUriSecrets('mongodb://h/?tls=true;tlsCertificateKeyFilePassword=secret;proxyPassword=proxy-secret;w=1')).toBe(
+      'mongodb://h/?tls=true&w=1'
+    );
+  });
+
   it('removes the auth password but keeps the username', () => {
     expect(stripUriSecrets('mongodb://alice:s3cr%40t@db1:27017,db2:27017/sales?tls=true')).toBe(
       'mongodb://alice@db1:27017,db2:27017/sales?tls=true'

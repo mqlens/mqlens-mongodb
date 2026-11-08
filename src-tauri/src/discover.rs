@@ -55,12 +55,34 @@ pub async fn discover_replica_set(uri: String) -> Result<DiscoveredMembers, Stri
         .await
         .map_err(|e| format!("Failed to parse connection URI: {e}"))?;
     let client = mongodb::Client::with_options(seed_options(options)).map_err(|e| e.to_string())?;
-    let hello = client
-        .database("admin")
-        .run_command(mongodb::bson::doc! { "hello": 1 })
-        .await
-        .map_err(|e| e.to_string())?;
+    let admin = client.database("admin");
+    let hello = hello_reply(|cmd| {
+        let admin = admin.clone();
+        async move {
+            admin.run_command(cmd).await.map_err(|e| {
+                let code = match *e.kind {
+                    mongodb::error::ErrorKind::Command(ref c) => Some(c.code),
+                    _ => None,
+                };
+                (code, e.to_string())
+            })
+        }
+    })
+    .await?;
     Ok(members_from_hello(&hello))
+}
+
+/// `hello`, or `isMaster` on a server that predates `hello` (before 4.2.10 /
+/// 4.4.2) and answers CommandNotFound (59), as the driver's own handshake does.
+async fn hello_reply<F, Fut>(run: F) -> Result<Document, String>
+where
+    F: Fn(Document) -> Fut,
+    Fut: std::future::Future<Output = Result<Document, (Option<i32>, String)>>,
+{
+    match run(mongodb::bson::doc! { "hello": 1 }).await {
+        Err((Some(59), _)) => run(mongodb::bson::doc! { "isMaster": 1 }).await.map_err(|(_, e)| e),
+        reply => reply.map_err(|(_, e)| e),
+    }
 }
 
 /// The `mongodb://` form of a `mongodb+srv://` URI: its userinfo, path and
@@ -107,6 +129,39 @@ pub async fn resolve_srv_seed_list(uri: String) -> Result<String, String> {
 mod tests {
     use super::*;
     use mongodb::bson::doc;
+
+    #[tokio::test]
+    async fn an_older_server_without_hello_is_asked_with_is_master() {
+        let asked = std::sync::Mutex::new(Vec::new());
+        let reply = hello_reply(|cmd: Document| {
+            let name = cmd.keys().next().unwrap().to_string();
+            asked.lock().unwrap().push(name.clone());
+            async move {
+                if name == "hello" {
+                    Err((Some(59), "no such command: 'hello'".to_string()))
+                } else {
+                    Ok(doc! { "setName": "rs-old", "hosts": ["old-a:27017"] })
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(*asked.lock().unwrap(), ["hello", "isMaster"]);
+        assert_eq!(members_from_hello(&reply).set_name.as_deref(), Some("rs-old"));
+    }
+
+    #[tokio::test]
+    async fn another_failure_is_reported_without_a_retry() {
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let err = hello_reply(|_cmd: Document| {
+            calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            async { Err((Some(13), "unauthorized".to_string())) }
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(err, "unauthorized");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
 
     #[tokio::test]
     async fn seed_options_talk_to_the_first_host_directly_without_credentials() {

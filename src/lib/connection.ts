@@ -83,9 +83,10 @@ export const stripUriSecrets = (uri: string): string => {
 
   const qIdx = out.indexOf('?');
   if (qIdx === -1) return out;
+  // The driver accepts ; between options as well as &.
   const kept = out
     .slice(qIdx + 1)
-    .split('&')
+    .split(/[&;]/)
     .filter((p) => p !== '' && !isSecretParam(p));
   return kept.length ? `${out.slice(0, qIdx)}?${kept.join('&')}` : out.slice(0, qIdx);
 };
