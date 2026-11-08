@@ -32,7 +32,8 @@ test.describe('Connection editor', () => {
     await page.getByPlaceholder('••••••••').fill('hunter2');
 
     await editorTab(page, 'TLS / SSL').click();
-    await chooseIn(page, 'Off (Insecure Plaintext)', 'Custom CA File Upload');
+    await page.getByLabel('Use TLS/SSL to connect').check();
+    await page.getByLabel('Use own CA file').check();
     await page.getByTestId('ca-file-browse').click();
     await expect(page.getByPlaceholder('/path/to/ca.pem')).toHaveValue('/certs/staging-ca.pem');
     await page.getByLabel('Allow invalid hostnames').check();
@@ -62,7 +63,7 @@ test.describe('Connection editor', () => {
     await app.open();
     await openManager(page);
 
-    // The import menu sits in the editor, next to Test Connection.
+    // The import menu sits at the foot of the editor's Server tab.
     await page.getByRole('button', { name: 'New...', exact: true }).click();
     await page.getByTestId('import-uri-btn').click();
     await page.getByTestId('import-paste-manually').click();
@@ -80,7 +81,7 @@ test.describe('Connection editor', () => {
     await app.open({ dialog: { open: '/exports/reporting.txt' }, files: { '/exports/reporting.txt': 'mongodb://reporting.example:27018/sales_db' } });
     await openManager(page);
 
-    // The import menu sits in the editor, next to Test Connection.
+    // The import menu sits at the foot of the editor's Server tab.
     await page.getByRole('button', { name: 'New...', exact: true }).click();
     await page.getByTestId('import-uri-btn').click();
     await page.getByTestId('import-from-file').click();
@@ -114,6 +115,34 @@ test.describe('Connection editor', () => {
     await dialog.getByTestId('export-include-password').click();
     await expect(preview).toContainText('hunter2');
     await expect(preview).toContainText('tunnel-pw');
+  });
+
+  test('saves the write and transport options set on the Advanced tab', async ({ app, page }) => {
+    await app.open();
+    await openManager(page);
+    await page.getByRole('button', { name: 'New...', exact: true }).click();
+    await page.getByLabel('Display Name').fill('Tuned');
+    await page.getByTestId('host-list').fill('tuned.example:27017');
+
+    await editorTab(page, 'Advanced').click();
+    await page.getByRole('combobox', { name: 'BSON Compression' }).click();
+    await page.getByRole('option', { name: 'Snappy', exact: true }).click();
+    await page.getByLabel(/^Load balanced/).check();
+    await page.getByTestId('retry-writes-select').click();
+    await page.getByRole('option', { name: 'Off', exact: true }).click();
+    await page.getByTestId('journal-select').click();
+    await page.getByRole('option', { name: 'On', exact: true }).click();
+    await page.getByLabel('Write concern (w)').fill('majority');
+    await page.getByLabel('Write timeout (ms)').fill('2500');
+    await page.getByLabel('Additional URI options').fill('maxStalenessSeconds=120');
+
+    const saved = await callFrom(app, 'save_connection_profile', () =>
+      page.getByRole('button', { name: 'Save', exact: true }).click(),
+    );
+    const uri = (saved.profile as { uri: string }).uri;
+    for (const option of ['compressors=snappy', 'loadBalanced=true', 'retryWrites=false', 'journal=true', 'w=majority', 'wtimeoutMS=2500', 'maxStalenessSeconds=120']) {
+      expect(uri).toContain(option);
+    }
   });
 });
 

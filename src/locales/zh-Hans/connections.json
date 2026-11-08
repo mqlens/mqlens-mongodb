@@ -9,7 +9,6 @@
     "delete": "删除",
     "duplicate": "复制副本",
     "edit": "编辑",
-    "export": "导出…",
     "exportAllUris": "导出全部 URI",
     "exportUri": "导出 URI",
     "hidePassword": "隐藏密码",
@@ -20,7 +19,8 @@
     "new": "新建…",
     "newFolder": "新建文件夹",
     "showPassword": "显示密码",
-    "testConnection": "测试连接"
+    "testConnection": "测试连接",
+    "exportUriEllipsis": "导出 URI…"
   },
   "advanced": {
     "appName": "应用名称",
@@ -99,7 +99,8 @@
     "x509Note": "需要启用 TLS 并配置客户端证书（TLS 标签页）。",
     "oidcRememberLogin": "在加密保险库中记住登录",
     "oidcRememberLoginHelp": "请先保存配置再连接，以便在重启后保留刷新令牌。默认关闭。忘记登录会删除已保存的令牌，现有连接仍保持登录状态。",
-    "oidcForgetLogin": "忘记已保存的登录"
+    "oidcForgetLogin": "忘记已保存的登录",
+    "authDatabaseHelp": "定义该用户的数据库。"
   },
   "colorTags": {
     "amber": "琥珀色",
@@ -149,11 +150,10 @@
     "duplicateTitle": "复制连接",
     "editTitle": "编辑连接",
     "newTitle": "新建连接",
-    "subtitle": "配置服务器、身份验证、TLS 和高级选项",
     "tabsAria": "连接设置分区"
   },
   "empty": {
-    "message": "请从侧边栏选择一个连接，或点击工具栏中的“新建…”创建一个。"
+    "noConnections": "还没有已保存的连接。选择“新建…”或“导入 URI”来添加。"
   },
   "errors": {
     "alreadyActive": "该连接已处于活动状态",
@@ -227,17 +227,20 @@
     "parseIntoFields": "解析到表单字段",
     "parseUriTitle": "用此 URI 填充服务器和身份验证表单字段，以便编辑",
     "pickCustomColor": "选择自定义颜色",
-    "protocol": "协议",
     "removeMember": "移除 {{host}}",
     "replicaSetName": "副本集名称",
     "routers": "路由（mongos）",
     "showPasswordToEdit": "显示密码以便编辑",
-    "topology": "拓扑结构",
     "topologyReplicaSet": "副本集",
     "topologySharded": "分片集群（mongos）",
     "topologyStandalone": "Standalone / 直连",
     "topologyUriOnly": "仅使用完整 URI 字符串",
-    "uriBadge": "URI"
+    "connectionType": "连接类型",
+    "topologySrv": "DNS 种子列表 (mongodb+srv)",
+    "fromUri": "从 URI…",
+    "fromUriHelp": "用连接字符串填写此表单。",
+    "toUri": "转为 URI…",
+    "toUriHelp": "将此连接复制或保存为连接字符串。"
   },
   "import": {
     "errors": {
@@ -249,15 +252,6 @@
   },
   "list": {
     "colorDotTitle": "连接颜色"
-  },
-  "profile": {
-    "connectedActive": "已连接（活动）",
-    "connectionUri": "连接 URI",
-    "disconnected": "已断开",
-    "metadata": "连接元数据",
-    "profileId": "配置 ID：",
-    "status": "状态：",
-    "subtitle": "连接配置"
   },
   "proxy": {
     "description": "MongoDB 驱动会通过 SOCKS5 代理建立连接。（驱动不支持 HTTP 代理。）",
@@ -272,7 +266,6 @@
     "allFoldersPlaceholder": "全部文件夹",
     "connectedTitle": "已连接",
     "emptyFolder": "空文件夹",
-    "searchPlaceholder": "搜索连接…",
     "unnamedConnection": "未命名连接"
   },
   "ssh": {
@@ -295,7 +288,6 @@
     "srvWarning": "mongodb+srv:// 无法与当前的单主机 SSH 隧道一起使用。请改用包含特定 MongoDB 节点主机名和端口的标准 mongodb:// URI。",
     "username": "SSH 用户名"
   },
-  "subtitle": "管理已保存的 MongoDB 配置和文件夹",
   "tabs": {
     "advanced": "高级",
     "auth": "身份验证",
@@ -329,11 +321,11 @@
     "insecureTag": "（不安全）",
     "keyPassword": "私钥密码",
     "keyPasswordHelp": "仅当私钥已加密时需要。随连接一起保存在保管库中。",
-    "mode": "SSL / TLS 证书模式",
-    "modeFile": "上传自定义 CA 文件",
-    "modeOff": "关闭（不加密，明文传输）",
-    "modeSystem": "系统根 CA 证书",
-    "validationWarning": "关闭证书校验会使连接面临中间人攻击风险。请仅在受信任的自签名测试服务器上启用。"
+    "validationWarning": "关闭证书校验会使连接面临中间人攻击风险。请仅在受信任的自签名测试服务器上启用。",
+    "enable": "使用 TLS/SSL 连接",
+    "caSource": "受信任的 CA",
+    "caSystem": "信任操作系统的证书存储",
+    "caFile": "使用自己的 CA 文件"
   },
   "serverAccounts": {
     "add": "添加服务器账户",
@@ -373,10 +365,6 @@
     "message": "此连接保存时未包含密码。密码仅用于本次连接，不会被保存。",
     "title": "{{name}} 的密码"
   },
-  "view": {
-    "table": "表格视图",
-    "tree": "树状视图"
-  },
   "table": {
     "lastConnected": "上次连接",
     "name": "名称",
@@ -384,5 +372,10 @@
     "none": "无",
     "security": "安全",
     "server": "服务器"
+  },
+  "filter": {
+    "placeholder": "筛选连接…",
+    "showFrom": "显示以下来源的连接：",
+    "matches_other": "{{count}} 个匹配"
   }
 }

@@ -11,8 +11,8 @@ const STAGING: ProfileSeed = { id: 'p-staging', name: 'Staging', uri: STAGING_UR
 
 const button = (page: Page, name: string) => page.getByRole('button', { name, exact: true });
 const editorTab = (page: Page, name: string) => page.getByRole('button', { name, exact: true });
-/** The manager's profile tree. */
-const tree = (page: Page) => page.getByRole('dialog').getByRole('complementary');
+/** The manager's connection table: folder rows with their connections nested under them. */
+const tree = (page: Page) => page.getByTestId('connection-table');
 const importError = (page: Page) => page.getByTestId('import-uri-error').last();
 /** Every value typed or loaded into the open dialogs' inputs. */
 const inputValues = (page: Page) =>
@@ -240,7 +240,8 @@ test.describe('Saved connection settings', () => {
     await editorTab(page, 'Authentication').click();
     await expect.poll(() => inputValues(page)).toContain('sales');
     await editorTab(page, 'TLS / SSL').click();
-    await expect(page.getByRole('combobox').filter({ hasText: /System/i })).toBeVisible();
+    await expect(page.getByLabel('Use TLS/SSL to connect')).toBeChecked();
+    await expect(page.getByLabel(/operating system/)).toBeChecked();
     expect(await save()).toContain('tls=true');
 
     await editProfile(page, 'AWS');
@@ -269,17 +270,20 @@ test.describe('Saved connection settings', () => {
     const colorOf = async () => ((await callFrom(app, 'save_connection_profile', () => button(page, 'Save').click())).profile as { color_tag: string }).color_tag;
 
     await editProfile(page, 'Short hex');
+    await button(page, 'Color tag').click();
     await expect(page.getByTestId('color-picker-custom-preview')).toBeVisible();
     expect(await colorOf()).toBe('#aabbcc');
 
     // A tag that isn't hex shows the picker's default, and is saved back as it was.
     await editProfile(page, 'Named');
+    await button(page, 'Color tag').click();
     await expect(page.getByTestId('color-picker-custom')).toHaveValue('#3b82f6');
     expect(await colorOf()).toBe('red');
 
     await button(page, 'New...').click();
     await page.getByLabel('Display Name').fill('Tagged');
     await page.getByTestId('host-list').fill('c.example:27017');
+    await button(page, 'Color tag').click();
     await page.getByTestId('color-swatch-green').click();
     await expect(page.getByTestId('color-swatch-green')).toHaveAttribute('aria-pressed', 'true');
     await page.getByTestId('color-picker-custom').fill('#123456');
@@ -384,9 +388,8 @@ test.describe('Connection table sorting', () => {
       { id: 'p-alpha', name: 'Alpha', uri: 'mongodb://zulu.example:27017' },
       { id: 'p-beta', name: 'Beta', uri: 'mongodb://alpha.example:27017' },
     ]);
-    await button(page, 'Table view').click();
     const table = page.getByTestId('connection-table');
-    const names = () => table.getByRole('row').evaluateAll((rows) => rows.slice(1).map((row) => row.querySelector('td')?.textContent?.trim()));
+    const names = () => table.getByTestId('connection-row-name').allTextContents();
     await expect.poll(names).toEqual(['Alpha', 'Beta']);
 
     await table.getByRole('button', { name: 'Server' }).click();
@@ -411,8 +414,7 @@ test.describe('Editor settings added for parity', () => {
     await editProfile(page, 'Kerberos');
 
     await editorTab(page, 'TLS / SSL').click();
-    await page.getByRole('combobox').filter({ hasText: 'Off (Insecure Plaintext)' }).click();
-    await page.getByRole('option', { name: 'System Root CA Certificates' }).click();
+    await page.getByLabel('Use TLS/SSL to connect').check();
     await page.getByLabel(/client certificate/i).fill('/certs/client.pem');
     await page.getByLabel(/key passphrase/i).fill("it's(secret)");
 

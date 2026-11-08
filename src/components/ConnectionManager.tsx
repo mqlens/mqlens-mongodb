@@ -26,7 +26,8 @@ import { formatShortcut, shortcutById } from '@/lib/shortcuts';
 import {
   Plus, X, Server, Play, Edit3, Trash2, Check, AlertCircle, RefreshCw,
   Folder, FolderPlus, FolderOpen, Search, ChevronRight,
-  Copy, ExternalLink, ShieldAlert, Eye, EyeOff, LayoutGrid, ClipboardPaste, Pipette, ListTree, Table2, ArrowUp, ArrowDown, Pencil, ClipboardCopy, FolderInput
+  Copy, ExternalLink, Eye, EyeOff, LayoutGrid, ClipboardPaste, Pipette, ArrowUp, ArrowDown, Pencil, ClipboardCopy, FolderInput, Palette,
+  type LucideIcon,
 } from 'lucide-react';
 import {
   ContextMenu,
@@ -60,6 +61,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Switch } from '@/components/ui/switch';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
   Select,
   SelectContent,
@@ -271,7 +273,6 @@ const TLS_OPTION_ALIASES: Record<string, string> = {
   tlsallowinvalidhostname: 'tlsAllowInvalidHostnames',
 };
 
-const VIEW_KEY = 'mqlens.connectionManager.view';
 type TableSortKey = 'name' | 'server' | 'security' | 'lastConnected';
 
 /** A saved SSH tunnel as the editor's SSH tab fields. */
@@ -301,28 +302,49 @@ const CONNECTION_MODE_OPTIONS: { value: ConnectionMode; labelKey: string; descri
   { value: 'confirm_destructive', labelKey: 'connectionMode.confirmDestructive.label', descriptionKey: 'connectionMode.confirmDestructive.description' },
 ];
 
-const sidebarPanelClass =
-  'flex shrink-0 flex-col border-r border-sidebar-border bg-sidebar/40 text-sidebar-foreground';
-
 /** Stacking above the connection-manager shell (z-50) and its nested editor (z-100). */
 const NESTED_DIALOG_Z = 'z-[100]';
 const NESTED_SELECT_Z = 'z-[110]';
 
-const sidebarNavButtonClass = (active: boolean) =>
+/** Icon-and-label spacing for menu items, as the sidebar's menus use. */
+const ctxItemClass = 'gap-2 text-xs [&_svg]:size-3';
+
+/** The editor's horizontal tab strip. */
+const editorTabClass = (active: boolean) =>
   cn(
-    'flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-ui-xs transition-colors cursor-pointer',
+    '-mb-px cursor-pointer border-b-2 px-3 py-2 text-ui-xs transition-colors',
     active
-      ? 'bg-background font-medium text-foreground shadow-sm ring-1 ring-border'
-      : 'text-muted-foreground hover:bg-background/60 hover:text-foreground'
+      ? 'border-primary font-medium text-foreground'
+      : 'border-transparent text-muted-foreground hover:text-foreground',
   );
 
-const treeRowClass = (active?: boolean) =>
-  cn(
-    'flex cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1.5 text-ui-xs transition-colors',
-    active
-      ? 'bg-background font-medium text-foreground shadow-sm ring-1 ring-border'
-      : 'text-muted-foreground hover:bg-sidebar-accent/70 hover:text-foreground',
-  );
+const sectionHeadingClass = 'border-t border-border pt-2.5 text-ui-2xs font-semibold uppercase tracking-wide text-muted-foreground';
+const helpTextClass = 'm-0 text-[10.5px] leading-relaxed text-muted-foreground';
+
+/** A form row with its label to the left of the control, the editor's density. */
+const FormRow = ({ label, htmlFor, children }: { label?: React.ReactNode; htmlFor?: string; children: React.ReactNode }) => (
+  <div className="grid grid-cols-[minmax(110px,160px)_minmax(0,1fr)] items-start gap-x-3">
+    <Label htmlFor={htmlFor} className="pt-2 text-ui-xs font-normal leading-tight text-muted-foreground">{label}</Label>
+    <div className="flex min-w-0 flex-col gap-1">{children}</div>
+  </div>
+);
+
+/** A toolbar button with its icon above its label. */
+const ToolbarButton = React.forwardRef<HTMLButtonElement, React.ComponentProps<typeof Button> & { icon: LucideIcon; label: string; iconClassName?: string }>(
+  ({ icon: Icon, label, iconClassName, className, ...props }, ref) => (
+    <Button
+      ref={ref}
+      variant="ghost"
+      className={cn('h-auto min-w-[60px] flex-col gap-1 px-2 py-1.5 font-normal [&_svg]:size-[18px]', className)}
+      {...props}
+    >
+      <Icon className={iconClassName} />
+      {/* Sized here, not on the button: cn() drops text-ui-* when a colour class is passed in. */}
+      <span className="text-ui-2xs">{label}</span>
+    </Button>
+  ),
+);
+ToolbarButton.displayName = 'ToolbarButton';
 
 const ConnectionColorDot = ({ color, className }: { color?: string | null; className?: string }) => {
   const { t } = useTranslation('connections');
@@ -337,12 +359,12 @@ const ConnectionColorDot = ({ color, className }: { color?: string | null; class
 };
 
 const TABS = [
-  { id: 'server', labelKey: 'tabs.server', icon: Server },
-  { id: 'auth', labelKey: 'tabs.auth', icon: ShieldAlert },
-  { id: 'tls', labelKey: 'tabs.tls', icon: ShieldAlert },
-  { id: 'ssh', labelKey: 'tabs.ssh', icon: ExternalLink },
-  { id: 'proxy', labelKey: 'tabs.proxy', icon: RefreshCw },
-  { id: 'adv', labelKey: 'tabs.advanced', icon: LayoutGrid },
+  { id: 'server', labelKey: 'tabs.server' },
+  { id: 'auth', labelKey: 'tabs.auth' },
+  { id: 'tls', labelKey: 'tabs.tls' },
+  { id: 'ssh', labelKey: 'tabs.ssh' },
+  { id: 'proxy', labelKey: 'tabs.proxy' },
+  { id: 'adv', labelKey: 'tabs.advanced' },
 ];
 
 // Turn a raw mongodb driver error (often a huge "server selection timeout" with
@@ -887,13 +909,6 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   const [profiles, setProfiles] = useState<ConnectionProfile[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [view, setView] = useState<'tree' | 'table'>(() => {
-    try {
-      return localStorage.getItem(VIEW_KEY) === 'table' ? 'table' : 'tree';
-    } catch {
-      return 'tree';
-    }
-  });
   const [sort, setSort] = useState<{ key: TableSortKey; dir: 1 | -1 }>({ key: 'name', dir: 1 });
   const [folderFilter, setFolderFilter] = useState<string>('all');
   
@@ -1862,14 +1877,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     await importParsedConnections(result.connections);
   };
 
-  const importUriMenu = (testId = 'import-uri-btn', className?: string) => (
+  const importUriMenu = (trigger: React.ReactElement) => (
     <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="outline" size="sm" className={cn(className)} data-testid={testId}>
-          <ClipboardPaste size={testId === 'import-uri-btn' ? 11 : 12} />
-          <span>{t('actions.importUri')}</span>
-        </Button>
-      </DropdownMenuTrigger>
+      <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
       <DropdownMenuContent align="start" className={NESTED_SELECT_Z}>
         <DropdownMenuItem onClick={() => void handleImportFromClipboard()} data-testid="import-from-clipboard">
           {t('import.fromClipboard')}
@@ -2093,15 +2103,6 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     });
   }, [profiles, searchQuery, folderFilter, profileFolderMap]);
 
-  const chooseView = (next: 'tree' | 'table') => {
-    setView(next);
-    try {
-      localStorage.setItem(VIEW_KEY, next);
-    } catch {
-      /* the choice just isn't remembered */
-    }
-  };
-
   // Re-read on open so a connect made since the last open shows.
   const lastConnected = useMemo(() => (isOpen ? readLastConnected() : {}), [isOpen]);
   const tableRows = useMemo(() => {
@@ -2190,28 +2191,33 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       <ContextMenu key={p.id}>
         <ContextMenuTrigger asChild onContextMenu={() => handleSelect(p.id)}>{row}</ContextMenuTrigger>
         <ContextMenuContent className={NESTED_SELECT_Z}>
-          <ContextMenuItem disabled={isActive || loading} onClick={handleConnectClick}>
-            <Play size={12} />
+          <ContextMenuItem className={ctxItemClass} disabled={isActive || loading} onClick={handleConnectClick}>
+            <Play />
             <span>{t('actions.connect')}</span>
           </ContextMenuItem>
-          <ContextMenuItem onClick={() => handleEditClick(p.id)}>
-            <Edit3 size={12} />
+          <ContextMenuSeparator />
+          <ContextMenuItem className={ctxItemClass} onClick={() => handleEditClick(p.id)}>
+            <Edit3 />
             <span>{t('actions.edit')}</span>
           </ContextMenuItem>
-          <ContextMenuItem onClick={() => handleDuplicateClick(p.id)}>
-            <Copy size={12} />
+          <ContextMenuItem className={ctxItemClass} onClick={() => handleDuplicateClick(p.id)}>
+            <Copy />
             <span>{t('actions.duplicate')}</span>
           </ContextMenuItem>
-          <ContextMenuItem onClick={() => void navigator.clipboard?.writeText(stripUriSecrets(p.uri)).catch(() => {})}>
-            <ClipboardCopy size={12} />
+          <ContextMenuSeparator />
+          <ContextMenuItem className={ctxItemClass} onClick={() => openExportDialog(p.uri, !!p.ssh?.enabled)}>
+            <ExternalLink />
+            <span>{t('actions.exportUriEllipsis')}</span>
+          </ContextMenuItem>
+          <ContextMenuItem className={ctxItemClass} onClick={() => void navigator.clipboard?.writeText(stripUriSecrets(p.uri)).catch(() => {})}>
+            <ClipboardCopy />
             <span>{t('actions.copyUri')}</span>
           </ContextMenuItem>
           <ContextMenuSeparator />
           <ContextMenuSub>
-            <ContextMenuSubTrigger>
-              <FolderInput size={12} />
+            <ContextMenuSubTrigger className={ctxItemClass}>
+              <FolderInput />
               <span>{t('actions.moveToFolder')}</span>
-              <ChevronRight size={12} className="ml-auto" />
             </ContextMenuSubTrigger>
             <ContextMenuSubContent className={NESTED_SELECT_Z}>
               <ContextMenuItem disabled={!current} onClick={() => moveToFolder(p.id, '')}>{t('folder.root')}</ContextMenuItem>
@@ -2221,12 +2227,45 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
             </ContextMenuSubContent>
           </ContextMenuSub>
           <ContextMenuSeparator />
-          <ContextMenuItem className="text-destructive focus:text-destructive" onClick={() => handleDelete(p.id)}>
-            <Trash2 size={12} />
+          <ContextMenuItem className={cn(ctxItemClass, 'text-destructive focus:text-destructive')} onClick={() => handleDelete(p.id)}>
+            <Trash2 />
             <span>{t('actions.delete')}</span>
           </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
+    );
+  };
+
+  // The table's rows in one folder ('' for the root), in the chosen sort order.
+  const rowsInFolder = (folderId: string) => tableRows.filter(r => (profileFolderMap[r.profile.id] || '') === folderId);
+
+  const profileRow = ({ profile: p, server, security, at }: (typeof tableRows)[number], nested: boolean) => {
+    const isSel = p.id === selectedId;
+    const isActive = activeConnections.some(c => c.profileId === p.id);
+    return profileMenu(p,
+      <tr
+        className={cn('cursor-default border-b border-border/40 hover:bg-muted/40', isSel && 'bg-primary/10 hover:bg-primary/15')}
+        aria-selected={isSel}
+        onClick={() => handleSelect(p.id)}
+        onDoubleClick={handleConnectClick}
+        {...dragProps(p.id)}
+      >
+        <td className={cn('py-1 pr-2', nested ? 'pl-8' : 'pl-2')}>
+          <span className="flex min-w-0 items-center gap-1.5">
+            <ConnectionColorDot color={p.color_tag} />
+            <Server size={12} className={cn('shrink-0', isSel ? 'text-primary' : 'text-muted-foreground')} />
+            <span data-testid="connection-row-name" className={cn('truncate', isSel && 'font-medium')}>{p.name || t('sidebar.unnamedConnection')}</span>
+            {isActive && (
+              <Badge variant="success" className="h-4 shrink-0 px-1 text-ui-2xs" title={t('sidebar.connectedTitle')}>
+                ●
+              </Badge>
+            )}
+          </span>
+        </td>
+        <td className="truncate px-2 py-1 font-mono">{server}</td>
+        <td className="truncate px-2 py-1">{security || t('table.none')}</td>
+        <td className="truncate px-2 py-1 tabular-nums text-muted-foreground">{at ? new Date(at).toLocaleString() : t('table.never')}</td>
+      </tr>,
     );
   };
 
@@ -2235,6 +2274,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   };
 
   const selectedProfile = profiles.find(p => p.id === selectedId);
+  const selectedIsActive = !!selectedProfile && activeConnections.some(c => c.profileId === selectedProfile.id);
 
   return (
     <>
@@ -2260,86 +2300,57 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       >
         <header
           data-dialog-drag-handle
-          className="flex shrink-0 cursor-grab items-center justify-between border-b border-border bg-muted/20 px-4 py-4 active:cursor-grabbing"
+          className="flex shrink-0 cursor-grab items-center justify-between border-b border-border bg-muted/20 px-3 py-1.5 active:cursor-grabbing"
         >
-          <div className="flex min-w-0 items-center gap-3">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10">
-              <Server className="h-5 w-5 text-primary" />
-            </div>
-            <div className="min-w-0">
-              <h2 className="text-sm font-semibold leading-tight text-foreground">{t('title')}</h2>
-              <p className="truncate text-ui-xs text-muted-foreground">{t('subtitle')}</p>
-            </div>
-          </div>
-          <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={onClose} aria-label={t('common:close')}>
+          <h2 className="flex min-w-0 items-center gap-2 truncate text-ui-sm font-semibold text-foreground">
+            <Server className="h-4 w-4 shrink-0 text-primary" />
+            {t('title')}
+          </h2>
+          <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={onClose} aria-label={t('common:close')}>
             <X size={14} />
           </Button>
         </header>
 
-        {/* Toolbar */}
-        <section className="flex shrink-0 flex-row flex-wrap items-center gap-1.5 border-b border-border bg-muted/30 px-4 py-2">
-          <Button variant="outline" size="sm" className="h-8 gap-1.5 text-ui-xs" onClick={handleNewClick} aria-label={t('actions.new')}>
-            <Plus size={12} className="text-primary" />
-            <span>{t('actions.new')}</span>
-          </Button>
-          <Button variant="outline" size="sm" className="h-8 gap-1.5 text-ui-xs" onClick={handleNewFolderClick}>
-            <FolderPlus size={12} className="text-warning" />
-            <span>{t('actions.newFolder')}</span>
-          </Button>
-          <Button
-            variant={showServer ? 'secondary' : 'outline'}
-            size="sm"
-            className="h-8 gap-1.5 text-ui-xs"
+        {/* Toolbar: create · change the picked connection · move connections in and out. */}
+        <section className="flex shrink-0 flex-row flex-wrap items-stretch gap-0.5 border-b border-border bg-muted/30 px-2 py-1">
+          <ToolbarButton icon={Plus} iconClassName="text-primary" label={t('actions.new')} onClick={handleNewClick} />
+          <ToolbarButton icon={FolderPlus} iconClassName="text-warning" label={t('actions.newFolder')} onClick={handleNewFolderClick} />
+          <ToolbarButton
+            icon={Server}
+            iconClassName="text-primary"
+            label={t('serverAccounts.title')}
+            className={cn(showServer && 'bg-secondary')}
             aria-pressed={showServer}
             onClick={() => setShowServer((v) => !v)}
-          >
-            <Server size={12} className="text-primary" />
-            <span>{t('serverAccounts.title')}</span>
-          </Button>
-          <div className="flex items-center rounded-md border border-border">
-            {([['tree', ListTree, t('view.tree')], ['table', Table2, t('view.table')]] as const).map(([v, Icon, label]) => (
-              <Button
-                key={v}
-                variant={view === v ? 'secondary' : 'ghost'}
-                size="icon"
-                className="h-8 w-8"
-                aria-label={label}
-                title={label}
-                aria-pressed={view === v}
-                onClick={() => chooseView(v)}
-              >
-                <Icon size={13} />
-              </Button>
-            ))}
-          </div>
-          {selectedId && (
-            <>
-              <div className="mx-1 h-4 w-px bg-border" />
-              <Button variant="outline" size="sm" className="h-8 gap-1.5 text-ui-xs" onClick={() => handleEditClick(selectedId)}>
-                <Edit3 size={12} className="text-primary" />
-                <span>{t('actions.edit')}</span>
-              </Button>
-              <Button variant="outline" size="sm" className="h-8 gap-1.5 text-ui-xs" onClick={() => handleDuplicateClick(selectedId)}>
-                <Copy size={12} className="text-muted-foreground" />
-                <span>{t('actions.duplicate')}</span>
-              </Button>
-              <Button variant="outline" size="sm" className="h-8 gap-1.5 text-ui-xs text-destructive hover:text-destructive" onClick={() => handleDelete(selectedId)}>
-                <Trash2 size={12} />
-                <span>{t('actions.delete')}</span>
-              </Button>
-              {importUriMenu('import-uri-toolbar-btn', 'h-8 gap-1.5 text-ui-xs')}
-              <Button variant="outline" size="sm" className="h-8 gap-1.5 text-ui-xs" data-testid="export-uri-btn" onClick={() => {
-                if (selectedProfile) openExportDialog(selectedProfile.uri, !!selectedProfile.ssh?.enabled);
-              }}>
-                <ExternalLink size={12} />
-                <span>{t('actions.exportUri')}</span>
-              </Button>
-              <Button variant="outline" size="sm" className="h-8 gap-1.5 text-ui-xs" data-testid="export-all-uris-btn" onClick={openExportAllDialog}>
-                <ExternalLink size={12} />
-                <span>{t('actions.exportAllUris')}</span>
-              </Button>
-            </>
-          )}
+          />
+          <div className="mx-1 my-1.5 w-px bg-border" />
+          <ToolbarButton icon={Edit3} label={t('actions.edit')} disabled={!selectedProfile} onClick={() => selectedId && handleEditClick(selectedId)} />
+          <ToolbarButton icon={Copy} label={t('actions.duplicate')} disabled={!selectedProfile} onClick={() => selectedId && handleDuplicateClick(selectedId)} />
+          <ToolbarButton
+            icon={Trash2}
+            label={t('actions.delete')}
+            className="text-destructive hover:text-destructive"
+            disabled={!selectedProfile}
+            onClick={() => selectedId && handleDelete(selectedId)}
+          />
+          <div className="mx-1 my-1.5 w-px bg-border" />
+          {importUriMenu(<ToolbarButton icon={ClipboardPaste} label={t('actions.importUri')} data-testid="import-uri-toolbar-btn" />)}
+          <ToolbarButton
+            icon={ExternalLink}
+            label={t('actions.exportUri')}
+            data-testid="export-uri-btn"
+            disabled={!selectedProfile}
+            onClick={() => {
+              if (selectedProfile) openExportDialog(selectedProfile.uri, !!selectedProfile.ssh?.enabled);
+            }}
+          />
+          <ToolbarButton
+            icon={ExternalLink}
+            label={t('actions.exportAllUris')}
+            data-testid="export-all-uris-btn"
+            disabled={profiles.length === 0}
+            onClick={openExportAllDialog}
+          />
         </section>
 
         {importError && !showEditDialog && (
@@ -2362,308 +2373,190 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
             </div>
           </ScrollArea>
         ) : (
-        /* Content splits */
-        <div className="flex min-h-0 flex-1">
-          {/* Left profile explorer tree */}
-          <aside className={cn(sidebarPanelClass, 'w-[min(280px,34%)]')}>
-            <div className="shrink-0 space-y-2 border-b border-sidebar-border px-3 py-3">
-              <div className="relative flex items-center">
-                <Search size={13} className="absolute left-2.5 text-muted-foreground" />
-                <Input
-                  type="text"
-                  placeholder={t('sidebar.searchPlaceholder')}
-                  value={searchQuery}
-                  onChange={e => setSearchQuery(e.target.value)}
-                  className="h-8 border-sidebar-border bg-background/80 pl-8 text-ui-xs"
-                />
-              </div>
-              <Select value={folderFilter} onValueChange={setFolderFilter}>
-                <SelectTrigger data-testid="folder-filter-select" className="h-8 w-full border-sidebar-border bg-background/80 text-ui-xs">
-                  <SelectValue placeholder={t('sidebar.allFoldersPlaceholder')} />
-                </SelectTrigger>
-                <SelectContent className={NESTED_SELECT_Z}>
-                  <SelectItem value="all">{t('sidebar.allFolders')}</SelectItem>
-                  <SelectItem value="root">{t('folder.root')}</SelectItem>
-                  {folders.map(f => (
-                    <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+        <>
+          <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-3 py-2">
+            <div className="relative flex min-w-[180px] flex-1 items-center">
+              <Search size={13} className="absolute left-2.5 text-muted-foreground" />
+              <Input
+                type="text"
+                placeholder={t('filter.placeholder')}
+                aria-label={t('filter.placeholder')}
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                className="h-8 pl-8 text-ui-xs"
+              />
             </div>
+            <Label htmlFor="folder-filter" className="shrink-0 text-ui-xs font-normal text-muted-foreground">{t('filter.showFrom')}</Label>
+            <Select value={folderFilter} onValueChange={setFolderFilter}>
+              <SelectTrigger id="folder-filter" data-testid="folder-filter-select" className="h-8 w-[170px] text-ui-xs">
+                <SelectValue placeholder={t('sidebar.allFoldersPlaceholder')} />
+              </SelectTrigger>
+              <SelectContent className={NESTED_SELECT_Z}>
+                <SelectItem value="all">{t('sidebar.allFolders')}</SelectItem>
+                <SelectItem value="root">{t('folder.root')}</SelectItem>
+                {folders.map(f => (
+                  <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <span data-testid="match-count" className="shrink-0 text-ui-xs tabular-nums text-muted-foreground">
+              {t('filter.matches', { count: filteredProfiles.length })}
+            </span>
+          </div>
 
-            <ScrollArea className="min-h-0 flex-1">
-            <div className="min-h-full p-2" {...dropProps('')}>
-              {folders.map(folder => {
-                const isExpanded = expandedFolders[folder.id];
-                const folderProfiles = filteredProfiles.filter(p => profileFolderMap[p.id] === folder.id);
-
-                return (
-                  <div key={folder.id}>
-                    <ContextMenu>
-                    <ContextMenuTrigger asChild>
-                    <div
-                      className={treeRowClass()}
-                      onClick={() => toggleFolderExpand(folder.id)}
-                      {...dropProps(folder.id)}
-                    >
-                      <ChevronRight
-                        size={12}
-                        className={cn('shrink-0 text-muted-foreground transition-transform duration-150', isExpanded && 'rotate-90')}
-                      />
-                      {isExpanded ? (
-                        <FolderOpen size={12} className="shrink-0 text-warning" />
-                      ) : (
-                        <Folder size={12} className="shrink-0 text-warning" />
-                      )}
-                      <span className="min-w-0 truncate">{folder.name}</span>
-                      <span className="shrink-0 text-ui-2xs tabular-nums text-muted-foreground">({folderProfiles.length})</span>
-                    </div>
-                    </ContextMenuTrigger>
-                    <ContextMenuContent className={NESTED_SELECT_Z}>
-                      <ContextMenuItem onClick={() => handleRenameFolder(folder)}>
-                        <Pencil size={12} />
-                        <span>{t('folder.rename')}</span>
-                      </ContextMenuItem>
-                      <ContextMenuItem className="text-destructive focus:text-destructive" onClick={() => handleDeleteFolder(folder)}>
-                        <Trash2 size={12} />
-                        <span>{t('folder.delete')}</span>
-                      </ContextMenuItem>
-                    </ContextMenuContent>
-                    </ContextMenu>
-
-                    {isExpanded && (
-                      <div className="ml-3 border-l border-sidebar-border pl-1.5">
-                        {folderProfiles.map(p => {
-                          const isSel = p.id === selectedId;
-                          const isActive = activeConnections.some(c => c.profileId === p.id);
-                          return profileMenu(p,
-                            <div
-                              className={treeRowClass(isSel)}
-                              onClick={() => handleSelect(p.id)}
-                              onDoubleClick={handleConnectClick}
-                              {...dragProps(p.id)}
-                            >
-                              <ConnectionColorDot color={p.color_tag} />
-                              <Server size={12} className={cn('shrink-0', isSel ? 'text-primary' : 'text-muted-foreground')} />
-                              <span className="min-w-0 truncate">{p.name || t('sidebar.unnamedConnection')}</span>
-                              {isActive && (
-                                <Badge variant="success" className="ml-auto h-4 px-1 text-ui-2xs" title={t('sidebar.connectedTitle')}>
-                                  ●
-                                </Badge>
-                              )}
-                            </div>
-                          );
-                        })}
-                        {folderProfiles.length === 0 && (
-                          <div className="pl-4 text-ui-2xs italic text-muted-foreground">{t('sidebar.emptyFolder')}</div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-
-              {/* Uncategorized profiles at root */}
-              {filteredProfiles.filter(p => !profileFolderMap[p.id]).map(p => {
-                const isSel = p.id === selectedId;
-                const isActive = activeConnections.some(c => c.profileId === p.id);
-                return profileMenu(p,
-                  <div
-                    className={cn(treeRowClass(isSel), 'my-0.5')}
-                    onClick={() => handleSelect(p.id)}
-                    onDoubleClick={handleConnectClick}
-                    {...dragProps(p.id)}
-                  >
-                    <ConnectionColorDot color={p.color_tag} />
-                    <Server size={12} className={cn('shrink-0', isSel ? 'text-primary' : 'text-muted-foreground')} />
-                    <span className="min-w-0 truncate">{p.name || t('sidebar.unnamedConnection')}</span>
-                    {isActive && (
-                      <Badge variant="success" className="ml-auto h-4 px-1 text-ui-2xs" title={t('sidebar.connectedTitle')}>
-                        ●
-                      </Badge>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-            </ScrollArea>
-          </aside>
-
-          {/* Right connection preview panel */}
           <ScrollArea className="min-h-0 flex-1 bg-background">
-            <div className="flex min-h-full flex-col p-6 lg:p-8">
-            {view === 'table' && profiles.length > 0 ? (
-              <>
-              <table data-testid="connection-table" className="w-full table-fixed border-collapse text-ui-xs">
-                <thead>
-                  <tr className="border-b border-border text-left">
-                    {([
-                      ['name', t('table.name')],
-                      ['server', t('table.server')],
-                      ['security', t('table.security')],
-                      ['lastConnected', t('table.lastConnected')],
-                    ] as const).map(([key, label]) => (
-                      <th
-                        key={key}
-                        className="py-1.5 pr-2 font-medium text-muted-foreground"
-                        aria-sort={sort.key === key ? (sort.dir === 1 ? 'ascending' : 'descending') : undefined}
-                      >
-                        <button type="button" className="inline-flex items-center gap-1 hover:text-foreground" onClick={() => sortBy(key)}>
-                          {label}
-                          {sort.key === key && (sort.dir === 1 ? <ArrowUp size={11} aria-hidden /> : <ArrowDown size={11} aria-hidden />)}
-                        </button>
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {tableRows.map(({ profile: p, server, security, at }) => profileMenu(p,
-                    <tr
-                      className={cn('cursor-default border-b border-border/60 hover:bg-muted/40', p.id === selectedId && 'bg-primary/10')}
-                      aria-selected={p.id === selectedId}
-                      onClick={() => handleSelect(p.id)}
-                      onDoubleClick={handleConnectClick}
-                      {...dragProps(p.id)}
+            <table data-testid="connection-table" className="w-full table-fixed border-collapse text-ui-xs" {...dropProps('')}>
+              <colgroup>
+                <col className="w-[34%]" />
+                <col className="w-[26%]" />
+                <col className="w-[22%]" />
+                <col className="w-[18%]" />
+              </colgroup>
+              <thead className="sticky top-0 z-[1] bg-muted/60 backdrop-blur">
+                <tr className="border-b border-border text-left">
+                  {([
+                    ['name', t('table.name')],
+                    ['server', t('table.server')],
+                    ['security', t('table.security')],
+                    ['lastConnected', t('table.lastConnected')],
+                  ] as const).map(([key, label]) => (
+                    <th
+                      key={key}
+                      className="border-r border-border/60 px-2 py-1 font-medium text-muted-foreground last:border-r-0"
+                      aria-sort={sort.key === key ? (sort.dir === 1 ? 'ascending' : 'descending') : undefined}
                     >
-                      <td className="py-1.5 pr-2">
-                        <span className="flex min-w-0 items-center gap-1.5">
-                          <ConnectionColorDot color={p.color_tag} />
-                          <span data-testid="connection-row-name" className="truncate">{p.name || t('sidebar.unnamedConnection')}</span>
-                        </span>
-                      </td>
-                      <td className="truncate py-1.5 pr-2 font-mono">{server}</td>
-                      <td className="truncate py-1.5 pr-2">{security || t('table.none')}</td>
-                      <td className="truncate py-1.5 tabular-nums text-muted-foreground">{at ? new Date(at).toLocaleString() : t('table.never')}</td>
-                    </tr>
+                      <button type="button" className="inline-flex items-center gap-1 hover:text-foreground" onClick={() => sortBy(key)}>
+                        {label}
+                        {sort.key === key && (sort.dir === 1 ? <ArrowUp size={11} aria-hidden /> : <ArrowDown size={11} aria-hidden />)}
+                      </button>
+                    </th>
                   ))}
-                </tbody>
-              </table>
-              {/* The details panel shows these in tree view; a connect started
-                  from a row still needs its error and login controls. */}
-              {(error || (connectLoginId && !showEditDialog)) && (
-                <div data-testid="connect-feedback" className="mt-4 flex flex-col gap-2">
-                  {error && (
-                    <div className="flex items-center gap-1.5 rounded border border-destructive/30 bg-destructive/10 p-2 text-[11px] text-destructive">
-                      <AlertCircle size={12} />
-                      <span>{error}</span>
-                    </div>
-                  )}
-                  {connectLoginId && !showEditDialog && (
-                    <div className="flex justify-end gap-2">
-                      <Button type="button" variant="outline" size="sm" data-testid="connect-cancel-login" onClick={handleCancelConnectLogin}>
-                        {t('test.cancelLogin')}
-                      </Button>
-                      <Button type="button" variant="outline" size="sm" data-testid="connect-reopen-login" onClick={handleReopenConnectLogin}>
-                        {t('test.openBrowserAgain')}
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              )}
-              </>
-            ) : selectedProfile ? (
-              <div className="flex flex-1 flex-col">
-                <div className="flex-1">
-                  <div className="mb-4 flex items-center gap-3 border-b border-border pb-3">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10">
-                      <Server size={18} className="text-primary" />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <ConnectionColorDot color={selectedProfile.color_tag} className="h-2.5 w-2.5" />
-                        <h3 className="truncate text-base font-semibold text-foreground">{selectedProfile.name}</h3>
-                      </div>
-                      <p className="text-ui-xs text-muted-foreground">{t('profile.subtitle')}</p>
-                    </div>
-                  </div>
-
-                  <div className="mb-4 flex flex-col gap-1.5">
-                    <div className="flex items-center justify-between">
-                      <Label className="text-ui-2xs uppercase tracking-wide text-muted-foreground">{t('profile.connectionUri')}</Label>
-                      {maskUriPassword(selectedProfile.uri) !== selectedProfile.uri && (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-6 w-6"
-                          onClick={() => setRevealDetailUri(v => !v)}
-                          title={revealDetailUri ? t('actions.hidePassword') : t('actions.showPassword')}
-                          aria-label={revealDetailUri ? t('actions.hidePassword') : t('actions.showPassword')}
-                        >
-                          {revealDetailUri ? <EyeOff size={13} /> : <Eye size={13} />}
-                        </Button>
+                </tr>
+              </thead>
+              <tbody>
+                {folders.map(folder => {
+                  const rows = rowsInFolder(folder.id);
+                  // A filter shows where its matches are: their folders open, the rest drop out.
+                  const filtering = searchQuery !== '';
+                  if (filtering && rows.length === 0) return null;
+                  const isExpanded = filtering || expandedFolders[folder.id];
+                  return (
+                    <React.Fragment key={folder.id}>
+                      <ContextMenu>
+                        <ContextMenuTrigger asChild>
+                          <tr
+                            className="cursor-default border-b border-border/40 hover:bg-muted/40"
+                            aria-expanded={!!isExpanded}
+                            onClick={() => toggleFolderExpand(folder.id)}
+                            {...dropProps(folder.id)}
+                          >
+                            <td colSpan={4} className="px-2 py-1">
+                              <span className="flex min-w-0 items-center gap-1.5">
+                                <ChevronRight
+                                  size={12}
+                                  className={cn('shrink-0 text-muted-foreground transition-transform duration-150', isExpanded && 'rotate-90')}
+                                />
+                                {isExpanded ? (
+                                  <FolderOpen size={13} className="shrink-0 text-warning" />
+                                ) : (
+                                  <Folder size={13} className="shrink-0 text-warning" />
+                                )}
+                                <span className="min-w-0 truncate font-medium">{folder.name}</span>
+                                <span className="shrink-0 text-ui-2xs tabular-nums text-muted-foreground">({rows.length})</span>
+                              </span>
+                            </td>
+                          </tr>
+                        </ContextMenuTrigger>
+                        <ContextMenuContent className={NESTED_SELECT_Z}>
+                          <ContextMenuItem className={ctxItemClass} onClick={() => handleRenameFolder(folder)}>
+                            <Pencil />
+                            <span>{t('folder.rename')}</span>
+                          </ContextMenuItem>
+                          <ContextMenuItem className={cn(ctxItemClass, 'text-destructive focus:text-destructive')} onClick={() => handleDeleteFolder(folder)}>
+                            <Trash2 />
+                            <span>{t('folder.delete')}</span>
+                          </ContextMenuItem>
+                        </ContextMenuContent>
+                      </ContextMenu>
+                      {isExpanded && rows.map(row => profileRow(row, true))}
+                      {isExpanded && rows.length === 0 && (
+                        <tr className="border-b border-border/40">
+                          <td colSpan={4} className="py-1 pl-10 text-ui-2xs italic text-muted-foreground">{t('sidebar.emptyFolder')}</td>
+                        </tr>
                       )}
-                    </div>
-                    <div className="rounded-lg border border-border bg-muted/30 p-3 font-mono text-ui-xs break-all select-text">
-                      {revealDetailUri ? selectedProfile.uri : maskUriPassword(selectedProfile.uri)}
-                    </div>
-                  </div>
-
-                  <div className="flex flex-col gap-1.5">
-                    <Label className="text-ui-2xs uppercase tracking-wide text-muted-foreground">{t('profile.metadata')}</Label>
-                    <div className="flex flex-col gap-2 rounded-lg border border-border bg-muted/20 p-3 text-ui-xs">
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">{t('profile.status')}</span>
-                        <span className="font-medium">
-                          {activeConnections.some(c => c.profileId === selectedProfile.id) ? t('profile.connectedActive') : t('profile.disconnected')}
-                        </span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">{t('profile.profileId')}</span>
-                        <span className="font-mono text-ui-2xs">{selectedProfile.id}</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {error && (
-                  <div className="mb-3 flex items-center gap-1.5 truncate rounded border border-destructive/30 bg-destructive/10 p-2 text-[11px] text-destructive">
-                    <AlertCircle size={12} />
-                    <span>{error}</span>
-                  </div>
+                    </React.Fragment>
+                  );
+                })}
+                {rowsInFolder('').map(row => profileRow(row, false))}
+                {profiles.length === 0 && (
+                  <tr>
+                    <td colSpan={4} className="px-3 py-6 text-center text-ui-xs text-muted-foreground">{t('empty.noConnections')}</td>
+                  </tr>
                 )}
-
-                <footer className="mt-auto flex justify-end gap-2 border-t border-border pt-3">
-                  {/* Not `showEditDialog`: the edit dialog is a separate top-layer
-                      Dialog that stays mounted alongside this one, and renders
-                      its own copy of these buttons below — showing both here
-                      too would duplicate the `connect-cancel-login` testid
-                      while a profile is selected behind an open editor (#430). */}
-                  {connectLoginId && !showEditDialog && (
-                    <>
-                      <Button type="button" variant="outline" size="sm" data-testid="connect-cancel-login" onClick={handleCancelConnectLogin}>
-                        {t('test.cancelLogin')}
-                      </Button>
-                      <Button type="button" variant="outline" size="sm" data-testid="connect-reopen-login" onClick={handleReopenConnectLogin}>
-                        {t('test.openBrowserAgain')}
-                      </Button>
-                    </>
-                  )}
-                  <Button
-                    onClick={handleConnectClick}
-                    disabled={loading || activeConnections.some(c => c.profileId === selectedProfile.id)}
-                    size="sm"
-                    aria-label={activeConnections.some(c => c.profileId === selectedProfile.id) ? t('actions.alreadyConnected') : loading ? t('actions.connecting') : t('actions.connect')}
-                  >
-                    <Play size={11} fill="currentColor" />
-                    <span>{activeConnections.some(c => c.profileId === selectedProfile.id) ? t('actions.alreadyConnected') : loading ? t('actions.connecting') : t('actions.connect')}</span>
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={onClose}>
-                    {t('common:close')}
-                  </Button>
-                </footer>
-              </div>
-            ) : (
-              <div className="flex flex-1 flex-col items-center justify-center p-8 text-center text-muted-foreground">
-                <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-muted">
-                  <Server size={28} className="text-muted-foreground" />
-                </div>
-                <span className="max-w-sm text-ui-xs leading-relaxed">{t('empty.message')}</span>
-              </div>
-            )}
-            </div>
+              </tbody>
+            </table>
           </ScrollArea>
-        </div>
+
+          {error && (
+            <div
+              data-testid="connect-feedback"
+              className="flex shrink-0 items-center gap-1.5 border-t border-destructive/30 bg-destructive/10 px-4 py-2 text-[11px] text-destructive"
+            >
+              <AlertCircle size={12} className="shrink-0" />
+              <span className="min-w-0 truncate">{error}</span>
+            </div>
+          )}
+
+          <footer className="flex shrink-0 items-center gap-2 border-t border-border bg-muted/20 px-3 py-2">
+            <div className="flex min-w-0 flex-1 items-center gap-1">
+              {selectedProfile && (
+                <>
+                  <code data-testid="selected-uri" className="min-w-0 truncate font-mono text-ui-2xs text-muted-foreground select-text">
+                    {revealDetailUri ? selectedProfile.uri : maskUriPassword(selectedProfile.uri)}
+                  </code>
+                  {maskUriPassword(selectedProfile.uri) !== selectedProfile.uri && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 shrink-0"
+                      onClick={() => setRevealDetailUri(v => !v)}
+                      title={revealDetailUri ? t('actions.hidePassword') : t('actions.showPassword')}
+                      aria-label={revealDetailUri ? t('actions.hidePassword') : t('actions.showPassword')}
+                    >
+                      {revealDetailUri ? <EyeOff size={13} /> : <Eye size={13} />}
+                    </Button>
+                  )}
+                </>
+              )}
+            </div>
+            {/* Not while the editor is open: it is a separate top-layer Dialog
+                that renders its own copy of these buttons, and both would
+                duplicate the `connect-cancel-login` testid (#430). */}
+            {connectLoginId && !showEditDialog && (
+              <>
+                <Button type="button" variant="outline" size="sm" data-testid="connect-cancel-login" onClick={handleCancelConnectLogin}>
+                  {t('test.cancelLogin')}
+                </Button>
+                <Button type="button" variant="outline" size="sm" data-testid="connect-reopen-login" onClick={handleReopenConnectLogin}>
+                  {t('test.openBrowserAgain')}
+                </Button>
+              </>
+            )}
+            <Button
+              onClick={handleConnectClick}
+              disabled={!selectedProfile || loading || selectedIsActive}
+              size="sm"
+              aria-label={selectedIsActive ? t('actions.alreadyConnected') : loading ? t('actions.connecting') : t('actions.connect')}
+            >
+              <Play size={11} fill="currentColor" />
+              <span>{selectedIsActive ? t('actions.alreadyConnected') : loading ? t('actions.connecting') : t('actions.connect')}</span>
+            </Button>
+            <Button variant="outline" size="sm" onClick={onClose}>
+              {t('common:close')}
+            </Button>
+          </footer>
+        </>
         )}
       </DraggableDialogContent>
     </Dialog>
@@ -2736,39 +2629,117 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
         >
             <header
               data-dialog-drag-handle
-              className="flex shrink-0 cursor-grab items-center justify-between border-b border-border bg-muted/20 px-4 py-4 active:cursor-grabbing"
+              className="flex shrink-0 cursor-grab items-center justify-between border-b border-border bg-muted/20 px-3 py-1.5 active:cursor-grabbing"
             >
-              <div className="flex min-w-0 items-center gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10">
-                  <Server className="h-5 w-5 text-primary" />
-                </div>
-                <div className="min-w-0">
-                  <h2 className="text-sm font-semibold leading-tight text-foreground">
-                    {editMode === 'new' ? t('editor.newTitle') : editMode === 'duplicate' ? t('editor.duplicateTitle') : t('editor.editTitle')}
-                  </h2>
-                  <p className="truncate text-ui-xs text-muted-foreground">{t('editor.subtitle')}</p>
-                </div>
-              </div>
-              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={closeEditor} aria-label={t('common:close')}>
+              <h2 className="flex min-w-0 items-center gap-2 truncate text-ui-sm font-semibold text-foreground">
+                <Server className="h-4 w-4 shrink-0 text-primary" />
+                {editMode === 'new' ? t('editor.newTitle') : editMode === 'duplicate' ? t('editor.duplicateTitle') : t('editor.editTitle')}
+              </h2>
+              <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={closeEditor} aria-label={t('common:close')}>
                 <X size={14} />
               </Button>
             </header>
 
-            {/* Dialog Meta details */}
-            <section className="shrink-0 space-y-2 border-b border-border bg-muted/20 px-4 py-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <Label htmlFor="connection-name" className="shrink-0 text-ui-xs">{t('form.displayName')}</Label>
-                <Input
-                  id="connection-name"
-                  type="text"
-                  value={editorState.name}
-                  onChange={e => setEditorState(prev => ({ ...prev, name: e.target.value }))}
-                  className="h-8 min-w-[160px] flex-1 text-ui-xs"
-                />
-
-                <Label htmlFor="folder-select" className="shrink-0 text-ui-xs">{t('form.folder')}</Label>
+            {/* Name, colour and folder */}
+            <section className="flex shrink-0 flex-col gap-1.5 px-4 pb-2 pt-3">
+              <FormRow label={t('form.displayName')} htmlFor="connection-name">
+                <div className="flex items-center gap-1.5">
+                  <Input
+                    id="connection-name"
+                    type="text"
+                    value={editorState.name}
+                    onChange={e => setEditorState(prev => ({ ...prev, name: e.target.value }))}
+                    className="h-8 flex-1 text-ui-xs"
+                  />
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        className="h-8 w-8 shrink-0"
+                        aria-label={t('form.colorTag')}
+                        title={t('form.colorTag')}
+                      >
+                        {editorState.colorTag ? (
+                          <span className="h-3.5 w-3.5 rounded-full border border-border" style={{ backgroundColor: editorState.colorTag }} />
+                        ) : (
+                          <Palette size={14} className="text-muted-foreground" />
+                        )}
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent
+                      align="end"
+                      className={cn(NESTED_SELECT_Z, 'w-auto p-2')}
+                      // Escape closes the popover only: kept from the window listener that closes the editor.
+                      onEscapeKeyDown={(e) => e.stopPropagation()}
+                    >
+                      <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label={t('form.colorTagGroupAria')}>
+                        <button
+                          type="button"
+                          data-testid="color-swatch-none"
+                          title={t('form.noColor')}
+                          aria-label={t('form.noColor')}
+                          aria-pressed={!editorState.colorTag}
+                          className={cn(
+                            'flex h-5 w-5 items-center justify-center rounded-full border border-border text-ui-2xs text-muted-foreground transition-colors',
+                            !editorState.colorTag && 'ring-2 ring-primary ring-offset-1 ring-offset-background',
+                          )}
+                          onClick={() => setEditorState((prev) => ({ ...prev, colorTag: '' }))}
+                        >
+                          ∅
+                        </button>
+                        {CONNECTION_COLOR_PALETTE.map((swatch) => (
+                          <button
+                            key={swatch.id}
+                            type="button"
+                            data-testid={`color-swatch-${swatch.id}`}
+                            title={t(swatch.labelKey)}
+                            aria-label={t(swatch.labelKey)}
+                            aria-pressed={editorState.colorTag === swatch.value}
+                            className={cn(
+                              'h-5 w-5 rounded-full transition-[box-shadow]',
+                              editorState.colorTag === swatch.value && 'ring-2 ring-primary ring-offset-1 ring-offset-background',
+                            )}
+                            style={{ backgroundColor: swatch.value }}
+                            onClick={() => setEditorState((prev) => ({ ...prev, colorTag: swatch.value }))}
+                          />
+                        ))}
+                        <label
+                          className={cn(
+                            'relative inline-flex h-6 cursor-pointer items-center gap-1 rounded-md border border-dashed border-border px-1.5 text-ui-2xs text-muted-foreground transition-colors hover:border-primary/50 hover:bg-accent hover:text-foreground',
+                            editorState.colorTag
+                              && !isPresetConnectionColor(editorState.colorTag)
+                              && 'border-solid ring-2 ring-primary ring-offset-1 ring-offset-background',
+                          )}
+                          title={t('form.pickCustomColor')}
+                        >
+                          <Pipette size={11} className="pointer-events-none shrink-0" aria-hidden="true" />
+                          <span className="pointer-events-none">{t('form.custom')}</span>
+                          {editorState.colorTag && !isPresetConnectionColor(editorState.colorTag) && (
+                            <span
+                              className="pointer-events-none h-2.5 w-2.5 shrink-0 rounded-full border border-border"
+                              style={{ backgroundColor: editorState.colorTag }}
+                              data-testid="color-picker-custom-preview"
+                            />
+                          )}
+                          <input
+                            type="color"
+                            data-testid="color-picker-custom"
+                            aria-label={t('form.pickCustomColor')}
+                            value={colorInputValue(editorState.colorTag)}
+                            onChange={(e) => setEditorState((prev) => ({ ...prev, colorTag: e.target.value }))}
+                            className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                          />
+                        </label>
+                      </div>
+                    </PopoverContent>
+                  </Popover>
+                </div>
+              </FormRow>
+              <FormRow label={t('form.folder')} htmlFor="folder-select">
                 <Select value={editorState.folder || '__root__'} onValueChange={(v) => setEditorState(prev => ({ ...prev, folder: v === '__root__' ? '' : v }))}>
-                  <SelectTrigger id="folder-select" className="h-8 w-[140px] text-ui-xs">
+                  <SelectTrigger id="folder-select" className="h-8 text-ui-xs">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent className={NESTED_SELECT_Z}>
@@ -2778,113 +2749,58 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                     ))}
                   </SelectContent>
                 </Select>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2">
-                <Label className="shrink-0 text-ui-xs">{t('form.colorTag')}</Label>
-                <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label={t('form.colorTagGroupAria')}>
-                  <button
-                    type="button"
-                    data-testid="color-swatch-none"
-                    title={t('form.noColor')}
-                    aria-label={t('form.noColor')}
-                    aria-pressed={!editorState.colorTag}
-                    className={cn(
-                      'flex h-5 w-5 items-center justify-center rounded-full border border-border text-ui-2xs text-muted-foreground transition-colors',
-                      !editorState.colorTag && 'ring-2 ring-primary ring-offset-1 ring-offset-background',
-                    )}
-                    onClick={() => setEditorState((prev) => ({ ...prev, colorTag: '' }))}
-                  >
-                    ∅
-                  </button>
-                  {CONNECTION_COLOR_PALETTE.map((swatch) => (
-                    <button
-                      key={swatch.id}
-                      type="button"
-                      data-testid={`color-swatch-${swatch.id}`}
-                      title={t(swatch.labelKey)}
-                      aria-label={t(swatch.labelKey)}
-                      aria-pressed={editorState.colorTag === swatch.value}
-                      className={cn(
-                        'h-5 w-5 rounded-full transition-[box-shadow]',
-                        editorState.colorTag === swatch.value && 'ring-2 ring-primary ring-offset-1 ring-offset-background',
-                      )}
-                      style={{ backgroundColor: swatch.value }}
-                      onClick={() => setEditorState((prev) => ({ ...prev, colorTag: swatch.value }))}
-                    />
-                  ))}
-                  <label
-                    className={cn(
-                      'relative inline-flex h-6 cursor-pointer items-center gap-1 rounded-md border border-dashed border-border px-1.5 text-ui-2xs text-muted-foreground transition-colors hover:border-primary/50 hover:bg-accent hover:text-foreground',
-                      editorState.colorTag
-                        && !isPresetConnectionColor(editorState.colorTag)
-                        && 'border-solid ring-2 ring-primary ring-offset-1 ring-offset-background',
-                    )}
-                    title={t('form.pickCustomColor')}
-                  >
-                    <Pipette size={11} className="pointer-events-none shrink-0" aria-hidden="true" />
-                    <span className="pointer-events-none">{t('form.custom')}</span>
-                    {editorState.colorTag && !isPresetConnectionColor(editorState.colorTag) && (
-                      <span
-                        className="pointer-events-none h-2.5 w-2.5 shrink-0 rounded-full border border-border"
-                        style={{ backgroundColor: editorState.colorTag }}
-                        data-testid="color-picker-custom-preview"
-                      />
-                    )}
-                    <input
-                      type="color"
-                      data-testid="color-picker-custom"
-                      aria-label={t('form.pickCustomColor')}
-                      value={colorInputValue(editorState.colorTag)}
-                      onChange={(e) => setEditorState((prev) => ({ ...prev, colorTag: e.target.value }))}
-                      className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-                    />
-                  </label>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2">
-                <Badge variant="secondary" className="shrink-0 text-ui-2xs">{t('form.uriBadge')}</Badge>
-                <code className="min-w-0 flex-1 truncate font-mono text-ui-2xs text-muted-foreground">{maskUriPassword(buildUri(editorState))}</code>
-                <Button type="button" variant="ghost" size="sm" className="h-7 shrink-0 gap-1 text-ui-2xs" data-testid="editor-export-uri-btn" onClick={() => openExportDialog(buildUri(editorState), editorState.sshEnabled)}>
-                  <Copy size={12} />
-                  <span>{t('actions.export')}</span>
-                </Button>
-              </div>
+              </FormRow>
             </section>
 
-            <div className="flex min-h-0 flex-1">
+            <div className="flex min-h-0 flex-1 flex-col">
             {!pendingSave && (
-            <aside className={cn(sidebarPanelClass, 'w-48 xl:w-52')}>
-              <nav className="flex flex-col gap-0.5 p-2" aria-label={t('editor.tabsAria')}>
-                {TABS.map(tab => {
-                  const TabIcon = tab.icon;
-                  return (
-                    <button
-                      key={tab.id}
-                      type="button"
-                      onClick={() => setActiveEditorTab(tab.id)}
-                      className={sidebarNavButtonClass(activeEditorTab === tab.id)}
-                    >
-                      <TabIcon className={cn('h-4 w-4 shrink-0', activeEditorTab === tab.id ? 'text-primary' : '')} />
-                      <span className="truncate">{t(tab.labelKey)}</span>
-                    </button>
-                  );
-                })}
+              <nav className="flex shrink-0 flex-wrap border-b border-border px-3" aria-label={t('editor.tabsAria')}>
+                {TABS.map(tab => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    aria-pressed={activeEditorTab === tab.id}
+                    onClick={() => setActiveEditorTab(tab.id)}
+                    className={editorTabClass(activeEditorTab === tab.id)}
+                  >
+                    {t(tab.labelKey)}
+                  </button>
+                ))}
               </nav>
-            </aside>
             )}
 
             {/* Editor dialog body views */}
             <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
             {!pendingSave && (
             <ScrollArea className="min-h-0 flex-1">
-            <div className="p-6">
+            <div className="flex flex-col gap-2 px-4 py-3">
               {activeEditorTab === 'server' && (
-                <div className="flex flex-col gap-2.5">
+                <>
+                  <FormRow label={t('form.connectionType')}>
+                    <Select
+                      value={editorState.topology === 'uri' ? 'uri' : editorState.protocol === 'mongodb+srv' ? 'srv' : editorState.topology}
+                      onValueChange={(v) => setEditorState(prev => (
+                        // A seedlist is an SRV lookup, which parseUriIntoFields reads as a cluster.
+                        v === 'srv' ? { ...prev, protocol: 'mongodb+srv', topology: 'sharded' }
+                        : v === 'uri' ? { ...prev, topology: v }
+                        : { ...prev, protocol: 'mongodb', topology: v }
+                      ))}
+                    >
+                      <SelectTrigger className="h-8 text-ui-xs" data-testid="topology-select" aria-label={t('form.connectionType')}>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className={NESTED_SELECT_Z}>
+                        <SelectItem value="standalone">{t('form.topologyStandalone')}</SelectItem>
+                        <SelectItem value="replicaSet">{t('form.topologyReplicaSet')}</SelectItem>
+                        <SelectItem value="sharded">{t('form.topologySharded')}</SelectItem>
+                        <SelectItem value="srv">{t('form.topologySrv')}</SelectItem>
+                        <SelectItem value="uri">{t('form.topologyUriOnly')}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </FormRow>
+
                   {editorState.topology === 'uri' && (
-                  <div className="flex flex-col gap-1">
-                    <Label htmlFor="connection-uri">{t('form.connectionUriLabel')}</Label>
+                  <FormRow label={t('form.connectionUriLabel')} htmlFor="connection-uri">
                     {(() => {
                       const masked = maskUriPassword(editorState.uri);
                       const hasSecret = masked !== editorState.uri;
@@ -2930,12 +2846,12 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                     >
                       <LayoutGrid size={12} /> {t('form.parseIntoFields')}
                     </Button>
-                  </div>
+                  </FormRow>
                   )}
 
                   {(editorState.topology === 'replicaSet' || editorState.topology === 'sharded') && editorState.protocol !== 'mongodb+srv' ? (
+                    <FormRow label={editorState.topology === 'replicaSet' ? t('form.members') : t('form.routers')}>
                     <div className="flex flex-col gap-1.5" data-testid="member-list">
-                      <Label>{editorState.topology === 'replicaSet' ? t('form.members') : t('form.routers')}</Label>
                       {editorState.hosts.map((member, i) => (
                         <div key={i} className="flex items-center gap-1.5">
                           <Input
@@ -3003,12 +2919,11 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                         </p>
                       )}
                     </div>
+                    </FormRow>
                   ) : editorState.topology !== 'uri' && (
-                    <div className="flex flex-col gap-1">
-                      <Label>
-                        {t('form.hostList')} {editorState.protocol === 'mongodb+srv' ? t('form.hostListHostnameOnly') : t('form.hostListHostPort')}
-                      </Label>
+                    <FormRow label={t('form.hostList')} htmlFor="host-list">
                       <Input
+                        id="host-list"
                         type="text"
                         data-testid="host-list"
                         value={hostsToText(editorState.hosts, editorState.protocol === 'mongodb+srv')}
@@ -3016,62 +2931,27 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                         placeholder={editorState.protocol === 'mongodb+srv' ? 'cluster0.abcd.mongodb.net' : '172.18.19.60:27017, 172.18.19.61:27017'}
                         className="font-mono"
                       />
-                    </div>
+                      <p className={helpTextClass}>
+                        {editorState.protocol === 'mongodb+srv' ? t('form.hostListHostnameOnly') : t('form.hostListHostPort')}
+                      </p>
+                    </FormRow>
                   )}
 
-                  <div className="flex gap-3 border-t border-border pt-2.5">
-                    {editorState.topology !== 'uri' && (
-                      <div className="flex flex-1 flex-col gap-1">
-                        <Label>{t('form.protocol')}</Label>
-                        <Select
-                          value={editorState.protocol}
-                          onValueChange={(v) => setEditorState(prev => ({ ...prev, protocol: v }))}
-                        >
-                          <SelectTrigger className="h-8 text-ui-xs" data-testid="protocol-select">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent className={NESTED_SELECT_Z}>
-                            <SelectItem value="mongodb">mongodb://</SelectItem>
-                            <SelectItem value="mongodb+srv">mongodb+srv://</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    )}
-                    <div className="flex flex-1 flex-col gap-1">
-                      <Label>{t('form.topology')}</Label>
-                      <Select
-                        value={editorState.topology}
-                        onValueChange={(v) => setEditorState(prev => ({ ...prev, topology: v }))}
-                      >
-                        <SelectTrigger className="h-8 text-ui-xs" data-testid="topology-select">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent className={NESTED_SELECT_Z}>
-                          <SelectItem value="standalone">{t('form.topologyStandalone')}</SelectItem>
-                          <SelectItem value="replicaSet">{t('form.topologyReplicaSet')}</SelectItem>
-                          <SelectItem value="sharded">{t('form.topologySharded')}</SelectItem>
-                          <SelectItem value="uri">{t('form.topologyUriOnly')}</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
+                  {editorState.topology === 'replicaSet' && (
+                    <FormRow label={t('form.replicaSetName')} htmlFor="replica-set-name">
+                      <Input
+                        id="replica-set-name"
+                        type="text"
+                        value={editorState.replicaSetName}
+                        onChange={e => setEditorState(prev => ({ ...prev, replicaSetName: e.target.value }))}
+                        placeholder="rs0"
+                      />
+                    </FormRow>
+                  )}
 
-                    {editorState.topology === 'replicaSet' && (
-                      <div className="flex flex-1 flex-col gap-1">
-                        <Label htmlFor="replica-set-name">{t('form.replicaSetName')}</Label>
-                        <Input
-                          id="replica-set-name"
-                          type="text"
-                          value={editorState.replicaSetName}
-                          onChange={e => setEditorState(prev => ({ ...prev, replicaSetName: e.target.value }))}
-                          placeholder="rs0"
-                        />
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="flex flex-col gap-2 border-t border-border pt-2.5">
-                    <Label className="text-ui-xs">{t('form.connectionMode')}</Label>
-                    <div className="flex flex-col gap-1.5" role="group" aria-label={t('form.connectionMode')}>
+                  <div className="border-t border-border" />
+                  <FormRow label={t('form.connectionMode')}>
+                    <div className="inline-flex w-fit rounded-md border border-border p-0.5" role="group" aria-label={t('form.connectionMode')}>
                       {CONNECTION_MODE_OPTIONS.map((opt) => (
                         <button
                           key={opt.value}
@@ -3079,20 +2959,21 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                           data-testid={`connection-mode-${opt.value}`}
                           aria-pressed={editorState.connectionMode === opt.value}
                           className={cn(
-                            'flex flex-col items-start gap-0.5 rounded-md border border-border px-2.5 py-1.5 text-left transition-colors hover:border-primary/50 hover:bg-accent',
-                            editorState.connectionMode === opt.value && 'border-primary bg-accent ring-1 ring-primary',
+                            'rounded px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground',
+                            editorState.connectionMode === opt.value && 'bg-primary/15 font-medium text-foreground',
                           )}
                           onClick={() => setEditorState((prev) => ({ ...prev, connectionMode: opt.value }))}
                         >
-                          <span className="text-[11px] font-medium">{t(opt.labelKey)}</span>
-                          <span className="text-[10.5px] leading-relaxed text-muted-foreground">{t(opt.descriptionKey)}</span>
+                          {t(opt.labelKey)}
                         </button>
                       ))}
                     </div>
-                  </div>
-
-                  <div className="flex flex-col gap-2 border-t border-border pt-2.5">
-                    <label className="flex items-center gap-2 text-[11px]">
+                    {CONNECTION_MODE_OPTIONS.filter(opt => opt.value === editorState.connectionMode).map(opt => (
+                      <p key={opt.value} className={helpTextClass}>{t(opt.descriptionKey)}</p>
+                    ))}
+                  </FormRow>
+                  <FormRow>
+                    <label className="flex items-center gap-2 pt-1.5 text-[11px]">
                       <input
                         id="mcp-enable"
                         type="checkbox"
@@ -3101,19 +2982,39 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                       />
                       <span>{t('form.mcpEnabled')}</span>
                     </label>
-                    <span className="text-[10.5px] leading-relaxed text-muted-foreground">
-                      {t('form.mcpEnabledDescription')}
-                    </span>
+                    <p className={helpTextClass}>{t('form.mcpEnabledDescription')}</p>
+                  </FormRow>
+
+                  <div className="border-t border-border" />
+                  <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-1.5">
+                    {importUriMenu(
+                      <Button type="button" variant="outline" size="sm" className="h-7 justify-start text-xs" data-testid="import-uri-btn">
+                        <ClipboardPaste size={12} />
+                        <span>{t('form.fromUri')}</span>
+                      </Button>,
+                    )}
+                    <span className="text-[11px] text-muted-foreground">{t('form.fromUriHelp')}</span>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 justify-start text-xs"
+                      data-testid="editor-export-uri-btn"
+                      onClick={() => openExportDialog(buildUri(editorState), editorState.sshEnabled)}
+                    >
+                      <ExternalLink size={12} />
+                      <span>{t('form.toUri')}</span>
+                    </Button>
+                    <span className="text-[11px] text-muted-foreground">{t('form.toUriHelp')}</span>
                   </div>
-                </div>
+                </>
               )}
 
               {activeEditorTab === 'auth' && (
-                <div className="flex flex-col gap-2.5">
-                  <div className="flex flex-col gap-1">
-                    <Label>{t('auth.method')}</Label>
+                <>
+                  <FormRow label={t('auth.method')}>
                     <Select value={editorState.authMethod} onValueChange={(v) => setEditorState(prev => ({ ...prev, authMethod: v }))}>
-                      <SelectTrigger className="h-8 text-xs" data-testid="auth-method-select">
+                      <SelectTrigger className="h-8 text-xs" data-testid="auth-method-select" aria-label={t('auth.method')}>
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent className={NESTED_SELECT_Z}>
@@ -3121,13 +3022,13 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                         <SelectItem value="scram-256">{t('auth.methodScram256')}</SelectItem>
                         <SelectItem value="scram-1">{t('auth.methodScram1')}</SelectItem>
                         <SelectItem value="x509">{t('auth.methodX509')}</SelectItem>
-                        <SelectItem value="aws">{t('auth.methodAws')}</SelectItem>
                         <SelectItem value="kerberos">{t('auth.methodKerberos')}</SelectItem>
                         <SelectItem value="ldap">{t('auth.methodLdap')}</SelectItem>
+                        <SelectItem value="aws">{t('auth.methodAws')}</SelectItem>
                         <SelectItem value="oidc">{t('auth.methodOidc')}</SelectItem>
                       </SelectContent>
                     </Select>
-                  </div>
+                  </FormRow>
 
                   {editorState.authMethod !== 'none' && (() => {
                     const m = editorState.authMethod;
@@ -3141,35 +3042,23 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                     const passLabel = m === 'aws' ? t('auth.passLabelAws') : t('auth.passLabelDefault');
                     const showPasswordField = m !== 'x509' && m !== 'kerberos' && m !== 'oidc';
                     return (
-                    <div className="flex flex-col gap-2 border-t border-border pt-2.5">
-                      <div className="flex gap-2">
-                        <div className="flex flex-1 flex-col gap-1">
-                          <Label>{userLabel}</Label>
-                          <Input
-                            type="text"
-                            value={editorState.authUser}
-                            onChange={e => setEditorState(prev => ({ ...prev, authUser: e.target.value }))}
-                            placeholder={m === 'aws' ? 'AKIA…' : m === 'kerberos' ? 'user@REALM' : 'admin'}
-                          />
-                        </div>
-                        {isScram && (
-                          <div className="flex flex-1 flex-col gap-1">
-                            <Label>{t('auth.authDatabase')}</Label>
-                            <Input
-                              type="text"
-                              value={editorState.authDb}
-                              onChange={e => setEditorState(prev => ({ ...prev, authDb: e.target.value }))}
-                              placeholder="admin"
-                            />
-                          </div>
-                        )}
-                      </div>
+                    <>
+                      <div className="border-t border-border" />
+                      <FormRow label={userLabel} htmlFor="auth-user">
+                        <Input
+                          id="auth-user"
+                          type="text"
+                          value={editorState.authUser}
+                          onChange={e => setEditorState(prev => ({ ...prev, authUser: e.target.value }))}
+                          placeholder={m === 'aws' ? 'AKIA…' : m === 'kerberos' ? 'user@REALM' : 'admin'}
+                        />
+                      </FormRow>
 
                       {showPasswordField && (
-                        <div className="flex flex-col gap-1">
-                          <Label>{passLabel}</Label>
+                        <FormRow label={passLabel} htmlFor="auth-pass">
                           <div className="relative">
                             <Input
+                              id="auth-pass"
                               type={showPassword ? 'text' : 'password'}
                               value={editorState.authPass}
                               onChange={e => setEditorState(prev => ({ ...prev, authPass: e.target.value }))}
@@ -3181,81 +3070,92 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                               variant="ghost"
                               size="icon"
                               className="absolute right-0 top-0 h-full w-8"
+                              aria-label={showPassword ? t('actions.hidePassword') : t('actions.showPassword')}
                               onClick={() => setShowPassword(prev => !prev)}
                             >
                               {showPassword ? <EyeOff size={13} /> : <Eye size={13} />}
                             </Button>
                           </div>
-                        </div>
+                        </FormRow>
+                      )}
+
+                      {isScram && (
+                        <FormRow label={t('auth.authDatabase')} htmlFor="auth-db">
+                          <Input
+                            id="auth-db"
+                            type="text"
+                            value={editorState.authDb}
+                            onChange={e => setEditorState(prev => ({ ...prev, authDb: e.target.value }))}
+                            placeholder="admin"
+                          />
+                          <p className={helpTextClass}>{t('auth.authDatabaseHelp')}</p>
+                        </FormRow>
                       )}
 
                       {m === 'aws' && (
-                        <div className="flex flex-col gap-1">
-                          <Label>{t('auth.sessionToken')}</Label>
+                        <FormRow label={t('auth.sessionToken')} htmlFor="auth-aws-token">
                           <Input
+                            id="auth-aws-token"
                             type="text"
                             value={editorState.awsSessionToken}
                             onChange={e => setEditorState(prev => ({ ...prev, awsSessionToken: e.target.value }))}
                             placeholder={t('auth.sessionTokenPlaceholder')}
                           />
-                        </div>
+                        </FormRow>
                       )}
 
                       {m === 'kerberos' && (
-                        <div className="flex flex-col gap-1">
-                          <Label>{t('auth.serviceName')}</Label>
+                        <FormRow label={t('auth.serviceName')} htmlFor="auth-kerberos-service">
                           <Input
+                            id="auth-kerberos-service"
                             type="text"
                             value={editorState.kerberosServiceName}
                             onChange={e => setEditorState(prev => ({ ...prev, kerberosServiceName: e.target.value }))}
                             placeholder="mongodb"
                           />
-                        </div>
+                        </FormRow>
                       )}
 
-                      {m === 'x509' && (
-                        <p className="m-0 text-[10px] text-muted-foreground">
-                          {t('auth.x509Note')}
-                        </p>
-                      )}
-                      {isExternal && (
-                        <p className="m-0 text-[10px] text-muted-foreground">
-                          {/* One key, not a prefix/suffix pair around the <code>:
-                              German puts the database NAME after the noun
-                              ("gegen die Datenbank $external"), which a split
-                              that hard-codes English word order cannot express
-                              without stranding the final period after a space. */}
-                          <Trans i18nKey="connections:auth.externalNote" t={t}>
-                            Authenticates against the <code>$external</code> database.
-                          </Trans>
-                        </p>
+                      {(m === 'x509' || isExternal) && (
+                        <FormRow>
+                          {m === 'x509' && <p className={helpTextClass}>{t('auth.x509Note')}</p>}
+                          {isExternal && (
+                            <p className={helpTextClass}>
+                              {/* One key, not a prefix/suffix pair around the <code>:
+                                  German puts the database NAME after the noun
+                                  ("gegen die Datenbank $external"), which a split
+                                  that hard-codes English word order cannot express
+                                  without stranding the final period after a space. */}
+                              <Trans i18nKey="connections:auth.externalNote" t={t}>
+                                Authenticates against the <code>$external</code> database.
+                              </Trans>
+                            </p>
+                          )}
+                        </FormRow>
                       )}
                       {m === 'oidc' && (
                         <>
-                          <p className="m-0 text-[10px] text-muted-foreground">
-                            {t('auth.oidcNote')}
-                          </p>
-                          <div className="flex flex-col gap-1">
+                          <FormRow>
+                            <p className={helpTextClass}>{t('auth.oidcNote')}</p>
                             <label className="flex items-center gap-2 text-[11px]">
                               <input type="checkbox" checked={editorState.oidcRememberLogin}
                                 aria-describedby="oidc-remember-help"
                                 onChange={e => setEditorState(prev => ({ ...prev, oidcRememberLogin: e.target.checked }))} />
                               <span>{t('auth.oidcRememberLogin')}</span>
                             </label>
-                            <span id="oidc-remember-help" className="text-[10.5px] leading-relaxed text-muted-foreground">
+                            <span id="oidc-remember-help" className={helpTextClass}>
                               {t('auth.oidcRememberLoginHelp')}
                             </span>
                             {editMode === 'edit' && selectedId && (
-                              <Button type="button" variant="outline" size="sm" onClick={async () => {
+                              <Button type="button" variant="outline" size="sm" className="w-fit" onClick={async () => {
                                 try {
                                   await invoke('forget_oidc_login', { profileId: selectedId });
                                   setError(null);
                                 } catch (err) { setError(String(err)); }
                               }}>{t('auth.oidcForgetLogin')}</Button>
                             )}
-                          </div>
-                          <div className="flex flex-col gap-1">
-                            <Label htmlFor="oidc-allowed-hosts">{t('auth.oidcAllowedHosts')}</Label>
+                          </FormRow>
+                          <FormRow label={t('auth.oidcAllowedHosts')} htmlFor="oidc-allowed-hosts">
                             <Input
                               id="oidc-allowed-hosts"
                               type="text"
@@ -3263,11 +3163,11 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                               onChange={e => setEditorState(prev => ({ ...prev, oidcAllowedHosts: e.target.value }))}
                               placeholder="mongo.corp.example.com"
                             />
-                            <span className="text-[10.5px] leading-relaxed text-muted-foreground">
+                            <span className={helpTextClass}>
                               {t('auth.oidcAllowedHostsHelp')}
                             </span>
-                          </div>
-                          <div className="flex flex-col gap-1">
+                          </FormRow>
+                          <FormRow>
                             <label className="flex items-center gap-2 text-[11px]">
                               <input
                                 type="checkbox"
@@ -3278,41 +3178,57 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                               />
                               <span>{t('auth.oidcUseIdToken')}</span>
                             </label>
-                            <span id="oidc-use-id-token-help" className="text-[10.5px] leading-relaxed text-muted-foreground">
+                            <span id="oidc-use-id-token-help" className={helpTextClass}>
                               {t('auth.oidcUseIdTokenHelp')}
                             </span>
-                          </div>
+                          </FormRow>
                         </>
                       )}
-                    </div>
+                    </>
                     );
                   })()}
-                </div>
+                </>
               )}
 
               {activeEditorTab === 'tls' && (
-                <div className="flex flex-col gap-2.5">
-                  <div className="flex flex-col gap-1">
-                    <Label>{t('tls.mode')}</Label>
-                    <Select value={editorState.tlsMode} onValueChange={(v) => setEditorState(prev => ({ ...prev, tlsMode: v }))}>
-                      <SelectTrigger className="h-8 text-xs">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent className={NESTED_SELECT_Z}>
-                        <SelectItem value="off">{t('tls.modeOff')}</SelectItem>
-                        <SelectItem value="system">{t('tls.modeSystem')}</SelectItem>
-                        <SelectItem value="file">{t('tls.modeFile')}</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  {editorState.tlsMode === 'file' && (
-                    <div className="flex flex-col gap-1 border-t border-border pt-2.5">
-                      <Label>{t('tls.caFilePath')}</Label>
+                <>
+                  <label className="flex items-center gap-2 text-[11px] font-medium">
+                    <input
+                      type="checkbox"
+                      id="tls-enable"
+                      checked={editorState.tlsMode !== 'off'}
+                      onChange={e => setEditorState(prev => ({
+                        ...prev,
+                        tlsMode: e.target.checked ? (prev.tlsMode === 'off' ? 'system' : prev.tlsMode) : 'off',
+                      }))}
+                    />
+                    <span>{t('tls.enable')}</span>
+                  </label>
+                  {/* Greyed out rather than hidden while TLS is off, so the tab keeps its shape. */}
+                  <fieldset disabled={editorState.tlsMode === 'off'} className="m-0 flex min-w-0 flex-col gap-2 border-0 p-0 disabled:opacity-60">
+                    <FormRow label={t('tls.caSource')}>
+                      <div className="flex flex-col gap-1 pt-1.5" role="radiogroup" aria-label={t('tls.caSource')}>
+                        {([['system', t('tls.caSystem')], ['file', t('tls.caFile')]] as const).map(([value, label]) => (
+                          <label key={value} className="flex items-center gap-2 text-[11px]">
+                            <input
+                              type="radio"
+                              name="tls-ca-source"
+                              value={value}
+                              checked={editorState.tlsMode === value}
+                              onChange={() => setEditorState(prev => ({ ...prev, tlsMode: value }))}
+                            />
+                            <span>{label}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </FormRow>
+                    <FormRow label={t('tls.caFilePath')} htmlFor="tls-ca-file">
                       <div className="flex gap-1.5">
                         <Input
+                          id="tls-ca-file"
                           type="text"
                           value={editorState.tlsCa}
+                          disabled={editorState.tlsMode !== 'file'}
                           onChange={e => setEditorState(prev => ({ ...prev, tlsCa: e.target.value }))}
                           placeholder="/path/to/ca.pem"
                           className="flex-1 font-mono"
@@ -3321,18 +3237,18 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                           type="button"
                           variant="outline"
                           size="sm"
+                          className="h-8"
                           data-testid="ca-file-browse"
+                          disabled={editorState.tlsMode !== 'file'}
                           onClick={() => pickTlsFile('tlsCa')}
                         >
                           {t('actions.browse')}
                         </Button>
                       </div>
-                    </div>
-                  )}
+                    </FormRow>
 
-                  {editorState.tlsMode !== 'off' && (
-                    <div className="flex flex-col gap-1 border-t border-border pt-2.5">
-                      <Label htmlFor="tls-client-cert">{t('tls.clientCert')}</Label>
+                    <div className="border-t border-border" />
+                    <FormRow label={t('tls.clientCert')} htmlFor="tls-client-cert">
                       <div className="flex gap-1.5">
                         <Input
                           id="tls-client-cert"
@@ -3346,13 +3262,15 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                           type="button"
                           variant="outline"
                           size="sm"
+                          className="h-8"
                           data-testid="client-cert-browse"
                           onClick={() => pickTlsFile('tlsClientCert')}
                         >
                           {t('actions.browse')}
                         </Button>
                       </div>
-                      <Label htmlFor="tls-key-password" className="mt-1.5">{t('tls.keyPassword')}</Label>
+                    </FormRow>
+                    <FormRow label={t('tls.keyPassword')} htmlFor="tls-key-password">
                       <Input
                         id="tls-key-password"
                         type="password"
@@ -3361,14 +3279,12 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                         onChange={e => setEditorState(prev => ({ ...prev, tlsKeyPassword: e.target.value }))}
                         disabled={!editorState.tlsClientCert}
                       />
-                      <span className="text-[10px] text-muted-foreground">{t('tls.keyPasswordHelp')}</span>
-                    </div>
-                  )}
+                      <span className={helpTextClass}>{t('tls.keyPasswordHelp')}</span>
+                    </FormRow>
 
-                  {editorState.tlsMode !== 'off' && (
-                    <div className="flex flex-col gap-2 border-t border-border pt-2.5">
-                      <Label>{t('tls.certValidation')}</Label>
-                      <label className="flex items-center gap-2 text-[11px]">
+                    <div className="border-t border-border" />
+                    <FormRow label={t('tls.certValidation')}>
+                      <label className="flex items-center gap-2 pt-1.5 text-[11px]">
                         <input
                           type="checkbox"
                           checked={editorState.tlsAllowInvalidCerts}
@@ -3384,16 +3300,14 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                         />
                         <span>{t('tls.allowInvalidHosts')}</span>
                       </label>
-                      <span className="text-[10.5px] leading-relaxed text-muted-foreground">
-                        {t('tls.validationWarning')}
-                      </span>
-                    </div>
-                  )}
-                </div>
+                      <span className={helpTextClass}>{t('tls.validationWarning')}</span>
+                    </FormRow>
+                  </fieldset>
+                </>
               )}
 
               {activeEditorTab === 'ssh' && (
-                <div className="flex flex-col gap-2.5">
+                <>
                   <div className="flex items-center gap-2">
                     <input
                       type="checkbox"
@@ -3404,11 +3318,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                     <Label htmlFor="ssh-enable" className="text-[11px] font-medium">{t('ssh.enableLabel')}</Label>
                   </div>
 
-                  {editorState.sshEnabled && (
-                    <div className="flex flex-col gap-2 border-t border-border pt-2.5">
+                  <fieldset disabled={!editorState.sshEnabled} className="m-0 flex min-w-0 flex-col gap-2 border-0 p-0 disabled:opacity-60">
                       {profiles.some(p => p.ssh?.enabled) && (
-                        <div className="flex flex-col gap-1">
-                          <Label>{t('ssh.reuse')}</Label>
+                        <FormRow label={t('ssh.reuse')}>
                           <Select
                             value=""
                             onValueChange={(id) => {
@@ -3416,7 +3328,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                               if (ssh) setEditorState(prev => ({ ...prev, ...sshEditorFields(ssh), sshEnabled: true }));
                             }}
                           >
-                            <SelectTrigger data-testid="ssh-reuse-select" className="h-8 text-xs">
+                            <SelectTrigger data-testid="ssh-reuse-select" className="h-8 text-xs" aria-label={t('ssh.reuse')}>
                               <SelectValue placeholder={t('ssh.reusePlaceholder')} />
                             </SelectTrigger>
                             <SelectContent className={NESTED_SELECT_Z}>
@@ -3425,9 +3337,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                               ))}
                             </SelectContent>
                           </Select>
-                        </div>
+                        </FormRow>
                       )}
-                      {(editorState.topology === 'uri'
+                      {editorState.sshEnabled && (editorState.topology === 'uri'
                         ? /^mongodb\+srv:\/\//i.test(editorState.uri.trim())
                         : editorState.protocol === 'mongodb+srv') && (
                         <div
@@ -3438,107 +3350,105 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                           <span>{t('ssh.srvWarning')}</span>
                         </div>
                       )}
-                      <div className="flex gap-2">
-                        <div className="flex flex-[2] flex-col gap-1">
-                          <Label htmlFor="ssh-host">{t('ssh.host')}</Label>
+                      <FormRow label={t('ssh.host')} htmlFor="ssh-host">
+                        <div className="flex items-center gap-1.5">
                           <Input
                             id="ssh-host"
                             type="text"
                             value={editorState.sshHost}
                             onChange={e => setEditorState(prev => ({ ...prev, sshHost: e.target.value }))}
                             placeholder="ssh.server.com"
+                            className="flex-1"
                           />
-                        </div>
-                        <div className="flex flex-1 flex-col gap-1">
-                          <Label>{t('ssh.port')}</Label>
+                          <Label htmlFor="ssh-port" className="shrink-0 text-ui-xs font-normal text-muted-foreground">{t('ssh.port')}</Label>
                           <Input
+                            id="ssh-port"
                             type="text"
                             value={editorState.sshPort}
                             onChange={e => setEditorState(prev => ({ ...prev, sshPort: e.target.value }))}
                             placeholder="22"
-                            className="font-mono"
+                            className="w-20 font-mono"
                           />
                         </div>
-                      </div>
-
-                      <div className="flex gap-2">
-                        <div className="flex flex-[2] flex-col gap-1">
-                          <Label>{t('ssh.username')}</Label>
-                          <Input
-                            type="text"
-                            value={editorState.sshUser}
-                            onChange={e => setEditorState(prev => ({ ...prev, sshUser: e.target.value }))}
-                            placeholder="deploy"
-                          />
-                        </div>
-                        <div className="flex flex-1 flex-col gap-1">
-                          <Label>{t('ssh.authMethod')}</Label>
-                          <Select value={editorState.sshAuth} onValueChange={(v) => setEditorState(prev => ({ ...prev, sshAuth: v }))}>
-                            <SelectTrigger className="h-8 text-xs" data-testid="ssh-auth-select">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent className={NESTED_SELECT_Z}>
-                              <SelectItem value="key">{t('ssh.authKey')}</SelectItem>
-                              <SelectItem value="password">{t('ssh.authPassword')}</SelectItem>
-                              <SelectItem value="agent">{t('ssh.authAgent')}</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      </div>
+                      </FormRow>
+                      <FormRow label={t('ssh.username')} htmlFor="ssh-user">
+                        <Input
+                          id="ssh-user"
+                          type="text"
+                          value={editorState.sshUser}
+                          onChange={e => setEditorState(prev => ({ ...prev, sshUser: e.target.value }))}
+                          placeholder="deploy"
+                        />
+                      </FormRow>
+                      <FormRow label={t('ssh.authMethod')}>
+                        <Select value={editorState.sshAuth} onValueChange={(v) => setEditorState(prev => ({ ...prev, sshAuth: v }))}>
+                          <SelectTrigger className="h-8 text-xs" data-testid="ssh-auth-select" aria-label={t('ssh.authMethod')}>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent className={NESTED_SELECT_Z}>
+                            <SelectItem value="key">{t('ssh.authKey')}</SelectItem>
+                            <SelectItem value="password">{t('ssh.authPassword')}</SelectItem>
+                            <SelectItem value="agent">{t('ssh.authAgent')}</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </FormRow>
 
                       {editorState.sshAuth === 'key' && (
                         <>
-                          <div className="flex flex-col gap-1">
-                            <Label>{t('ssh.privateKeyPath')}</Label>
+                          <FormRow label={t('ssh.privateKeyPath')} htmlFor="ssh-key">
                             <Input
+                              id="ssh-key"
                               type="text"
                               value={editorState.sshKey}
                               onChange={e => setEditorState(prev => ({ ...prev, sshKey: e.target.value }))}
                               placeholder="~/.ssh/id_ed25519"
                               className="font-mono"
                             />
-                          </div>
-                          <div className="flex flex-col gap-1">
-                            <Label>{t('ssh.keyPassphrase')}</Label>
+                          </FormRow>
+                          <FormRow label={t('ssh.keyPassphrase')}>
                             <PasswordInput
                               value={editorState.sshPass}
                               onChange={e => setEditorState(prev => ({ ...prev, sshPass: e.target.value }))}
                               placeholder={t('ssh.keyPassphrasePlaceholder')}
                               className="font-mono"
+                              aria-label={t('ssh.keyPassphrase')}
                             />
-                          </div>
+                          </FormRow>
                         </>
                       )}
                       {editorState.sshAuth === 'password' && (
-                        <div className="flex flex-col gap-1">
-                          <Label>{t('ssh.password')}</Label>
+                        <FormRow label={t('ssh.password')}>
                           <PasswordInput
                             value={editorState.sshPass}
                             onChange={e => setEditorState(prev => ({ ...prev, sshPass: e.target.value }))}
                             placeholder="••••••••"
                             className="font-mono"
+                            aria-label={t('ssh.password')}
                           />
-                        </div>
+                        </FormRow>
                       )}
                       {editorState.sshAuth === 'agent' && (
-                        <div
-                          data-testid="ssh-agent-note"
-                          className="rounded border border-border bg-muted/40 px-2 py-1.5 text-[10.5px] leading-relaxed text-muted-foreground"
-                        >
-                          {t('ssh.agentNote')}
-                        </div>
+                        <FormRow>
+                          <div
+                            data-testid="ssh-agent-note"
+                            className="rounded border border-border bg-muted/40 px-2 py-1.5 text-[10.5px] leading-relaxed text-muted-foreground"
+                          >
+                            {t('ssh.agentNote')}
+                          </div>
+                        </FormRow>
                       )}
 
-                      <div className="text-[10.5px] leading-relaxed text-muted-foreground">
-                        {t('ssh.hostKeyNotePrefix')} <code>~/.ssh/known_hosts</code>{t('ssh.hostKeyNoteSuffix')}
-                      </div>
-                    </div>
-                  )}
-                </div>
+                      <FormRow>
+                        <p className={helpTextClass}>
+                          {t('ssh.hostKeyNotePrefix')} <code>~/.ssh/known_hosts</code>{t('ssh.hostKeyNoteSuffix')}
+                        </p>
+                      </FormRow>
+                  </fieldset>
+                </>
               )}
 
               {activeEditorTab === 'proxy' && (
-                <div className="flex flex-col gap-2.5">
+                <>
                   <div className="flex items-center gap-2">
                     <input
                       type="checkbox"
@@ -3548,198 +3458,178 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                     />
                     <Label htmlFor="proxy-enable" className="text-[11px] font-medium">{t('proxy.enableLabel')}</Label>
                   </div>
-                  <p className="m-0 text-[10px] text-muted-foreground">
-                    {t('proxy.description')}
-                  </p>
+                  <p className={helpTextClass}>{t('proxy.description')}</p>
 
-                  {editorState.proxyEnabled && (
-                    <div className="flex flex-col gap-2 border-t border-border pt-2.5">
-                      <div className="flex gap-2">
-                        <div className="flex flex-[2] flex-col gap-1">
-                          <Label>{t('proxy.host')}</Label>
-                          <Input
-                            type="text"
-                            value={editorState.proxyHost}
-                            onChange={e => setEditorState(prev => ({ ...prev, proxyHost: e.target.value }))}
-                            placeholder="proxy.internal"
-                          />
-                        </div>
-                        <div className="flex flex-1 flex-col gap-1">
-                          <Label>{t('proxy.port')}</Label>
-                          <Input
-                            type="text"
-                            value={editorState.proxyPort}
-                            onChange={e => setEditorState(prev => ({ ...prev, proxyPort: e.target.value }))}
-                            placeholder="1080"
-                            className="font-mono"
-                          />
-                        </div>
+                  <fieldset disabled={!editorState.proxyEnabled} className="m-0 flex min-w-0 flex-col gap-2 border-0 p-0 disabled:opacity-60">
+                    <FormRow label={t('proxy.host')} htmlFor="proxy-host">
+                      <div className="flex items-center gap-1.5">
+                        <Input
+                          id="proxy-host"
+                          type="text"
+                          value={editorState.proxyHost}
+                          onChange={e => setEditorState(prev => ({ ...prev, proxyHost: e.target.value }))}
+                          placeholder="proxy.internal"
+                          className="flex-1"
+                        />
+                        <Label htmlFor="proxy-port" className="shrink-0 text-ui-xs font-normal text-muted-foreground">{t('proxy.port')}</Label>
+                        <Input
+                          id="proxy-port"
+                          type="text"
+                          value={editorState.proxyPort}
+                          onChange={e => setEditorState(prev => ({ ...prev, proxyPort: e.target.value }))}
+                          placeholder="1080"
+                          className="w-20 font-mono"
+                        />
                       </div>
-
-                      <div className="flex gap-2">
-                        <div className="flex flex-1 flex-col gap-1">
-                          <Label>{t('proxy.username')}</Label>
-                          <Input
-                            type="text"
-                            value={editorState.proxyUser}
-                            onChange={e => setEditorState(prev => ({ ...prev, proxyUser: e.target.value }))}
-                            placeholder="username"
-                          />
-                        </div>
-                        <div className="flex flex-1 flex-col gap-1">
-                          <Label>{t('proxy.password')}</Label>
-                          <Input
-                            type="password"
-                            value={editorState.proxyPass}
-                            onChange={e => setEditorState(prev => ({ ...prev, proxyPass: e.target.value }))}
-                            placeholder="••••••••"
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
+                    </FormRow>
+                    <FormRow label={t('proxy.username')} htmlFor="proxy-user">
+                      <Input
+                        id="proxy-user"
+                        type="text"
+                        value={editorState.proxyUser}
+                        onChange={e => setEditorState(prev => ({ ...prev, proxyUser: e.target.value }))}
+                        placeholder="username"
+                      />
+                    </FormRow>
+                    <FormRow label={t('proxy.password')} htmlFor="proxy-pass">
+                      <Input
+                        id="proxy-pass"
+                        type="password"
+                        value={editorState.proxyPass}
+                        onChange={e => setEditorState(prev => ({ ...prev, proxyPass: e.target.value }))}
+                        placeholder="••••••••"
+                      />
+                    </FormRow>
+                  </fieldset>
+                </>
               )}
 
               {activeEditorTab === 'adv' && (
-                <div className="flex flex-col gap-2">
-                  <div className="flex gap-2">
-                    <div className="flex flex-1 flex-col gap-1">
-                      <Label>{t('advanced.defaultDb')}</Label>
-                      <Input
-                        type="text"
-                        value={editorState.defaultDb}
-                        onChange={e => setEditorState(prev => ({ ...prev, defaultDb: e.target.value }))}
-                        placeholder="test"
-                      />
-                    </div>
-                    <div className="flex flex-1 flex-col gap-1">
-                      <Label>{t('advanced.compression')}</Label>
-                      <Select value={editorState.compression} onValueChange={(v) => setEditorState(prev => ({ ...prev, compression: v }))}>
-                        <SelectTrigger className="h-8 text-xs">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent className={NESTED_SELECT_Z}>
-                          <SelectItem value="none">{t('advanced.compressionNone')}</SelectItem>
-                          <SelectItem value="snappy">{t('advanced.compressionSnappy')}</SelectItem>
-                          <SelectItem value="zlib">{t('advanced.compressionZlib')}</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-
-                  <h4 className="mt-2 border-t border-border pt-2.5 text-ui-2xs font-semibold uppercase tracking-wide text-muted-foreground">{t('advanced.readSection')}</h4>
-                  <div className="flex gap-2">
-                    <div className="flex flex-1 flex-col gap-1">
-                      <Label>{t('advanced.readPreference')}</Label>
-                      <Select value={editorState.readPreference} onValueChange={(v) => setEditorState(prev => ({ ...prev, readPreference: v }))}>
-                        <SelectTrigger data-testid="read-preference-select" className="h-8 text-xs">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent className={NESTED_SELECT_Z}>
-                          {/* MongoDB's own mode names, the same in every language. */}
-                          {READ_PREFERENCE_MODES.map((mode) => (
-                            <SelectItem key={mode} value={mode}>{mode}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="flex flex-1 flex-col gap-1">
-                      <Label htmlFor="adv-read-tags">{t('advanced.readPreferenceTags')}</Label>
-                      <textarea
-                        id="adv-read-tags"
-                        rows={2}
-                        value={editorState.readPreferenceTags}
-                        disabled={editorState.readPreference === 'primary'}
-                        onChange={e => setEditorState(prev => ({ ...prev, readPreferenceTags: e.target.value }))}
-                        placeholder={'dc:ny,rack:1\n{}'}
-                        className="w-full resize-y rounded-md border border-input bg-background px-3 py-1 font-mono text-ui-xs shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                      />
-                      <p className="m-0 text-[10px] text-muted-foreground">{t('advanced.readPreferenceTagsHelp')}</p>
-                    </div>
-                  </div>
-
-                  <h4 className="mt-2 border-t border-border pt-2.5 text-ui-2xs font-semibold uppercase tracking-wide text-muted-foreground">{t('advanced.timeoutsSection')}</h4>
-                  <div className="grid grid-cols-2 gap-2">
-                    {([
-                      ['connectTimeout', t('advanced.connectTimeout'), '10000'],
-                      ['serverSelectionTimeout', t('advanced.serverSelectionTimeout'), '30000'],
-                      ['socketTimeout', t('advanced.socketTimeout'), '0'],
-                      ['maxIdleTime', t('advanced.maxIdleTime'), '0'],
-                      ['maxPoolSize', t('advanced.maxPoolSize'), '100'],
-                      ['appName', t('advanced.appName'), 'MQLens'],
-                    ] as const).map(([field, label, placeholder]) => (
-                      <div key={field} className="flex flex-col gap-1">
-                        <Label htmlFor={`adv-${field}`}>{label}</Label>
-                        <Input
-                          id={`adv-${field}`}
-                          type="text"
-                          inputMode={field === 'appName' ? undefined : 'numeric'}
-                          value={editorState[field]}
-                          onChange={e => setEditorState(prev => ({ ...prev, [field]: e.target.value }))}
-                          placeholder={placeholder}
-                          className={field === 'appName' ? undefined : 'font-mono'}
-                        />
-                      </div>
-                    ))}
-                  </div>
-
-                  <h4 className="mt-2 border-t border-border pt-2.5 text-ui-2xs font-semibold uppercase tracking-wide text-muted-foreground">{t('advanced.writesSection')}</h4>
-                  <div className="grid grid-cols-2 gap-2">
-                    {([
-                      ['retryWrites', t('advanced.retryWrites'), 'retry-writes-select'],
-                      ['journal', t('advanced.journal'), 'journal-select'],
-                    ] as const).map(([field, label, testId]) => (
-                      <div key={field} className="flex flex-col gap-1">
-                        <Label>{label}</Label>
-                        <Select value={editorState[field]} onValueChange={(v) => setEditorState(prev => ({ ...prev, [field]: v }))}>
-                          <SelectTrigger data-testid={testId} className="h-8 text-xs">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent className={NESTED_SELECT_Z}>
-                            <SelectItem value="default">{t('advanced.driverDefault')}</SelectItem>
-                            <SelectItem value="true">{t('advanced.on')}</SelectItem>
-                            <SelectItem value="false">{t('advanced.off')}</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    ))}
-                    <div className="flex flex-col gap-1">
-                      <Label htmlFor="adv-w">{t('advanced.writeConcernW')}</Label>
-                      <Input
-                        id="adv-w"
-                        type="text"
-                        value={editorState.writeConcernW}
-                        onChange={e => setEditorState(prev => ({ ...prev, writeConcernW: e.target.value }))}
-                        placeholder="majority"
-                        className="font-mono"
-                      />
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      <Label htmlFor="adv-wtimeout">{t('advanced.wtimeout')}</Label>
-                      <Input
-                        id="adv-wtimeout"
-                        type="text"
-                        inputMode="numeric"
-                        value={editorState.wtimeout}
-                        onChange={e => setEditorState(prev => ({ ...prev, wtimeout: e.target.value }))}
-                        placeholder="0"
-                        className="font-mono"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="mt-2 flex items-center gap-2 border-t border-border pt-2.5">
-                    <input
-                      type="checkbox"
-                      id="adv-load-balanced"
-                      checked={editorState.loadBalanced}
-                      onChange={e => setEditorState(prev => ({ ...prev, loadBalanced: e.target.checked }))}
+                <>
+                  <FormRow label={t('advanced.defaultDb')} htmlFor="adv-default-db">
+                    <Input
+                      id="adv-default-db"
+                      type="text"
+                      value={editorState.defaultDb}
+                      onChange={e => setEditorState(prev => ({ ...prev, defaultDb: e.target.value }))}
+                      placeholder="test"
                     />
-                    <Label htmlFor="adv-load-balanced" className="text-[11px] font-medium">{t('advanced.loadBalanced')}</Label>
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <Label htmlFor="adv-extra">{t('advanced.extraOptions')}</Label>
+                  </FormRow>
+                  <FormRow label={t('advanced.compression')}>
+                    <Select value={editorState.compression} onValueChange={(v) => setEditorState(prev => ({ ...prev, compression: v }))}>
+                      <SelectTrigger className="h-8 text-xs" aria-label={t('advanced.compression')}>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className={NESTED_SELECT_Z}>
+                        <SelectItem value="none">{t('advanced.compressionNone')}</SelectItem>
+                        <SelectItem value="snappy">{t('advanced.compressionSnappy')}</SelectItem>
+                        <SelectItem value="zlib">{t('advanced.compressionZlib')}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </FormRow>
+
+                  <h4 className={sectionHeadingClass}>{t('advanced.readSection')}</h4>
+                  <FormRow label={t('advanced.readPreference')}>
+                    <Select value={editorState.readPreference} onValueChange={(v) => setEditorState(prev => ({ ...prev, readPreference: v }))}>
+                      <SelectTrigger data-testid="read-preference-select" className="h-8 text-xs" aria-label={t('advanced.readPreference')}>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className={NESTED_SELECT_Z}>
+                        {/* MongoDB's own mode names, the same in every language. */}
+                        {READ_PREFERENCE_MODES.map((mode) => (
+                          <SelectItem key={mode} value={mode}>{mode}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </FormRow>
+                  <FormRow label={t('advanced.readPreferenceTags')} htmlFor="adv-read-tags">
+                    <textarea
+                      id="adv-read-tags"
+                      rows={2}
+                      value={editorState.readPreferenceTags}
+                      disabled={editorState.readPreference === 'primary'}
+                      onChange={e => setEditorState(prev => ({ ...prev, readPreferenceTags: e.target.value }))}
+                      placeholder={'dc:ny,rack:1\n{}'}
+                      className="w-full resize-y rounded-md border border-input bg-background px-3 py-1 font-mono text-ui-xs shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                    />
+                    <p className="m-0 text-[10px] text-muted-foreground">{t('advanced.readPreferenceTagsHelp')}</p>
+                  </FormRow>
+
+                  <h4 className={sectionHeadingClass}>{t('advanced.timeoutsSection')}</h4>
+                  {([
+                    ['maxIdleTime', t('advanced.maxIdleTime'), '0'],
+                    ['maxPoolSize', t('advanced.maxPoolSize'), '100'],
+                    ['serverSelectionTimeout', t('advanced.serverSelectionTimeout'), '30000'],
+                    ['socketTimeout', t('advanced.socketTimeout'), '0'],
+                    ['connectTimeout', t('advanced.connectTimeout'), '10000'],
+                    ['appName', t('advanced.appName'), 'MQLens'],
+                  ] as const).map(([field, label, placeholder]) => (
+                    <FormRow key={field} label={label} htmlFor={`adv-${field}`}>
+                      <Input
+                        id={`adv-${field}`}
+                        type="text"
+                        inputMode={field === 'appName' ? undefined : 'numeric'}
+                        value={editorState[field]}
+                        onChange={e => setEditorState(prev => ({ ...prev, [field]: e.target.value }))}
+                        placeholder={placeholder}
+                        className={field === 'appName' ? undefined : 'font-mono'}
+                      />
+                    </FormRow>
+                  ))}
+                  <FormRow>
+                    <label className="flex items-center gap-2 pt-1 text-[11px]">
+                      <input
+                        type="checkbox"
+                        id="adv-load-balanced"
+                        checked={editorState.loadBalanced}
+                        onChange={e => setEditorState(prev => ({ ...prev, loadBalanced: e.target.checked }))}
+                      />
+                      <span>{t('advanced.loadBalanced')}</span>
+                    </label>
+                  </FormRow>
+
+                  <h4 className={sectionHeadingClass}>{t('advanced.writesSection')}</h4>
+                  {([
+                    ['retryWrites', t('advanced.retryWrites'), 'retry-writes-select'],
+                    ['journal', t('advanced.journal'), 'journal-select'],
+                  ] as const).map(([field, label, testId]) => (
+                    <FormRow key={field} label={label}>
+                      <Select value={editorState[field]} onValueChange={(v) => setEditorState(prev => ({ ...prev, [field]: v }))}>
+                        <SelectTrigger data-testid={testId} className="h-8 text-xs" aria-label={label}>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className={NESTED_SELECT_Z}>
+                          <SelectItem value="default">{t('advanced.driverDefault')}</SelectItem>
+                          <SelectItem value="true">{t('advanced.on')}</SelectItem>
+                          <SelectItem value="false">{t('advanced.off')}</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </FormRow>
+                  ))}
+                  <FormRow label={t('advanced.writeConcernW')} htmlFor="adv-w">
+                    <Input
+                      id="adv-w"
+                      type="text"
+                      value={editorState.writeConcernW}
+                      onChange={e => setEditorState(prev => ({ ...prev, writeConcernW: e.target.value }))}
+                      placeholder="majority"
+                      className="font-mono"
+                    />
+                  </FormRow>
+                  <FormRow label={t('advanced.wtimeout')} htmlFor="adv-wtimeout">
+                    <Input
+                      id="adv-wtimeout"
+                      type="text"
+                      inputMode="numeric"
+                      value={editorState.wtimeout}
+                      onChange={e => setEditorState(prev => ({ ...prev, wtimeout: e.target.value }))}
+                      placeholder="0"
+                      className="font-mono"
+                    />
+                  </FormRow>
+
+                  <div className="border-t border-border" />
+                  <FormRow label={t('advanced.extraOptions')} htmlFor="adv-extra">
                     <Input
                       id="adv-extra"
                       type="text"
@@ -3749,8 +3639,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                       className="font-mono"
                     />
                     <p className="m-0 text-[10px] text-muted-foreground">{t('advanced.extraOptionsHelp')}</p>
-                  </div>
-                </div>
+                  </FormRow>
+                </>
               )}
             </div>
             </ScrollArea>
@@ -3924,6 +3814,22 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                 <div className="ml-[18px] mt-1 font-normal text-muted-foreground">
                   {t('connectNow.saveOffer')}
                 </div>
+                {/* The tabs are hidden under the offer, so the URI it connected
+                    to, and To URI, stay reachable here. */}
+                <div className="ml-[18px] mt-1.5 flex min-w-0 items-center gap-2">
+                  <code className="min-w-0 flex-1 truncate font-mono text-ui-2xs text-muted-foreground">{maskUriPassword(buildUri(editorState))}</code>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-6 shrink-0 text-ui-2xs"
+                    data-testid="editor-export-uri-btn"
+                    onClick={() => openExportDialog(buildUri(editorState), editorState.sshEnabled)}
+                  >
+                    <ExternalLink size={11} />
+                    <span>{t('form.toUri')}</span>
+                  </Button>
+                </div>
               </div>
             )}
 
@@ -3935,7 +3841,6 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                       <RefreshCw size={11} className={testing ? 'animate-spin' : ''} />
                       <span>{t('actions.testConnection')}</span>
                     </Button>
-                    {importUriMenu()}
                     {importError && (
                       <span className="self-center text-ui-2xs text-destructive" data-testid="import-uri-error">
                         {importError}

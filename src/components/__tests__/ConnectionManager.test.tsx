@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ReactElement } from 'react';
-import { render as rtlRender, screen, fireEvent, waitFor, act, within, cleanup } from '@testing-library/react';
+import { render as rtlRender, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
 import {
   ConnectionManager,
   buildUri,
@@ -1120,6 +1120,7 @@ describe('ConnectionManager Component', () => {
     fireEvent.change(screen.getByLabelText(/display name/i), { target: { value: 'Prod' } });
     await pickSelectOption('topology-select', /full uri string only/i);
     fireEvent.change(screen.getByLabelText(/connection uri/i), { target: { value: 'mongodb://prod' } });
+    fireEvent.click(screen.getByRole('button', { name: /^color tag$/i }));
     fireEvent.click(screen.getByTestId('color-swatch-blue'));
     fireEvent.click(screen.getByRole('button', { name: /save/i }));
 
@@ -1158,6 +1159,7 @@ describe('ConnectionManager Component', () => {
     fireEvent.change(screen.getByLabelText(/display name/i), { target: { value: 'Custom' } });
     await pickSelectOption('topology-select', /full uri string only/i);
     fireEvent.change(screen.getByLabelText(/connection uri/i), { target: { value: 'mongodb://custom' } });
+    fireEvent.click(screen.getByRole('button', { name: /^color tag$/i }));
     expect(screen.getByLabelText('Pick a custom color')).toBeInTheDocument();
     fireEvent.change(screen.getByTestId('color-picker-custom'), { target: { value: '#a1b2c3' } });
     fireEvent.click(screen.getByRole('button', { name: /save/i }));
@@ -1225,6 +1227,7 @@ describe('ConnectionManager Component', () => {
     await waitFor(() => expect(screen.getAllByText('Staging')[0]).toBeInTheDocument());
     fireEvent.click(screen.getAllByText('Staging')[0]);
     fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^color tag$/i }));
     fireEvent.click(screen.getByTestId('color-swatch-none'));
     fireEvent.click(screen.getByRole('button', { name: /save/i }));
 
@@ -2491,7 +2494,7 @@ describe('URI import and export', () => {
     fireEvent.click(await screen.findByTestId('import-from-clipboard'));
 
     await waitFor(() => {
-      expect(screen.getByText(/db\.imported\.example/)).toBeInTheDocument();
+      expect(screen.getByTestId('host-list')).toHaveValue('db.imported.example:27017');
     });
   });
 
@@ -2516,7 +2519,7 @@ describe('URI import and export', () => {
     fireEvent.click(await screen.findByTestId('import-from-file'));
 
     await waitFor(() => {
-      expect(screen.getByText(/cluster\.file\.example/)).toBeInTheDocument();
+      expect(screen.getByTestId('host-list')).toHaveValue('cluster.file.example');
     });
   });
 
@@ -4101,7 +4104,7 @@ describe('the connection table', () => {
   it('lists every connection with its server and security, never a password', async () => {
     localStorage.setItem('mqlens.lastConnected', JSON.stringify({ 'p-b': Date.now() - 60_000 }));
     mount();
-    fireEvent.click(await screen.findByRole('button', { name: /table view/i }));
+    await screen.findByTestId('connection-table');
     const table = screen.getByTestId('connection-table');
     expect(names()).toEqual(['Analytics', 'Billing', 'Cache']);
     expect(within(table).getByText('billing.db:27017')).toBeInTheDocument();
@@ -4114,7 +4117,7 @@ describe('the connection table', () => {
   it('sorts by a column header and reverses on a second click', async () => {
     localStorage.setItem('mqlens.lastConnected', JSON.stringify({ 'p-c': 3000, 'p-a': 1000 }));
     mount();
-    fireEvent.click(await screen.findByRole('button', { name: /table view/i }));
+    await screen.findByTestId('connection-table');
     fireEvent.click(screen.getByRole('button', { name: /^name/i }));
     expect(names()).toEqual(['Cache', 'Billing', 'Analytics']);
     fireEvent.click(screen.getByRole('button', { name: /last connected/i }));
@@ -4130,17 +4133,9 @@ describe('the connection table', () => {
       return Promise.resolve([]);
     });
     render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
-    fireEvent.click(await screen.findByRole('button', { name: /table view/i }));
+    await screen.findByTestId('connection-table');
     fireEvent.doubleClick(within(screen.getByTestId('connection-table')).getByText('Cache'));
     expect(await screen.findByTestId('connect-feedback')).toHaveTextContent(/timed out/i);
-  });
-
-  it('remembers the chosen view', async () => {
-    mount();
-    fireEvent.click(await screen.findByRole('button', { name: /table view/i }));
-    cleanup();
-    mount();
-    expect(await screen.findByTestId('connection-table')).toBeInTheDocument();
   });
 });
 
@@ -4302,5 +4297,248 @@ describe("reusing another connection's SSH tunnel", () => {
 
     await waitFor(() => expect(savedProfile).not.toBeNull());
     expect(savedProfile.ssh).toEqual(bastion);
+  });
+});
+
+describe('the manager laid out as one filterable connection table', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  const profiles = [
+    { id: 'p-b', name: 'Billing', uri: 'mongodb://bob:pw@billing.db:27017/?authMechanism=SCRAM-SHA-256' },
+    { id: 'p-a', name: 'Analytics', uri: 'mongodb+srv://an.example.net/' },
+    { id: 'p-c', name: 'Cache', uri: 'mongodb://localhost:27017' },
+  ];
+  const mount = (list: any[] = profiles) => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve(list);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+  };
+  const table = () => screen.getByTestId('connection-table');
+
+  it('keeps every toolbar action on screen, greyed out until a connection is picked', async () => {
+    mount([]);
+    await screen.findByTestId('connection-table');
+    for (const name of [/^edit$/i, /^duplicate$/i, /^delete$/i, /^export uri$/i, /^connect$/i]) {
+      expect(screen.getByRole('button', { name })).toBeDisabled();
+    }
+    // Importing needs no selection, so an empty list can still be filled.
+    expect(screen.getByTestId('import-uri-toolbar-btn')).toBeEnabled();
+    expect(screen.getByTestId('export-all-uris-btn')).toBeDisabled();
+  });
+
+  it('sets the red Delete label in the same small type as the other toolbar labels', async () => {
+    mount([]);
+    await screen.findByTestId('connection-table');
+    // The destructive colour must not knock out the label's font size.
+    const sizes = (name: RegExp) =>
+      within(screen.getByRole('button', { name })).getByText(name).className.split(' ').filter((c) => /^text-(ui-|\[)/.test(c));
+    expect(sizes(/^edit$/i)).not.toEqual([]);
+    expect(sizes(/^delete$/i)).toEqual(sizes(/^edit$/i));
+  });
+
+  it('keeps the column headers over an empty list', async () => {
+    mount([]);
+    expect(within(await screen.findByTestId('connection-table')).getByRole('button', { name: /^name/i })).toBeInTheDocument();
+    expect(within(table()).getByText(/no saved connections/i)).toBeInTheDocument();
+  });
+
+  it('counts the connections the filter matches', async () => {
+    mount();
+    expect(await screen.findByTestId('match-count')).toHaveTextContent('3 matches');
+    fireEvent.change(screen.getByPlaceholderText(/filter connections/i), { target: { value: 'cache' } });
+    expect(screen.getByTestId('match-count')).toHaveTextContent('1 match');
+  });
+
+  it('shows folders as rows of the table, with their connections nested under them', async () => {
+    localStorage.setItem('mqlens_folders', JSON.stringify([{ id: 'f-fin', name: 'Finance', parentId: null }]));
+    localStorage.setItem('mqlens_profile_folders', JSON.stringify({ 'p-b': 'f-fin' }));
+    mount();
+    const folderRow = await within(await screen.findByTestId('connection-table')).findByText('Finance');
+    expect(within(table()).queryByText('Billing')).toBeNull();
+    expect(within(table()).getByText('Cache')).toBeInTheDocument();
+    fireEvent.click(folderRow);
+    expect(within(table()).getByText('Billing')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /table view/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /tree view/i })).toBeNull();
+  });
+
+  it('opens the folders that hold a filter’s matches and drops the ones that hold none', async () => {
+    localStorage.setItem('mqlens_folders', JSON.stringify([
+      { id: 'f-fin', name: 'Finance', parentId: null },
+      { id: 'f-ops', name: 'Ops', parentId: null },
+    ]));
+    localStorage.setItem('mqlens_profile_folders', JSON.stringify({ 'p-b': 'f-fin', 'p-c': 'f-ops' }));
+    mount();
+    await within(await screen.findByTestId('connection-table')).findByText('Finance');
+    fireEvent.change(screen.getByPlaceholderText(/filter connections/i), { target: { value: 'bill' } });
+    // The match count must point at a row the user can see, not one in a closed folder.
+    expect(within(table()).getByText('Billing')).toBeInTheDocument();
+    expect(within(table()).queryByText('Ops')).toBeNull();
+    // Clearing the filter puts the folders back as the user left them.
+    fireEvent.change(screen.getByPlaceholderText(/filter connections/i), { target: { value: '' } });
+    expect(within(table()).getByText('Ops')).toBeInTheDocument();
+    expect(within(table()).queryByText('Billing')).toBeNull();
+  });
+
+  it('shows the picked connection’s URI, password hidden, beside Connect', async () => {
+    mount();
+    fireEvent.click(await within(await screen.findByTestId('connection-table')).findByText('Billing'));
+    const uri = screen.getByTestId('selected-uri');
+    expect(uri).toHaveTextContent('billing.db:27017');
+    expect(uri.textContent).not.toContain('pw@');
+    expect(screen.getByRole('button', { name: /^connect$/i })).toBeEnabled();
+  });
+
+  it('exports one connection’s URI from its row menu', async () => {
+    mount();
+    fireEvent.contextMenu(await within(await screen.findByTestId('connection-table')).findByText('Cache'));
+    fireEvent.click(await screen.findByRole('menuitem', { name: /export uri/i }));
+    expect(await screen.findByTestId('export-uri-preview')).toHaveTextContent('mongodb://localhost:27017');
+  });
+});
+
+describe('the connection editor laid out as a tabbed form', () => {
+  let savedProfile: any;
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    savedProfile = null;
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'save_connection_profile') {
+        savedProfile = args.profile;
+        return Promise.resolve();
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+  });
+  const openNew = async () => {
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: /new\.\.\./i }));
+    fireEvent.change(screen.getByLabelText(/display name/i), { target: { value: 'Edited' } });
+  };
+  const save = async () => {
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    await waitFor(() => expect(savedProfile).not.toBeNull());
+  };
+
+  it('offers a DNS seedlist as a connection type, which writes a mongodb+srv URI', async () => {
+    await openNew();
+    expect(screen.queryByTestId('protocol-select')).toBeNull();
+    await pickSelectOption('topology-select', /dns seedlist/i);
+    fireEvent.change(screen.getByTestId('host-list'), { target: { value: 'cluster0.abcd.mongodb.net' } });
+    await save();
+    expect(savedProfile.uri).toMatch(/^mongodb\+srv:\/\/cluster0\.abcd\.mongodb\.net/);
+  });
+
+  it('turns a seedlist back into a plain mongodb URI when another type is picked', async () => {
+    await openNew();
+    await pickSelectOption('topology-select', /dns seedlist/i);
+    await pickSelectOption('topology-select', /^standalone/i);
+    await save();
+    expect(savedProfile.uri).toMatch(/^mongodb:\/\/localhost:27017/);
+  });
+
+  it('keeps the colour swatches in a popover on the colour button', async () => {
+    await openNew();
+    expect(screen.queryByTestId('color-swatch-blue')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /color tag/i }));
+    fireEvent.click(await screen.findByTestId('color-swatch-blue'));
+    await save();
+    expect(savedProfile.color_tag).toBe('#3b82f6');
+  });
+
+  it('closes only the colour popover on Escape, keeping the editor and what was typed', async () => {
+    await openNew();
+    fireEvent.click(screen.getByRole('button', { name: /color tag/i }));
+    const swatch = await screen.findByTestId('color-swatch-blue');
+    fireEvent.keyDown(swatch, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByTestId('color-swatch-blue')).toBeNull());
+    expect(screen.getByLabelText(/display name/i)).toHaveValue('Edited');
+  });
+
+  it('lets Escape close the manager after the editor was cancelled with its colour popover open', async () => {
+    const onClose = vi.fn();
+    render(<ConnectionManager isOpen={true} onClose={onClose} onConnect={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: /new\.\.\./i }));
+    fireEvent.click(screen.getByRole('button', { name: /color tag/i }));
+    await screen.findByTestId('color-swatch-blue');
+    fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+    await waitFor(() => expect(screen.queryByLabelText(/display name/i)).toBeNull());
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it('puts From URI and To URI on the Server tab', async () => {
+    await openNew();
+    expect(screen.getByTestId('import-uri-btn')).toBeInTheDocument();
+    expect(screen.getByTestId('editor-export-uri-btn')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^authentication$/i }));
+    expect(screen.queryByTestId('import-uri-btn')).toBeNull();
+    expect(screen.queryByTestId('editor-export-uri-btn')).toBeNull();
+  });
+
+  it('describes only the connection mode that is picked', async () => {
+    await openNew();
+    expect(screen.getByText('Full read/write')).toBeInTheDocument();
+    expect(screen.queryByText('Blocks all writes')).toBeNull();
+    fireEvent.click(screen.getByTestId('connection-mode-read_only'));
+    expect(screen.getByText('Blocks all writes')).toBeInTheDocument();
+    expect(screen.queryByText('Full read/write')).toBeNull();
+  });
+
+  it('lists the authentication methods in the usual order', async () => {
+    await openNew();
+    fireEvent.click(screen.getByRole('button', { name: /^authentication$/i }));
+    fireEvent.click(screen.getByTestId('auth-method-select'));
+    const options = (await screen.findAllByRole('option')).map(o => o.textContent);
+    expect(options).toEqual([
+      'None (Guest Access)', 'SCRAM-SHA-256 (Default)', 'SCRAM-SHA-1', 'x.509 Client Certificate',
+      'GSSAPI (Kerberos)', 'LDAP (PLAIN)', 'MONGODB-AWS (IAM)', 'OIDC (browser login)',
+    ]);
+  });
+
+  it('stacks user name, password and authentication database, in that order', async () => {
+    await openNew();
+    fireEvent.click(screen.getByRole('button', { name: /^authentication$/i }));
+    await pickSelectOption('auth-method-select', /scram-sha-256/i);
+    const user = screen.getByLabelText(/^username$/i);
+    const pass = screen.getByLabelText(/^password$/i);
+    const db = screen.getByLabelText(/authentication database/i);
+    expect(user.compareDocumentPosition(pass) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(pass.compareDocumentPosition(db) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('turns TLS on with a checkbox and picks the CA source with radio buttons', async () => {
+    await openNew();
+    fireEvent.click(screen.getByRole('button', { name: /^tls \/ ssl$/i }));
+    const useTls = screen.getByLabelText(/use tls/i);
+    expect(useTls).not.toBeChecked();
+    expect(screen.getByLabelText(/client certificate/i)).toBeDisabled();
+    expect(screen.getByRole('radio', { name: /own ca file/i })).toBeDisabled();
+    fireEvent.click(useTls);
+    expect(screen.getByRole('radio', { name: /operating system/i })).toBeChecked();
+    fireEvent.click(screen.getByRole('radio', { name: /own ca file/i }));
+    fireEvent.change(screen.getByLabelText(/ca file path/i), { target: { value: '/ca.pem' } });
+    await save();
+    expect(savedProfile.uri).toContain('tls=true');
+    expect(savedProfile.uri).toContain('tlsCAFile=%2Fca.pem');
+  });
+
+  it('keeps SSH and proxy fields on screen, disabled, while they are off', async () => {
+    await openNew();
+    fireEvent.click(screen.getByRole('button', { name: /^ssh tunnel$/i }));
+    expect(screen.getByLabelText(/ssh server host/i)).toBeDisabled();
+    fireEvent.click(screen.getByLabelText(/enable ssh tunnel/i));
+    expect(screen.getByLabelText(/ssh server host/i)).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: /^proxy$/i }));
+    expect(screen.getByLabelText(/^proxy host$/i)).toBeDisabled();
+    fireEvent.click(screen.getByLabelText(/enable socks5/i));
+    expect(screen.getByLabelText(/^proxy host$/i)).toBeEnabled();
   });
 });

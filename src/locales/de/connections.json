@@ -9,7 +9,6 @@
     "delete": "Löschen",
     "duplicate": "Duplizieren",
     "edit": "Bearbeiten",
-    "export": "Exportieren…",
     "exportAllUris": "Alle URIs exportieren",
     "exportUri": "URI exportieren",
     "hidePassword": "Passwort ausblenden",
@@ -20,7 +19,8 @@
     "new": "Neu...",
     "newFolder": "Neuer Ordner",
     "showPassword": "Passwort anzeigen",
-    "testConnection": "Verbindung testen"
+    "testConnection": "Verbindung testen",
+    "exportUriEllipsis": "URI exportieren…"
   },
   "advanced": {
     "appName": "Anwendungsname",
@@ -99,7 +99,8 @@
     "x509Note": "Erfordert TLS mit einem Clientzertifikat (Tab TLS).",
     "oidcRememberLogin": "Anmeldung im verschlüsselten Tresor speichern",
     "oidcRememberLoginHelp": "Speichere das Profil vor dem Verbinden, um sein Aktualisierungstoken über Neustarts hinweg zu behalten. Standardmäßig deaktiviert. Vergessen entfernt das gespeicherte Token; bestehende Verbindungen bleiben angemeldet.",
-    "oidcForgetLogin": "Gespeicherte Anmeldung vergessen"
+    "oidcForgetLogin": "Gespeicherte Anmeldung vergessen",
+    "authDatabaseHelp": "Die Datenbank, in der der Benutzer angelegt ist."
   },
   "colorTags": {
     "amber": "Bernstein",
@@ -150,11 +151,10 @@
     "duplicateTitle": "Verbindung duplizieren",
     "editTitle": "Verbindung bearbeiten",
     "newTitle": "Neue Verbindung",
-    "subtitle": "Server, Authentifizierung, TLS und erweiterte Optionen konfigurieren",
     "tabsAria": "Bereiche der Verbindungseinstellungen"
   },
   "empty": {
-    "message": "Wähle eine Verbindung aus der Seitenleiste oder klicke in der Symbolleiste auf \"Neu…\", um eine zu erstellen."
+    "noConnections": "Noch keine gespeicherten Verbindungen. Wähle Neu… oder URI importieren, um eine hinzuzufügen."
   },
   "errors": {
     "alreadyActive": "Diese Verbindung ist bereits aktiv",
@@ -229,17 +229,20 @@
     "parseIntoFields": "In Formularfelder übernehmen",
     "parseUriTitle": "Füllt die Felder in Server und Authentifizierung aus dieser URI, damit du sie bearbeiten kannst",
     "pickCustomColor": "Eigene Farbe wählen",
-    "protocol": "Protokoll",
     "removeMember": "{{host}} entfernen",
     "replicaSetName": "Replikatset-Name",
     "routers": "Router (mongos)",
     "showPasswordToEdit": "Passwort zum Bearbeiten anzeigen",
-    "topology": "Topologie",
     "topologyReplicaSet": "Replikatset",
     "topologySharded": "Sharded-Cluster (mongos)",
     "topologyStandalone": "Standalone / Direkt",
     "topologyUriOnly": "Nur vollständige URI-Zeichenfolge",
-    "uriBadge": "URI"
+    "connectionType": "Verbindungstyp",
+    "topologySrv": "DNS-Seedlist (mongodb+srv)",
+    "fromUri": "Aus URI…",
+    "fromUriHelp": "Dieses Formular aus einem Verbindungsstring ausfüllen.",
+    "toUri": "Als URI…",
+    "toUriHelp": "Diese Verbindung als Verbindungsstring kopieren oder speichern."
   },
   "import": {
     "errors": {
@@ -251,15 +254,6 @@
   },
   "list": {
     "colorDotTitle": "Verbindungsfarbe"
-  },
-  "profile": {
-    "connectedActive": "Verbunden (aktiv)",
-    "connectionUri": "Verbindungs-URI",
-    "disconnected": "Getrennt",
-    "metadata": "Verbindungsmetadaten",
-    "profileId": "Profil-ID:",
-    "status": "Status:",
-    "subtitle": "Verbindungsprofil"
   },
   "proxy": {
     "description": "Der MongoDB-Treiber leitet seine Verbindung durch einen SOCKS5-Proxy. (HTTP-Proxys werden vom Treiber nicht unterstützt.)",
@@ -274,7 +268,6 @@
     "allFoldersPlaceholder": "Alle Ordner",
     "connectedTitle": "Verbunden",
     "emptyFolder": "Leerer Ordner",
-    "searchPlaceholder": "Verbindungen durchsuchen...",
     "unnamedConnection": "Unbenannte Verbindung"
   },
   "ssh": {
@@ -297,7 +290,6 @@
     "srvWarning": "mongodb+srv:// kann nicht mit dem aktuellen Einzel-Host-SSH-Tunnel verwendet werden. Verwende stattdessen eine standardmäßige mongodb://-URI mit Hostnamen und Port eines bestimmten MongoDB-Knotens.",
     "username": "SSH-Benutzername"
   },
-  "subtitle": "Gespeicherte MongoDB-Profile und Ordner verwalten",
   "tabs": {
     "advanced": "Erweitert",
     "auth": "Authentifizierung",
@@ -331,11 +323,11 @@
     "insecureTag": "(unsicher)",
     "keyPassword": "Passphrase des Schlüssels",
     "keyPasswordHelp": "Nur nötig, wenn der private Schlüssel verschlüsselt ist. Wird mit der Verbindung im Tresor gespeichert.",
-    "mode": "SSL/TLS-Zertifikatsmodus",
-    "modeFile": "Eigene CA-Datei hochladen",
-    "modeOff": "Aus (unsicherer Klartext)",
-    "modeSystem": "Root-CA-Zertifikate des Systems",
-    "validationWarning": "Das Deaktivieren der Zertifikatsvalidierung setzt die Verbindung Man-in-the-Middle-Angriffen aus. Nur für vertrauenswürdige/selbstsignierte Testserver aktivieren."
+    "validationWarning": "Das Deaktivieren der Zertifikatsvalidierung setzt die Verbindung Man-in-the-Middle-Angriffen aus. Nur für vertrauenswürdige/selbstsignierte Testserver aktivieren.",
+    "enable": "TLS/SSL für die Verbindung verwenden",
+    "caSource": "Vertrauenswürdige CAs",
+    "caSystem": "Dem Zertifikatsspeicher des Betriebssystems vertrauen",
+    "caFile": "Eigene CA-Datei verwenden"
   },
   "serverAccounts": {
     "add": "Serverkonto hinzufügen",
@@ -375,10 +367,6 @@
     "message": "Diese Verbindung wurde ohne Passwort gespeichert. Es gilt nur für diese Verbindung und wird nicht gespeichert.",
     "title": "Passwort für {{name}}"
   },
-  "view": {
-    "table": "Tabellenansicht",
-    "tree": "Baumansicht"
-  },
   "table": {
     "lastConnected": "Zuletzt verbunden",
     "name": "Verbindung",
@@ -386,5 +374,11 @@
     "none": "Keine",
     "security": "Sicherheit",
     "server": "Host"
+  },
+  "filter": {
+    "placeholder": "Verbindungen filtern…",
+    "showFrom": "Verbindungen aus:",
+    "matches_one": "{{count}} Treffer",
+    "matches_other": "{{count}} Treffer"
   }
 }
