@@ -672,7 +672,8 @@ export const buildUri = (s: typeof BLANK_CONN) => {
   else if (s.tlsOffExplicit) params.push('tls=false');
   // Custom CA file (and optional client cert/key file) must be passed to the driver.
   if (s.tlsMode === 'file' && s.tlsCa) params.push(`tlsCAFile=${encodeURIComponent(s.tlsCa)}`);
-  if (s.tlsMode !== 'off' && s.tlsClientCert) {
+  // mongodb+srv:// is TLS unless it says tls=false, so its certificate stays.
+  if ((s.tlsMode !== 'off' || (isSrv && !s.tlsOffExplicit)) && s.tlsClientCert) {
     params.push(`tlsCertificateKeyFile=${encodeURIComponent(s.tlsClientCert)}`);
     // Also encode ' ( ) ! * ~ so no character of the secret can end the URI
     // where log redaction reads it in free text.

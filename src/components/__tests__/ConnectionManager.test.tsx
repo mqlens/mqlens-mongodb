@@ -3727,6 +3727,13 @@ describe('URI options survive an edit and are editable on the Advanced tab', () 
     expect(saved).not.toMatch(/allowinvalid/i);
   });
 
+  it('keeps the client certificate of an SRV connection, which is TLS without saying so', () => {
+    const f = parseUriIntoFields('mongodb+srv://cluster.example.net/?sslPEMKeyFile=%2Fclient.pem&sslPEMKeyPassword=secret');
+    const saved = buildUri({ ...baseConn, ...f });
+    expect(saved).toContain('tlsCertificateKeyFile=%2Fclient.pem');
+    expect(saved).toContain('tlsCertificateKeyFilePassword=secret');
+  });
+
   it('keeps an explicit tls=false or ssl=false, which an SRV connection needs to stay off', () => {
     for (const uri of ['mongodb+srv://cluster0.example.net/app?tls=false', 'mongodb://h1:27017/?ssl=false']) {
       expect(buildUri({ ...baseConn, ...parseUriIntoFields(uri) })).toMatch(/[?&](tls|ssl)=false/);
