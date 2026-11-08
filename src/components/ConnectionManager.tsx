@@ -246,6 +246,31 @@ const FORM_URI_OPTIONS = new Set([
   'loadbalanced', 'w', 'wtimeoutms', 'journal', 'proxyhost', 'proxyport', 'proxyusername', 'proxypassword',
 ]);
 
+/**
+ * Legacy and singular TLS option names, under the name the form reads them
+ * by: the same aliases the backend's `normalize_mongodb_uri_options` accepts,
+ * so a setting the driver will apply is never hidden in `extraOptions`.
+ */
+const TLS_OPTION_ALIASES: Record<string, string> = {
+  ssl: 'tls',
+  sslcafile: 'tlsCAFile',
+  sslcertificateauthorityfile: 'tlsCAFile',
+  sslcertificatekeyfile: 'tlsCertificateKeyFile',
+  sslpemkeyfile: 'tlsCertificateKeyFile',
+  sslclientcertificatekeyfile: 'tlsCertificateKeyFile',
+  sslcertificatekeyfilepassword: 'tlsCertificateKeyFilePassword',
+  sslpemkeypassword: 'tlsCertificateKeyFilePassword',
+  sslclientcertificatekeypassword: 'tlsCertificateKeyFilePassword',
+  sslinvalidcertificateallowed: 'tlsAllowInvalidCertificates',
+  sslallowinvalidcertificate: 'tlsAllowInvalidCertificates',
+  sslallowinvalidcertificates: 'tlsAllowInvalidCertificates',
+  tlsallowinvalidcertificate: 'tlsAllowInvalidCertificates',
+  sslinvalidhostnameallowed: 'tlsAllowInvalidHostnames',
+  sslallowinvalidhostname: 'tlsAllowInvalidHostnames',
+  sslallowinvalidhostnames: 'tlsAllowInvalidHostnames',
+  tlsallowinvalidhostname: 'tlsAllowInvalidHostnames',
+};
+
 const VIEW_KEY = 'mqlens.connectionManager.view';
 type TableSortKey = 'name' | 'server' | 'security' | 'lastConnected';
 
@@ -445,21 +470,29 @@ export const parseUriIntoFields = (uri: string) => {
     defaultDb = m[4] || '';
     // `;` separates options as `&` does, for the driver and the backend's
     // normaliser alike, so every lookup below reads either.
-    query = (m[5] || '').replace(/;/g, '&');
+    query = (m[5] || '')
+      .replace(/;/g, '&')
+      .split('&')
+      .map((p) => {
+        const key = p.split('=')[0];
+        const name = TLS_OPTION_ALIASES[key.toLowerCase()];
+        return name ? name + p.slice(key.length) : p;
+      })
+      .join('&');
     const param = (name: string): string | null => {
       const mm = query.match(new RegExp(`(?:^|&)${name}=([^&]*)`, 'i'));
       return mm ? decodeURIComponent(mm[1]) : null;
     };
-    const caFile = param('tlsCAFile') || param('sslCertificateAuthorityFile');
+    const caFile = param('tlsCAFile');
     if (caFile) {
       tlsMode = 'file';
       tlsCa = caFile;
-    } else if (/(?:^|&)(?:tls|ssl)=true/i.test(query)) {
+    } else if (/(?:^|&)tls=true/i.test(query)) {
       tlsMode = 'system';
     }
-    tlsOffExplicit = tlsMode === 'off' && /(?:^|&)(?:tls|ssl)=false/i.test(query);
-    tlsClientCert = param('tlsCertificateKeyFile') || param('sslClientCertificateKeyFile') || '';
-    tlsKeyPassword = param('tlsCertificateKeyFilePassword') || param('sslClientCertificateKeyPassword') || '';
+    tlsOffExplicit = tlsMode === 'off' && /(?:^|&)tls=false/i.test(query);
+    tlsClientCert = param('tlsCertificateKeyFile') || '';
+    tlsKeyPassword = param('tlsCertificateKeyFilePassword') || '';
     // tlsInsecure implies both allow-invalid relaxations.
     const insecure = /(?:^|&)tlsInsecure=true/i.test(query);
     tlsAllowInvalidCerts = insecure || /(?:^|&)tlsAllowInvalidCertificates=true/i.test(query);

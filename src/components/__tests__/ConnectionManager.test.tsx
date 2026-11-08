@@ -3715,6 +3715,18 @@ describe('URI options survive an edit and are editable on the Advanced tab', () 
     expect(optionsOf(rebuilt)).toEqual(optionsOf(uri));
   });
 
+  it('reads legacy ssl spellings into the TLS fields, so unchecking them removes them', () => {
+    const f = parseUriIntoFields(
+      'mongodb://h:27017/?ssl=true&sslAllowInvalidCertificates=true&sslAllowInvalidHostnames=true&sslCAFile=%2Fca.pem&sslPEMKeyFile=%2Fc.pem&sslPEMKeyPassword=kp',
+    );
+    expect(f).toMatchObject({
+      tlsMode: 'file', tlsCa: '/ca.pem', tlsClientCert: '/c.pem', tlsKeyPassword: 'kp',
+      tlsAllowInvalidCerts: true, tlsAllowInvalidHosts: true, extraOptions: '',
+    });
+    const saved = buildUri({ ...baseConn, ...f, tlsAllowInvalidCerts: false, tlsAllowInvalidHosts: false });
+    expect(saved).not.toMatch(/allowinvalid/i);
+  });
+
   it('keeps an explicit tls=false or ssl=false, which an SRV connection needs to stay off', () => {
     for (const uri of ['mongodb+srv://cluster0.example.net/app?tls=false', 'mongodb://h1:27017/?ssl=false']) {
       expect(buildUri({ ...baseConn, ...parseUriIntoFields(uri) })).toMatch(/[?&](tls|ssl)=false/);
