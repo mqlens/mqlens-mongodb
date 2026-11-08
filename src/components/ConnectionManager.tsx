@@ -631,8 +631,9 @@ export const buildUri = (s: typeof BLANK_CONN) => {
   }
   const params = [];
   if (s.topology === 'replicaSet' && s.replicaSetName) params.push(`replicaSet=${encodeURIComponent(s.replicaSetName)}`);
-  // directConnection only makes sense for a single-host, non-SRV standalone.
-  if (s.topology === 'standalone' && s.directConnection && !isSrv && s.hosts.filter(h => h.host).length <= 1)
+  // directConnection only makes sense for a single-host, non-SRV standalone,
+  // and never with loadBalanced, which the driver refuses alongside it.
+  if (s.topology === 'standalone' && s.directConnection && !s.loadBalanced && !isSrv && s.hosts.filter(h => h.host).length <= 1)
     params.push('directConnection=true');
   if (s.tlsMode !== 'off') params.push('tls=true');
   else if (s.tlsOffExplicit) params.push('tls=false');

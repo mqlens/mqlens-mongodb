@@ -3733,6 +3733,12 @@ describe('URI options survive an edit and are editable on the Advanced tab', () 
     expect(buildUri({ ...baseConn, ...parseUriIntoFields('mongodb://h1:27017/?compressors=zstd') })).toContain('compressors=zstd');
   });
 
+  it('drops directConnection when load balancing, which the driver refuses together', () => {
+    const uri = buildUri({ ...baseConn, ...parseUriIntoFields('mongodb://lb.example:27017/?directConnection=true'), loadBalanced: true });
+    expect(optionsOf(uri)).toContain('loadBalanced=true');
+    expect(uri).not.toMatch(/directConnection/i);
+  });
+
   it('keeps authMechanismProperties it has no field for', () => {
     const uri = 'mongodb://svc%40REALM@kdc.example.com:27017/?authMechanism=GSSAPI&authSource=$external' +
       '&authMechanismProperties=SERVICE_NAME:mongo,CANONICALIZE_HOST_NAME:true';

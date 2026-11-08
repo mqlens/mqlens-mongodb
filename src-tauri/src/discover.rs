@@ -96,7 +96,13 @@ pub fn seed_list_uri(srv_uri: &str, hosts: &[String], repl_set: Option<&str>, au
     let (path, query) = tail.split_once('?').unwrap_or((tail, ""));
     let path = path.strip_prefix('/').unwrap_or(path);
 
-    let mut params: Vec<String> = query.split(['&', ';']).filter(|p| !p.is_empty()).map(str::to_string).collect();
+    // srvServiceName and srvMaxHosts are only valid on mongodb+srv://.
+    let srv_only = |p: &&str| {
+        let key = p.split('=').next().unwrap_or("");
+        key.eq_ignore_ascii_case("srvServiceName") || key.eq_ignore_ascii_case("srvMaxHosts")
+    };
+    let mut params: Vec<String> =
+        query.split(['&', ';']).filter(|p| !p.is_empty()).filter(|p| !srv_only(p)).map(str::to_string).collect();
     let has = |params: &[String], keys: &[&str]| {
         params.iter().any(|p| keys.iter().any(|k| p.split('=').next().is_some_and(|key| key.eq_ignore_ascii_case(k))))
     };
@@ -129,6 +135,17 @@ pub async fn resolve_srv_seed_list(uri: String) -> Result<String, String> {
 mod tests {
     use super::*;
     use mongodb::bson::doc;
+
+    #[test]
+    fn a_seed_list_drops_the_options_only_srv_allows() {
+        let out = seed_list_uri(
+            "mongodb+srv://c.example.net/app?srvServiceName=custom&srvMaxHosts=2&w=1",
+            &["a.example.net:27017".to_string()],
+            None,
+            None,
+        );
+        assert_eq!(out, "mongodb://a.example.net:27017/app?w=1&tls=true");
+    }
 
     #[tokio::test]
     async fn an_older_server_without_hello_is_asked_with_is_master() {
