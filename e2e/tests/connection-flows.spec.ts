@@ -121,6 +121,26 @@ test.describe('Connecting from the editor', () => {
   });
 });
 
+test.describe('A connection saved without its password', () => {
+  test('asks for it, whatever the encoding of the mechanism name, and connects with what was typed', async ({ app, page }) => {
+    await openWithProfiles(app, page, [
+      { id: 'p-odd', name: 'Odd', uri: 'mongodb://bob@staging.example:27017/?authMechanism=GSSAPI%' },
+      { id: 'p-scram', name: 'Scram', uri: 'mongodb://alice@staging.example:27017/?authMechanism=SCRAM%2DSHA%2D256' },
+    ]);
+
+    await tree(page).getByText('Odd', { exact: true }).dblclick();
+    await expect(page.getByTestId('dialog-title')).toHaveText('Password for Odd');
+    await page.getByTestId('dialog-cancel').click();
+    expect(await app.calls('connect_db')).toHaveLength(0);
+
+    await tree(page).getByText('Scram', { exact: true }).dblclick();
+    await expect(page.getByTestId('dialog-title')).toHaveText('Password for Scram');
+    await page.getByTestId('dialog-input').fill(' pw ');
+    const connected = await callFrom(app, 'connect_db', () => page.getByTestId('dialog-confirm').click());
+    expect(connected.uri).toBe('mongodb://alice:%20pw%20@staging.example:27017/?authMechanism=SCRAM%2DSHA%2D256');
+  });
+});
+
 test.describe('Importing connections', () => {
   test('reads a URI from each kind of file, and says why a file could not be used', async ({ app, page }) => {
     await app.open({
@@ -212,6 +232,7 @@ test.describe('Saved connection settings', () => {
       { id: 'p-tls', name: 'TLS', uri: 'mongodb://reader:secret@tls.example:27017/sales?tls=true' },
       { id: 'p-aws', name: 'AWS', uri: 'mongodb://aws.example:27017/?authMechanism=MONGODB-AWS&authMechanismProperties=AWS_SESSION_TOKEN:tok-123' },
       { id: 'p-krb', name: 'Kerberos', uri: 'mongodb://alice@krb.example:27017/?authMechanism=GSSAPI&authMechanismProperties=SERVICE_NAME:mongosvc' },
+      { id: 'p-plain', name: 'Plaintext', uri: 'mongodb://plain.example:27017/?tls=false' },
     ]);
     const save = async () => ((await callFrom(app, 'save_connection_profile', () => button(page, 'Save').click())).profile as { uri: string }).uri;
 
@@ -234,6 +255,10 @@ test.describe('Saved connection settings', () => {
     await editorTab(page, 'Authentication').click();
     await expect.poll(() => inputValues(page)).toContain('mongosvc');
     expect(decodeURIComponent(await save())).toContain('SERVICE_NAME:mongosvc');
+
+    // An explicit tls=false is kept, so a host whose default is TLS stays plaintext.
+    await editProfile(page, 'Plaintext');
+    expect(await save()).toContain('tls=false');
   });
 
   test('tags a connection with a preset or custom colour, and reads short and named tags back', async ({ app, page }) => {
