@@ -1877,6 +1877,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     ? []
     : (exportDialog.mode === 'all' ? profiles.map(p => p.uri) : [exportDialog.uri]).filter(u => /^mongodb\+srv:\/\//i.test(u));
   const seeded = (uri: string) => (exportSeedList ? seedUris[uri] ?? uri : uri);
+  // Until every SRV URI has its seed list, the preview would still export SRV.
+  const seedPending = exportSeedList && srvExportUris.some(u => !seedUris[u]);
 
   const toggleSeedList = async (on: boolean) => {
     setExportSeedList(on);
@@ -4038,6 +4040,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
               variant="outline"
               size="sm"
               data-testid="export-save-btn"
+              disabled={seedPending}
               onClick={handleExportSave}
             >
               {t('export.saveToFile')}
@@ -4045,6 +4048,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
             <Button
               size="sm"
               data-testid="export-copy-btn"
+              disabled={seedPending}
               onClick={() => navigator.clipboard?.writeText(exportPreview)}
             >
               {t('export.copyToClipboard')}

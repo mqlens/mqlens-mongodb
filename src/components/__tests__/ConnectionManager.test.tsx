@@ -4230,6 +4230,18 @@ describe('exporting an SRV connection as a seed list', () => {
     expect(preview()).toBe('mongodb+srv://cluster0.x.net/');
   });
 
+  it('holds Copy and Save until the seed list is resolved', async () => {
+    let finish: (uri: string) => void = () => {};
+    mount({ id: 'p-srv', name: 'Atlas', uri: 'mongodb+srv://cluster0.x.net/' }, () => new Promise(r => { finish = r; }));
+    fireEvent.click(await screen.findByTestId('export-uri-btn'));
+    fireEvent.click(screen.getByTestId('export-seed-list'));
+    expect(screen.getByTestId('export-copy-btn')).toBeDisabled();
+    expect(screen.getByTestId('export-save-btn')).toBeDisabled();
+    await act(async () => finish('mongodb://a.x.net:27017/?tls=true'));
+    expect(screen.getByTestId('export-copy-btn')).toBeEnabled();
+    expect(screen.getByTestId('export-save-btn')).toBeEnabled();
+  });
+
   it('offers no conversion for a connection that is not SRV', async () => {
     mount({ id: 'p-plain', name: 'Plain', uri: 'mongodb://h:27017' }, async () => '');
     fireEvent.click(await screen.findByTestId('export-uri-btn'));
