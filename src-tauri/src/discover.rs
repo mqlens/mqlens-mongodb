@@ -87,9 +87,15 @@ where
 
 /// The `mongodb://` form of a `mongodb+srv://` URI: its userinfo, path and
 /// options kept, the host replaced by the resolved `hosts`, and what SRV
-/// implies or DNS supplied — TLS, and the TXT record's replicaSet and
-/// authSource — added unless the URI set them itself.
-pub fn seed_list_uri(srv_uri: &str, hosts: &[String], repl_set: Option<&str>, auth_source: Option<&str>) -> String {
+/// implies or DNS supplied — TLS, and the TXT record's replicaSet, authSource
+/// and loadBalanced — added unless the URI set them itself.
+pub fn seed_list_uri(
+    srv_uri: &str,
+    hosts: &[String],
+    repl_set: Option<&str>,
+    auth_source: Option<&str>,
+    load_balanced: bool,
+) -> String {
     let rest = srv_uri.split_once("://").map_or(srv_uri, |(_, r)| r);
     let (authority, tail) = rest.find(['/', '?']).map_or((rest, ""), |i| rest.split_at(i));
     let userinfo = authority.rfind('@').map_or("", |i| &authority[..=i]);
@@ -115,6 +121,9 @@ pub fn seed_list_uri(srv_uri: &str, hosts: &[String], repl_set: Option<&str>, au
     if let Some(source) = auth_source.filter(|_| !has(&params, &["authSource"])) {
         params.push(format!("authSource={}", utf8_percent_encode(source, OPTION_VALUE)));
     }
+    if load_balanced && !has(&params, &["loadBalanced"]) {
+        params.push("loadBalanced=true".into());
+    }
     format!("mongodb://{userinfo}{}/{path}?{}", hosts.join(","), params.join("&"))
 }
 
@@ -128,7 +137,7 @@ pub async fn resolve_srv_seed_list(uri: String) -> Result<String, String> {
         .map_err(|e| format!("Failed to resolve SRV record: {e}"))?;
     let hosts: Vec<String> = options.hosts.iter().map(|h| h.to_string()).collect();
     let source = options.credential.as_ref().and_then(|c| c.source.as_deref());
-    Ok(seed_list_uri(&uri, &hosts, options.repl_set_name.as_deref(), source))
+    Ok(seed_list_uri(&uri, &hosts, options.repl_set_name.as_deref(), source, options.load_balanced == Some(true)))
 }
 
 #[cfg(test)]
@@ -137,12 +146,26 @@ mod tests {
     use mongodb::bson::doc;
 
     #[test]
+    fn a_seed_list_keeps_load_balancing_from_dns_unless_the_uri_set_it() {
+        let hosts = ["lb.x.net:27017".to_string()];
+        assert_eq!(
+            seed_list_uri("mongodb+srv://c.x.net/", &hosts, None, None, true),
+            "mongodb://lb.x.net:27017/?tls=true&loadBalanced=true"
+        );
+        assert_eq!(
+            seed_list_uri("mongodb+srv://c.x.net/?loadBalanced=false", &hosts, None, None, true),
+            "mongodb://lb.x.net:27017/?loadBalanced=false&tls=true"
+        );
+    }
+
+    #[test]
     fn a_seed_list_drops_the_options_only_srv_allows() {
         let out = seed_list_uri(
             "mongodb+srv://c.example.net/app?srvServiceName=custom&srvMaxHosts=2&w=1",
             &["a.example.net:27017".to_string()],
             None,
             None,
+            false,
         );
         assert_eq!(out, "mongodb://a.example.net:27017/app?w=1&tls=true");
     }
@@ -224,7 +247,7 @@ mod tests {
     fn an_srv_uri_becomes_its_seed_list_with_what_dns_added() {
         let hosts = ["a.x.net:27017".to_string(), "b.x.net:27017".to_string()];
         assert_eq!(
-            seed_list_uri("mongodb+srv://u:p%40w@cluster0.x.net/app?retryWrites=true", &hosts, Some("atlas-1"), Some("admin")),
+            seed_list_uri("mongodb+srv://u:p%40w@cluster0.x.net/app?retryWrites=true", &hosts, Some("atlas-1"), Some("admin"), false),
             "mongodb://u:p%40w@a.x.net:27017,b.x.net:27017/app?retryWrites=true&tls=true&replicaSet=atlas-1&authSource=admin"
         );
     }
@@ -233,9 +256,9 @@ mod tests {
     fn options_the_srv_uri_set_itself_win() {
         let hosts = ["a.x.net:27017".to_string()];
         assert_eq!(
-            seed_list_uri("mongodb+srv://c.x.net/?tls=false&authSource=db1&replicaSet=mine", &hosts, Some("atlas-1"), Some("admin")),
+            seed_list_uri("mongodb+srv://c.x.net/?tls=false&authSource=db1&replicaSet=mine", &hosts, Some("atlas-1"), Some("admin"), false),
             "mongodb://a.x.net:27017/?tls=false&authSource=db1&replicaSet=mine"
         );
-        assert_eq!(seed_list_uri("mongodb+srv://c.x.net", &hosts, None, None), "mongodb://a.x.net:27017/?tls=true");
+        assert_eq!(seed_list_uri("mongodb+srv://c.x.net", &hosts, None, None, false), "mongodb://a.x.net:27017/?tls=true");
     }
 }
