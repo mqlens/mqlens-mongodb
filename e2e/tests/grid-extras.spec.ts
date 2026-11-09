@@ -11,6 +11,22 @@ const jsonLine = (page: Page, text: string) => view(page).locator('[data-json-li
 const clipboard = (page: Page) => page.evaluate(() => navigator.clipboard.readText());
 const findInput = (page: Page) => view(page).getByTestId('results-find-input');
 
+/** The text of one table cell, by its row number (1-based, as shown) and column name. */
+async function tableCellText(page: Page, row: number, column: string): Promise<string> {
+  return view(page).getByTestId('table-header').evaluate((header, [row, column]) => {
+    const headings = Array.from(header.children);
+    const index = headings.findIndex((h) => h.textContent === column);
+    if (index < 0) throw new Error(`No column ${column}`);
+    const body = header.parentElement!.querySelector('[data-testid="table-body-scroll"]')!;
+    // A row lines up with the header: the row number, then a cell per column.
+    const line = Array.from(body.querySelectorAll('div')).find(
+      (d) => d.children.length === headings.length && d.firstElementChild?.textContent === String(row),
+    );
+    if (!line) throw new Error(`No row ${row}`);
+    return line.children[index].textContent ?? '';
+  }, [row, column] as const);
+}
+
 /** Open shop.things on a saved connection whose server holds only `docs`. */
 async function openThings(app: App, page: Page, docs: Doc[]): Promise<void> {
   await connectStaging(app, page, { servers: { [STAGING_URI]: { databases: { shop: { things: { docs } } } } } });
@@ -224,8 +240,11 @@ test.describe('Typed values and find', () => {
     await expect(header).not.toContainText('$date');
     await expect(view(page).getByText('Lima')).toBeVisible();
     await expect(view(page).getByText('52.5')).toBeVisible();
-    // Lima has no geo, and its `meta` is an array: blank, not null.
+    // Lima has no geo, and its `meta` is an array: blank, not null or anything else.
     await expect(view(page).getByTestId('table-null')).toHaveCount(1);
+    expect(await tableCellText(page, 2, 'address.geo.lat')).toBe('');
+    expect(await tableCellText(page, 2, 'meta.$schema')).toBe('');
+    expect(await tableCellText(page, 2, 'address.city')).toBe('Lima');
     await findInResults(page, header, 'Berlin');
     await expect(view(page).getByTestId('results-find-status')).toContainText('1');
   });
