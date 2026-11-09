@@ -119,7 +119,7 @@ import { UserManagementView } from './components/UserManagementView';
 import { TaskManager, type ExportTaskInfo } from './components/TaskManager';
 import { ActivityPanel } from './components/ActivityPanel';
 import { VaultGate } from './components/VaultGate';
-import { UpdatePrompt } from './components/UpdatePrompt';
+import { UpdatePrompt, WhatsNew } from './components/UpdatePrompt';
 import { DialogProvider, useDialogs } from './components/dialogs/DialogProvider';
 import { formatBytes } from './lib/format';
 import type { QueryCodeSpec } from './lib/queryCodeGen';
@@ -5362,6 +5362,7 @@ function Workspace() {
           />
 
           <UpdatePrompt />
+          <WhatsNew version={appVersion} />
 
           {/* A write no conversation asked for — an external MCP client's —
               is confirmed here rather than in a chat panel, which is not on

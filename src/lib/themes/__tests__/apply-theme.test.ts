@@ -115,3 +115,51 @@ describe('appearance cache', () => {
     localStorage.removeItem('mqlens-theme');
   });
 });
+
+describe('a theme that follows the system', () => {
+  const systemIs = (scheme: 'light' | 'dark') => {
+    window.matchMedia = ((query: string) => ({
+      matches: query === `(prefers-color-scheme: ${scheme})`,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    })) as unknown as typeof window.matchMedia;
+  };
+
+  beforeEach(() => resetAppliedThemeCache());
+  afterEach(() => {
+    delete (window as { matchMedia?: unknown }).matchMedia;
+  });
+
+  it('is what a fresh install starts with', () => {
+    expect(migrateLegacyTheme().mode).toBe('system');
+    expect(DEFAULT_THEME_CONFIG.mode).toBe('system');
+  });
+
+  it('uses the light MQLens theme on a light system', () => {
+    systemIs('light');
+    const config = { ...DEFAULT_THEME_CONFIG, presetId: 'mqlens-dark', mode: 'system' as const };
+    expect(applyTheme(config)).toBe('light');
+    expect(document.documentElement.getAttribute('data-theme')).toBe('mqlens-light');
+    expect(getEffectiveTokens(config).background).toBe(
+      getEffectiveTokens({ ...config, presetId: 'mqlens-light', mode: 'light' }).background,
+    );
+  });
+
+  it('uses the dark MQLens theme on a dark system', () => {
+    systemIs('dark');
+    const config = { ...DEFAULT_THEME_CONFIG, presetId: 'mqlens-light', mode: 'system' as const };
+    expect(applyTheme(config)).toBe('dark');
+    expect(document.documentElement.getAttribute('data-theme')).toBe('mqlens-dark');
+  });
+
+  it('keeps a theme that has no light or dark twin', () => {
+    systemIs('light');
+    const config = { ...DEFAULT_THEME_CONFIG, presetId: 'nord', mode: 'system' as const };
+    applyTheme(config);
+    expect(document.documentElement.getAttribute('data-theme')).toBe('nord');
+  });
+
+  it('falls back to dark where the system preference cannot be read', () => {
+    expect(applyTheme({ ...DEFAULT_THEME_CONFIG, mode: 'system' })).toBe('dark');
+  });
+});

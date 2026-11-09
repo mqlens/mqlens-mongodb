@@ -478,6 +478,10 @@
       "dismiss": "关闭",
       "offline": "你当前处于离线状态。请连接网络后重试。",
       "uptodate": "你已在使用最新版本。"
+    },
+    "whatsNew": {
+      "link": "查看新功能",
+      "message": "已更新到 MQLens {{version}}。"
     }
   },
   "vaultGate": {
@@ -485,6 +489,12 @@
       "resetLink": "忘记密码？重置（会删除所有已保存的凭据）",
       "setup": "创建并解锁",
       "unlock": "解锁"
+    },
+    "biometricOffer": {
+      "description": "使用此设备的生物识别解锁（Touch ID、Face ID 或 Windows Hello），无需输入主密码。你可以在“设置 → 安全”中关闭它。",
+      "enable": "开启生物识别解锁",
+      "skip": "暂不",
+      "title": "下次无需密码即可解锁？"
     },
     "biometry": {
       "faceId": "使用 Face ID",
