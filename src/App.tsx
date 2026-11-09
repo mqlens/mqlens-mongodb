@@ -4779,14 +4779,27 @@ function Workspace() {
   /** Saves one value edited in place in the results grid. Rejects, after a
    *  toast, so the grid keeps the cell editor open with the value typed. */
   const handleEditField = async (tab: QueryTab, doc: Record<string, any>, edited: Record<string, any>) => {
+    // A tab on its way to another window is frozen; the edit goes with it.
+    if (movingTabIds.has(tab.id)) throw new Error(t('toast.tabMoving'));
+    // Registered like a dialog save, through the refresh, so the tab is not
+    // moved and its namespace not dropped or renamed while the write is out.
+    const editId = `cell:${crypto.randomUUID()}`;
+    setPendingSaves(prev => [
+      ...prev,
+      { editId, tabId: tab.id, connectionId: tab.connectionId, db: tab.db, collection: tab.collection },
+    ]);
     try {
-      await writeDocumentUpdate(tab, doc, shellToEjson(docToShell(edited)));
-    } catch (err: any) {
-      toast(t('toast.updateFailed', { detail: err?.message || err }), 'error');
-      throw err;
+      try {
+        await writeDocumentUpdate(tab, doc, shellToEjson(docToShell(edited)));
+      } catch (err: any) {
+        toast(t('toast.updateFailed', { detail: err?.message || err }), 'error');
+        throw err;
+      }
+      await refreshTabResults(tab);
+      toast(t('toast.documentSavedIn', { collection: tab.collection }), 'success', { title: t('toast.savedTitle') });
+    } finally {
+      setPendingSaves(prev => prev.filter(s => s.editId !== editId));
     }
-    await refreshTabResults(tab);
-    toast(t('toast.documentSavedIn', { collection: tab.collection }), 'success', { title: t('toast.savedTitle') });
   };
 
   const writeDocumentUpdate = async (tab: QueryTab, target: Record<string, any> | null | undefined, json: string) => {
