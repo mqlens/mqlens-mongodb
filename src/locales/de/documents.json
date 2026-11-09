@@ -350,6 +350,8 @@
       "docsCountExact_other": "{{count}} Dokumente",
       "elements_one": "[ {{count}} Element ]",
       "elements_other": "[ {{count}} Elemente ]",
+      "embeddedFields": "Eingebettete Felder",
+      "embeddedFieldsHint": "Felder eingebetteter Dokumente als eigene Spalten anzeigen, benannt nach Punktpfad",
       "fields_one": "{ {{count}} Feld }",
       "fields_other": "{ {{count}} Felder }",
       "generatingQueryPlan": "Abfrageplan wird erstellt...",

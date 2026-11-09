@@ -2694,3 +2694,81 @@ it('keeps malformed EJSON inspectable in Plain JSON and escapes field names', ()
   expect(screen.getByText('"invalid"')).toBeInTheDocument();
   error.mockRestore();
 });
+
+describe('DataGrid — table null, missing and embedded fields', () => {
+  const headerCells = () =>
+    Array.from(screen.getByTestId('table-header').children).map((c) => c.textContent);
+
+  it('marks a null value, and leaves a missing field blank', () => {
+    render(<DataGrid documents={[{ _id: 1, phone: null }, { _id: 2 }]} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+
+    // One null, one missing: only the null is drawn.
+    const nulls = screen.getAllByTestId('table-null');
+    expect(nulls).toHaveLength(1);
+    expect(nulls[0]).toHaveTextContent('null');
+  });
+
+  it('shows embedded fields as their own dot-path columns when asked', () => {
+    render(
+      <DataGrid
+        documents={[
+          { _id: 1, address: { city: 'New York', geo: { lat: 40.7 } }, tags: ['a'], since: { $date: '2024-01-01T00:00:00Z' } },
+          { _id: 2, address: { city: 'Seattle' } },
+        ]}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+    expect(headerCells()).toContain('address');
+
+    fireEvent.click(screen.getByRole('checkbox', { name: /embedded fields/i }));
+
+    const cols = headerCells();
+    expect(cols).toEqual(expect.arrayContaining(['_id', 'address.city', 'address.geo.lat', 'tags', 'since']));
+    expect(cols).not.toContain('address');
+    // A typed value like a date is one value, not an object to open up.
+    expect(cols.some((c) => c?.includes('$date'))).toBe(false);
+    expect(screen.getByText('New York')).toBeInTheDocument();
+    expect(screen.getByText('Seattle')).toBeInTheDocument();
+    expect(screen.getByText('40.7')).toBeInTheDocument();
+    // Seattle has no geo: blank, not null.
+    expect(screen.queryByTestId('table-null')).toBeNull();
+  });
+
+  it('leaves a missing embedded field blank even when its name is a JavaScript built-in (#551 review)', () => {
+    render(<DataGrid documents={[{ _id: 1, profile: { constructor: 'stored value' } }, { _id: 2, profile: { a: 1 } }]} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+    fireEvent.click(screen.getByRole('checkbox', { name: /embedded fields/i }));
+
+    expect(headerCells()).toContain('profile.constructor');
+    expect(screen.getByText('stored value')).toBeInTheDocument();
+    expect(screen.queryByText(/native code/)).toBeNull();
+  });
+
+  it('shows a stored top-level field even when the row looks like a typed value (#551 review)', () => {
+    // A projection without _id can return a row whose keys are all EJSON-like.
+    render(<DataGrid documents={[{ $options: 'custom' }]} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+    expect(screen.getByText('custom')).toBeInTheDocument();
+  });
+
+  it('does not read an embedded path through an array (#551 review)', () => {
+    render(<DataGrid documents={[{ _id: 1, a: { length: 4 } }, { _id: 2, a: ['x', 'y', 'z'] }]} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+    fireEvent.click(screen.getByRole('checkbox', { name: /embedded fields/i }));
+
+    expect(headerCells()).toContain('a.length');
+    expect(screen.getByText('4')).toBeInTheDocument();
+    // The array's own length is not a stored a.length.
+    expect(screen.queryByText('3')).toBeNull();
+  });
+
+  it('opens an ordinary document that has a $-prefixed field (#551 review)', () => {
+    render(<DataGrid documents={[{ _id: 1, meta: { $schema: 'v1', city: 'Berlin' } }]} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+    fireEvent.click(screen.getByRole('checkbox', { name: /embedded fields/i }));
+
+    expect(headerCells()).toEqual(expect.arrayContaining(['meta.$schema', 'meta.city']));
+    expect(screen.getByText('Berlin')).toBeInTheDocument();
+  });
+});
