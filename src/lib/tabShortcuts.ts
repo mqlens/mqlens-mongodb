@@ -72,7 +72,7 @@ function matchKey(event: KeyLike, mac: boolean): TabCommand | null {
 export function targetTabId(
   tabIds: string[],
   activeTabId: string | null,
-  command: TabCommand,
+  command: Extract<TabCommand, { type: 'next-tab' | 'prev-tab' | 'select-tab' | 'select-last-tab' }>,
 ): string | null {
   if (tabIds.length === 0) return null;
   switch (command.type) {
@@ -87,7 +87,5 @@ export function targetTabId(
       return tabIds[command.index] ?? null;
     case 'select-last-tab':
       return tabIds[tabIds.length - 1];
-    default:
-      return null;
   }
 }
