@@ -244,7 +244,7 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
               wrapperProps={{ 'data-testid': 'document-json-input' }}
               onMount={(editor, monaco) => {
                 editorValue.onMount(editor, monaco);
-                editor.onDidBlurEditorText(() => flushDraft());
+                editor.onDidBlurEditorText(() => flushDraft(true));
                 monacoRef.current = monaco;
                 registerDocLanguage(monaco);
                 // The theme's token colours come from the same design tokens the
