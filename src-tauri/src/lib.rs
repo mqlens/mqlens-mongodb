@@ -34,6 +34,8 @@ mod state;
 pub mod toolsetup;
 pub mod updater;
 mod vault;
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+mod app_menu;
 mod window;
 mod windows;
 mod workspace;
@@ -4604,7 +4606,13 @@ pub fn run() {
     // terminal does. Must run here on the main thread before worker threads start.
     path_env::ensure_user_path();
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .menu(app_menu::build)
+        .on_menu_event(|app, event| app_menu::handle_event(app, event.id().as_ref()));
+
+    builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())

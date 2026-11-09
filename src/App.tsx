@@ -78,6 +78,7 @@ import {
   windowLabel,
   subscribeWorkspaceChanged,
   subscribeConnectionsChanged,
+  subscribeTabCommand,
   setConnectionMeta,
   connectionList,
   detachTabToNewWindow,
@@ -109,6 +110,9 @@ import {
 import { ReconnectBanner } from './workspace/ReconnectBanner';
 import { collectionTabsMatching } from './workspace/collectionTabs';
 import { uniqueCollectionTabId } from './workspace/tabId';
+import { rememberClosedTab, takeClosedTab, type ClosedTab } from './workspace/closedTabs';
+import { tabCommandForKey, tabCommandFromMenu, targetTabId, type TabCommand } from './lib/tabShortcuts';
+import { isMacPlatform } from './lib/shortcuts';
 import { ContextMenu, type ContextMenuItem } from './components/ContextMenu';
 import { CreateViewView } from './components/CreateViewView';
 import { ValidationRulesView } from './components/ValidationRulesView';
@@ -283,6 +287,22 @@ function rowsAreStoredDocuments(tab: {
 const EMPTY_COLUMN_WIDTHS: Record<string, number> = {};
 
 const DEFAULT_QUERY = { filter: '{}', sort: '{}', projection: '{}', limit: 50, skip: 0 };
+
+/** What "Reopen Closed Tab" keeps of a tab: where it pointed and how it was
+ *  queried, never its results, plan or draft (up to 20 of them stay in memory). */
+export type ClosedTabSnapshot = Omit<
+  QueryTab,
+  | 'results' | 'loading' | 'error' | 'explainResult' | 'documentEdit' | 'pagerRequest'
+  | 'totalCount' | 'countLoading' | 'estimated' | 'initialShellCommand'
+>;
+
+export function closedTabSnapshot(tab: QueryTab): ClosedTabSnapshot {
+  const {
+    results, loading, error, explainResult, documentEdit, pagerRequest,
+    totalCount, countLoading, estimated, initialShellCommand, ...snapshot
+  } = tab;
+  return snapshot;
+}
 
 // A cached/restored builder state may carry "{}" in the query/sort/projection
 // fields (from workspaces saved before empties were blanked); normalize it to
@@ -694,6 +714,7 @@ function Workspace() {
   const tabChatCache = useRef(
     new Map<string, { messages: ChatMessage[]; isOpen: boolean; chatId?: string }>()
   );
+  const closedTabsRef = useRef<ClosedTab<ClosedTabSnapshot, BuilderState>[]>([]);
   // Workspace-store mirroring plumbing (Phase 2 Task 5). Mirroring starts
   // DISABLED — the restore effect below is the only thing allowed to turn it
   // on, once workspace_get has resolved (snapshot applied or none found).
@@ -1684,16 +1705,9 @@ function Workspace() {
     }
   };
 
-  const handleDuplicateTab = (sourceTabId: string) => {
-    const src = tabs.find((t) => t.id === sourceTabId && t.type === 'collection');
-    if (!src) return;
-
-    const baseId = `${src.connectionId}.${src.db}.${src.collection}`;
-    const tabId = uniqueCollectionTabId(baseId, tabs.map((t) => t.id));
-
-    let def: QueryDef | null;
+  const lastQueryDefOf = (src: QueryTab): QueryDef | null => {
     try {
-      def = src.lastAggregate
+      return src.lastAggregate
         ? { queryType: 'aggregate', pipeline: src.lastAggregate }
         : src.lastQuery
           ? {
@@ -1706,8 +1720,17 @@ function Workspace() {
             }
           : null;
     } catch {
-      def = null; // corrupted persisted query — fall back to the default find
+      return null; // corrupted persisted query — fall back to the default find
     }
+  };
+
+  const handleDuplicateTab = (sourceTabId: string) => {
+    const src = tabs.find((t) => t.id === sourceTabId && t.type === 'collection');
+    if (!src) return;
+
+    const baseId = `${src.connectionId}.${src.db}.${src.collection}`;
+    const tabId = uniqueCollectionTabId(baseId, tabs.map((t) => t.id));
+    const def = lastQueryDefOf(src);
 
     const newTab: QueryTab = {
       id: tabId,
@@ -2784,7 +2807,7 @@ function Workspace() {
   //     since the tab itself was never going to be restored anyway.
   const dispatchWorkspace = (
     action: WorkspaceAction,
-    options?: { tab?: QueryTab }
+    options?: { tab?: QueryTab; rememberClosed?: boolean }
   ) => {
     // Cross-window open dedupe (Phase 3 Task 4 — MANDATE from Task 2
     // review): the backend's own OpenTab dedupe only applies WITHIN one
@@ -2816,6 +2839,18 @@ function Workspace() {
         invoke('focus_window', { label: foreignWindow.id }).catch(console.warn);
         return;
       }
+    }
+    // Before the evictions below, which drop the builder states it keeps.
+    const closedIds = action.type === 'close_tab'
+      ? [action.tabId]
+      : action.type === 'close_many' && options?.rememberClosed ? action.tabIds : [];
+    for (const id of closedIds) {
+      const closing = tabs.find(t => t.id === id);
+      if (!closing) continue;
+      closedTabsRef.current = rememberClosedTab(closedTabsRef.current, {
+        tab: closedTabSnapshot(closing),
+        builderState: tabBuilderStateCache.current.get(id),
+      });
     }
     if (action.type === 'close_tab') {
       tabBuilderStateCache.current.delete(action.tabId);
@@ -2920,7 +2955,8 @@ function Workspace() {
     switch (action.type) {
       case 'open_tab': {
         if (options?.tab) {
-          const conn = activeConnections.find(c => c.id === options.tab!.connectionId);
+          const conn = activeConnections.find(c => c.id === options.tab!.connectionId)
+            ?? disconnectedProfileConnection(options.tab.connectionId);
           const builderState = tabBuilderStateCache.current.get(options.tab.id);
           const persisted = toPersistedTab(options.tab, conn, builderState);
           if (persisted === null) {
@@ -3223,14 +3259,14 @@ function Workspace() {
       items.push({
         label: tShell('workspaceTabBar.contextMenu.closeOthers'),
         icon: <XSquare />,
-        onClick: () => dispatchWorkspace({ type: 'close_many', tabIds: otherTabIds }),
+        onClick: () => dispatchWorkspace({ type: 'close_many', tabIds: otherTabIds }, { rememberClosed: true }),
       });
     }
     if (rightTabIds.length > 0) {
       items.push({
         label: tShell('workspaceTabBar.contextMenu.closeToTheRight'),
         icon: <ChevronsRight />,
-        onClick: () => dispatchWorkspace({ type: 'close_many', tabIds: rightTabIds }),
+        onClick: () => dispatchWorkspace({ type: 'close_many', tabIds: rightTabIds }, { rememberClosed: true }),
       });
     }
 
@@ -3274,6 +3310,116 @@ function Workspace() {
     const next = p.tabIds[(i + dir + p.tabIds.length) % p.tabIds.length];
     dispatchWorkspace({ type: 'set_active', paneId: p.id, tabId: next });
   };
+
+  // A session-restored tab is still `profile:<id>` until it reconnects; this
+  // stands in for its connection so a reopen persists it under that profile.
+  const disconnectedProfileConnection = (connectionId: string) => {
+    if (!connectionId.startsWith('profile:')) return undefined;
+    const profileId = connectionId.slice('profile:'.length);
+    return { id: connectionId, profileId, name: restoredProfileNames.get(profileId) ?? '' };
+  };
+
+  const reopenClosedTab = () => {
+    const { entry, history } = takeClosedTab(closedTabsRef.current, (tab) =>
+      tab.type === 'settings' || tab.type === 'tasks' || tab.type === 'activity'
+        || tab.connectionId.startsWith('profile:')
+        || activeConnections.some(c => c.id === tab.connectionId)
+    );
+    closedTabsRef.current = history;
+    if (!entry) return;
+    const { tab: closed, builderState } = entry;
+    // Its profile may have connected since it closed: come back live, not as a banner.
+    const live = closed.connectionId.startsWith('profile:')
+      ? activeConnections.find(c => `profile:${c.profileId}` === closed.connectionId)
+      : undefined;
+    const id = live ? toLiveSpaceId(closed.id, activeConnections) : closed.id;
+    const connectionId = live ? live.id : closed.connectionId;
+    if (tabs.some(t => t.id === id)) {
+      dispatchWorkspace({ type: 'open_tab', tabId: id });
+      return;
+    }
+    const runsQuery = closed.type === 'collection' && !connectionId.startsWith('profile:');
+    // A $out/$merge pipeline stays in the builder but only runs when the user presses Run.
+    const writes = detectAggregateWriteStage(closed.lastAggregate).hasWriteStage;
+    const restoredBuilder = builderState
+      ?? (writes ? builderStateFromQueryTab(closed.lastQuery, closed.lastAggregate) : undefined);
+    if (restoredBuilder) tabBuilderStateCache.current.set(id, restoredBuilder);
+    const reopened: QueryTab = {
+      ...closed,
+      ...(writes && { lastAggregate: undefined }),
+      id,
+      connectionId,
+      results: [],
+      loading: runsQuery,
+      error: null,
+      explainResult: null,
+    };
+    setTabs(prev => [...prev, reopened]);
+    dispatchWorkspace({ type: 'open_tab', tabId: id }, { tab: reopened });
+    if (runsQuery) {
+      void loadTabResults(id, connectionId, reopened.db, reopened.collection, lastQueryDefOf(reopened));
+    }
+  };
+
+  const runTabCommand = (command: TabCommand) => {
+    switch (command.type) {
+      case 'close-tab':
+        if (!activeTabId) return;
+        // Main always falls back to Quick Start, so closing a lone Quick Start
+        // would only flash it away and back.
+        if (isMainWindow && tabs.length === 1 && activeTabId === QUICK_START_TAB_ID) return;
+        closeTabById(activeTabId);
+        return;
+      case 'new-tab': {
+        const active = tabs.find(t => t.id === activeTabId);
+        if (active?.type === 'collection') {
+          void handleSelectCollection(active.connectionId, active.db, active.collection, undefined, { newTab: true });
+        } else {
+          openQuickStartTab();
+        }
+        return;
+      }
+      case 'reopen-closed-tab':
+        reopenClosedTab();
+        return;
+      case 'open-settings':
+        handleOpenSettingsTab();
+        return;
+      default: {
+        if (!focusedPane) return;
+        const target = targetTabId(focusedPane.tabIds, focusedPane.activeTabId, command);
+        if (target && target !== focusedPane.activeTabId) {
+          dispatchWorkspace({ type: 'set_active', paneId: focusedPane.id, tabId: target });
+        }
+      }
+    }
+  };
+  const runTabCommandRef = useRef(runTabCommand);
+  runTabCommandRef.current = runTabCommand;
+
+  useEffect(() => {
+    const mac = isMacPlatform();
+    const onKey = (e: KeyboardEvent) => {
+      const command = tabCommandForKey(e, mac);
+      if (!command) return;
+      e.preventDefault();
+      runTabCommandRef.current(command);
+    };
+    window.addEventListener('keydown', onKey);
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    subscribeTabCommand((payload) => {
+      const command = tabCommandFromMenu(payload);
+      if (command) runTabCommandRef.current(command);
+    })
+      .then((fn) => (cancelled ? fn() : (unlisten = fn)))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      window.removeEventListener('keydown', onKey);
+      unlisten?.();
+    };
+  }, []);
 
   const openQuickStartTab = () => {
     const alreadyOpen = tabs.some(t => t.id === QUICK_START_TAB_ID);
