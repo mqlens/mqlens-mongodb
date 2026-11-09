@@ -1112,7 +1112,13 @@ pub fn mongosh_uri_args(state: &AppState, connection_id: &str, uri: &str) -> Res
     if state.conn_oidc_id_token.lock_safe()?.contains(connection_id) {
         args.push("--oidcIdTokenAsAccessToken".to_string());
     }
-    args.push(connections::normalize_mongodb_uri_options(uri));
+    // The URI the connection actually connected with: it holds a password
+    // asked for at connect and never saved, and an SSH tunnel's local address.
+    // Mock connections have none, so they keep the one passed in. Like a saved
+    // password, it is on mongosh's command line, where `ps` shows it; the
+    // tools avoid that with a 0600 `--config` file (`db::mongotools`).
+    let uri = db::mongotools::resolve_conn_uri(state, connection_id).unwrap_or_else(|_| uri.to_string());
+    args.push(connections::normalize_mongodb_uri_options(&uri));
     Ok(args)
 }
 

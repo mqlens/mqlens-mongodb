@@ -1640,6 +1640,19 @@ mod tests {
         // path plus the integration test below.
     }
 
+    #[test]
+    fn mongosh_gets_the_uri_its_connection_connected_with() {
+        // A password asked for at connect is never saved, so the URI the
+        // window hands the shell lacks it; the one the connection used has it.
+        let state = AppState::new();
+        let connected = "mongodb://alice:p%40ss@db.example:27017/";
+        state.conn_uris.lock().unwrap().insert("conn-1".to_string(), connected.to_string());
+
+        let args = crate::mongosh_uri_args(&state, "conn-1", "mongodb://alice@db.example:27017/").unwrap();
+
+        assert_eq!(args.last().unwrap(), &crate::connections::normalize_mongodb_uri_options(connected));
+    }
+
     #[tokio::test]
     async fn test_mock_full_collection_export_task_writes_file() {
         let state = AppState::new();

@@ -9,9 +9,9 @@
     "delete": "Delete",
     "duplicate": "Duplicate",
     "edit": "Edit",
-    "export": "Export…",
     "exportAllUris": "Export All URIs",
     "exportUri": "Export URI",
+    "exportUriEllipsis": "Export URI…",
     "hidePassword": "Hide password",
     "import": "Import",
     "importAll": "Import all",
@@ -53,6 +53,7 @@
   },
   "auth": {
     "authDatabase": "Authentication Database",
+    "authDatabaseHelp": "The database where the user is defined.",
     "externalNote": "Authenticates against the <1>$external</1> database.",
     "method": "Authentication Method",
     "methodAws": "MONGODB-AWS (IAM)",
@@ -150,11 +151,10 @@
     "duplicateTitle": "Duplicate Connection",
     "editTitle": "Edit Connection",
     "newTitle": "New Connection",
-    "subtitle": "Configure server, auth, TLS, and advanced options",
     "tabsAria": "Connection settings sections"
   },
   "empty": {
-    "message": "Click \"New...\" in the toolbar to add a connection, or select a saved one from the list on the left."
+    "noConnections": "No saved connections yet. Choose \"{{newLabel}}\" or \"{{importLabel}}\" to add one."
   },
   "errors": {
     "alreadyActive": "This connection is already active",
@@ -194,6 +194,12 @@
     "selectCertificateTitle": "Select certificate file",
     "textFilter": "Text"
   },
+  "filter": {
+    "matches_one": "{{count}} match",
+    "matches_other": "{{count}} matches",
+    "placeholder": "Filter connections…",
+    "showFrom": "Show connections from:"
+  },
   "folder": {
     "closeDialogAria": "Close folder dialog",
     "delete": "Delete folder",
@@ -209,6 +215,7 @@
     "colorTag": "Color tag",
     "colorTagGroupAria": "Connection color tag",
     "connectionMode": "Connection mode",
+    "connectionType": "Connection type",
     "connectionUriLabel": "Connection URI",
     "custom": "Custom",
     "discover": "Discover",
@@ -217,6 +224,8 @@
     "discoverTitle": "Ask a member for the replica set name and the full member list",
     "displayName": "Display Name",
     "folder": "Folder",
+    "fromUri": "From URI…",
+    "fromUriHelp": "Fill in this form from a connection string.",
     "hostList": "Host List",
     "hostListHostnameOnly": "(hostname only)",
     "hostListHostPort": "(host:port, comma-separated)",
@@ -229,17 +238,17 @@
     "parseIntoFields": "Parse into form fields",
     "parseUriTitle": "Fill the Server and Auth form fields from this URI so you can edit them",
     "pickCustomColor": "Pick a custom color",
-    "protocol": "Protocol",
     "removeMember": "Remove {{host}}",
     "replicaSetName": "Replica Set Name",
     "routers": "Routers (mongos)",
     "showPasswordToEdit": "Show password to edit",
-    "topology": "Topology",
     "topologyReplicaSet": "Replica Set",
     "topologySharded": "Sharded Cluster (mongos)",
+    "topologySrv": "DNS seedlist (mongodb+srv)",
     "topologyStandalone": "Standalone / Direct",
     "topologyUriOnly": "Full URI String Only",
-    "uriBadge": "URI"
+    "toUri": "To URI…",
+    "toUriHelp": "Copy or save this connection as a connection string."
   },
   "import": {
     "errors": {
@@ -255,15 +264,6 @@
   "passwordPrompt": {
     "message": "This connection was saved without its password. It is used for this connection only and is not saved.",
     "title": "Password for {{name}}"
-  },
-  "profile": {
-    "connectedActive": "Connected (Active)",
-    "connectionUri": "Connection URI",
-    "disconnected": "Disconnected",
-    "metadata": "Connection Metadata",
-    "profileId": "Profile ID:",
-    "status": "Status:",
-    "subtitle": "Connection profile"
   },
   "proxy": {
     "description": "The MongoDB driver tunnels its connection through a SOCKS5 proxy. (HTTP proxies are not supported by the driver.)",
@@ -312,7 +312,6 @@
     "allFoldersPlaceholder": "All folders",
     "connectedTitle": "Connected",
     "emptyFolder": "Empty folder",
-    "searchPlaceholder": "Search connections...",
     "unnamedConnection": "Unnamed connection"
   },
   "ssh": {
@@ -335,7 +334,6 @@
     "srvWarning": "mongodb+srv:// cannot be used with the current single-host SSH tunnel. Use a standard mongodb:// URI with a specific MongoDB node hostname and port instead.",
     "username": "SSH Username"
   },
-  "subtitle": "Manage saved MongoDB profiles and folders",
   "table": {
     "lastConnected": "Last connected",
     "name": "Name",
@@ -371,20 +369,16 @@
   "tls": {
     "allowInvalidCerts": "Allow invalid certificates",
     "allowInvalidHosts": "Allow invalid hostnames",
+    "caFile": "Use own CA file",
     "caFilePath": "CA File Path",
+    "caSource": "Trusted CAs",
+    "caSystem": "Trust the operating system’s certificate store",
     "certValidation": "Certificate Validation",
     "clientCert": "Client certificate (PEM with key)",
+    "enable": "Use TLS/SSL to connect",
     "insecureTag": "(insecure)",
     "keyPassword": "Key passphrase",
     "keyPasswordHelp": "Only needed when the private key is encrypted. Stored in the vault with the connection.",
-    "mode": "SSL / TLS Certificate Mode",
-    "modeFile": "Custom CA File Upload",
-    "modeOff": "Off (Insecure Plaintext)",
-    "modeSystem": "System Root CA Certificates",
     "validationWarning": "Disabling certificate validation exposes the connection to man-in-the-middle attacks. Enable only for trusted/self-signed test servers."
-  },
-  "view": {
-    "table": "Table view",
-    "tree": "Tree view"
   }
 }
