@@ -64,7 +64,7 @@ Add MQLens to your system flake:
 
 ```nix
 {
-  inputs.mqlens.url = "github:j-a-sunny/mqlens-mongodb";
+  inputs.mqlens.url = "github:mqlens/mqlens-mongodb";
   inputs.mqlens.inputs.nixpkgs.follows = "nixpkgs";
 
   outputs = { self, nixpkgs, mqlens, ... }: {
@@ -91,13 +91,13 @@ also install it without the module by adding
 To run it temporarily without adding it to your system configuration:
 
 ```sh
-nix run github:j-a-sunny/mqlens-mongodb
+nix run github:mqlens/mqlens-mongodb
 ```
 
 To install it into your Nix profile:
 
 ```sh
-nix profile install github:j-a-sunny/mqlens-mongodb
+nix profile install github:mqlens/mqlens-mongodb
 ```
 
 1. Open MQLens and create your local credential vault.
