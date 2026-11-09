@@ -178,7 +178,8 @@ export const QuickStart: React.FC<QuickStartProps> = ({
         </div>
       </header>
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden xl:grid-cols-[minmax(0,1fr)_20rem] 2xl:grid-cols-[minmax(0,1fr)_22rem]">
+      {/* Below xl the side column stacks under the cards and the whole body scrolls. */}
+      <div className="grid min-h-0 flex-1 grid-cols-1 overflow-y-auto xl:overflow-hidden xl:grid-cols-[minmax(0,1fr)_20rem] 2xl:grid-cols-[minmax(0,1fr)_22rem]">
         <ScrollArea className="min-h-0 min-w-0">
           <div className="px-6 py-6 lg:px-10 lg:py-8">
             <section>
@@ -261,7 +262,7 @@ export const QuickStart: React.FC<QuickStartProps> = ({
           </div>
         </ScrollArea>
 
-        <aside className="hidden min-h-0 min-w-0 flex-col overflow-y-auto border-l border-border bg-sidebar/30 xl:flex">
+        <aside className="flex min-h-0 min-w-0 flex-col overflow-y-auto border-t border-border bg-sidebar/30 xl:border-l xl:border-t-0">
           <div className="flex w-full flex-col gap-5 px-5 py-6 lg:px-6 lg:py-8">
               <Card className="w-full shadow-none">
                 <CardHeader className="pb-3">

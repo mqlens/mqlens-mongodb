@@ -154,7 +154,7 @@
     "tabsAria": "Connection settings sections"
   },
   "empty": {
-    "message": "Select a connection from the sidebar, or choose \"New…\" in the toolbar to create one."
+    "message": "Click \"New...\" in the toolbar to add a connection, or select a saved one from the list on the left."
   },
   "errors": {
     "alreadyActive": "This connection is already active",
