@@ -2063,11 +2063,12 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     // A reply for an editor that has since closed (and maybe reopened on
     // another connection) is dropped, as a connect's is.
     const attempt = connectAttemptRef.current;
+    const requested = editorState;
     setDiscovering(true);
     setDiscoverNote(null);
     try {
       const found = await invoke<{ set_name: string | null; hosts: string[] }>('discover_replica_set', {
-        uri: buildUri(editorState),
+        uri: buildUri(requested),
       });
       if (attempt !== connectAttemptRef.current) return;
       // The reply comes from the server, so only plain host:port members are
@@ -2075,7 +2076,13 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       const members = found.hosts.filter((h) => /^[A-Za-z0-9.-]+:\d{1,5}$/.test(h));
       if (found.set_name && members.length) {
         const setName = found.set_name;
-        setEditorState((prev) => ({ ...prev, replicaSetName: setName, hosts: textToHosts(members.join(',')) }));
+        setEditorState((prev) =>
+          // Members or set name edited while this ran: those edits win over
+          // a reply for the seed they replaced.
+          prev.hosts !== requested.hosts || prev.replicaSetName !== requested.replicaSetName
+            ? prev
+            : { ...prev, replicaSetName: setName, hosts: textToHosts(members.join(',')) },
+        );
       } else {
         setDiscoverNote(t('form.discoverNoSet'));
       }

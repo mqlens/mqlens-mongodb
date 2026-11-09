@@ -3921,6 +3921,22 @@ describe('replica set and sharded members', () => {
     expect(screen.getByLabelText(/replica set name/i)).not.toHaveValue('rs-a');
   });
 
+  it('keeps member edits made while Discover was running', async () => {
+    await openNewEditor();
+    let reply: (value: unknown) => void = () => {};
+    mockInvoke.mockImplementation((cmd: string) =>
+      cmd === 'discover_replica_set' ? new Promise((resolve) => { reply = resolve; }) : Promise.resolve([]),
+    );
+    await pickSelectOption('topology-select', /^replica set$/i);
+    fireEvent.change(screen.getByTestId('member-host-0'), { target: { value: 'seed-a.example' } });
+    fireEvent.click(screen.getByRole('button', { name: /discover/i }));
+    fireEvent.change(screen.getByTestId('member-host-0'), { target: { value: 'seed-b.example' } });
+    await act(async () => reply({ set_name: 'rs-a', hosts: ['a.example:27017'], arbiters: [] }));
+
+    expect(screen.getByTestId('member-host-0')).toHaveValue('seed-b.example');
+    expect(screen.getByLabelText(/replica set name/i)).not.toHaveValue('rs-a');
+  });
+
   it('says so when Discover finds no replica set', async () => {
     await openNewEditor();
     mockInvoke.mockImplementation((cmd: string) =>
