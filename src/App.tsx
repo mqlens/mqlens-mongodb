@@ -3715,6 +3715,21 @@ function Workspace() {
     }
   };
 
+  // A stage preview in the aggregation builder: runs the pipeline and hands the
+  // rows back, leaving the tab's results, history and last query alone. The
+  // builder never previews a $out/$merge stage, and MongoDB refuses one that
+  // is not last, so a preview cannot write.
+  const handlePreviewAggregate = async (tab: QueryTab, pipeline: Record<string, unknown>[]) => {
+    const rows = await invoke<string[]>('execute_aggregate', {
+      id: tab.connectionId,
+      database: tab.db,
+      collection: tab.collection,
+      pipeline: JSON.stringify(pipeline),
+      confirmed: false,
+    });
+    return rows.map(s => JSON.parse(s));
+  };
+
   // Re-run a tab's last query — used to refresh the grid after a document write.
   const refreshTabResults = async (tab: QueryTab) => {
     try {
@@ -4978,6 +4993,7 @@ function Workspace() {
               onAIChatIdChange={(chatId) => handleAIChatIdChange(tab.id, chatId)}
               onExecute={q => handleExecuteQuery(tab, q)}
               onExecuteAggregate={isCommandBlocked(tab.connectionId, 'execute_aggregate') ? undefined : pipeline => handleExecuteAggregate(tab, pipeline)}
+              onPreviewAggregate={isCommandBlocked(tab.connectionId, 'execute_aggregate') ? undefined : pipeline => handlePreviewAggregate(tab, pipeline)}
               aggregateBlocked={isCommandBlocked(tab.connectionId, 'execute_aggregate')}
               onExplain={filter => handleExplainQuery(tab, filter)}
               onExplainAggregate={pipeline => handleExplainAggregate(tab, pipeline)}

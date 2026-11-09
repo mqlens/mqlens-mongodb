@@ -83,6 +83,15 @@
       "findSummary": "find · {{filter}}"
     },
     "pipeline": {
+      "preview": {
+        "caption": "Die ersten {{count}} Dokumente vor und nach der Stufe",
+        "docCount_one": "{{count}} Dok.",
+        "docCount_other": "{{count}} Dok.",
+        "empty": "Keine Dokumente",
+        "input": "Eingabe",
+        "output": "Ausgabe",
+        "refresh": "Vorschau aktualisieren"
+      },
       "stageCount_one": "{{count}} Stufe",
       "stageCount_other": "{{count}} Stufen",
       "stageGroups": {
@@ -112,12 +121,15 @@
       "moveStageDown": "Stufe {{n}} nach unten verschieben",
       "moveStageUp": "Stufe {{n}} nach oben verschieben",
       "openExportWorkspace": "Export-Arbeitsbereich öffnen",
+      "previewStage": "Vorschau für Stufe {{n}}",
+      "previewWriteStage": "Eine schreibende Stufe wird nicht in der Vorschau ausgeführt",
       "redoPipelineChange": "Pipeline-Änderung wiederholen",
       "removeFromFavorites": "Aus Favoriten entfernen",
       "removeRule": "Regel entfernen",
       "removeStage": "Stufe {{n}} entfernen",
       "runDisabled": "Abfragesyntax korrigieren, um sie auszuführen",
       "runPipelineToStage": "Pipeline bis Stufe {{n}} ausführen",
+      "stageDocs": "Dokumentation zu {{operator}}",
       "undoPipelineChange": "Pipeline-Änderung rückgängig machen"
     },
     "notices": {
