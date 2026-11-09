@@ -307,10 +307,10 @@
     },
     "explain": {
       "labels": {
-        "collectionFallback": "Collection",
         "collectionNode": "Collection\n{{namespace}}",
         "documentsFromCollection": "Dokumente aus Collection",
-        "indexNode": "Index: {{indexName}}"
+        "indexNode": "Index: {{indexName}}",
+        "planUnavailable": "Plan nicht verfügbar"
       },
       "stage": {
         "collectionScan": "Collection-Scan",
@@ -323,6 +323,12 @@
         "result": "Ergebnis",
         "skip": "Überspringen",
         "sort": "Sortierung"
+      },
+      "stats": {
+        "docsExamined": "{{n}} Dokumente geprüft",
+        "keysExamined": "{{n}} Schlüssel geprüft",
+        "ms": "{{n}} ms",
+        "returned": "{{n}} zurückgegeben"
       }
     },
     "find": {

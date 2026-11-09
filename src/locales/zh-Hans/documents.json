@@ -102,10 +102,10 @@
     },
     "explain": {
       "labels": {
-        "collectionFallback": "Collection",
         "collectionNode": "Collection\n{{namespace}}",
         "documentsFromCollection": "来自 Collection 的文档",
-        "indexNode": "索引：{{indexName}}"
+        "indexNode": "索引：{{indexName}}",
+        "planUnavailable": "执行计划不可用"
       },
       "stage": {
         "collectionScan": "全 Collection 扫描",
@@ -118,6 +118,12 @@
         "result": "结果",
         "skip": "跳过",
         "sort": "排序"
+      },
+      "stats": {
+        "docsExamined": "已检查 {{n}} 个文档",
+        "keysExamined": "已检查 {{n}} 个键",
+        "ms": "{{n}} 毫秒",
+        "returned": "返回 {{n}} 条"
       }
     },
     "find": {

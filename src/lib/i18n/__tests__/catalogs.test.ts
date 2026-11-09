@@ -61,8 +61,8 @@ const ALLOWED_IDENTICAL_VALUES = new Set([
   'sidebar:tree.collectionsLabel', // Collections
   'sidebar:tree.viewsLabel', // Views
   'documents:dataGrid.explain.labels.collectionNode', // Collection\n{{namespace}}
-  'documents:dataGrid.explain.labels.collectionFallback', // Collection
   'documents:dataGrid.labels.utc', // UTC — universal time-zone abbreviation
+  'documents:dataGrid.explain.stats.ms', // {{n}} ms — SI unit symbol, same in German
   'admin:statsCards.collStats.collection', // Collection:
   'admin:statsCards.dbStats.labels.collections', // Collections
   'admin:statsCards.dbStats.labels.views', // Views

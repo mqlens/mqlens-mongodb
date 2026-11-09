@@ -107,10 +107,10 @@
     },
     "explain": {
       "labels": {
-        "collectionFallback": "Collection",
         "collectionNode": "Collection\n{{namespace}}",
         "documentsFromCollection": "Documents from collection",
-        "indexNode": "Index: {{indexName}}"
+        "indexNode": "Index: {{indexName}}",
+        "planUnavailable": "Plan unavailable"
       },
       "stage": {
         "collectionScan": "Collection scan",
@@ -123,6 +123,12 @@
         "result": "Result",
         "skip": "Skip",
         "sort": "Sort"
+      },
+      "stats": {
+        "docsExamined": "{{n}} docs examined",
+        "keysExamined": "{{n}} keys examined",
+        "ms": "{{n}} ms",
+        "returned": "{{n}} returned"
       }
     },
     "find": {
