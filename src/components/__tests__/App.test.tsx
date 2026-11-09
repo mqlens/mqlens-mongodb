@@ -6029,6 +6029,36 @@ describe('tab shortcuts', () => {
       );
       expect(screen.queryByTestId('tab-content-profile:p1.sales_db.orders')).not.toBeInTheDocument();
     });
+
+    it.each([
+      ['does not repeat a $out pipeline', { $out: 'orders_archive' }, false],
+      ['does not repeat a $merge pipeline', { $merge: { into: 'orders_archive' } }, false],
+      ['reruns a read-only pipeline', { $limit: 10 }, true],
+    ])('%s when it comes back', async (_name, lastStage, reruns) => {
+      const { fireEvent, waitFor } = await import('@testing-library/react');
+      const withPipeline = {
+        ...disconnected,
+        tabs: disconnected.tabs.map((tab) =>
+          tab.collection === 'orders' ? { ...tab, lastAggregate: [{ $match: { status: 'closed' } }, lastStage] } : tab
+        ),
+      };
+      const base = mockInvoke.getMockImplementation()!;
+      mockInvoke.mockImplementation((cmd: string, args?: unknown) =>
+        cmd === 'workspace_get' ? Promise.resolve(withPipeline) : base(cmd, args)
+      );
+      await closeOrders();
+      fireEvent.click(screen.getByRole('button', { name: /Reconnect Prod Cluster/ }));
+      await screen.findByTestId('tab-content-new-conn-1.sales_db.customers');
+      fireEvent.keyDown(window, { key: 'T', code: 'KeyT', ctrlKey: true, shiftKey: true });
+
+      await screen.findByTestId('tab-content-new-conn-1.sales_db.orders');
+      const ordersRun = (cmd: string) => () =>
+        expect(mockInvoke).toHaveBeenCalledWith(cmd, expect.objectContaining({ collection: 'orders' }));
+      await waitFor(ordersRun(reruns ? 'execute_aggregate' : 'execute_mql_query'));
+      if (!reruns) {
+        expect(mockInvoke).not.toHaveBeenCalledWith('execute_aggregate', expect.objectContaining({ collection: 'orders' }));
+      }
+    });
   });
 
   it('keeps no results, plan or draft for a closed tab', () => {

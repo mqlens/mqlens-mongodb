@@ -3323,8 +3323,11 @@ function Workspace() {
     }
     if (builderState) tabBuilderStateCache.current.set(id, builderState);
     const runsQuery = closed.type === 'collection' && !connectionId.startsWith('profile:');
+    // A $out/$merge pipeline stays in the builder but only runs when the user presses Run.
+    const writes = detectAggregateWriteStage(closed.lastAggregate).hasWriteStage;
     const reopened: QueryTab = {
       ...closed,
+      ...(writes && { lastAggregate: undefined }),
       id,
       connectionId,
       results: [],
