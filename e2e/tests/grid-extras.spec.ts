@@ -197,6 +197,39 @@ test.describe('Typed values and find', () => {
     }
   });
 
+  test('the table tells null from missing, and opens embedded fields into columns', async ({ app, page }) => {
+    await openThings(app, page, [
+      {
+        _id: 1,
+        email: null,
+        address: { city: 'Berlin', geo: { lat: 52.5 } },
+        since: { $date: '2025-05-01T12:00:00Z' },
+        meta: { $schema: 'v1' },
+      },
+      { _id: 2, address: { city: 'Lima' }, meta: ['x', 'y', 'z'] },
+    ]);
+    await viewButton(page, 'Table').click();
+    const header = view(page).getByTestId('table-header');
+    await expect(header).toContainText(/email/i);
+
+    // The first has a null email, the second none at all: one marker, which find matches.
+    await expect(view(page).getByTestId('table-null')).toHaveCount(1);
+    await findInResults(page, header, 'null');
+    await expect(view(page).getByTestId('results-find-status')).toContainText('1');
+    await page.keyboard.press('Escape');
+
+    await view(page).getByRole('checkbox', { name: 'Embedded fields' }).check();
+    for (const col of [/address\.city/i, /address\.geo\.lat/i, /meta\.\$schema/i]) await expect(header).toContainText(col);
+    // A date is one value, not a document to open.
+    await expect(header).not.toContainText('$date');
+    await expect(view(page).getByText('Lima')).toBeVisible();
+    await expect(view(page).getByText('52.5')).toBeVisible();
+    // Lima has no geo, and its `meta` is an array: blank, not null.
+    await expect(view(page).getByTestId('table-null')).toHaveCount(1);
+    await findInResults(page, header, 'Berlin');
+    await expect(view(page).getByTestId('results-find-status')).toContainText('1');
+  });
+
   test('find brings a match in an off-screen column into view, and back', async ({ app, page }) => {
     const wide = Object.fromEntries(Array.from({ length: 20 }, (_, i) => [`field_${String(i).padStart(2, '0')}`, `value-${i}-${'x'.repeat(40)}`]));
     await openThings(app, page, [{ _id: 1, ...wide }]);
