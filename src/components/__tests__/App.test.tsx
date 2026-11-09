@@ -1118,6 +1118,41 @@ describe('App Component', () => {
     });
   });
 
+  it('accepts shell syntax in the update-many prompt, the way the query bar does', async () => {
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd, args) => {
+      calls.push({ cmd, args });
+      if (cmd === 'execute_mql_query')
+        return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+      if (cmd === 'count_documents') return Promise.resolve(3);
+      if (cmd === 'update_many') return Promise.resolve(3);
+      return Promise.resolve([]);
+    });
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+    fireEvent.click(screen.getByTestId('select-collection-btn'));
+    expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+
+    fireEvent.pointerDown(screen.getByTestId('bulk-write-menu-btn'), { button: 0, pointerType: 'mouse' });
+    fireEvent.click(screen.getByTestId('update-many-btn'));
+    const input = await screen.findByTestId('dialog-input');
+    fireEvent.change(input, {
+      target: { value: '{ $set: { lastSeen: ISODate("2024-01-01"), managerId: ObjectId("6af1b1a32e3d410c48e8594b") } }' },
+    });
+    fireEvent.click(screen.getByTestId('dialog-confirm'));
+    fireEvent.click(await screen.findByTestId('dialog-confirm'));
+
+    // Sent as Extended JSON, so the server stores a real Date and ObjectId.
+    await waitFor(() => {
+      const um = calls.find((c) => c.cmd === 'update_many');
+      expect(um).toBeTruthy();
+      expect(JSON.parse(um.args.update)).toEqual({
+        $set: { lastSeen: { $date: '2024-01-01T00:00:00Z' }, managerId: { $oid: '6af1b1a32e3d410c48e8594b' } },
+      });
+    });
+  });
+
   it('update-many on a confirm_destructive connection requires a typed collection-name match before invoking (#188 Task 3)', async () => {
     const calls: any[] = [];
     mockInvoke.mockImplementation((cmd, args) => {

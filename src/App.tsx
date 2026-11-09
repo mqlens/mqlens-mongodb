@@ -128,7 +128,7 @@ import { DialogProvider, useDialogs } from './components/dialogs/DialogProvider'
 import { formatBytes } from './lib/format';
 import type { QueryCodeSpec } from './lib/queryCodeGen';
 import type { IndexSuggestion } from './lib/indexSuggestions';
-import { docToShell, shellToEjson } from './lib/shellDoc';
+import { docToShell, shellToEjson, parseShellJson } from './lib/shellDoc';
 import { recordHistory, loadCollectionQueries, type SavedQueryBody } from './lib/queryStore';
 import { clearNamespaceIndex, loadNamespaceIndex, matchesNamespaceScope } from './lib/paletteIndex';
 import { CHECK_UPDATE_EVENT } from './components/UpdatePrompt';
@@ -4656,14 +4656,16 @@ function Workspace() {
   const handleUpdateMany = async (tab: QueryTab) => {
     if (tab.type !== 'collection') return;
     const filter = bulkFilter(tab);
-    const update = await prompt({
+    // Parsed like the query bar, so ISODate(), ObjectId() and unquoted keys
+    // work, and sent as the Extended JSON that parser produces.
+    const updateText = await prompt({
       title: t('documents:dataGrid.dialogs.updateMany.title'),
       message: t('documents:dataGrid.dialogs.updateMany.promptMessage'),
       defaultValue: '{ "$set": {} }',
       validate: (v) => {
         let parsed: any;
         try {
-          parsed = JSON.parse(v);
+          parsed = parseShellJson(v);
         } catch {
           return t('documents:dataGrid.dialogs.updateMany.validation.invalidJson');
         }
@@ -4676,7 +4678,8 @@ function Workspace() {
         return null;
       },
     });
-    if (!update) return; // cancelled
+    if (!updateText) return; // cancelled
+    const update = JSON.stringify(parseShellJson(updateText));
     // #188 Task 3: see handleDeleteMany's comment on this same lookup.
     const mode = activeConnections.find((c) => c.id === tab.connectionId)?.mode ?? 'normal';
     try {
