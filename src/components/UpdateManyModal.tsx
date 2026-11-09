@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { PencilLine } from 'lucide-react';
 import Editor from '@monaco-editor/react';
 import { useTranslation } from 'react-i18next';
@@ -56,10 +56,8 @@ interface UpdateManyModalProps {
  */
 export const UpdateManyModal: React.FC<UpdateManyModalProps> = ({ isOpen, filter, count, onClose, onSubmit }) => {
   const { t } = useTranslation('documents');
+  // Kept while hidden (another tab is showing); the caller remounts this per update.
   const [text, setText] = useState(DEFAULT_UPDATE);
-  useEffect(() => {
-    if (isOpen) setText(DEFAULT_UPDATE);
-  }, [isOpen]);
 
   const result = useMemo(() => parseUpdate(text, t), [text, t]);
   const submit = () => {
@@ -96,7 +94,8 @@ export const UpdateManyModal: React.FC<UpdateManyModalProps> = ({ isOpen, filter
             <PencilLine size={16} className="text-primary" />
             <DialogTitle className="text-sm">{t('dataGrid.dialogs.updateMany.title')}</DialogTitle>
           </div>
-          <DialogDescription className="whitespace-pre-line pt-1 text-xs" data-testid="update-many-target">
+          {/* Bounded, so a long filter (a big $in list) scrolls instead of crowding out the editor. */}
+          <DialogDescription className="max-h-24 overflow-y-auto whitespace-pre-line break-all pt-1 text-xs" data-testid="update-many-target">
             {target}
           </DialogDescription>
         </DialogHeader>

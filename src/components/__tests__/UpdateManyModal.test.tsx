@@ -60,6 +60,23 @@ describe('UpdateManyModal', () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
+  it('scrolls a long filter in a bounded area, so the editor keeps its room', () => {
+    const filter = JSON.stringify({ _id: { $in: Array.from({ length: 400 }, (_, i) => i) } });
+    render(<UpdateManyModal {...props} filter={filter} />);
+    const target = screen.getByTestId('update-many-target');
+    expect(target.className).toMatch(/\bmax-h-\S+/);
+    expect(target).toHaveClass('overflow-y-auto');
+  });
+
+  it('keeps the draft while hidden and shows it again', () => {
+    const { rerender } = render(<UpdateManyModal {...props} />);
+    fireEvent.change(screen.getByTestId('update-many-editor'), { target: { value: '{ $set: { tier: "Gold" } }' } });
+    rerender(<UpdateManyModal {...props} isOpen={false} />);
+    expect(screen.queryByTestId('update-many-modal')).toBeNull();
+    rerender(<UpdateManyModal {...props} />);
+    expect(screen.getByTestId('update-many-editor')).toHaveValue('{ $set: { tier: "Gold" } }');
+  });
+
   it('warns when an empty filter means every document', () => {
     render(<UpdateManyModal {...props} filter="{}" count={1} />);
     expect(screen.getByTestId('update-many-target')).toHaveTextContent('This affects the only document in the collection');

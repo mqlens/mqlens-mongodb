@@ -1151,6 +1151,41 @@ describe('App Component', () => {
     });
   });
 
+  it('shows the update-many editor only on the tab it was opened from, keeping its draft (#550 review)', async () => {
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd, args) => {
+      calls.push({ cmd, args });
+      if (cmd === 'execute_mql_query')
+        return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+      if (cmd === 'count_documents') return Promise.resolve(3);
+      if (cmd === 'update_many') return Promise.resolve(3);
+      return Promise.resolve([]);
+    });
+    const { fireEvent, waitFor, within } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+    fireEvent.click(screen.getByTestId('select-collection-btn'));
+    expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+
+    fireEvent.pointerDown(screen.getByTestId('bulk-write-menu-btn'), { button: 0, pointerType: 'mouse' });
+    fireEvent.click(screen.getByTestId('update-many-btn'));
+    fireEvent.change(await screen.findByTestId('update-many-editor'), { target: { value: '{ $set: { tier: "Gold" } }' } });
+
+    // Another tab: the editor would otherwise write to a collection no longer on screen.
+    const tabStrip = screen.getByTestId('workspace-tab-strip');
+    fireEvent.click(within(tabStrip).getByText('Quick Start'));
+    await waitFor(() => expect(screen.queryByTestId('update-many-modal')).toBeNull());
+
+    // Back again, the draft is where it was left.
+    fireEvent.click(within(tabStrip).getByText('customers'));
+    expect(await screen.findByTestId('update-many-editor')).toHaveValue('{ $set: { tier: "Gold" } }');
+    fireEvent.click(screen.getByTestId('update-many-submit'));
+    await waitFor(() => {
+      const um = calls.find((c) => c.cmd === 'update_many');
+      expect(um?.args).toMatchObject({ collection: 'customers', update: '{"$set":{"tier":"Gold"}}' });
+    });
+  });
+
   it('update-many on a confirm_destructive connection requires a typed collection-name match before invoking (#188 Task 3)', async () => {
     const calls: any[] = [];
     mockInvoke.mockImplementation((cmd, args) => {

@@ -4655,8 +4655,10 @@ function Workspace() {
   };
 
   // Update Many counts first, then opens UpdateManyModal, which names the
-  // filter and the count, so submitting it is the confirmation.
-  const [updateManyTarget, setUpdateManyTarget] = useState<{ tab: QueryTab; filter: string; count: number } | null>(null);
+  // filter and the count, so submitting it is the confirmation. It belongs to
+  // the tab it was opened from and shows only while that tab does, since it
+  // does not name the collection it writes to (#550 review).
+  const [updateManyTarget, setUpdateManyTarget] = useState<{ tab: QueryTab; filter: string; count: number; openedAt: number } | null>(null);
 
   const handleUpdateMany = async (tab: QueryTab) => {
     if (tab.type !== 'collection') return;
@@ -4668,7 +4670,7 @@ function Workspace() {
         collection: tab.collection,
         filter,
       });
-      setUpdateManyTarget({ tab, filter, count });
+      setUpdateManyTarget({ tab, filter, count, openedAt: Date.now() });
     } catch (err: any) {
       toast(t('toast.updateFailed', { detail: err?.message || err }), 'error');
     }
@@ -5503,7 +5505,9 @@ function Workspace() {
           />
 
           <UpdateManyModal
-            isOpen={updateManyTarget !== null}
+            // A fresh draft per Update Many; hiding it on another tab keeps the draft.
+            key={updateManyTarget?.openedAt ?? 'none'}
+            isOpen={updateManyTarget !== null && updateManyTarget.tab.id === activeTab?.id}
             filter={updateManyTarget?.filter ?? '{}'}
             count={updateManyTarget?.count ?? 0}
             onClose={() => setUpdateManyTarget(null)}
