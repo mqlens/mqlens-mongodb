@@ -647,6 +647,7 @@ function Workspace() {
   // to solve for `handleBuilderStateChange`. Mirrors `tabs` on every change,
   // in a layout effect for the reason given on `activeConnectionsRef` below.
   const tabsRef = useRef<QueryTab[]>(tabs);
+  const documentEditFlushRef = useRef<(() => boolean) | null>(null);
   useLayoutEffect(() => {
     tabsRef.current = tabs;
   }, [tabs]);
@@ -3038,6 +3039,9 @@ function Workspace() {
    *  to be there. */
   const readyForWindowChange = async (tabId: string): Promise<boolean> => {
     const profileId = toProfileSpaceId(tabId, activeConnections);
+    // The editor holds the last keys until typing pauses; they must reach the
+    // tab before it is read, and again after every await below.
+    documentEditFlushRef.current?.();
     // Re-read on every pass, from the ref rather than the render closure: the
     // await below is a gap the user can type, cancel or start a save in, and a
     // check made before it describes a state the move no longer happens in
@@ -3070,6 +3074,7 @@ function Workspace() {
         toast(t('toast.documentEditNotSynced'), 'error');
         return false;
       }
+      if (documentEditFlushRef.current?.()) continue;
       if (!hasPendingDocumentEdit(profileId)) {
         // Settled: nothing new arrived while that was in flight.
         const still = tabsRef.current.find(x => x.id === tabId)?.documentEdit;
@@ -5349,6 +5354,9 @@ function Workspace() {
               switching back restores it, because the text lives on the tab
               rather than in the dialog (#277). */}
           <DocumentEditModal
+            // One instance per edit: queued keys leave with the edit they were typed into.
+            key={activeTab?.documentEdit?.id ?? 'none'}
+            flushHandleRef={documentEditFlushRef}
             isOpen={activeTab?.documentEdit !== undefined}
             mode={activeTab?.documentEdit?.mode || 'insert'}
             initialJson={activeTab?.documentEdit?.initialJson || '{}'}

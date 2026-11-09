@@ -94,6 +94,28 @@ test.describe('Single documents', () => {
     await expect(modal).toHaveCount(0);
   });
 
+  test('saves the text typed just before Save, before the draft has synced', async ({ app, page }) => {
+    await openCustomers(app, page);
+    await view(page).getByRole('button', { name: 'JSON', exact: true }).click();
+    await jsonLine(page, 'Alice Smith').click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Duplicate document' }).click();
+    const modal = page.getByTestId('document-edit-modal');
+    await expect.poll(() => getEditorText(page, modal)).toContain('Alice Smith');
+
+    // Typing and Save in one task, well inside the editor's 250 ms pause.
+    const inserted = await callFrom(app, 'insert_document', () =>
+      page.evaluate(async () => {
+        type Editor = { getDomNode(): HTMLElement | null; setValue(v: string): void };
+        const monaco = (await window.__MQLENS_E2E_MONACO__!()) as { editor: { getEditors(): Editor[] } };
+        const modalNode = document.querySelector('[data-testid="document-edit-modal"]')!;
+        const editor = monaco.editor.getEditors().find((candidate) => modalNode.contains(candidate.getDomNode()))!;
+        editor.setValue('{ "name": "Ada Lovelace" }');
+        (modalNode.querySelector('[data-testid="document-save-btn"]') as HTMLButtonElement).click();
+      }),
+    );
+    expect(JSON.parse(String(inserted.document))).toEqual({ name: 'Ada Lovelace' });
+  });
+
   test('will not save an edit to a document shown without its _id', async ({ app, page }) => {
     await openCustomers(app, page);
     await view(page).getByTestId('query-options-toggle').click();
