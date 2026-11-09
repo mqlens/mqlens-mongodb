@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test';
 import { test, expect, type App } from '../fixtures';
 import { SAMPLE_SERVER } from '../harness/seed';
-import { loadSample, openCollection, openInNewTab, setEditorText, STAGING_URI, view } from '../helpers';
+import { callFrom, connectStaging, loadSample, openCollection, openInNewTab, setEditorText, STAGING_URI, view } from '../helpers';
 
 const strip = (page: Page) => page.getByTestId('workspace-tab-strip');
 // What the macOS app menu sends; the keydown path skips these chords there.
@@ -89,20 +89,24 @@ test.describe('Tab shortcuts', () => {
   });
 
   test('brings back a $out pipeline in the builder without running it again', async ({ app, page }) => {
-    await openThreeTabs(app, page);
+    // A saved connection: the sample server rejects writes, so the pipeline would never be kept.
+    await connectStaging(app, page);
+    await openCollection(page, 'sales_db', 'customers');
+    await openInNewTab(page, 'products');
     await view(page).getByTestId('mode-aggregate-tab').click();
     const editor = view(page).getByTestId('aggregation-pipeline-editor');
     await editor.getByRole('button', { name: 'Add Stage' }).click();
     await editor.getByTestId('pipeline-stage-1').locator('select').selectOption('$out');
-    await setEditorText(page, editor.getByTestId('pipeline-stage-1'), '"transactions_archive"');
-    await view(page).getByRole('button', { name: 'Run', exact: true }).click();
-    await expect.poll(async () => (await app.calls('execute_aggregate')).length).toBe(1);
+    await setEditorText(page, editor.getByTestId('pipeline-stage-1'), '"products_archive"');
+    await callFrom(app, 'execute_aggregate', () => view(page).getByRole('button', { name: 'Run', exact: true }).click());
+    expect((await app.calls('execute_aggregate'))[0].error).toBeUndefined();
 
     await menu(app, 'close-tab');
-    await expect(strip(page).getByText('transactions')).toHaveCount(0);
+    await expect(strip(page).getByText('products')).toHaveCount(0);
     await menu(app, 'reopen-closed-tab');
-    await expect(view(page)).toHaveAttribute('data-testid', /transactions/);
+    await expect(view(page)).toHaveAttribute('data-testid', /products/);
     await expect(view(page).getByTestId('pipeline-stage-1').locator('select')).toHaveValue('$out');
+    await expect(view(page).getByRole('button', { name: 'Run', exact: true })).toBeEnabled();
     expect(await app.calls('execute_aggregate')).toHaveLength(1);
   });
 
