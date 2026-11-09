@@ -50,6 +50,56 @@ Get the [latest release](https://github.com/mqlens/mqlens-mongodb/releases/lates
 | Windows | `.exe` or `.msi` for x64 | Run the installer, then launch MQLens from the Start menu. |
 | Linux | `.deb`, `.rpm`, or `.AppImage` | Use your package manager, or make the AppImage executable. |
 
+### NixOS
+
+The flake fetches the latest stable x86_64 Linux `.deb` and patches its binary
+against NixOS's GTK and WebKitGTK libraries. This avoids carrying the full
+AppImage payload in the Nix store and uses a consistent NixOS Wayland/EGL stack.
+A scheduled GitHub Action opens a pull request when a new stable release needs
+a version or hash update.
+The repository must allow GitHub Actions to create pull requests for that
+automation to publish updates.
+
+Add MQLens to your system flake:
+
+```nix
+{
+  inputs.mqlens.url = "github:j-a-sunny/mqlens-mongodb";
+  inputs.mqlens.inputs.nixpkgs.follows = "nixpkgs";
+
+  outputs = { self, nixpkgs, mqlens, ... }: {
+    nixosConfigurations.my-host = nixpkgs.lib.nixosSystem {
+      modules = [
+        mqlens.nixosModules.default
+        ./configuration.nix
+      ];
+    };
+  };
+}
+```
+
+Enable it in `configuration.nix`:
+
+```nix
+programs.mqlens.enable = true;
+```
+
+The module installs MQLens from the pinned GitHub release `.deb`. You can
+also install it without the module by adding
+`inputs.mqlens.packages.${pkgs.system}.default` to `environment.systemPackages`.
+
+To run it temporarily without adding it to your system configuration:
+
+```sh
+nix run github:j-a-sunny/mqlens-mongodb
+```
+
+To install it into your Nix profile:
+
+```sh
+nix profile install github:j-a-sunny/mqlens-mongodb
+```
+
 1. Open MQLens and create your local credential vault.
 2. Add a MongoDB connection, or explore the built-in sample data.
 3. Open a collection, enter a filter, and run your query.
