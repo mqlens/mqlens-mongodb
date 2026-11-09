@@ -2745,6 +2745,13 @@ describe('DataGrid — table null, missing and embedded fields', () => {
     expect(screen.queryByText(/native code/)).toBeNull();
   });
 
+  it('shows a stored top-level field even when the row looks like a typed value (#551 review)', () => {
+    // A projection without _id can return a row whose keys are all EJSON-like.
+    render(<DataGrid documents={[{ $options: 'custom' }]} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+    expect(screen.getByText('custom')).toBeInTheDocument();
+  });
+
   it('does not read an embedded path through an array (#551 review)', () => {
     render(<DataGrid documents={[{ _id: 1, a: { length: 4 } }, { _id: 2, a: ['x', 'y', 'z'] }]} />);
     fireEvent.click(screen.getByRole('button', { name: /table/i }));

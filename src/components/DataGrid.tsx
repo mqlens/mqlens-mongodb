@@ -1292,13 +1292,16 @@ export const DataGrid: React.FC<DataGridProps> = ({
   }, [documents, flattenEmbedded]);
   const columns = useMemo(() => Array.from(columnPaths.keys()), [columnPaths]);
   // undefined when the document has no such field, which the table leaves blank.
-  // Steps only into documents, by their own fields: an array's `length` or a
-  // missing `constructor` is not a stored value (#551 review).
-  const cellValue = (doc: Record<string, any> | undefined, col: string): any =>
-    (columnPaths.get(col) ?? [col]).reduce<any>(
-      (v, k) => (isEmbeddedDoc(v) && Object.hasOwn(v, k) ? v[k] : undefined),
-      doc,
-    );
+  // Own fields only: a missing `constructor` is not a stored value. The row is
+  // read directly (it is always a document, and checking it would enumerate
+  // every field per cell); deeper steps go only into sub-documents, never
+  // through an array's `length` or a typed value (#551 review).
+  const cellValue = (doc: Record<string, any> | undefined, col: string): any => {
+    const [first, ...rest] = columnPaths.get(col) ?? [col];
+    let v = doc && Object.hasOwn(doc, first) ? doc[first] : undefined;
+    for (const k of rest) v = isEmbeddedDoc(v) && Object.hasOwn(v, k) ? v[k] : undefined;
+    return v;
+  };
 
   // A value the grid gives a constructor call to. Delegates so this list cannot
   // fall behind bsonDisplay's.
