@@ -154,7 +154,7 @@
     "tabsAria": "Bereiche der Verbindungseinstellungen"
   },
   "empty": {
-    "noConnections": "Noch keine gespeicherten Verbindungen. Wähle Neu… oder URI importieren, um eine hinzuzufügen."
+    "noConnections": "Noch keine gespeicherten Verbindungen. Wähle \"{{newLabel}}\" oder \"{{importLabel}}\", um eine hinzuzufügen."
   },
   "errors": {
     "alreadyActive": "Diese Verbindung ist bereits aktiv",

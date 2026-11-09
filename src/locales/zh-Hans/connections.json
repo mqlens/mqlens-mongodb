@@ -153,7 +153,7 @@
     "tabsAria": "连接设置分区"
   },
   "empty": {
-    "noConnections": "还没有已保存的连接。选择“新建…”或“导入 URI”来添加。"
+    "noConnections": "还没有已保存的连接。选择“{{newLabel}}”或“{{importLabel}}”来添加。"
   },
   "errors": {
     "alreadyActive": "该连接已处于活动状态",

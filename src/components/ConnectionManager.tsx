@@ -2506,7 +2506,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                 {rowsInFolder('').map(row => profileRow(row, false))}
                 {profiles.length === 0 && (
                   <tr>
-                    <td colSpan={4} className="px-3 py-6 text-center text-ui-xs text-muted-foreground">{t('empty.noConnections')}</td>
+                    <td colSpan={4} className="px-3 py-6 text-center text-ui-xs text-muted-foreground">{t('empty.noConnections', { newLabel: t('actions.new'), importLabel: t('actions.importUri') })}</td>
                   </tr>
                 )}
               </tbody>
