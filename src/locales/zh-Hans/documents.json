@@ -142,6 +142,8 @@
       "docsCountEstimated_other": "约 {{count}} 个文档",
       "docsCountExact_other": "{{count}} 个文档",
       "elements_other": "[ {{count}} 个元素 ]",
+      "embeddedFields": "嵌入字段",
+      "embeddedFieldsHint": "将嵌入文档的字段显示为单独的列，按点路径命名",
       "fields_other": "{ {{count}} 个字段 }",
       "generatingQueryPlan": "正在生成查询计划…",
       "key": "键",

@@ -697,6 +697,8 @@ interface TableRowExtra {
   findHighlightClass: (rowId: number, columnKey?: string) => string | undefined;
   openCtxMenu: JsonRowExtra['openCtxMenu'];
   renderCell: (val: any) => React.ReactNode;
+  /** The column's value in a document; undefined when the field is missing. */
+  cellValue: (doc: Record<string, any>, col: string) => any;
   hasRowActions: boolean;
   rowActions: RowActionsContext;
 }
@@ -712,6 +714,7 @@ const TableRow = ({
   findHighlightClass,
   openCtxMenu,
   renderCell,
+  cellValue,
   hasRowActions,
   rowActions,
 }: { index: number; style: React.CSSProperties } & TableRowExtra) => {
@@ -738,9 +741,9 @@ const TableRow = ({
             findHighlightClass(index, col)
           )}
           style={{ width: `${colWidth(col)}px`, flexShrink: 0 }}
-          onContextMenu={(e) => openCtxMenu(e, rawDoc, col, rawDoc[col])}
+          onContextMenu={(e) => openCtxMenu(e, rawDoc, col, cellValue(rawDoc, col))}
         >
-          {renderCell(rawDoc[col])}
+          {renderCell(cellValue(rawDoc, col))}
         </div>
       ))}
       {hasRowActions && (
@@ -902,6 +905,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   }, [documents]);
 
   const [plainJson, setPlainJson] = useState(false);
+  const [embeddedFields, setEmbeddedFields] = useState(false);
   const plainDocument = (doc: Record<string, any>) => {
     try {
       // Canonical parsing retains large integers until conversion to strings.
@@ -1261,15 +1265,34 @@ export const DataGrid: React.FC<DataGridProps> = ({
     [documents, parsedDocs, usePlainJson],
   );
 
-  // Extract all unique columns present in documents
-  const columns = useMemo(() => {
-    if (!documents || documents.length === 0) return [];
-    const keys = new Set<string>();
-    documents.forEach((doc) => {
-      Object.keys(doc).forEach((k) => keys.add(k));
-    });
-    return Array.from(keys);
-  }, [documents]);
+  // Each column's name and the path to its value, in first-seen order. Top-level
+  // keys, unless the table's "Embedded fields" is on: then sub-documents open
+  // into dot-path columns. Arrays and typed values (`{ $date: … }`, `{ $oid: … }`)
+  // stay one column. ponytail: a key that itself contains a dot can share a name
+  // with an embedded path; the first one seen wins the column.
+  const flattenEmbedded = embeddedFields && viewMode === 'table';
+  const columnPaths = useMemo(() => {
+    const paths = new Map<string, string[]>();
+    const isEmbeddedDoc = (v: any) =>
+      v !== null && typeof v === 'object' && !Array.isArray(v) && !isBsonInstance(v)
+      && Object.keys(v).length > 0 && !Object.keys(v).some((k) => k.startsWith('$'));
+    const walk = (obj: Record<string, any>, prefix: string[]) => {
+      for (const [k, v] of Object.entries(obj)) {
+        const path = [...prefix, k];
+        if (flattenEmbedded && isEmbeddedDoc(v)) walk(v, path);
+        else if (!paths.has(path.join('.'))) paths.set(path.join('.'), path);
+      }
+    };
+    documents?.forEach((doc) => walk(doc, []));
+    return paths;
+  }, [documents, flattenEmbedded]);
+  const columns = useMemo(() => Array.from(columnPaths.keys()), [columnPaths]);
+  // undefined when the document has no such field, which the table leaves blank.
+  const cellValue = (doc: Record<string, any> | undefined, col: string): any =>
+    (columnPaths.get(col) ?? [col]).reduce<any>(
+      (v, k) => (v !== null && typeof v === 'object' ? v[k] : undefined),
+      doc,
+    );
 
   // A value the grid gives a constructor call to. Delegates so this list cannot
   // fall behind bsonDisplay's.
@@ -1309,7 +1332,15 @@ export const DataGrid: React.FC<DataGridProps> = ({
   // Colored Table cell — same syntax palette as the Tree/JSON views (strings,
   // numbers, booleans, BSON types) so the Table is visually consistent.
   const renderColoredCell = (val: any): React.ReactNode => {
-    if (val === null || val === undefined) return '';
+    // A field set to null and a field that is missing are different things.
+    if (val === null) {
+      return (
+        <span data-testid="table-null" className="rounded bg-muted px-1 text-[10px] italic text-syntax-null">
+          null
+        </span>
+      );
+    }
+    if (val === undefined) return '';
     if (typeof val === 'string') return <span className="text-syntax-string">{val}</span>;
     if (typeof val === 'number') return <span className="text-syntax-number">{String(val)}</span>;
     if (typeof val === 'boolean') return <span className="text-syntax-boolean font-bold">{val ? 'true' : 'false'}</span>;
@@ -1994,7 +2025,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
           columns.map((col) => ({
             rowIndex: index,
             columnKey: col,
-            text: tableValueText((doc as Record<string, unknown>)?.[col], bsonDisplayOptions),
+            text: tableValueText(cellValue(doc, col), bsonDisplayOptions),
           }))
         )
       );
@@ -2346,6 +2377,12 @@ export const DataGrid: React.FC<DataGridProps> = ({
                 {plainJson && <AlertTriangle size={12} role="img" aria-label={t('dataGrid.labels.plainJsonWarning')} />}
               </label>
             )}
+            {viewMode === 'table' && (
+              <label className="flex items-center gap-2 text-[11px] text-muted-foreground" title={t('dataGrid.labels.embeddedFieldsHint')}>
+                <input type="checkbox" aria-label={t('dataGrid.labels.embeddedFields')} checked={embeddedFields} onChange={e => setEmbeddedFields(e.target.checked)} />
+                {t('dataGrid.labels.embeddedFields')}
+              </label>
+            )}
             <div className="flex items-center rounded-md border border-border bg-background p-0.5">
               <button
                 role="button"
@@ -2602,6 +2639,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
                   findHighlightClass,
                   openCtxMenu,
                   renderCell: renderColoredCell,
+                  cellValue,
                   hasRowActions,
                   rowActions,
                 }}

@@ -2694,3 +2694,44 @@ it('keeps malformed EJSON inspectable in Plain JSON and escapes field names', ()
   expect(screen.getByText('"invalid"')).toBeInTheDocument();
   error.mockRestore();
 });
+
+describe('DataGrid — table null, missing and embedded fields', () => {
+  const headerCells = () =>
+    Array.from(screen.getByTestId('table-header').children).map((c) => c.textContent);
+
+  it('marks a null value, and leaves a missing field blank', () => {
+    render(<DataGrid documents={[{ _id: 1, phone: null }, { _id: 2 }]} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+
+    // One null, one missing: only the null is drawn.
+    const nulls = screen.getAllByTestId('table-null');
+    expect(nulls).toHaveLength(1);
+    expect(nulls[0]).toHaveTextContent('null');
+  });
+
+  it('shows embedded fields as their own dot-path columns when asked', () => {
+    render(
+      <DataGrid
+        documents={[
+          { _id: 1, address: { city: 'New York', geo: { lat: 40.7 } }, tags: ['a'], since: { $date: '2024-01-01T00:00:00Z' } },
+          { _id: 2, address: { city: 'Seattle' } },
+        ]}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+    expect(headerCells()).toContain('address');
+
+    fireEvent.click(screen.getByRole('checkbox', { name: /embedded fields/i }));
+
+    const cols = headerCells();
+    expect(cols).toEqual(expect.arrayContaining(['_id', 'address.city', 'address.geo.lat', 'tags', 'since']));
+    expect(cols).not.toContain('address');
+    // A typed value like a date is one value, not an object to open up.
+    expect(cols.some((c) => c?.includes('$date'))).toBe(false);
+    expect(screen.getByText('New York')).toBeInTheDocument();
+    expect(screen.getByText('Seattle')).toBeInTheDocument();
+    expect(screen.getByText('40.7')).toBeInTheDocument();
+    // Seattle has no geo: blank, not null.
+    expect(screen.queryByTestId('table-null')).toBeNull();
+  });
+});

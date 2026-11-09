@@ -148,6 +148,8 @@
       "docsCountExact_other": "{{count}} docs",
       "elements_one": "[ {{count}} element ]",
       "elements_other": "[ {{count}} elements ]",
+      "embeddedFields": "Embedded fields",
+      "embeddedFieldsHint": "Show the fields of embedded documents as their own columns, named by dot path",
       "fields_one": "{ {{count}} field }",
       "fields_other": "{ {{count}} fields }",
       "generatingQueryPlan": "Generating query plan...",

@@ -203,7 +203,6 @@ describe('tableValueText — what the table view displays', () => {
   });
 
   it('is empty for an absent value', () => {
-    expect(tableValueText(null)).toBe('');
     expect(tableValueText(undefined)).toBe('');
   });
 });
@@ -237,5 +236,12 @@ describe('bsonInstanceTypeLabel — the tree’s Type column', () => {
     for (const v of [null, undefined, 'text', 7, true, { a: 1 }, [1, 2]]) {
       expect(bsonInstanceTypeLabel(v)).toBeNull();
     }
+  });
+});
+
+describe('tableValueText: null and missing', () => {
+  it('reads null as null, so find matches the marker on screen, and missing as nothing', () => {
+    expect(tableValueText(null)).toBe('null');
+    expect(tableValueText(undefined)).toBe('');
   });
 });

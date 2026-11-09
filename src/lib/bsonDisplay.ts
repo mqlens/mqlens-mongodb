@@ -270,7 +270,9 @@ export function plainBsonShape(val: Record<string, any>, options?: BsonDisplayOp
  * table than in the JSON view, and find follows whichever view is on screen.
  */
 export function tableValueText(val: unknown, options?: BsonDisplayOptions): string {
-  if (val === null || val === undefined) return "";
+  // null is drawn as a marker; a missing field (undefined) is a blank cell.
+  if (val === null) return "null";
+  if (val === undefined) return "";
   if (typeof val === "string") return val;
   if (typeof val === "number") return String(val);
   if (typeof val === "boolean") return val ? "true" : "false";
