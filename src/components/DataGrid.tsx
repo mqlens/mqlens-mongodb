@@ -130,12 +130,44 @@ export type ViewMode = 'table' | 'tree' | 'json' | 'chart';
 /** Which pane of the results area is showing. */
 export type ResultsTab = 'results' | 'explain' | 'query';
 
+interface ExplainStats {
+  nReturned?: number;
+  docsExamined?: number;
+  keysExamined?: number;
+  ms?: number;
+}
+
 interface ExplainNode {
   name: string;
   type: 'result' | 'stage' | 'collection' | 'index';
   detail?: string;
   children?: ExplainNode[];
+  stats?: ExplainStats;
 }
+
+// executionStats spells the same counters differently per level: a plan stage
+// carries docsExamined/executionTimeMillisEstimate, the totals block
+// totalDocsExamined/executionTimeMillis.
+const STAGE_STAT_KEYS: [keyof ExplainStats, string][] = [
+  ['nReturned', 'nReturned'],
+  ['docsExamined', 'docsExamined'],
+  ['keysExamined', 'keysExamined'],
+  ['ms', 'executionTimeMillisEstimate'],
+];
+const TOTAL_STAT_KEYS: [keyof ExplainStats, string][] = [
+  ['nReturned', 'nReturned'],
+  ['docsExamined', 'totalDocsExamined'],
+  ['keysExamined', 'totalKeysExamined'],
+  ['ms', 'executionTimeMillis'],
+];
+
+const pickStats = (src: any, keys: [keyof ExplainStats, string][]): ExplainStats | undefined => {
+  const stats: ExplainStats = {};
+  for (const [to, from] of keys) {
+    if (typeof src?.[from] === 'number') stats[to] = src[from];
+  }
+  return Object.keys(stats).length > 0 ? stats : undefined;
+};
 
 const GridIcon = () => (
   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-primary">
@@ -210,18 +242,22 @@ const getStageNameLabel = (stage: string, t: ExplainTFunc = defaultExplainT): st
 };
 
 // Build a parseStage bound to a namespace (the find winningPlan walker).
+// `execObj` is the matching node of executionStats.executionStages, walked in
+// step with the plan. Stats attach only where the stage names agree, so a plan
+// the executor reshapes (the SBE engine) gets no misattributed numbers.
 const makeParseStage = (namespace: string, t: ExplainTFunc = defaultExplainT) => {
-  const parseStage = (stageObj: any): ExplainNode => {
+  const parseStage = (stageObj: any, execObj?: any): ExplainNode => {
     const stageName = stageObj?.stage || "STAGE";
     const name = getStageNameLabel(stageName, t);
     const children: ExplainNode[] = [];
+    const exec = execObj && execObj.stage === stageObj?.stage ? execObj : undefined;
 
     if (stageObj?.inputStage) {
-      children.push(parseStage(stageObj.inputStage));
+      children.push(parseStage(stageObj.inputStage, exec?.inputStage));
     }
     if (Array.isArray(stageObj?.inputStages)) {
-      stageObj.inputStages.forEach((sub: any) => {
-        if (sub) children.push(parseStage(sub));
+      stageObj.inputStages.forEach((sub: any, i: number) => {
+        if (sub) children.push(parseStage(sub, exec?.inputStages?.[i]));
       });
     }
 
@@ -251,7 +287,8 @@ const makeParseStage = (namespace: string, t: ExplainTFunc = defaultExplainT) =>
       name,
       type: 'stage',
       detail: stageName + (stageObj.indexName ? ` (${stageObj.indexName})` : ''),
-      children: children.length > 0 ? children : undefined
+      children: children.length > 0 ? children : undefined,
+      stats: pickStats(exec, STAGE_STAT_KEYS),
     };
   };
   return parseStage;
@@ -271,7 +308,7 @@ export const getExplainTree = (explainStr: string, t: ExplainTFunc = defaultExpl
       const namespace = cursorQP?.namespace || "collection";
       const parseStage = makeParseStage(namespace, t);
       const cursorChild: ExplainNode = cursorQP?.winningPlan
-        ? parseStage(cursorQP.winningPlan)
+        ? parseStage(cursorQP.winningPlan, cursorStage.$cursor.executionStats?.executionStages)
         : {
             name: t('documents:dataGrid.explain.labels.collectionNode', { namespace, defaultValue: 'Collection\n{{namespace}}' }),
             type: 'collection',
@@ -288,6 +325,7 @@ export const getExplainTree = (explainStr: string, t: ExplainTFunc = defaultExpl
             type: 'stage',
             detail: t('documents:dataGrid.explain.labels.documentsFromCollection', { defaultValue: 'Documents from collection' }),
             children: [cursorChild],
+            stats: pickStats(stageObj, STAGE_STAT_KEYS),
           };
         } else {
           current = {
@@ -295,6 +333,7 @@ export const getExplainTree = (explainStr: string, t: ExplainTFunc = defaultExpl
             type: 'stage',
             detail: key,
             children: current ? [current] : undefined,
+            stats: pickStats(stageObj, STAGE_STAT_KEYS),
           };
         }
       });
@@ -304,56 +343,29 @@ export const getExplainTree = (explainStr: string, t: ExplainTFunc = defaultExpl
     const queryPlanner = explainJson?.queryPlanner || {};
     const namespace = queryPlanner?.namespace || "collection";
     const winningPlan = queryPlanner?.winningPlan;
+    const executionStats = explainJson?.executionStats;
 
-    if (!winningPlan) {
-      return {
-        name: t('documents:dataGrid.explain.stage.result', { defaultValue: 'Result' }),
-        type: "result",
-        children: [
-          {
-            name: t('documents:dataGrid.explain.stage.collectionScan', { defaultValue: 'Collection scan' }),
-            type: "stage",
-            detail: "COLLSCAN",
-            children: [
-              {
-                name: t('documents:dataGrid.explain.labels.collectionNode', { namespace, defaultValue: 'Collection\n{{namespace}}' }),
-                type: "collection",
-                detail: namespace
-              }
-            ]
-          }
-        ]
-      };
-    }
+    if (!winningPlan) return planUnavailable(t);
 
     return {
       name: t('documents:dataGrid.explain.stage.result', { defaultValue: 'Result' }),
       type: "result",
-      children: [makeParseStage(namespace, t)(winningPlan)]
+      children: [makeParseStage(namespace, t)(winningPlan, executionStats?.executionStages)],
+      stats: pickStats(executionStats, TOTAL_STAT_KEYS),
     };
 
   } catch (e) {
     console.error("Failed to parse explain tree", e);
-    return {
-      name: t('documents:dataGrid.explain.stage.result', { defaultValue: 'Result' }),
-      type: "result",
-      children: [
-        {
-          name: t('documents:dataGrid.explain.stage.collectionScan', { defaultValue: 'Collection scan' }),
-          type: "stage",
-          detail: "COLLSCAN",
-          children: [
-            {
-              name: t('documents:dataGrid.explain.labels.collectionFallback', { defaultValue: 'Collection' }),
-              type: "collection",
-              detail: "collection"
-            }
-          ]
-        }
-      ]
-    };
+    return planUnavailable(t);
   }
 };
+
+// Said plainly rather than drawn as a COLLSCAN the server never reported.
+const planUnavailable = (t: ExplainTFunc): ExplainNode => ({
+  name: t('documents:dataGrid.explain.stage.result', { defaultValue: 'Result' }),
+  type: 'result',
+  detail: t('documents:dataGrid.explain.labels.planUnavailable', { defaultValue: 'Plan unavailable' }),
+});
 
 const explainNodeHover: Record<ExplainNode['type'], string> = {
   result: 'hover:border-success/40',
@@ -362,7 +374,19 @@ const explainNodeHover: Record<ExplainNode['type'], string> = {
   index: 'hover:border-warning/40',
 };
 
+// Numbers follow the UI language, not the OS locale, so they match the labels.
+const formatExplainStats = (stats: ExplainStats, t: ExplainTFunc, language: string): string => {
+  const n = (v: number) => v.toLocaleString(language);
+  const parts: string[] = [];
+  if (stats.nReturned !== undefined) parts.push(t('documents:dataGrid.explain.stats.returned', { n: n(stats.nReturned), defaultValue: '{{n}} returned' }));
+  if (stats.docsExamined !== undefined) parts.push(t('documents:dataGrid.explain.stats.docsExamined', { n: n(stats.docsExamined), defaultValue: '{{n}} docs examined' }));
+  if (stats.keysExamined !== undefined) parts.push(t('documents:dataGrid.explain.stats.keysExamined', { n: n(stats.keysExamined), defaultValue: '{{n}} keys examined' }));
+  if (stats.ms !== undefined) parts.push(t('documents:dataGrid.explain.stats.ms', { n: n(stats.ms), defaultValue: '{{n}} ms' }));
+  return parts.join(' · ');
+};
+
 const RenderTreeNode: React.FC<{ node: ExplainNode }> = ({ node }) => {
+  const { t, i18n } = useTranslation('documents');
   return (
     <div className="flex w-full flex-col items-center">
       <div
@@ -391,6 +415,11 @@ const RenderTreeNode: React.FC<{ node: ExplainNode }> = ({ node }) => {
           )}
           {node.type !== 'stage' && node.detail && (
             <span className="font-mono text-[11px] text-muted-foreground">{node.detail}</span>
+          )}
+          {node.stats && (
+            <span data-testid="explain-node-stats" className="text-[11px] tabular-nums text-muted-foreground">
+              {formatExplainStats(node.stats, t, i18n.language)}
+            </span>
           )}
         </div>
       </div>

@@ -90,6 +90,77 @@ describe('getExplainTree (M1)', () => {
     // ...and the cursor's real plan (index scan) is at the leaf.
     expect(names).toContain('Index scan');
   });
+
+  // Shape taken from a live MongoDB 7.0 find explain (executionStats verbosity).
+  const findWithStats = JSON.stringify({
+    queryPlanner: {
+      namespace: 'shop.orders',
+      winningPlan: { stage: 'FETCH', inputStage: { stage: 'IXSCAN', indexName: 'tier_1' } },
+    },
+    executionStats: {
+      nReturned: 582,
+      executionTimeMillis: 3,
+      totalKeysExamined: 582,
+      totalDocsExamined: 582,
+      executionStages: {
+        stage: 'FETCH',
+        nReturned: 582,
+        executionTimeMillisEstimate: 2,
+        docsExamined: 582,
+        inputStage: { stage: 'IXSCAN', nReturned: 582, executionTimeMillisEstimate: 1, keysExamined: 582 },
+      },
+    },
+  });
+
+  it('puts executionStats totals on the result node', () => {
+    const tree = getExplainTree(findWithStats);
+    expect(tree.stats).toEqual({ nReturned: 582, docsExamined: 582, keysExamined: 582, ms: 3 });
+  });
+
+  it('attaches per-stage executionStats to the matching plan stages', () => {
+    const fetch = getExplainTree(findWithStats).children![0];
+    const ixscan = fetch.children![0];
+    expect(fetch.stats).toEqual({ nReturned: 582, docsExamined: 582, ms: 2 });
+    expect(ixscan.stats).toEqual({ nReturned: 582, keysExamined: 582, ms: 1 });
+  });
+
+  it('does not attach per-stage stats when executionStages does not mirror the plan', () => {
+    const sbe = JSON.stringify({
+      queryPlanner: { namespace: 'a.b', winningPlan: { stage: 'COLLSCAN' } },
+      executionStats: {
+        nReturned: 5, executionTimeMillis: 1, totalKeysExamined: 0, totalDocsExamined: 10,
+        executionStages: { stage: 'filter', nReturned: 5 },
+      },
+    });
+    const tree = getExplainTree(sbe);
+    expect(tree.stats).toEqual({ nReturned: 5, docsExamined: 10, keysExamined: 0, ms: 1 });
+    expect(tree.children![0].stats).toBeUndefined();
+  });
+
+  it('attaches nReturned and time to aggregate pipeline stages', () => {
+    const agg = JSON.stringify({
+      stages: [
+        {
+          $cursor: {
+            queryPlanner: { namespace: 'a.b', winningPlan: { stage: 'COLLSCAN' } },
+            executionStats: { nReturned: 100, executionTimeMillis: 4, totalKeysExamined: 0, totalDocsExamined: 100 },
+          },
+          nReturned: 100,
+          executionTimeMillisEstimate: 4,
+        },
+        { $group: { _id: '$t' }, nReturned: 3, executionTimeMillisEstimate: 5 },
+      ],
+    });
+    const group = getExplainTree(agg).children![0];
+    expect(group.name).toBe('$group');
+    expect(group.stats).toEqual({ nReturned: 3, ms: 5 });
+    expect(group.children![0].stats).toEqual({ nReturned: 100, ms: 4 });
+  });
+
+  it('does not invent a COLLSCAN when the plan is missing', () => {
+    expect(collectNames(getExplainTree('{"queryPlanner": {}}'))).not.toContain('Collection scan');
+    expect(collectNames(getExplainTree('not json'))).not.toContain('Collection scan');
+  });
 });
 
 const mockDocuments = [
@@ -319,6 +390,20 @@ describe('DataGrid Component', () => {
     });
     render(<DataGrid documents={mockDocuments} explainResult={ixscanExplain} />);
     expect(screen.queryByTestId('create-suggested-index-btn')).not.toBeInTheDocument();
+  });
+
+  it('shows executionStats counts on the explain tree cards', () => {
+    const plan = JSON.stringify({
+      queryPlanner: { namespace: 'shop.orders', winningPlan: { stage: 'COLLSCAN' } },
+      executionStats: {
+        nReturned: 7, executionTimeMillis: 12, totalKeysExamined: 0, totalDocsExamined: 3000,
+        executionStages: { stage: 'COLLSCAN', nReturned: 7, executionTimeMillisEstimate: 11, docsExamined: 3000 },
+      },
+    });
+    render(<DataGrid documents={mockDocuments} explainResult={plan} activeTab="explain" />);
+    const stats = screen.getAllByTestId('explain-node-stats').map((el) => el.textContent);
+    expect(stats[0]).toBe('7 returned · 3,000 docs examined · 0 keys examined · 12 ms');
+    expect(stats[1]).toBe('7 returned · 3,000 docs examined · 11 ms');
   });
 
   it('shows a Query Code tab rendering the query spec in the selected language', () => {
