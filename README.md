@@ -84,8 +84,9 @@ Enable it in `configuration.nix`:
 programs.mqlens.enable = true;
 ```
 
-The module installs MQLens from the pinned GitHub release `.deb`. You can
-also install it without the module by adding
+Enabling the module installs MQLens from the pinned GitHub release `.deb` and
+adds `mongosh` to your system path for MQLens's embedded shell. You can also
+install MQLens without the module by adding
 `inputs.mqlens.packages.${pkgs.system}.default` to `environment.systemPackages`.
 
 To run it temporarily without adding it to your system configuration:
