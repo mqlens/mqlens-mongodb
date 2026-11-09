@@ -6034,8 +6034,8 @@ describe('tab shortcuts', () => {
       ['does not repeat a $out pipeline', { $out: 'orders_archive' }, false],
       ['does not repeat a $merge pipeline', { $merge: { into: 'orders_archive' } }, false],
       ['reruns a read-only pipeline', { $limit: 10 }, true],
-    ])('%s when it comes back', async (_name, lastStage, reruns) => {
-      const { fireEvent, waitFor } = await import('@testing-library/react');
+    ])('%s when it comes back, with the pipeline kept in the builder', async (_name, lastStage, reruns) => {
+      const { fireEvent, waitFor, within } = await import('@testing-library/react');
       const withPipeline = {
         ...disconnected,
         tabs: disconnected.tabs.map((tab) =>
@@ -6051,7 +6051,9 @@ describe('tab shortcuts', () => {
       await screen.findByTestId('tab-content-new-conn-1.sales_db.customers');
       fireEvent.keyDown(window, { key: 'T', code: 'KeyT', ctrlKey: true, shiftKey: true });
 
-      await screen.findByTestId('tab-content-new-conn-1.sales_db.orders');
+      const content = await screen.findByTestId('tab-content-new-conn-1.sales_db.orders');
+      const lastStageOp = within(content).getByTestId('pipeline-stage-1').querySelector('select')!;
+      expect(lastStageOp).toHaveValue(Object.keys(lastStage)[0]);
       const ordersRun = (cmd: string) => () =>
         expect(mockInvoke).toHaveBeenCalledWith(cmd, expect.objectContaining({ collection: 'orders' }));
       await waitFor(ordersRun(reruns ? 'execute_aggregate' : 'execute_mql_query'));

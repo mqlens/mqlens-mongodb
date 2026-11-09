@@ -3321,10 +3321,12 @@ function Workspace() {
       dispatchWorkspace({ type: 'open_tab', tabId: id });
       return;
     }
-    if (builderState) tabBuilderStateCache.current.set(id, builderState);
     const runsQuery = closed.type === 'collection' && !connectionId.startsWith('profile:');
     // A $out/$merge pipeline stays in the builder but only runs when the user presses Run.
     const writes = detectAggregateWriteStage(closed.lastAggregate).hasWriteStage;
+    const restoredBuilder = builderState
+      ?? (writes ? builderStateFromQueryTab(closed.lastQuery, closed.lastAggregate) : undefined);
+    if (restoredBuilder) tabBuilderStateCache.current.set(id, restoredBuilder);
     const reopened: QueryTab = {
       ...closed,
       ...(writes && { lastAggregate: undefined }),
