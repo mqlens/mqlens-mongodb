@@ -90,6 +90,7 @@
         "body_one": "Apply this update to {{count}} document(s) matching:\n{{filter}}",
         "body_other": "Apply this update to {{count}} document(s) matching:\n{{filter}}",
         "confirmLabel": "Update",
+        "hint": "Shell syntax works here: unquoted keys, ISODate(), ObjectId(). Ctrl+Enter applies the update.",
         "promptMessage": "Update document (operators, e.g. {\"$set\": {...}}):",
         "title": "Update many",
         "validation": {

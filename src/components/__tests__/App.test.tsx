@@ -1080,7 +1080,7 @@ describe('App Component', () => {
     });
   });
 
-  it('updates many via an operator prompt + confirm (M7)', async () => {
+  it('updates many from the counted update editor (M7)', async () => {
     const calls: any[] = [];
     mockInvoke.mockImplementation((cmd, args) => {
       calls.push({ cmd, args });
@@ -1098,12 +1098,12 @@ describe('App Component', () => {
 
     fireEvent.pointerDown(screen.getByTestId('bulk-write-menu-btn'), { button: 0, pointerType: 'mouse' });
     fireEvent.click(screen.getByTestId('update-many-btn'));
-    // Prompt for the update doc, then submit it.
-    const input = await screen.findByTestId('dialog-input');
-    fireEvent.change(input, { target: { value: '{"$set":{"tier":"Gold"}}' } });
-    fireEvent.click(screen.getByTestId('dialog-confirm'));
-    // Then the counted confirm dialog.
-    fireEvent.click(await screen.findByTestId('dialog-confirm'));
+    // One editor that names the count and filter, so submitting it is the confirmation.
+    const editor = await screen.findByTestId('update-many-editor');
+    expect(screen.getByTestId('update-many-target')).toHaveTextContent('3');
+    fireEvent.change(editor, { target: { value: '{"$set":{"tier":"Gold"}}' } });
+    fireEvent.click(screen.getByTestId('update-many-submit'));
+    expect(screen.queryByTestId('dialog-confirm')).toBeNull();
 
     await waitFor(() => {
       const um = calls.find((c) => c.cmd === 'update_many');
@@ -1118,7 +1118,7 @@ describe('App Component', () => {
     });
   });
 
-  it('accepts shell syntax in the update-many prompt, the way the query bar does', async () => {
+  it('accepts shell syntax in the update-many editor, the way the query bar does', async () => {
     const calls: any[] = [];
     mockInvoke.mockImplementation((cmd, args) => {
       calls.push({ cmd, args });
@@ -1136,12 +1136,10 @@ describe('App Component', () => {
 
     fireEvent.pointerDown(screen.getByTestId('bulk-write-menu-btn'), { button: 0, pointerType: 'mouse' });
     fireEvent.click(screen.getByTestId('update-many-btn'));
-    const input = await screen.findByTestId('dialog-input');
-    fireEvent.change(input, {
+    fireEvent.change(await screen.findByTestId('update-many-editor'), {
       target: { value: '{ $set: { lastSeen: ISODate("2024-01-01"), managerId: ObjectId("6af1b1a32e3d410c48e8594b") } }' },
     });
-    fireEvent.click(screen.getByTestId('dialog-confirm'));
-    fireEvent.click(await screen.findByTestId('dialog-confirm'));
+    fireEvent.click(screen.getByTestId('update-many-submit'));
 
     // Sent as Extended JSON, so the server stores a real Date and ObjectId.
     await waitFor(() => {
@@ -1176,10 +1174,9 @@ describe('App Component', () => {
 
     fireEvent.pointerDown(screen.getByTestId('bulk-write-menu-btn'), { button: 0, pointerType: 'mouse' });
     fireEvent.click(screen.getByTestId('update-many-btn'));
-    // The update-body prompt is unchanged (data entry, not a confirmation).
-    const updateInput = await screen.findByTestId('dialog-input');
-    fireEvent.change(updateInput, { target: { value: '{"$set":{"tier":"Gold"}}' } });
-    fireEvent.click(screen.getByTestId('dialog-confirm'));
+    // The update editor still comes first; the typed name is asked after it.
+    fireEvent.change(await screen.findByTestId('update-many-editor'), { target: { value: '{"$set":{"tier":"Gold"}}' } });
+    fireEvent.click(screen.getByTestId('update-many-submit'));
 
     // Wrong typed name -> no invoke.
     const wrongInput = await screen.findByTestId('dialog-input');
@@ -1323,12 +1320,11 @@ describe('App Component', () => {
 
     fireEvent.pointerDown(screen.getByTestId('bulk-write-menu-btn'), { button: 0, pointerType: 'mouse' });
     fireEvent.click(screen.getByTestId('update-many-btn'));
-    const input = await screen.findByTestId('dialog-input');
-    fireEvent.change(input, { target: { value: '{"tier":"Gold"}' } });
-    fireEvent.click(screen.getByTestId('dialog-confirm'));
+    fireEvent.change(await screen.findByTestId('update-many-editor'), { target: { value: '{"tier":"Gold"}' } });
+    fireEvent.click(screen.getByTestId('update-many-submit'));
 
     // Validation blocks submit; no update_many call.
-    expect(await screen.findByTestId('dialog-error')).toBeInTheDocument();
+    expect(screen.getByTestId('update-many-error')).toBeInTheDocument();
     expect(calls.find((c) => c.cmd === 'update_many')).toBeFalsy();
   });
 
@@ -5738,11 +5734,7 @@ describe('App Component', () => {
         expect(
           await screen.findByText('Dokument aktualisieren (Operatoren, z. B. {"$set": {...}}):'),
         ).toBeInTheDocument();
-        fireEvent.change(screen.getByTestId('dialog-input'), {
-          target: { value: '{"$set":{"tier":"Gold"}}' },
-        });
-        fireEvent.click(screen.getByTestId('dialog-confirm'));
-        expect(await screen.findByTestId('dialog-confirm')).toHaveTextContent('Aktualisieren');
+        expect(screen.getByTestId('update-many-submit')).toHaveTextContent('Aktualisieren');
       } finally {
         await i18next.changeLanguage('en');
       }

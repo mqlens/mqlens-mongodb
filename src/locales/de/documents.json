@@ -290,6 +290,7 @@
         "body_one": "Diese Aktualisierung auf {{count}} Dokument anwenden, das folgendem Filter entspricht?\n{{filter}}",
         "body_other": "Diese Aktualisierung auf {{count}} Dokumente anwenden, die folgendem Filter entsprechen?\n{{filter}}",
         "confirmLabel": "Aktualisieren",
+        "hint": "Shell-Syntax funktioniert hier: Schlüssel ohne Anführungszeichen, ISODate(), ObjectId(). Strg+Enter wendet die Aktualisierung an.",
         "promptMessage": "Dokument aktualisieren (Operatoren, z. B. {\"$set\": {...}}):",
         "title": "Mehrere aktualisieren",
         "validation": {
