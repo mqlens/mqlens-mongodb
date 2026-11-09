@@ -36,7 +36,7 @@ async function copyValueOf(page: Page, target: Locator, expected: string): Promi
 }
 
 test.describe('Explain plans', () => {
-  test('names each stage of a plan, and shows a collection scan when the plan has none', async ({ app, page }) => {
+  test('names each stage of a plan, and says so when the plan has none', async ({ app, page }) => {
     await openThings(app, page, [{ _id: 1, name: 'one' }]);
     const plans = [
       {
@@ -77,10 +77,12 @@ test.describe('Explain plans', () => {
       await expect(panel).toContainText(label);
     }
 
-    // Asked again, the plan has no winning plan at all.
+    // Asked again, the plan has no winning plan at all: say so rather than
+    // draw a collection scan the server never reported.
     await callFrom(app, 'explain_mql_query', () => view(page).getByTestId('explain-plan-tab').click());
     await expect(panel).not.toContainText('OR Merge');
-    await expect(panel).toContainText('Collection scan');
+    await expect(panel).toContainText('Plan unavailable');
+    await expect(panel).not.toContainText('Collection scan');
   });
 
   test('shows a pipeline plan from its cursor stage up', async ({ app, page }) => {
