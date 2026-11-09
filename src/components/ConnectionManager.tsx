@@ -187,6 +187,8 @@ const BLANK_CONN = {
   tlsMode: 'off',
   // The saved URI said tls=false (or ssl=false); kept while TLS stays off.
   tlsOffExplicit: false,
+  // The CA source TLS returns to when switched back on. Editor-only.
+  tlsCaSource: 'system',
   tlsCa: '',
   tlsClientCert: '',
   tlsClientKey: '',
@@ -3213,12 +3215,11 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                       type="checkbox"
                       id="tls-enable"
                       checked={editorState.tlsMode !== 'off'}
-                      // Turning TLS off keeps the CA path, so a path still there is
-                      // the own-CA choice to come back to.
-                      onChange={e => setEditorState(prev => ({
-                        ...prev,
-                        tlsMode: !e.target.checked ? 'off' : prev.tlsMode !== 'off' ? prev.tlsMode : prev.tlsCa ? 'file' : 'system',
-                      }))}
+                      onChange={e => setEditorState(prev =>
+                        e.target.checked
+                          ? { ...prev, tlsMode: prev.tlsMode === 'off' ? prev.tlsCaSource : prev.tlsMode }
+                          : { ...prev, tlsMode: 'off', tlsCaSource: prev.tlsMode === 'off' ? prev.tlsCaSource : prev.tlsMode },
+                      )}
                     />
                     <span>{t('tls.enable')}</span>
                   </label>

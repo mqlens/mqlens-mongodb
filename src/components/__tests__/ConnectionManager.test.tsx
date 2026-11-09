@@ -4590,6 +4590,21 @@ describe('the connection editor laid out as a tabbed form', () => {
     expect(savedProfile.uri).toContain('tlsCAFile=%2Fca.pem');
   });
 
+  it('keeps the system store choice across a TLS toggle, though a CA path is left over', async () => {
+    await openNew();
+    fireEvent.click(screen.getByRole('button', { name: /^tls \/ ssl$/i }));
+    const useTls = screen.getByLabelText(/use tls/i);
+    fireEvent.click(useTls);
+    fireEvent.click(screen.getByRole('radio', { name: /own ca file/i }));
+    fireEvent.change(screen.getByLabelText(/ca file path/i), { target: { value: '/ca.pem' } });
+    fireEvent.click(screen.getByRole('radio', { name: /operating system/i }));
+    fireEvent.click(useTls);
+    fireEvent.click(useTls);
+    expect(screen.getByRole('radio', { name: /operating system/i })).toBeChecked();
+    await save();
+    expect(savedProfile.uri).not.toContain('tlsCAFile');
+  });
+
   it('keeps SSH and proxy fields on screen, disabled, while they are off', async () => {
     await openNew();
     fireEvent.click(screen.getByRole('button', { name: /^ssh tunnel$/i }));
