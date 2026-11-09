@@ -1288,9 +1288,10 @@ export const DataGrid: React.FC<DataGridProps> = ({
   }, [documents, flattenEmbedded]);
   const columns = useMemo(() => Array.from(columnPaths.keys()), [columnPaths]);
   // undefined when the document has no such field, which the table leaves blank.
+  // Own properties only: a missing `constructor` must not read Object's.
   const cellValue = (doc: Record<string, any> | undefined, col: string): any =>
     (columnPaths.get(col) ?? [col]).reduce<any>(
-      (v, k) => (v !== null && typeof v === 'object' ? v[k] : undefined),
+      (v, k) => (v !== null && typeof v === 'object' && Object.hasOwn(v, k) ? v[k] : undefined),
       doc,
     );
 

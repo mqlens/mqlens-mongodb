@@ -2734,4 +2734,14 @@ describe('DataGrid — table null, missing and embedded fields', () => {
     // Seattle has no geo: blank, not null.
     expect(screen.queryByTestId('table-null')).toBeNull();
   });
+
+  it('leaves a missing embedded field blank even when its name is a JavaScript built-in (#551 review)', () => {
+    render(<DataGrid documents={[{ _id: 1, profile: { constructor: 'stored value' } }, { _id: 2, profile: { a: 1 } }]} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+    fireEvent.click(screen.getByRole('checkbox', { name: /embedded fields/i }));
+
+    expect(headerCells()).toContain('profile.constructor');
+    expect(screen.getByText('stored value')).toBeInTheDocument();
+    expect(screen.queryByText(/native code/)).toBeNull();
+  });
 });
