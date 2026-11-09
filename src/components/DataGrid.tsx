@@ -770,7 +770,8 @@ const InlineCellEditor = ({
         if (e.key === 'Escape') {
           e.preventDefault();
           onCancel();
-        } else if (e.key === 'Enter' && !saving) {
+        } else if (e.key === 'Enter' && !saving && !e.nativeEvent.isComposing) {
+          // An Enter that confirms an IME candidate is still typing, not a save.
           e.preventDefault();
           void commit();
         }

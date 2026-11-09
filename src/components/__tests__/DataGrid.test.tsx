@@ -2821,6 +2821,19 @@ describe('DataGrid — in-place cell edit', () => {
     expect(onEditField.mock.calls[0][1].tier).toEqual({ $date: '2024-01-01T00:00:00Z' });
   });
 
+  it('does not save on the Enter that confirms an IME composition (#554 review)', () => {
+    const onEditField = vi.fn().mockResolvedValue(undefined);
+    render(<DataGrid documents={docs()} onEditField={onEditField} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+
+    fireEvent.doubleClick(cell('free'));
+    fireEvent.change(editor(), { target: { value: '"专业"' } });
+    fireEvent.keyDown(editor(), { key: 'Enter', isComposing: true });
+
+    expect(onEditField).not.toHaveBeenCalled();
+    expect(editor().value).toBe('"专业"');
+  });
+
   it('cancels on Escape without writing', () => {
     const onEditField = vi.fn();
     render(<DataGrid documents={docs()} onEditField={onEditField} />);
