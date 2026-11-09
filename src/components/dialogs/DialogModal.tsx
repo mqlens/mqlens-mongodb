@@ -36,6 +36,8 @@ export interface PromptRequest {
   destructive?: boolean;
   /** Render a multi-line textarea instead of a single-line input. */
   multiline?: boolean;
+  /** Mask the input, for a password. */
+  password?: boolean;
 }
 
 export interface ChooseRequest {
@@ -73,7 +75,8 @@ export const DialogModal: React.FC<DialogModalProps> = ({ request, onResolve }) 
   const submitPrompt = () => {
     const r = request as PromptRequest;
     if (r.confirmEnabled && !r.confirmEnabled(value)) return;
-    const trimmed = value.trim();
+    // A password is taken as typed: spaces at either end can be part of it.
+    const trimmed = r.password ? value : value.trim();
     const err = r.validate ? r.validate(trimmed) : null;
     if (err) {
       setError(err);
@@ -140,6 +143,7 @@ export const DialogModal: React.FC<DialogModalProps> = ({ request, onResolve }) 
               ) : (
                 <Input
                   ref={inputRef as React.RefObject<HTMLInputElement>}
+                  type={request.password ? 'password' : 'text'}
                   className="dialog-input"
                   data-testid="dialog-input"
                   value={value}

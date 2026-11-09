@@ -294,3 +294,69 @@ test.describe('App-wide actions', () => {
     await expect(strip(page).getByText('customers', { exact: true })).toHaveCount(0);
   });
 });
+
+test.describe('Saved without its password', () => {
+  const NO_PASSWORD = { id: 'p-ask', name: 'Ask', uri: 'mongodb://alice@staging.example:27017/?authMechanism=SCRAM-SHA-256' };
+  const WITH_PASSWORD = 'mongodb://alice:s3cret@staging.example:27017/?authMechanism=SCRAM-SHA-256';
+
+  test('quick connect asks for the password and connects with it', async ({ app, page }) => {
+    await app.open({ profiles: [NO_PASSWORD], servers: { [STAGING_URI]: SAMPLE_SERVER } });
+    await page.getByRole('button', { name: 'Connect to Ask', exact: true }).click();
+    const input = page.getByTestId('dialog-input');
+    await expect(input).toHaveAttribute('type', 'password');
+    const connected = await callFrom(app, 'connect_db', async () => {
+      await input.fill('s3cret');
+      await input.press('Enter');
+    });
+    expect(connected).toMatchObject({ uri: WITH_PASSWORD });
+  });
+
+  test('reconnect asks too, and cancelling leaves the banner', async ({ app, page }) => {
+    await app.open({
+      profiles: [NO_PASSWORD],
+      servers: { [STAGING_URI]: SAMPLE_SERVER },
+      workspace: savedWorkspace([collectionTab('p-ask', 'Ask', 'sales_db', 'customers')]),
+    });
+    const banner = page.getByTestId('reconnect-banner');
+    await banner.getByRole('button', { name: 'Reconnect Ask' }).click();
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(banner).toBeVisible();
+    expect(await app.calls('connect_db')).toHaveLength(0);
+
+    await banner.getByRole('button', { name: 'Reconnect Ask' }).click();
+    const connected = await callFrom(app, 'connect_db', async () => {
+      await page.getByTestId('dialog-input').fill('s3cret');
+      await page.getByTestId('dialog-input').press('Enter');
+    });
+    expect(connected).toMatchObject({ uri: WITH_PASSWORD });
+    await expect(banner).toHaveCount(0);
+  });
+});
+
+test.describe('Connection table', () => {
+  test('shows when each connection last connected', async ({ app, page }) => {
+    await openStagingWith(app);
+    await page.getByRole('button', { name: 'Connect to Staging', exact: true }).click();
+    await expect(sidebar(page).getByRole('button', { name: 'Connection Staging' })).toBeVisible();
+
+    await page.getByRole('button', { name: 'New connection', exact: true }).first().click();
+    await page.getByRole('button', { name: 'Table view', exact: true }).click();
+    const row = page.getByTestId('connection-table').getByRole('row').filter({ hasText: 'Staging' });
+    await expect(row).toContainText('staging.example:27017');
+    await expect(row).not.toContainText('Never');
+  });
+});
+
+test.describe('Export as a seed list', () => {
+  test('turns an SRV connection into its member hosts', async ({ app, page }) => {
+    await app.open({ profiles: [{ id: 'p-atlas', name: 'Atlas', uri: 'mongodb+srv://ann:pw@cluster0.example.net/app' }] });
+    await page.getByRole('button', { name: 'New connection', exact: true }).first().click();
+    await page.getByTestId('export-uri-btn').click();
+    const preview = page.getByTestId('export-uri-preview');
+    await expect(preview).toHaveText('mongodb+srv://ann@cluster0.example.net/app');
+    await page.getByTestId('export-seed-list').click();
+    await expect(preview).toHaveText(
+      'mongodb://ann@shard-00.cluster0.example.net:27017,shard-01.cluster0.example.net:27017,shard-02.cluster0.example.net:27017/app?tls=true',
+    );
+  });
+});

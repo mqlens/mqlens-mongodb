@@ -4,6 +4,7 @@
     "browse": "Browse…",
     "connect": "Connect",
     "connecting": "Connecting...",
+    "copyUri": "Copy URI (without secrets)",
     "create": "Create",
     "delete": "Delete",
     "duplicate": "Duplicate",
@@ -15,17 +16,40 @@
     "import": "Import",
     "importAll": "Import all",
     "importUri": "Import URI",
+    "moveToFolder": "Move to folder",
     "new": "New...",
     "newFolder": "New Folder",
     "showPassword": "Show password",
     "testConnection": "Test Connection"
   },
   "advanced": {
+    "appName": "Application name",
     "compression": "BSON Compression",
     "compressionNone": "None",
     "compressionSnappy": "Snappy",
     "compressionZlib": "Zlib",
-    "defaultDb": "Default Database"
+    "connectTimeout": "Connect timeout (ms)",
+    "defaultDb": "Default Database",
+    "driverDefault": "Driver default",
+    "extraOptions": "Additional URI options",
+    "extraOptionsHelp": "Options the form has no field for, as key=value pairs joined with &. Kept exactly as written.",
+    "journal": "Journal acknowledgement",
+    "loadBalanced": "Load balanced (connect through a load balancer)",
+    "maxIdleTime": "Max idle time (ms)",
+    "maxPoolSize": "Max pool size",
+    "off": "Off",
+    "on": "On",
+    "readPreference": "Read preference",
+    "readPreferenceTags": "Read preference tags",
+    "readPreferenceTagsHelp": "One tag set per line, tried in order. {} matches any member.",
+    "readSection": "Reads",
+    "retryWrites": "Retry writes",
+    "serverSelectionTimeout": "Server selection timeout (ms)",
+    "socketTimeout": "Socket timeout (ms)",
+    "timeoutsSection": "Timeouts and pool",
+    "writeConcernW": "Write concern (w)",
+    "writesSection": "Writes",
+    "wtimeout": "Write timeout (ms)"
   },
   "auth": {
     "authDatabase": "Authentication Database",
@@ -155,6 +179,9 @@
     "saveAllTitle": "Save connection URIs",
     "saveTitle": "Save connection URI",
     "saveToFile": "Save to file…",
+    "seedList": "Convert SRV to a seed list",
+    "seedListDescription": "Look up the SRV record now and export the member hosts, for tools that cannot read mongodb+srv://.",
+    "seedListFailed": "Could not resolve the SRV record: {{error}}",
     "singleTitle": "Export connection URI",
     "sshNote": "This connection uses an SSH tunnel. Tunnel settings can’t be represented in a MongoDB URI and are not exported."
   },
@@ -163,21 +190,31 @@
     "certificatesFilter": "Certificates",
     "importFileTitle": "Import connection URI from file",
     "jsonFilter": "JSON",
-    "jsonStudio3tFilter": "JSON / Studio 3T URI",
+    "jsonStudio3tFilter": "Connection files (Studio 3T, Compass, Robo 3T, JSON, URI)",
     "selectCertificateTitle": "Select certificate file",
     "textFilter": "Text"
   },
   "folder": {
     "closeDialogAria": "Close folder dialog",
+    "delete": "Delete folder",
+    "deleteMessage": "Delete the folder \"{{name}}\"? Its connections are kept and move to the root.",
+    "deleteTitle": "Delete folder",
     "nameLabel": "Folder Name",
+    "rename": "Rename folder",
+    "renameTitle": "Rename folder",
     "root": "(root)"
   },
   "form": {
+    "addMember": "Add member",
     "colorTag": "Color tag",
     "colorTagGroupAria": "Connection color tag",
     "connectionMode": "Connection mode",
     "connectionUriLabel": "Connection URI",
     "custom": "Custom",
+    "discover": "Discover",
+    "discoverNoSet": "That server is not a replica set member.",
+    "discoverNoSsh": "Discover is not available through an SSH tunnel, which reaches one host only.",
+    "discoverTitle": "Ask a member for the replica set name and the full member list",
     "displayName": "Display Name",
     "folder": "Folder",
     "hostList": "Host List",
@@ -185,12 +222,17 @@
     "hostListHostPort": "(host:port, comma-separated)",
     "mcpEnabled": "Expose to MCP agents",
     "mcpEnabledDescription": "Agents connected to the MQLens MCP server can see and connect to this profile.",
+    "memberHost": "Member {{index}} host",
+    "memberPort": "Member {{index}} port",
+    "members": "Members",
     "noColor": "No color",
     "parseIntoFields": "Parse into form fields",
     "parseUriTitle": "Fill the Server and Auth form fields from this URI so you can edit them",
     "pickCustomColor": "Pick a custom color",
     "protocol": "Protocol",
+    "removeMember": "Remove {{host}}",
     "replicaSetName": "Replica Set Name",
+    "routers": "Routers (mongos)",
     "showPasswordToEdit": "Show password to edit",
     "topology": "Topology",
     "topologyReplicaSet": "Replica Set",
@@ -209,6 +251,10 @@
   },
   "list": {
     "colorDotTitle": "Connection color"
+  },
+  "passwordPrompt": {
+    "message": "This connection was saved without its password. It is used for this connection only and is not saved.",
+    "title": "Password for {{name}}"
   },
   "profile": {
     "connectedActive": "Connected (Active)",
@@ -284,10 +330,20 @@
     "password": "SSH Password",
     "port": "SSH Port",
     "privateKeyPath": "Private Key Path",
+    "reuse": "Use the tunnel of",
+    "reusePlaceholder": "Another connection…",
     "srvWarning": "mongodb+srv:// cannot be used with the current single-host SSH tunnel. Use a standard mongodb:// URI with a specific MongoDB node hostname and port instead.",
     "username": "SSH Username"
   },
   "subtitle": "Manage saved MongoDB profiles and folders",
+  "table": {
+    "lastConnected": "Last connected",
+    "name": "Name",
+    "never": "Never",
+    "none": "None",
+    "security": "Security",
+    "server": "Server"
+  },
   "tabs": {
     "advanced": "Advanced",
     "auth": "Authentication",
@@ -317,11 +373,18 @@
     "allowInvalidHosts": "Allow invalid hostnames",
     "caFilePath": "CA File Path",
     "certValidation": "Certificate Validation",
+    "clientCert": "Client certificate (PEM with key)",
     "insecureTag": "(insecure)",
+    "keyPassword": "Key passphrase",
+    "keyPasswordHelp": "Only needed when the private key is encrypted. Stored in the vault with the connection.",
     "mode": "SSL / TLS Certificate Mode",
     "modeFile": "Custom CA File Upload",
     "modeOff": "Off (Insecure Plaintext)",
     "modeSystem": "System Root CA Certificates",
     "validationWarning": "Disabling certificate validation exposes the connection to man-in-the-middle attacks. Enable only for trusted/self-signed test servers."
+  },
+  "view": {
+    "table": "Table view",
+    "tree": "Tree view"
   }
 }

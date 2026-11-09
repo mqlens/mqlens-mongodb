@@ -1675,6 +1675,18 @@ mod tests {
         (log, move |u: PhaseUpdate| recorder.lock().unwrap().push((u.phase, u.status)))
     }
 
+    /// An encrypted client key needs its passphrase. The driver only accepts
+    /// the option with its `cert-key-password` feature; without it every
+    /// connection that set one failed to parse.
+    #[tokio::test]
+    async fn a_client_key_passphrase_parses_for_connect() {
+        let uri = normalize_mongodb_uri_options(
+            "mongodb://db:27017/?tls=true&tlsCertificateKeyFile=client.pem&sslPEMKeyPassword=kp",
+        );
+        let parsed = mongodb::options::ClientOptions::parse(&uri).await;
+        assert!(parsed.is_ok(), "passphrase rejected: {:?}", parsed.err());
+    }
+
     /// D6: the row must not appear for mechanisms whose authentication we
     /// never observe. The test reaches the ping phase — the only place an
     /// Authenticate row could come from — so its absence means something.

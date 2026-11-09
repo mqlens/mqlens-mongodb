@@ -156,7 +156,7 @@ test.describe('Sidebar on a saved connection', () => {
       app,
       page,
       { monitoring: { replSet } },
-      { uri: 'mongodb://reporter@staging.example:27017/?readPreference=secondaryPreferred' },
+      { uri: 'mongodb://reporter:report-pw@staging.example:27017/?readPreference=secondaryPreferred' },
     );
 
     await sidebar(page).getByRole('button', { name: 'Connection Staging' }).hover();

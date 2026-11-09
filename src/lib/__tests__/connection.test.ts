@@ -9,9 +9,20 @@ import {
   resolveImportUri,
   stripUriSecrets,
   validateMongoUri,
+  needsPasswordPrompt,
+  connectionSummary,
+  readLastConnected,
+  recordLastConnected,
+  withPassword,
 } from '../connection';
 
 describe('stripUriSecrets', () => {
+  it('removes secret options separated by ; as well as &', () => {
+    expect(stripUriSecrets('mongodb://h/?tls=true;tlsCertificateKeyFilePassword=secret;proxyPassword=proxy-secret;w=1')).toBe(
+      'mongodb://h/?tls=true&w=1'
+    );
+  });
+
   it('removes the auth password but keeps the username', () => {
     expect(stripUriSecrets('mongodb://alice:s3cr%40t@db1:27017,db2:27017/sales?tls=true')).toBe(
       'mongodb://alice@db1:27017,db2:27017/sales?tls=true'
@@ -379,5 +390,189 @@ describe('buildExportAllUris', () => {
       ],
       connections: [],
     });
+  });
+});
+
+describe('asking for a password that was not saved', () => {
+  it('asks when a password mechanism has a user and no password', () => {
+    expect(needsPasswordPrompt('mongodb://alice@db:27017/')).toBe(true);
+    expect(needsPasswordPrompt('mongodb://alice@db:27017/?authMechanism=SCRAM-SHA-1')).toBe(true);
+    expect(needsPasswordPrompt('mongodb://alice@db:27017/?authMechanism=PLAIN&authSource=$external')).toBe(true);
+    expect(needsPasswordPrompt('mongodb+srv://AKIA@cluster.example.net/?authMechanism=MONGODB-AWS')).toBe(true);
+  });
+
+  it('does not ask when there is a password, no user, or a passwordless mechanism', () => {
+    expect(needsPasswordPrompt('mongodb://alice:pw@db:27017/')).toBe(false);
+    expect(needsPasswordPrompt('mongodb://alice:@db:27017/')).toBe(false);
+    expect(needsPasswordPrompt('mongodb://db:27017/')).toBe(false);
+    expect(needsPasswordPrompt('mongodb://CN=me@db:27017/?authMechanism=MONGODB-X509')).toBe(false);
+    expect(needsPasswordPrompt('mongodb://svc%40REALM@db:27017/?authMechanism=GSSAPI')).toBe(false);
+    expect(needsPasswordPrompt('mongodb://me@db:27017/?authMechanism=MONGODB-OIDC')).toBe(false);
+    expect(needsPasswordPrompt('mongodb://db:27017/?note=a@b')).toBe(false);
+  });
+
+  it('reads a passwordless mechanism between ; separators too, as the driver does', () => {
+    expect(needsPasswordPrompt('mongodb://CN=me@db:27017/?authMechanism=MONGODB-X509;tls=true')).toBe(false);
+    expect(needsPasswordPrompt('mongodb://svc%40REALM@db:27017/?tls=true;authMechanism=GSSAPI')).toBe(false);
+  });
+
+  it('decodes a percent-encoded mechanism name before deciding', () => {
+    expect(needsPasswordPrompt('mongodb://alice@db:27017/?authMechanism=MONGODB%2DOIDC')).toBe(false);
+    expect(needsPasswordPrompt('mongodb://alice@db:27017/?authMechanism=SCRAM%2DSHA%2D256')).toBe(true);
+    expect(needsPasswordPrompt('mongodb://alice@db:27017/?authMechanism=GSSAPI%')).toBe(true);
+  });
+
+  it('puts the typed password into the userinfo, encoded', () => {
+    expect(withPassword('mongodb://alice@db:27017/shop?tls=true', 'p@ss:/w')).toBe(
+      'mongodb://alice:p%40ss%3A%2Fw@db:27017/shop?tls=true',
+    );
+    expect(withPassword('mongodb+srv://alice@cluster.example.net', 'x')).toBe('mongodb+srv://alice:x@cluster.example.net');
+  });
+});
+
+describe('what the connection table shows', () => {
+  it('summarises a URI without its password', () => {
+    expect(connectionSummary('mongodb://alice:s3cret@h1:27017,h2:27018/app?tls=true&authMechanism=SCRAM-SHA-1')).toEqual({
+      server: 'h1:27017, h2:27018',
+      user: 'alice',
+      mechanism: 'SCRAM-SHA-1',
+      tls: true,
+    });
+    expect(connectionSummary('mongodb+srv://cluster0.example.net/')).toEqual({
+      server: 'cluster0.example.net (SRV)',
+      user: '',
+      mechanism: '',
+      tls: true,
+    });
+    expect(connectionSummary('mongodb://localhost')).toEqual({ server: 'localhost', user: '', mechanism: '', tls: false });
+  });
+
+  it('shows a username with a malformed escape as written instead of throwing', () => {
+    expect(connectionSummary('mongodb://user%ZZ@h1:27017/').user).toBe('user%ZZ');
+  });
+
+  it('remembers when each profile last connected', () => {
+    localStorage.clear();
+    recordLastConnected('p1', 1000);
+    recordLastConnected('p2', 2000);
+    recordLastConnected('p1', 3000);
+    expect(readLastConnected()).toEqual({ p1: 3000, p2: 2000 });
+  });
+
+  it('reads damaged storage as nothing recorded', () => {
+    localStorage.setItem('mqlens.lastConnected', '{not json');
+    expect(readLastConnected()).toEqual({});
+  });
+});
+
+describe('maskUriPassword hides secret options too', () => {
+  it('masks the sslCertificateKeyFilePassword spelling as well', () => {
+    expect(maskUriPassword('mongodb://h/?sslCertificateKeyFilePassword=kp')).toBe('mongodb://h/?sslCertificateKeyFilePassword=••••••');
+  });
+
+  it('masks the proxy password and every client-key passphrase spelling', () => {
+    const masked = maskUriPassword(
+      'mongodb://h:27017/?tls=true&tlsCertificateKeyFilePassword=kp1&proxyPassword=pp&sslClientCertificateKeyPassword=kp2&sslPEMKeyPassword=kp3&appName=x',
+    );
+    expect(masked).toBe(
+      'mongodb://h:27017/?tls=true&tlsCertificateKeyFilePassword=••••••&proxyPassword=••••••&sslClientCertificateKeyPassword=••••••&sslPEMKeyPassword=••••••&appName=x',
+    );
+  });
+});
+
+describe('importing from other MongoDB tools', () => {
+  it('reads a Compass export, named by its favourite', () => {
+    const compass = JSON.stringify({
+      type: 'Compass Connections',
+      version: { $numberInt: '1' },
+      connections: [
+        {
+          id: 'c1',
+          connectionOptions: { connectionString: 'mongodb://ann@reports.db:27017/?authSource=admin' },
+          favorite: { name: 'Reports', color: 'color3' },
+        },
+        { id: 'c2', connectionOptions: { connectionString: 'mongodb+srv://cluster0.example.net/' } },
+      ],
+    });
+    expect(parseConnectionImportFile(compass)).toEqual({ ok: true, connections: [
+      { name: 'Reports', uri: 'mongodb://ann@reports.db:27017/?authSource=admin', folder: null },
+      { name: 'cluster0.example.net', uri: 'mongodb+srv://cluster0.example.net/', folder: null },
+    ] });
+  });
+
+  it('builds URIs from a robo3t.json, which stores fields rather than a URI', () => {
+    const robo = JSON.stringify({
+      connections: [
+        {
+          connectionName: 'Local',
+          serverHost: 'localhost',
+          serverPort: 27017,
+          credentials: [],
+          ssl: { enabled: false },
+        },
+        {
+          connectionName: 'Billing',
+          serverHost: 'billing.db',
+          serverPort: 27018,
+          credentials: [{ enabled: true, userName: 'bob', userPassword: 'p@ss', databaseName: 'admin', mechanism: 'SCRAM-SHA-256' }],
+          ssl: { enabled: true },
+        },
+        {
+          connectionName: 'Cluster',
+          serverHost: 'm1.db',
+          serverPort: 27017,
+          credentials: [{ enabled: false, userName: 'unused', userPassword: 'x', databaseName: 'admin' }],
+          replicaSet: { setName: 'rs0', members: ['m1.db:27017', 'm2.db:27017'] },
+        },
+      ],
+    });
+    expect(parseConnectionImportFile(robo)).toEqual({ ok: true, connections: [
+      { name: 'Local', uri: 'mongodb://localhost:27017/', folder: null },
+      {
+        name: 'Billing',
+        uri: 'mongodb://bob:p%40ss@billing.db:27018/?authSource=admin&authMechanism=SCRAM-SHA-256&tls=true',
+        folder: null,
+      },
+      { name: 'Cluster', uri: 'mongodb://m1.db:27017,m2.db:27017/?replicaSet=rs0', folder: null },
+    ] });
+  });
+});
+
+describe('exporting and importing SSH tunnel settings', () => {
+  const tunnelled = {
+    id: 'p-ssh',
+    name: 'Behind bastion',
+    uri: 'mongodb://app:pw@10.0.0.5:27017/',
+    ssh: { enabled: true, host: 'bastion.example', port: 2222, user: 'ops', auth: { type: 'key' as const, path: '/keys/id_ed25519', passphrase: 'kp' } },
+  };
+
+  it('writes the tunnel into the JSON export, without its secrets by default', () => {
+    const out = JSON.parse(buildExportAllUris([tunnelled], { includePassword: false, includeSettings: true }));
+    expect(out.connections[0].ssh).toEqual({ host: 'bastion.example', port: 2222, user: 'ops', auth: { type: 'key', path: '/keys/id_ed25519' } });
+    const withSecrets = JSON.parse(buildExportAllUris([tunnelled], { includePassword: true, includeSettings: true }));
+    expect(withSecrets.connections[0].ssh.auth).toEqual({ type: 'key', path: '/keys/id_ed25519', passphrase: 'kp' });
+  });
+
+  it('leaves out a tunnel that is switched off', () => {
+    const off = { ...tunnelled, ssh: { ...tunnelled.ssh, enabled: false } };
+    expect(JSON.parse(buildExportAllUris([off], { includePassword: false, includeSettings: true })).connections[0].ssh).toBeUndefined();
+  });
+
+  it('reads the tunnel back on import', () => {
+    const text = buildExportAllUris([tunnelled], { includePassword: false, includeSettings: true });
+    expect(parseConnectionImportFile(text)).toEqual({
+      ok: true,
+      connections: [{
+        name: 'Behind bastion',
+        uri: 'mongodb://app@10.0.0.5:27017/',
+        folder: null,
+        ssh: { enabled: true, host: 'bastion.example', port: 2222, user: 'ops', auth: { type: 'key', path: '/keys/id_ed25519' } },
+      }],
+    });
+  });
+
+  it('ignores an ssh entry it cannot use', () => {
+    const text = JSON.stringify({ connections: [{ name: 'x', uri: 'mongodb://h', ssh: { host: 'b', auth: { type: 'telnet' } } }] });
+    expect(parseConnectionImportFile(text)).toEqual({ ok: true, connections: [{ name: 'x', uri: 'mongodb://h', folder: null }] });
   });
 });

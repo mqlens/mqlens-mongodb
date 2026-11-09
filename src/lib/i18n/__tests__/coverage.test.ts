@@ -131,6 +131,14 @@ const EXEMPT_HITS: Record<string, string[]> = {
     // OIDC allowed-hosts example (#430) — a hostname the user would type, not
     // instructional prose; same treatment as the other example placeholders above.
     'placeholder="mongo.corp.example.com"',
+    // Replica set member rows, client certificate and Advanced tab examples:
+    // a host, port and path to type, and URI option syntax, not prose.
+    'placeholder="db1.example.com"',
+    'placeholder="27017"',
+    'placeholder="/path/to/client.pem"',
+    "placeholder={'dc:ny,rack:1\\n{}'}",
+    'placeholder="majority"',
+    'placeholder="maxConnecting=2&zlibCompressionLevel=6"',
     // Stored profile default value, not UI copy (see the source comment at
     // its definition) — it is written straight into connection state and
     // must never be a translated word (Global Constraint 1's "sammlung" bug).

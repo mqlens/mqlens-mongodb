@@ -25,6 +25,8 @@ export interface PromptOptions {
   destructive?: boolean;
   /** Render a multi-line textarea instead of a single-line input. */
   multiline?: boolean;
+  /** Mask the input, for a password. */
+  password?: boolean;
 }
 
 export interface ChooseOptions {

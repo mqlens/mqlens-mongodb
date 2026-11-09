@@ -18,6 +18,7 @@ mod command_coverage;
 pub mod change_streams;
 pub mod chats;
 pub mod connections;
+pub mod discover;
 mod db;
 pub mod durable;
 pub mod mcp;
@@ -4753,6 +4754,8 @@ pub fn run() {
             server_list_connections,
             server_connect,
             connections::test_connection_uri,
+            discover::discover_replica_set,
+            discover::resolve_srv_seed_list,
             load_app_settings,
             save_app_settings,
             patch_app_settings,

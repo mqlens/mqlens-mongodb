@@ -1,6 +1,7 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from '../fixtures';
 import { callFrom } from '../helpers';
+import { SAMPLE_SERVER } from '../harness/seed';
 
 /** Quick Start → Connection Manager. */
 async function openManager(page: Page): Promise<void> {
@@ -89,7 +90,15 @@ test.describe('Connection editor', () => {
 
   test('exports every saved URI, with passwords only when asked', async ({ app, page }) => {
     await app.open({
-      profiles: [{ id: 'p-reporting', name: 'Reporting', uri: 'mongodb://reporter:hunter2@reporting.example:27017/?authSource=admin' }],
+      profiles: [
+        { id: 'p-reporting', name: 'Reporting', uri: 'mongodb://reporter:hunter2@reporting.example:27017/?authSource=admin' },
+        {
+          id: 'p-tunnel',
+          name: 'Tunnel',
+          uri: 'mongodb://10.0.0.5:27017',
+          ssh: { enabled: true, host: 'bastion.example', port: 22, user: 'ops', auth: { type: 'password', password: 'tunnel-pw' } },
+        },
+      ],
     });
     await openManager(page);
 
@@ -98,8 +107,58 @@ test.describe('Connection editor', () => {
     const preview = dialog.getByTestId('export-uri-preview');
     await expect(preview).toContainText('reporting.example:27017');
     await expect(preview).not.toContainText('hunter2');
+    // The tunnel goes too, its password only where URI passwords do.
+    await expect(preview).toContainText('bastion.example');
+    await expect(preview).not.toContainText('tunnel-pw');
 
     await dialog.getByTestId('export-include-password').click();
     await expect(preview).toContainText('hunter2');
+    await expect(preview).toContainText('tunnel-pw');
+  });
+});
+
+test.describe('Replica set members', () => {
+  const REPLICA_SET = {
+    isReplicaSet: true,
+    clusterType: 'replicaSet',
+    set: 'rs-prod',
+    myStateStr: 'PRIMARY',
+    mongoVersion: '7.0.5',
+    members: [{ name: 'seed.example:27017' }, { name: 'second.example:27018' }],
+  };
+
+  test('discovers the set name and members from one seed, then saves them', async ({ app, page }) => {
+    await app.open({ servers: { 'mongodb://seed.example:27017': SAMPLE_SERVER }, monitoring: { replSet: REPLICA_SET } });
+    await openManager(page);
+    await page.getByRole('button', { name: 'New...', exact: true }).click();
+    await page.getByLabel('Display Name').fill('Prod set');
+    await chooseIn(page, 'Standalone / Direct', 'Replica Set');
+    await page.getByTestId('member-host-0').fill('seed.example');
+    await page.getByTestId('discover-members-btn').click();
+
+    await expect(page.getByTestId('member-host-1')).toHaveValue('second.example');
+    await expect(page.getByTestId('member-port-1')).toHaveValue('27018');
+    await expect(page.getByLabel('Replica Set Name')).toHaveValue('rs-prod');
+
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    await expect.poll(() => app.calls('save_connection_profile')).toHaveLength(1);
+    const [save] = await app.calls('save_connection_profile');
+    const { uri } = (save.args as { profile: { uri: string } }).profile;
+    expect(uri).toMatch(/^mongodb:\/\/seed\.example:27017,second\.example:27018[/?]/);
+    expect(uri).toContain('replicaSet=rs-prod');
+  });
+
+  test('explains when the seed is not in a replica set', async ({ app, page }) => {
+    await app.open({ servers: { 'mongodb://seed.example:27017': SAMPLE_SERVER } });
+    await openManager(page);
+    await page.getByRole('button', { name: 'New...', exact: true }).click();
+    await chooseIn(page, 'Standalone / Direct', 'Replica Set');
+    await page.getByTestId('member-host-0').fill('seed.example');
+    await page.getByTestId('discover-members-btn').click();
+    await expect(page.getByTestId('discover-note')).toContainText('not a replica set member');
+
+    await page.getByTestId('member-host-0').fill('nobody.example');
+    await page.getByTestId('discover-members-btn').click();
+    await expect(page.getByTestId('discover-note')).toContainText('no server answers');
   });
 });

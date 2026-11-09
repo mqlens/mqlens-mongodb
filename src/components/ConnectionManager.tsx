@@ -6,8 +6,13 @@ import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
 import {
   buildExportAllUris,
   buildExportUri,
+  connectionSummary,
+  maskUriPassword,
   parseConnectionImportFile,
+  readLastConnected,
+  stripUriSecrets,
   resolveImportUri,
+  uriWithAskedPassword,
   type ImportedConnection,
   type ImportParseErrorCode,
 } from '@/lib/connection';
@@ -21,8 +26,18 @@ import { formatShortcut, shortcutById } from '@/lib/shortcuts';
 import {
   Plus, X, Server, Play, Edit3, Trash2, Check, AlertCircle, RefreshCw,
   Folder, FolderPlus, FolderOpen, Search, ChevronRight,
-  Copy, ExternalLink, ShieldAlert, Eye, EyeOff, LayoutGrid, ClipboardPaste, Pipette
+  Copy, ExternalLink, ShieldAlert, Eye, EyeOff, LayoutGrid, ClipboardPaste, Pipette, ListTree, Table2, ArrowUp, ArrowDown, Pencil, ClipboardCopy, FolderInput
 } from 'lucide-react';
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -168,9 +183,12 @@ const BLANK_CONN = {
   oidcUseIdToken: false,
   oidcRememberLogin: false,
   tlsMode: 'off',
+  // The saved URI said tls=false (or ssl=false); kept while TLS stays off.
+  tlsOffExplicit: false,
   tlsCa: '',
   tlsClientCert: '',
   tlsClientKey: '',
+  tlsKeyPassword: '',
   tlsAllowInvalidHosts: false,
   tlsAllowInvalidCerts: false,
   sshEnabled: false,
@@ -188,9 +206,20 @@ const BLANK_CONN = {
   proxyPass: '',
   defaultDb: '',
   readPreference: 'primary',
+  readPreferenceTags: '',
   appName: 'MQLens',
-  connectTimeout: 10000,
-  serverSelectionTimeout: 30000,
+  connectTimeout: '10000',
+  serverSelectionTimeout: '30000',
+  socketTimeout: '',
+  maxIdleTime: '',
+  maxPoolSize: '',
+  retryWrites: 'default',
+  loadBalanced: false,
+  writeConcernW: '',
+  wtimeout: '',
+  journal: 'default',
+  extraOptions: '',
+  authMechanismExtraProps: '',
   compression: 'none',
   // Stored profile data, not UI copy — intentionally English in every locale (i18n out of scope).
   name: 'New Connection',
@@ -199,6 +228,71 @@ const BLANK_CONN = {
   mcpEnabled: false,
   connectionMode: 'normal' as ConnectionMode,
 };
+
+const READ_PREFERENCE_MODES = ['primary', 'primaryPreferred', 'secondary', 'secondaryPreferred', 'nearest'];
+
+/**
+ * URI options (lowercase) the editor's fields own: `parseUriIntoFields` reads
+ * them and `buildUri` writes them back, sometimes under their modern name
+ * (`ssl` as `tls`). Any other option rides through `extraOptions` untouched.
+ */
+const FORM_URI_OPTIONS = new Set([
+  'replicaset', 'directconnection', 'tls', 'ssl', 'tlscafile', 'sslcertificateauthorityfile',
+  'tlscertificatekeyfile', 'sslclientcertificatekeyfile', 'tlscertificatekeyfilepassword',
+  'sslclientcertificatekeypassword', 'tlsinsecure', 'tlsallowinvalidcertificates',
+  'tlsallowinvalidhostnames', 'authmechanism', 'authsource', 'authmechanismproperties',
+  'readpreference', 'readpreferencetags', 'compressors', 'appname', 'connecttimeoutms',
+  'serverselectiontimeoutms', 'sockettimeoutms', 'maxidletimems', 'maxpoolsize', 'retrywrites',
+  'loadbalanced', 'w', 'wtimeoutms', 'journal', 'proxyhost', 'proxyport', 'proxyusername', 'proxypassword',
+]);
+
+/**
+ * Legacy and singular TLS option names, under the name the form reads them
+ * by: the same aliases the backend's `normalize_mongodb_uri_options` accepts,
+ * so a setting the driver will apply is never hidden in `extraOptions`.
+ */
+const TLS_OPTION_ALIASES: Record<string, string> = {
+  ssl: 'tls',
+  sslcafile: 'tlsCAFile',
+  sslcertificateauthorityfile: 'tlsCAFile',
+  sslcertificatekeyfile: 'tlsCertificateKeyFile',
+  sslpemkeyfile: 'tlsCertificateKeyFile',
+  sslclientcertificatekeyfile: 'tlsCertificateKeyFile',
+  sslcertificatekeyfilepassword: 'tlsCertificateKeyFilePassword',
+  sslpemkeypassword: 'tlsCertificateKeyFilePassword',
+  sslclientcertificatekeypassword: 'tlsCertificateKeyFilePassword',
+  sslinvalidcertificateallowed: 'tlsAllowInvalidCertificates',
+  sslallowinvalidcertificate: 'tlsAllowInvalidCertificates',
+  sslallowinvalidcertificates: 'tlsAllowInvalidCertificates',
+  tlsallowinvalidcertificate: 'tlsAllowInvalidCertificates',
+  sslinvalidhostnameallowed: 'tlsAllowInvalidHostnames',
+  sslallowinvalidhostname: 'tlsAllowInvalidHostnames',
+  sslallowinvalidhostnames: 'tlsAllowInvalidHostnames',
+  tlsallowinvalidhostname: 'tlsAllowInvalidHostnames',
+};
+
+const VIEW_KEY = 'mqlens.connectionManager.view';
+type TableSortKey = 'name' | 'server' | 'security' | 'lastConnected';
+
+/** A saved SSH tunnel as the editor's SSH tab fields. */
+const sshEditorFields = (ssh: SshConfig) => ({
+  sshEnabled: ssh.enabled,
+  sshHost: ssh.host,
+  sshPort: String(ssh.port),
+  sshUser: ssh.user,
+  sshAuth: ssh.auth.type,
+  sshKey: ssh.auth.type === 'key' ? ssh.auth.path : '',
+  sshPass:
+    ssh.auth.type === 'password'
+      ? ssh.auth.password
+      : ssh.auth.type === 'key'
+        ? ssh.auth.passphrase || ''
+        : '',
+});
+
+/** Percent-encode an option value but keep the `:` and `,` that tag sets and mechanism properties are built from. */
+const encodeOptionValue = (value: string) =>
+  encodeURIComponent(value).replace(/%3A/gi, ':').replace(/%2C/gi, ',');
 
 /** Connection mode editor options (#188 Task 1) — segmented control in the server panel. */
 const CONNECTION_MODE_OPTIONS: { value: ConnectionMode; labelKey: string; descriptionKey: string }[] = [
@@ -250,11 +344,6 @@ const TABS = [
   { id: 'proxy', labelKey: 'tabs.proxy', icon: RefreshCw },
   { id: 'adv', labelKey: 'tabs.advanced', icon: LayoutGrid },
 ];
-
-// Replace the password in a mongodb URI (//user:PASSWORD@host) with dots, so the
-// connection string can be shown without exposing the credential.
-export const maskUriPassword = (uri: string): string =>
-  uri.replace(/(\/\/[^/:@\s]+:)([^@/\s]+)(@)/, (_m, a, _p, c) => `${a}••••••${c}`);
 
 // Turn a raw mongodb driver error (often a huge "server selection timeout" with
 // the full topology dump) into a concise root-cause headline + actionable hint.
@@ -333,8 +422,10 @@ export const parseUriIntoFields = (uri: string) => {
   let hostStr = isSrv ? 'localhost' : 'localhost:27017';
   let defaultDb = '';
   let tlsMode = 'off';
+  let tlsOffExplicit = false;
   let tlsCa = '';
   let tlsClientCert = '';
+  let tlsKeyPassword = '';
   let tlsAllowInvalidCerts = false;
   let tlsAllowInvalidHosts = false;
   let authMethod = 'none';
@@ -346,7 +437,32 @@ export const parseUriIntoFields = (uri: string) => {
   let authDb = 'admin';
   let awsSessionToken = '';
   let kerberosServiceName = '';
+  let authMechanismExtraProps = '';
   let query = '';
+  // The Advanced and Proxy fields. Blank means "not in the URI": a saved
+  // connection that never set appName or a timeout must not gain one on edit.
+  const options = {
+    readPreference: 'primary',
+    readPreferenceTags: '',
+    compression: 'none',
+    appName: '',
+    connectTimeout: '',
+    serverSelectionTimeout: '',
+    socketTimeout: '',
+    maxIdleTime: '',
+    maxPoolSize: '',
+    retryWrites: 'default',
+    loadBalanced: false,
+    writeConcernW: '',
+    wtimeout: '',
+    journal: 'default',
+    proxyEnabled: false,
+    proxyHost: '',
+    proxyPort: '1080',
+    proxyUser: '',
+    proxyPass: '',
+    extraOptions: '',
+  };
   if (m) {
     authUser = m[1] ? decodeURIComponent(m[1]) : '';
     authPass = m[2] ? decodeURIComponent(m[2]) : '';
@@ -354,19 +470,29 @@ export const parseUriIntoFields = (uri: string) => {
     defaultDb = m[4] || '';
     // `;` separates options as `&` does, for the driver and the backend's
     // normaliser alike, so every lookup below reads either.
-    query = (m[5] || '').replace(/;/g, '&');
+    query = (m[5] || '')
+      .replace(/;/g, '&')
+      .split('&')
+      .map((p) => {
+        const key = p.split('=')[0];
+        const name = TLS_OPTION_ALIASES[key.toLowerCase()];
+        return name ? name + p.slice(key.length) : p;
+      })
+      .join('&');
     const param = (name: string): string | null => {
       const mm = query.match(new RegExp(`(?:^|&)${name}=([^&]*)`, 'i'));
       return mm ? decodeURIComponent(mm[1]) : null;
     };
-    const caFile = param('tlsCAFile') || param('sslCertificateAuthorityFile');
+    const caFile = param('tlsCAFile');
     if (caFile) {
       tlsMode = 'file';
       tlsCa = caFile;
-    } else if (/(?:^|&)(?:tls|ssl)=true/i.test(query)) {
+    } else if (/(?:^|&)tls=true/i.test(query)) {
       tlsMode = 'system';
     }
-    tlsClientCert = param('tlsCertificateKeyFile') || param('sslClientCertificateKeyFile') || '';
+    tlsOffExplicit = tlsMode === 'off' && /(?:^|&)tls=false/i.test(query);
+    tlsClientCert = param('tlsCertificateKeyFile') || '';
+    tlsKeyPassword = param('tlsCertificateKeyFilePassword') || '';
     // tlsInsecure implies both allow-invalid relaxations.
     const insecure = /(?:^|&)tlsInsecure=true/i.test(query);
     tlsAllowInvalidCerts = insecure || /(?:^|&)tlsAllowInvalidCertificates=true/i.test(query);
@@ -415,7 +541,55 @@ export const parseUriIntoFields = (uri: string) => {
       const value = entry.slice(at + 1);
       if (key === 'AWS_SESSION_TOKEN') awsSessionToken = value;
       else if (key === 'SERVICE_NAME') kerberosServiceName = value;
+      else if (entry) authMechanismExtraProps += (authMechanismExtraProps ? ',' : '') + entry;
     }
+
+    const parts = query.split('&').filter(Boolean);
+    const values = (name: string) =>
+      parts
+        .filter((p) => p.split('=')[0].toLowerCase() === name.toLowerCase())
+        .map((p) => decodeURIComponent(p.slice(p.indexOf('=') + 1)));
+    const one = (name: string) => values(name)[0] ?? '';
+    const readPreference = one('readPreference');
+    if (READ_PREFERENCE_MODES.includes(readPreference)) options.readPreference = readPreference;
+    // One tag set per line, in priority order; the empty set is spelled {}.
+    options.readPreferenceTags = values('readPreferenceTags').map((v) => v || '{}').join('\n');
+    const compressors = one('compressors');
+    if (compressors === 'snappy' || compressors === 'zlib') options.compression = compressors;
+    options.appName = one('appName');
+    options.connectTimeout = one('connectTimeoutMS');
+    options.serverSelectionTimeout = one('serverSelectionTimeoutMS');
+    options.socketTimeout = one('socketTimeoutMS');
+    options.maxIdleTime = one('maxIdleTimeMS');
+    options.maxPoolSize = one('maxPoolSize');
+    const flag = (v: string) => (v === 'true' || v === 'false' ? v : 'default');
+    options.retryWrites = flag(one('retryWrites'));
+    options.loadBalanced = one('loadBalanced') === 'true';
+    options.writeConcernW = one('w');
+    options.wtimeout = one('wtimeoutMS');
+    options.journal = flag(one('journal'));
+    options.proxyHost = one('proxyHost');
+    options.proxyEnabled = !!options.proxyHost;
+    options.proxyPort = one('proxyPort') || '1080';
+    options.proxyUser = one('proxyUsername');
+    options.proxyPass = one('proxyPassword');
+    // Everything the form has no field for is carried through as written, so
+    // editing a saved connection never drops an option (buildUri appends it).
+    const representable: Record<string, (v: string) => boolean> = {
+      readpreference: (v) => READ_PREFERENCE_MODES.includes(v),
+      compressors: (v) => v === 'snappy' || v === 'zlib',
+      retrywrites: (v) => v === 'true' || v === 'false',
+      journal: (v) => v === 'true' || v === 'false',
+      loadbalanced: (v) => v === 'true',
+    };
+    options.extraOptions = parts
+      .filter((p) => {
+        const key = p.split('=')[0].toLowerCase();
+        if (!FORM_URI_OPTIONS.has(key)) return true;
+        const check = representable[key];
+        return check ? !check(decodeURIComponent(p.slice(p.indexOf('=') + 1))) : false;
+      })
+      .join('&');
   }
   const hosts = hostStr.split(',').map((h) => {
     const [host, port] = h.split(':');
@@ -439,9 +613,13 @@ export const parseUriIntoFields = (uri: string) => {
     authDb,
     awsSessionToken,
     kerberosServiceName,
+    authMechanismExtraProps,
+    ...options,
     tlsMode,
+    tlsOffExplicit,
     tlsCa,
     tlsClientCert,
+    tlsKeyPassword,
     tlsAllowInvalidCerts,
     tlsAllowInvalidHosts,
     defaultDb,
@@ -485,14 +663,25 @@ export const buildUri = (s: typeof BLANK_CONN) => {
     creds = `${u}${p}@`;
   }
   const params = [];
-  if (s.topology === 'replicaSet' && s.replicaSetName) params.push(`replicaSet=${s.replicaSetName}`);
-  // directConnection only makes sense for a single-host, non-SRV standalone.
-  if (s.topology === 'standalone' && s.directConnection && !isSrv && s.hosts.filter(h => h.host).length <= 1)
+  if (s.topology === 'replicaSet' && s.replicaSetName) params.push(`replicaSet=${encodeURIComponent(s.replicaSetName)}`);
+  // directConnection only makes sense for a single-host, non-SRV standalone,
+  // and never with loadBalanced, which the driver refuses alongside it.
+  if (s.topology === 'standalone' && s.directConnection && !s.loadBalanced && !isSrv && s.hosts.filter(h => h.host).length <= 1)
     params.push('directConnection=true');
   if (s.tlsMode !== 'off') params.push('tls=true');
+  else if (s.tlsOffExplicit) params.push('tls=false');
   // Custom CA file (and optional client cert/key file) must be passed to the driver.
   if (s.tlsMode === 'file' && s.tlsCa) params.push(`tlsCAFile=${encodeURIComponent(s.tlsCa)}`);
-  if (s.tlsMode !== 'off' && s.tlsClientCert) params.push(`tlsCertificateKeyFile=${encodeURIComponent(s.tlsClientCert)}`);
+  // mongodb+srv:// is TLS unless it says tls=false, so its certificate stays.
+  if ((s.tlsMode !== 'off' || (isSrv && !s.tlsOffExplicit)) && s.tlsClientCert) {
+    params.push(`tlsCertificateKeyFile=${encodeURIComponent(s.tlsClientCert)}`);
+    // Also encode ' ( ) ! * ~ so no character of the secret can end the URI
+    // where log redaction reads it in free text.
+    if (s.tlsKeyPassword) {
+      const value = encodeURIComponent(s.tlsKeyPassword).replace(/[!'()*~]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+      params.push(`tlsCertificateKeyFilePassword=${value}`);
+    }
+  }
   if (s.tlsAllowInvalidHosts) params.push('tlsAllowInvalidHostnames=true');
   if (s.tlsAllowInvalidCerts) params.push('tlsAllowInvalidCertificates=true');
   if (s.authMethod === 'scram-1') params.push('authMechanism=SCRAM-SHA-1');
@@ -529,18 +718,37 @@ export const buildUri = (s: typeof BLANK_CONN) => {
     if (s.authDb !== implied) params.push(`authSource=${encodeURIComponent(s.authDb)}`);
   }
   // Mechanism-specific properties (M5).
+  const mechanismProps = [];
   if (s.authMethod === 'aws' && s.awsSessionToken) {
-    params.push(`authMechanismProperties=AWS_SESSION_TOKEN:${encodeURIComponent(s.awsSessionToken)}`);
+    mechanismProps.push(`AWS_SESSION_TOKEN:${encodeURIComponent(s.awsSessionToken)}`);
   }
   if (s.authMethod === 'kerberos' && s.kerberosServiceName) {
-    params.push(`authMechanismProperties=SERVICE_NAME:${encodeURIComponent(s.kerberosServiceName)}`);
+    mechanismProps.push(`SERVICE_NAME:${encodeURIComponent(s.kerberosServiceName)}`);
   }
-  if (s.readPreference !== 'primary') params.push(`readPreference=${s.readPreference}`);
+  if (s.authMethod !== 'none' && s.authMechanismExtraProps) mechanismProps.push(encodeOptionValue(s.authMechanismExtraProps));
+  if (mechanismProps.length) params.push(`authMechanismProperties=${mechanismProps.join(',')}`);
+  if (s.readPreference !== 'primary') {
+    params.push(`readPreference=${s.readPreference}`);
+    for (const line of (s.readPreferenceTags ?? '').split('\n').map((l) => l.trim()).filter(Boolean)) {
+      params.push(`readPreferenceTags=${line === '{}' ? '' : encodeOptionValue(line)}`);
+    }
+  }
   if (s.compression !== 'none') params.push(`compressors=${s.compression}`);
   if (s.appName) params.push(`appName=${encodeURIComponent(s.appName)}`);
-  // Timeouts (M2): honor the user's configured connect/server-selection windows.
-  if (s.connectTimeout) params.push(`connectTimeoutMS=${s.connectTimeout}`);
-  if (s.serverSelectionTimeout) params.push(`serverSelectionTimeoutMS=${s.serverSelectionTimeout}`);
+  // Timeouts (M2) and the rest of the Advanced tab; blank leaves the driver default.
+  const numeric: [string, string | undefined][] = [
+    ['connectTimeoutMS', s.connectTimeout],
+    ['serverSelectionTimeoutMS', s.serverSelectionTimeout],
+    ['socketTimeoutMS', s.socketTimeout],
+    ['maxIdleTimeMS', s.maxIdleTime],
+    ['maxPoolSize', s.maxPoolSize],
+  ];
+  for (const [key, value] of numeric) if (value?.trim()) params.push(`${key}=${encodeURIComponent(value.trim())}`);
+  if (s.retryWrites && s.retryWrites !== 'default') params.push(`retryWrites=${s.retryWrites}`);
+  if (s.loadBalanced) params.push('loadBalanced=true');
+  if (s.writeConcernW?.trim()) params.push(`w=${encodeURIComponent(s.writeConcernW.trim())}`);
+  if (s.wtimeout?.trim()) params.push(`wtimeoutMS=${encodeURIComponent(s.wtimeout.trim())}`);
+  if (s.journal && s.journal !== 'default') params.push(`journal=${s.journal}`);
   // SOCKS5 proxy (M2): the MongoDB driver only supports SOCKS5 proxy URI options.
   if (s.proxyEnabled && s.proxyHost) {
     params.push(`proxyHost=${encodeURIComponent(s.proxyHost)}`);
@@ -548,6 +756,11 @@ export const buildUri = (s: typeof BLANK_CONN) => {
     if (s.proxyUser) params.push(`proxyUsername=${encodeURIComponent(s.proxyUser)}`);
     if (s.proxyPass) params.push(`proxyPassword=${encodeURIComponent(s.proxyPass)}`);
   }
+  // A kept option gives way when a form control now writes the same key.
+  const keyOf = (p: string) => p.split('=')[0].toLowerCase().replace(/^ssl$/, 'tls');
+  const owned = new Set(params.map(keyOf));
+  const extra = (s.extraOptions ?? '').trim().replace(/^[?&]+/, '').split('&').filter((p) => p && !owned.has(keyOf(p))).join('&');
+  if (extra) params.push(extra);
   const dbPath = s.defaultDb ? `/${s.defaultDb}` : '';
   const scheme = isSrv ? 'mongodb+srv' : 'mongodb';
   return `${scheme}://${creds}${hosts}${dbPath}${params.length ? '?' + params.join('&') : ''}`;
@@ -674,6 +887,14 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   const [profiles, setProfiles] = useState<ConnectionProfile[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [view, setView] = useState<'tree' | 'table'>(() => {
+    try {
+      return localStorage.getItem(VIEW_KEY) === 'table' ? 'table' : 'tree';
+    } catch {
+      return 'tree';
+    }
+  });
+  const [sort, setSort] = useState<{ key: TableSortKey; dir: 1 | -1 }>({ key: 'name', dir: 1 });
   const [folderFilter, setFolderFilter] = useState<string>('all');
   
   // Folder tree management states
@@ -699,6 +920,10 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   >(null);
   const [exportIncludePassword, setExportIncludePassword] = useState(false);
   const [exportIncludeSettings, setExportIncludeSettings] = useState(true);
+  // SRV -> seed list: resolved URIs by their SRV form, and the last lookup failure.
+  const [exportSeedList, setExportSeedList] = useState(false);
+  const [seedUris, setSeedUris] = useState<Record<string, string>>({});
+  const [seedError, setSeedError] = useState<string | null>(null);
   const [editorState, setEditorState] = useState<typeof BLANK_CONN>(BLANK_CONN);
   const [activeEditorTab, setActiveEditorTab] = useState('server');
   const [showPassword, setShowPassword] = useState(false);
@@ -709,6 +934,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
 
   // Test Connection States
   const [testing, setTesting] = useState(false);
+  const [discovering, setDiscovering] = useState(false);
+  const [discoverNote, setDiscoverNote] = useState<string | null>(null);
   const [testProgress, setTestProgress] = useState(0);
   const [testSteps, setTestSteps] = useState<TestStep[]>([
     { key: 'parse', nameKey: 'test.stageParse', status: 'running' },
@@ -903,23 +1130,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     const parsed = parseUriIntoFields(profile.uri);
 
     // Restore structured SSH config persisted with the profile.
-    const ssh = profile.ssh || null;
-    const sshFields = ssh
-      ? {
-          sshEnabled: ssh.enabled,
-          sshHost: ssh.host,
-          sshPort: String(ssh.port),
-          sshUser: ssh.user,
-          sshAuth: ssh.auth.type,
-          sshKey: ssh.auth.type === 'key' ? ssh.auth.path : '',
-          sshPass:
-            ssh.auth.type === 'password'
-              ? ssh.auth.password
-              : ssh.auth.type === 'key'
-                ? ssh.auth.passphrase || ''
-                : '',
-        }
-      : {};
+    const sshFields = profile.ssh ? sshEditorFields(profile.ssh) : {};
 
     const opened = {
       ...BLANK_CONN,
@@ -1402,6 +1613,13 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       return;
     }
 
+    const uri = await uriWithAskedPassword(profile.uri, prompt, {
+      title: t('passwordPrompt.title', { name: profile.name }),
+      message: t('passwordPrompt.message'),
+      confirmLabel: t('actions.connect'),
+    });
+    if (uri === null) return;
+
     // See `handleEditorConnect`'s `loginId` comment: minted only for OIDC,
     // since `connect_db` streams no phases Cancel/Reopen could otherwise key on.
     const loginId = isOidcUri(profile.uri) ? generateUUID() : null;
@@ -1409,7 +1627,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     setError(null);
     setConnectLoginId(loginId);
     try {
-      const connId = await invoke<string>('connect_db', { uri: profile.uri, ssh: profile.ssh ?? null, oidc: profile.oidc ?? null, loginId, profileId: profile.id });
+      const connId = await invoke<string>('connect_db', { uri, ssh: profile.ssh ?? null, oidc: profile.oidc ?? null, loginId, profileId: profile.id });
       onConnect(connId, profile.name, profile.uri, profile.id, profile.color_tag ?? undefined, profile.connection_mode ?? 'normal');
     } catch (err: any) {
       setError(describeConnectError(err, t));
@@ -1523,6 +1741,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     if (connections.length === 1 && !connections[0].folder) {
       openEditorForImport();
       applyImportedUri(connections[0].uri, connections[0].name);
+      const ssh = connections[0].ssh;
+      if (ssh) setEditorState((prev) => ({ ...prev, ...sshEditorFields(ssh), sshEnabled: true }));
       return;
     }
 
@@ -1549,7 +1769,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
           id: generateUUID(),
           name,
           uri: connection.uri,
-          ssh: null,
+          ssh: connection.ssh ?? null,
           color_tag: null,
           mcp_enabled: false,
         };
@@ -1669,12 +1889,16 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   const openExportDialog = (uri: string, hasSsh: boolean) => {
     setExportIncludePassword(false);
     setExportIncludeSettings(true);
+    setExportSeedList(false);
+    setSeedError(null);
     setExportDialog({ mode: 'single', uri, hasSsh });
   };
 
   const openExportAllDialog = () => {
     setExportIncludePassword(false);
     setExportIncludeSettings(true);
+    setExportSeedList(false);
+    setSeedError(null);
     setExportDialog({ mode: 'all' });
   };
 
@@ -1683,11 +1907,34 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     includeSettings: exportIncludeSettings,
   };
 
+  const srvExportUris = !exportDialog
+    ? []
+    : (exportDialog.mode === 'all' ? profiles.map(p => p.uri) : [exportDialog.uri]).filter(u => /^mongodb\+srv:\/\//i.test(u));
+  const seeded = (uri: string) => (exportSeedList ? seedUris[uri] ?? uri : uri);
+  // Until every SRV URI has its seed list, the preview would still export SRV.
+  const seedPending = exportSeedList && srvExportUris.some(u => !seedUris[u]);
+
+  const toggleSeedList = async (on: boolean) => {
+    setExportSeedList(on);
+    setSeedError(null);
+    if (!on) return;
+    const resolved: Record<string, string> = {};
+    for (const uri of srvExportUris) {
+      if (seedUris[uri]) continue;
+      try {
+        resolved[uri] = await invoke<string>('resolve_srv_seed_list', { uri });
+      } catch (e) {
+        setSeedError(t('export.seedListFailed', { error: String(e) }));
+      }
+    }
+    setSeedUris(prev => ({ ...prev, ...resolved }));
+  };
+
   const exportPreview = !exportDialog
     ? ''
     : exportDialog.mode === 'all'
-      ? buildExportAllUris(profiles, exportOpts, { folders, profileFolderMap })
-      : buildExportUri(exportDialog.uri, exportOpts);
+      ? buildExportAllUris(profiles.map(p => ({ ...p, uri: seeded(p.uri) })), exportOpts, { folders, profileFolderMap })
+      : buildExportUri(seeded(exportDialog.uri), exportOpts);
 
   const handleExportSave = async () => {
     if (!exportDialog) return;
@@ -1792,6 +2039,37 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     }
   };
 
+  // Discover (replica set): ask a seed member for the set's name and members.
+  const handleDiscover = async () => {
+    // A reply for an editor that has since closed (and maybe reopened on
+    // another connection) is dropped, as a connect's is.
+    const attempt = connectAttemptRef.current;
+    setDiscovering(true);
+    setDiscoverNote(null);
+    try {
+      const found = await invoke<{ set_name: string | null; hosts: string[] }>('discover_replica_set', {
+        uri: buildUri(editorState),
+      });
+      if (attempt !== connectAttemptRef.current) return;
+      // The reply comes from the server, so only plain host:port members are
+      // taken; anything else could carry URI syntax into the saved string.
+      const members = found.hosts.filter((h) => /^[A-Za-z0-9.-]+:\d{1,5}$/.test(h));
+      if (found.set_name && members.length) {
+        const setName = found.set_name;
+        setEditorState((prev) => ({ ...prev, replicaSetName: setName, hosts: textToHosts(members.join(',')) }));
+      } else {
+        setDiscoverNote(t('form.discoverNoSet'));
+      }
+    } catch (err) {
+      if (attempt === connectAttemptRef.current) setDiscoverNote(connectErrorText(err));
+    } finally {
+      setDiscovering(false);
+    }
+  };
+
+  const setMember = (index: number, patch: Partial<{ host: string; port: string }>) =>
+    setEditorState((prev) => ({ ...prev, hosts: prev.hosts.map((h, i) => (i === index ? { ...h, ...patch } : h)) }));
+
   const handleCancelTestLogin = () => { cancelOidcLogin(testLoginId); };
   const handleReopenTestLogin = () => {
     if (!testLoginId) return;
@@ -1814,6 +2092,143 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       return matchesSearch && mappedFolder === folderFilter;
     });
   }, [profiles, searchQuery, folderFilter, profileFolderMap]);
+
+  const chooseView = (next: 'tree' | 'table') => {
+    setView(next);
+    try {
+      localStorage.setItem(VIEW_KEY, next);
+    } catch {
+      /* the choice just isn't remembered */
+    }
+  };
+
+  // Re-read on open so a connect made since the last open shows.
+  const lastConnected = useMemo(() => (isOpen ? readLastConnected() : {}), [isOpen]);
+  const tableRows = useMemo(() => {
+    const rows = filteredProfiles.map(p => {
+      const summary = connectionSummary(p.uri);
+      const security = [
+        [summary.user, summary.mechanism].filter(Boolean).join(' · '),
+        summary.tls ? 'TLS' : '',
+        p.ssh?.enabled ? 'SSH' : '',
+      ].filter(Boolean).join(', ');
+      return { profile: p, server: summary.server, security, at: lastConnected[p.id] ?? 0 };
+    });
+    const value = (r: (typeof rows)[number]) =>
+      sort.key === 'name' ? r.profile.name : sort.key === 'server' ? r.server : sort.key === 'security' ? r.security : r.at;
+    return rows.sort((a, b) => {
+      const x = value(a), y = value(b);
+      return (typeof x === 'number' ? x - (y as number) : x.localeCompare(y as string, undefined, { sensitivity: 'base' })) * sort.dir;
+    });
+  }, [filteredProfiles, lastConnected, sort]);
+  // A new column starts ascending, except dates, which start with the most recent.
+  const sortBy = (key: TableSortKey) =>
+    setSort(prev => (prev.key === key ? { key, dir: prev.dir === 1 ? -1 : 1 } : { key, dir: key === 'lastConnected' ? -1 : 1 }));
+
+  const moveToFolder = (profileId: string, folderId: string) => {
+    const map = { ...profileFolderMap };
+    if (folderId) map[profileId] = folderId;
+    else delete map[profileId];
+    saveFoldersToStorage(folders, map);
+  };
+
+  const handleRenameFolder = async (folder: FolderNode) => {
+    const name = await prompt({
+      title: t('folder.renameTitle'),
+      defaultValue: folder.name,
+      confirmLabel: t('folder.rename'),
+      validate: (v) => {
+        const next = v.trim().toLowerCase();
+        if (!next) return t('errors.folderNameRequired');
+        return folders.some(f => f.id !== folder.id && f.name.toLowerCase() === next) ? t('errors.folderNameExists') : null;
+      },
+    });
+    if (name === null) return;
+    saveFoldersToStorage(folders.map(f => (f.id === folder.id ? { ...f, name: name.trim() } : f)), profileFolderMap);
+  };
+
+  // Deleting a folder never deletes connections: they move to the root.
+  const handleDeleteFolder = async (folder: FolderNode) => {
+    const ok = await confirm({
+      title: t('folder.deleteTitle'),
+      message: t('folder.deleteMessage', { name: folder.name }),
+      confirmLabel: t('actions.delete'),
+      destructive: true,
+    });
+    if (!ok) return;
+    const map = Object.fromEntries(Object.entries(profileFolderMap).filter(([, f]) => f !== folder.id));
+    saveFoldersToStorage(folders.filter(f => f.id !== folder.id), map);
+  };
+
+  // The profile being dragged; a ref, so a drop works without reading dataTransfer.
+  const dragProfileId = useRef<string | null>(null);
+  const dragProps = (profileId: string) => ({
+    draggable: true,
+    onDragStart: (e: React.DragEvent) => {
+      dragProfileId.current = profileId;
+      e.dataTransfer?.setData('text/plain', profileId);
+    },
+    onDragEnd: () => { dragProfileId.current = null; },
+  });
+  const dropProps = (folderId: string) => ({
+    'data-folder-id': folderId || 'root',
+    onDragOver: (e: React.DragEvent) => { if (dragProfileId.current) e.preventDefault(); },
+    onDrop: (e: React.DragEvent) => {
+      const id = dragProfileId.current;
+      dragProfileId.current = null;
+      if (!id) return;
+      e.preventDefault();
+      e.stopPropagation();
+      moveToFolder(id, folderId);
+    },
+  });
+
+  const profileMenu = (p: ConnectionProfile, row: React.ReactElement) => {
+    const isActive = activeConnections.some(c => c.profileId === p.id);
+    const current = profileFolderMap[p.id] || '';
+    return (
+      <ContextMenu key={p.id}>
+        <ContextMenuTrigger asChild onContextMenu={() => handleSelect(p.id)}>{row}</ContextMenuTrigger>
+        <ContextMenuContent className={NESTED_SELECT_Z}>
+          <ContextMenuItem disabled={isActive || loading} onClick={handleConnectClick}>
+            <Play size={12} />
+            <span>{t('actions.connect')}</span>
+          </ContextMenuItem>
+          <ContextMenuItem onClick={() => handleEditClick(p.id)}>
+            <Edit3 size={12} />
+            <span>{t('actions.edit')}</span>
+          </ContextMenuItem>
+          <ContextMenuItem onClick={() => handleDuplicateClick(p.id)}>
+            <Copy size={12} />
+            <span>{t('actions.duplicate')}</span>
+          </ContextMenuItem>
+          <ContextMenuItem onClick={() => void navigator.clipboard?.writeText(stripUriSecrets(p.uri)).catch(() => {})}>
+            <ClipboardCopy size={12} />
+            <span>{t('actions.copyUri')}</span>
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuSub>
+            <ContextMenuSubTrigger>
+              <FolderInput size={12} />
+              <span>{t('actions.moveToFolder')}</span>
+              <ChevronRight size={12} className="ml-auto" />
+            </ContextMenuSubTrigger>
+            <ContextMenuSubContent className={NESTED_SELECT_Z}>
+              <ContextMenuItem disabled={!current} onClick={() => moveToFolder(p.id, '')}>{t('folder.root')}</ContextMenuItem>
+              {folders.map(f => (
+                <ContextMenuItem key={f.id} disabled={current === f.id} onClick={() => moveToFolder(p.id, f.id)}>{f.name}</ContextMenuItem>
+              ))}
+            </ContextMenuSubContent>
+          </ContextMenuSub>
+          <ContextMenuSeparator />
+          <ContextMenuItem className="text-destructive focus:text-destructive" onClick={() => handleDelete(p.id)}>
+            <Trash2 size={12} />
+            <span>{t('actions.delete')}</span>
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
+    );
+  };
 
   const toggleFolderExpand = (folderId: string) => {
     setExpandedFolders(prev => ({ ...prev, [folderId]: !prev[folderId] }));
@@ -1881,6 +2296,22 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
             <Server size={12} className="text-primary" />
             <span>{t('serverAccounts.title')}</span>
           </Button>
+          <div className="flex items-center rounded-md border border-border">
+            {([['tree', ListTree, t('view.tree')], ['table', Table2, t('view.table')]] as const).map(([v, Icon, label]) => (
+              <Button
+                key={v}
+                variant={view === v ? 'secondary' : 'ghost'}
+                size="icon"
+                className="h-8 w-8"
+                aria-label={label}
+                title={label}
+                aria-pressed={view === v}
+                onClick={() => chooseView(v)}
+              >
+                <Icon size={13} />
+              </Button>
+            ))}
+          </div>
           {selectedId && (
             <>
               <div className="mx-1 h-4 w-px bg-border" />
@@ -1961,16 +2392,19 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
             </div>
 
             <ScrollArea className="min-h-0 flex-1">
-            <div className="p-2">
+            <div className="min-h-full p-2" {...dropProps('')}>
               {folders.map(folder => {
                 const isExpanded = expandedFolders[folder.id];
                 const folderProfiles = filteredProfiles.filter(p => profileFolderMap[p.id] === folder.id);
 
                 return (
                   <div key={folder.id}>
+                    <ContextMenu>
+                    <ContextMenuTrigger asChild>
                     <div
                       className={treeRowClass()}
                       onClick={() => toggleFolderExpand(folder.id)}
+                      {...dropProps(folder.id)}
                     >
                       <ChevronRight
                         size={12}
@@ -1984,18 +2418,30 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                       <span className="min-w-0 truncate">{folder.name}</span>
                       <span className="shrink-0 text-ui-2xs tabular-nums text-muted-foreground">({folderProfiles.length})</span>
                     </div>
+                    </ContextMenuTrigger>
+                    <ContextMenuContent className={NESTED_SELECT_Z}>
+                      <ContextMenuItem onClick={() => handleRenameFolder(folder)}>
+                        <Pencil size={12} />
+                        <span>{t('folder.rename')}</span>
+                      </ContextMenuItem>
+                      <ContextMenuItem className="text-destructive focus:text-destructive" onClick={() => handleDeleteFolder(folder)}>
+                        <Trash2 size={12} />
+                        <span>{t('folder.delete')}</span>
+                      </ContextMenuItem>
+                    </ContextMenuContent>
+                    </ContextMenu>
 
                     {isExpanded && (
                       <div className="ml-3 border-l border-sidebar-border pl-1.5">
                         {folderProfiles.map(p => {
                           const isSel = p.id === selectedId;
                           const isActive = activeConnections.some(c => c.profileId === p.id);
-                          return (
+                          return profileMenu(p,
                             <div
-                              key={p.id}
                               className={treeRowClass(isSel)}
                               onClick={() => handleSelect(p.id)}
                               onDoubleClick={handleConnectClick}
+                              {...dragProps(p.id)}
                             >
                               <ConnectionColorDot color={p.color_tag} />
                               <Server size={12} className={cn('shrink-0', isSel ? 'text-primary' : 'text-muted-foreground')} />
@@ -2021,12 +2467,12 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
               {filteredProfiles.filter(p => !profileFolderMap[p.id]).map(p => {
                 const isSel = p.id === selectedId;
                 const isActive = activeConnections.some(c => c.profileId === p.id);
-                return (
+                return profileMenu(p,
                   <div
-                    key={p.id}
                     className={cn(treeRowClass(isSel), 'my-0.5')}
                     onClick={() => handleSelect(p.id)}
                     onDoubleClick={handleConnectClick}
+                    {...dragProps(p.id)}
                   >
                     <ConnectionColorDot color={p.color_tag} />
                     <Server size={12} className={cn('shrink-0', isSel ? 'text-primary' : 'text-muted-foreground')} />
@@ -2046,7 +2492,76 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
           {/* Right connection preview panel */}
           <ScrollArea className="min-h-0 flex-1 bg-background">
             <div className="flex min-h-full flex-col p-6 lg:p-8">
-            {selectedProfile ? (
+            {view === 'table' && profiles.length > 0 ? (
+              <>
+              <table data-testid="connection-table" className="w-full table-fixed border-collapse text-ui-xs">
+                <thead>
+                  <tr className="border-b border-border text-left">
+                    {([
+                      ['name', t('table.name')],
+                      ['server', t('table.server')],
+                      ['security', t('table.security')],
+                      ['lastConnected', t('table.lastConnected')],
+                    ] as const).map(([key, label]) => (
+                      <th
+                        key={key}
+                        className="py-1.5 pr-2 font-medium text-muted-foreground"
+                        aria-sort={sort.key === key ? (sort.dir === 1 ? 'ascending' : 'descending') : undefined}
+                      >
+                        <button type="button" className="inline-flex items-center gap-1 hover:text-foreground" onClick={() => sortBy(key)}>
+                          {label}
+                          {sort.key === key && (sort.dir === 1 ? <ArrowUp size={11} aria-hidden /> : <ArrowDown size={11} aria-hidden />)}
+                        </button>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {tableRows.map(({ profile: p, server, security, at }) => profileMenu(p,
+                    <tr
+                      className={cn('cursor-default border-b border-border/60 hover:bg-muted/40', p.id === selectedId && 'bg-primary/10')}
+                      aria-selected={p.id === selectedId}
+                      onClick={() => handleSelect(p.id)}
+                      onDoubleClick={handleConnectClick}
+                      {...dragProps(p.id)}
+                    >
+                      <td className="py-1.5 pr-2">
+                        <span className="flex min-w-0 items-center gap-1.5">
+                          <ConnectionColorDot color={p.color_tag} />
+                          <span data-testid="connection-row-name" className="truncate">{p.name || t('sidebar.unnamedConnection')}</span>
+                        </span>
+                      </td>
+                      <td className="truncate py-1.5 pr-2 font-mono">{server}</td>
+                      <td className="truncate py-1.5 pr-2">{security || t('table.none')}</td>
+                      <td className="truncate py-1.5 tabular-nums text-muted-foreground">{at ? new Date(at).toLocaleString() : t('table.never')}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {/* The details panel shows these in tree view; a connect started
+                  from a row still needs its error and login controls. */}
+              {(error || (connectLoginId && !showEditDialog)) && (
+                <div data-testid="connect-feedback" className="mt-4 flex flex-col gap-2">
+                  {error && (
+                    <div className="flex items-center gap-1.5 rounded border border-destructive/30 bg-destructive/10 p-2 text-[11px] text-destructive">
+                      <AlertCircle size={12} />
+                      <span>{error}</span>
+                    </div>
+                  )}
+                  {connectLoginId && !showEditDialog && (
+                    <div className="flex justify-end gap-2">
+                      <Button type="button" variant="outline" size="sm" data-testid="connect-cancel-login" onClick={handleCancelConnectLogin}>
+                        {t('test.cancelLogin')}
+                      </Button>
+                      <Button type="button" variant="outline" size="sm" data-testid="connect-reopen-login" onClick={handleReopenConnectLogin}>
+                        {t('test.openBrowserAgain')}
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )}
+              </>
+            ) : selectedProfile ? (
               <div className="flex flex-1 flex-col">
                 <div className="flex-1">
                   <div className="mb-4 flex items-center gap-3 border-b border-border pb-3">
@@ -2418,7 +2933,77 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                   </div>
                   )}
 
-                  {editorState.topology !== 'uri' && (
+                  {(editorState.topology === 'replicaSet' || editorState.topology === 'sharded') && editorState.protocol !== 'mongodb+srv' ? (
+                    <div className="flex flex-col gap-1.5" data-testid="member-list">
+                      <Label>{editorState.topology === 'replicaSet' ? t('form.members') : t('form.routers')}</Label>
+                      {editorState.hosts.map((member, i) => (
+                        <div key={i} className="flex items-center gap-1.5">
+                          <Input
+                            type="text"
+                            data-testid={`member-host-${i}`}
+                            aria-label={t('form.memberHost', { index: i + 1 })}
+                            value={member.host}
+                            onChange={e => setMember(i, { host: e.target.value })}
+                            placeholder="db1.example.com"
+                            className="flex-[3] font-mono"
+                          />
+                          <Input
+                            type="text"
+                            inputMode="numeric"
+                            data-testid={`member-port-${i}`}
+                            aria-label={t('form.memberPort', { index: i + 1 })}
+                            value={member.port}
+                            onChange={e => setMember(i, { port: e.target.value })}
+                            placeholder="27017"
+                            className="flex-1 font-mono"
+                          />
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 shrink-0"
+                            disabled={editorState.hosts.length === 1}
+                            aria-label={t('form.removeMember', { host: member.host || i + 1 })}
+                            onClick={() => setEditorState(prev => ({ ...prev, hosts: prev.hosts.filter((_, j) => j !== i) }))}
+                          >
+                            <X size={13} />
+                          </Button>
+                        </div>
+                      ))}
+                      <div className="flex items-center gap-1.5">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-7 gap-1 text-xs"
+                          onClick={() => setEditorState(prev => ({ ...prev, hosts: [...prev.hosts, { host: '', port: '27017' }] }))}
+                        >
+                          <Plus size={12} /> {t('form.addMember')}
+                        </Button>
+                        {editorState.topology === 'replicaSet' && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-7 gap-1 text-xs"
+                            data-testid="discover-members-btn"
+                            // An SSH tunnel reaches one host only, and Discover
+                            // would go around it straight to the seed.
+                            disabled={discovering || editorState.sshEnabled || !editorState.hosts.some(h => h.host.trim())}
+                            onClick={handleDiscover}
+                            title={editorState.sshEnabled ? t('form.discoverNoSsh') : t('form.discoverTitle')}
+                          >
+                            <RefreshCw size={12} className={cn(discovering && 'animate-spin')} /> {t('form.discover')}
+                          </Button>
+                        )}
+                      </div>
+                      {discoverNote && (
+                        <p className="m-0 flex items-center gap-1 text-[11px] text-warning" data-testid="discover-note">
+                          <AlertCircle size={12} /> {discoverNote}
+                        </p>
+                      )}
+                    </div>
+                  ) : editorState.topology !== 'uri' && (
                     <div className="flex flex-col gap-1">
                       <Label>
                         {t('form.hostList')} {editorState.protocol === 'mongodb+srv' ? t('form.hostListHostnameOnly') : t('form.hostListHostPort')}
@@ -2472,8 +3057,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
 
                     {editorState.topology === 'replicaSet' && (
                       <div className="flex flex-1 flex-col gap-1">
-                        <Label>{t('form.replicaSetName')}</Label>
+                        <Label htmlFor="replica-set-name">{t('form.replicaSetName')}</Label>
                         <Input
+                          id="replica-set-name"
                           type="text"
                           value={editorState.replicaSetName}
                           onChange={e => setEditorState(prev => ({ ...prev, replicaSetName: e.target.value }))}
@@ -2745,6 +3331,41 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                   )}
 
                   {editorState.tlsMode !== 'off' && (
+                    <div className="flex flex-col gap-1 border-t border-border pt-2.5">
+                      <Label htmlFor="tls-client-cert">{t('tls.clientCert')}</Label>
+                      <div className="flex gap-1.5">
+                        <Input
+                          id="tls-client-cert"
+                          type="text"
+                          value={editorState.tlsClientCert}
+                          onChange={e => setEditorState(prev => ({ ...prev, tlsClientCert: e.target.value }))}
+                          placeholder="/path/to/client.pem"
+                          className="flex-1 font-mono"
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          data-testid="client-cert-browse"
+                          onClick={() => pickTlsFile('tlsClientCert')}
+                        >
+                          {t('actions.browse')}
+                        </Button>
+                      </div>
+                      <Label htmlFor="tls-key-password" className="mt-1.5">{t('tls.keyPassword')}</Label>
+                      <Input
+                        id="tls-key-password"
+                        type="password"
+                        autoComplete="off"
+                        value={editorState.tlsKeyPassword}
+                        onChange={e => setEditorState(prev => ({ ...prev, tlsKeyPassword: e.target.value }))}
+                        disabled={!editorState.tlsClientCert}
+                      />
+                      <span className="text-[10px] text-muted-foreground">{t('tls.keyPasswordHelp')}</span>
+                    </div>
+                  )}
+
+                  {editorState.tlsMode !== 'off' && (
                     <div className="flex flex-col gap-2 border-t border-border pt-2.5">
                       <Label>{t('tls.certValidation')}</Label>
                       <label className="flex items-center gap-2 text-[11px]">
@@ -2785,6 +3406,27 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
 
                   {editorState.sshEnabled && (
                     <div className="flex flex-col gap-2 border-t border-border pt-2.5">
+                      {profiles.some(p => p.ssh?.enabled) && (
+                        <div className="flex flex-col gap-1">
+                          <Label>{t('ssh.reuse')}</Label>
+                          <Select
+                            value=""
+                            onValueChange={(id) => {
+                              const ssh = profiles.find(p => p.id === id)?.ssh;
+                              if (ssh) setEditorState(prev => ({ ...prev, ...sshEditorFields(ssh), sshEnabled: true }));
+                            }}
+                          >
+                            <SelectTrigger data-testid="ssh-reuse-select" className="h-8 text-xs">
+                              <SelectValue placeholder={t('ssh.reusePlaceholder')} />
+                            </SelectTrigger>
+                            <SelectContent className={NESTED_SELECT_Z}>
+                              {profiles.filter(p => p.ssh?.enabled).map(p => (
+                                <SelectItem key={p.id} value={p.id}>{`${p.name} (${p.ssh!.user}@${p.ssh!.host}:${p.ssh!.port})`}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
                       {(editorState.topology === 'uri'
                         ? /^mongodb\+srv:\/\//i.test(editorState.uri.trim())
                         : editorState.protocol === 'mongodb+srv') && (
@@ -2798,8 +3440,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                       )}
                       <div className="flex gap-2">
                         <div className="flex flex-[2] flex-col gap-1">
-                          <Label>{t('ssh.host')}</Label>
+                          <Label htmlFor="ssh-host">{t('ssh.host')}</Label>
                           <Input
+                            id="ssh-host"
                             type="text"
                             value={editorState.sshHost}
                             onChange={e => setEditorState(prev => ({ ...prev, sshHost: e.target.value }))}
@@ -2983,6 +3626,129 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                         </SelectContent>
                       </Select>
                     </div>
+                  </div>
+
+                  <h4 className="mt-2 border-t border-border pt-2.5 text-ui-2xs font-semibold uppercase tracking-wide text-muted-foreground">{t('advanced.readSection')}</h4>
+                  <div className="flex gap-2">
+                    <div className="flex flex-1 flex-col gap-1">
+                      <Label>{t('advanced.readPreference')}</Label>
+                      <Select value={editorState.readPreference} onValueChange={(v) => setEditorState(prev => ({ ...prev, readPreference: v }))}>
+                        <SelectTrigger data-testid="read-preference-select" className="h-8 text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className={NESTED_SELECT_Z}>
+                          {/* MongoDB's own mode names, the same in every language. */}
+                          {READ_PREFERENCE_MODES.map((mode) => (
+                            <SelectItem key={mode} value={mode}>{mode}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="flex flex-1 flex-col gap-1">
+                      <Label htmlFor="adv-read-tags">{t('advanced.readPreferenceTags')}</Label>
+                      <textarea
+                        id="adv-read-tags"
+                        rows={2}
+                        value={editorState.readPreferenceTags}
+                        disabled={editorState.readPreference === 'primary'}
+                        onChange={e => setEditorState(prev => ({ ...prev, readPreferenceTags: e.target.value }))}
+                        placeholder={'dc:ny,rack:1\n{}'}
+                        className="w-full resize-y rounded-md border border-input bg-background px-3 py-1 font-mono text-ui-xs shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                      />
+                      <p className="m-0 text-[10px] text-muted-foreground">{t('advanced.readPreferenceTagsHelp')}</p>
+                    </div>
+                  </div>
+
+                  <h4 className="mt-2 border-t border-border pt-2.5 text-ui-2xs font-semibold uppercase tracking-wide text-muted-foreground">{t('advanced.timeoutsSection')}</h4>
+                  <div className="grid grid-cols-2 gap-2">
+                    {([
+                      ['connectTimeout', t('advanced.connectTimeout'), '10000'],
+                      ['serverSelectionTimeout', t('advanced.serverSelectionTimeout'), '30000'],
+                      ['socketTimeout', t('advanced.socketTimeout'), '0'],
+                      ['maxIdleTime', t('advanced.maxIdleTime'), '0'],
+                      ['maxPoolSize', t('advanced.maxPoolSize'), '100'],
+                      ['appName', t('advanced.appName'), 'MQLens'],
+                    ] as const).map(([field, label, placeholder]) => (
+                      <div key={field} className="flex flex-col gap-1">
+                        <Label htmlFor={`adv-${field}`}>{label}</Label>
+                        <Input
+                          id={`adv-${field}`}
+                          type="text"
+                          inputMode={field === 'appName' ? undefined : 'numeric'}
+                          value={editorState[field]}
+                          onChange={e => setEditorState(prev => ({ ...prev, [field]: e.target.value }))}
+                          placeholder={placeholder}
+                          className={field === 'appName' ? undefined : 'font-mono'}
+                        />
+                      </div>
+                    ))}
+                  </div>
+
+                  <h4 className="mt-2 border-t border-border pt-2.5 text-ui-2xs font-semibold uppercase tracking-wide text-muted-foreground">{t('advanced.writesSection')}</h4>
+                  <div className="grid grid-cols-2 gap-2">
+                    {([
+                      ['retryWrites', t('advanced.retryWrites'), 'retry-writes-select'],
+                      ['journal', t('advanced.journal'), 'journal-select'],
+                    ] as const).map(([field, label, testId]) => (
+                      <div key={field} className="flex flex-col gap-1">
+                        <Label>{label}</Label>
+                        <Select value={editorState[field]} onValueChange={(v) => setEditorState(prev => ({ ...prev, [field]: v }))}>
+                          <SelectTrigger data-testid={testId} className="h-8 text-xs">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent className={NESTED_SELECT_Z}>
+                            <SelectItem value="default">{t('advanced.driverDefault')}</SelectItem>
+                            <SelectItem value="true">{t('advanced.on')}</SelectItem>
+                            <SelectItem value="false">{t('advanced.off')}</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    ))}
+                    <div className="flex flex-col gap-1">
+                      <Label htmlFor="adv-w">{t('advanced.writeConcernW')}</Label>
+                      <Input
+                        id="adv-w"
+                        type="text"
+                        value={editorState.writeConcernW}
+                        onChange={e => setEditorState(prev => ({ ...prev, writeConcernW: e.target.value }))}
+                        placeholder="majority"
+                        className="font-mono"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <Label htmlFor="adv-wtimeout">{t('advanced.wtimeout')}</Label>
+                      <Input
+                        id="adv-wtimeout"
+                        type="text"
+                        inputMode="numeric"
+                        value={editorState.wtimeout}
+                        onChange={e => setEditorState(prev => ({ ...prev, wtimeout: e.target.value }))}
+                        placeholder="0"
+                        className="font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="mt-2 flex items-center gap-2 border-t border-border pt-2.5">
+                    <input
+                      type="checkbox"
+                      id="adv-load-balanced"
+                      checked={editorState.loadBalanced}
+                      onChange={e => setEditorState(prev => ({ ...prev, loadBalanced: e.target.checked }))}
+                    />
+                    <Label htmlFor="adv-load-balanced" className="text-[11px] font-medium">{t('advanced.loadBalanced')}</Label>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <Label htmlFor="adv-extra">{t('advanced.extraOptions')}</Label>
+                    <Input
+                      id="adv-extra"
+                      type="text"
+                      value={editorState.extraOptions}
+                      onChange={e => setEditorState(prev => ({ ...prev, extraOptions: e.target.value }))}
+                      placeholder="maxConnecting=2&zlibCompressionLevel=6"
+                      className="font-mono"
+                    />
+                    <p className="m-0 text-[10px] text-muted-foreground">{t('advanced.extraOptionsHelp')}</p>
                   </div>
                 </div>
               )}
@@ -3280,6 +4046,23 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                 data-testid="export-include-settings"
               />
             </div>
+            {srvExportUris.length > 0 && (
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <Label htmlFor="export-seed-list" className="text-ui-xs">{t('export.seedList')}</Label>
+                  <p className="text-ui-2xs text-muted-foreground">{t('export.seedListDescription')}</p>
+                </div>
+                <Switch
+                  id="export-seed-list"
+                  checked={exportSeedList}
+                  onCheckedChange={(on) => void toggleSeedList(on)}
+                  data-testid="export-seed-list"
+                />
+              </div>
+            )}
+            {seedError && (
+              <p className="text-ui-2xs text-destructive" role="alert">{seedError}</p>
+            )}
             {exportDialog?.mode === 'single' && exportDialog.hasSsh && (
               <p className="text-ui-2xs text-muted-foreground" data-testid="export-ssh-note">
                 {t('export.sshNote')}
@@ -3291,6 +4074,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
               variant="outline"
               size="sm"
               data-testid="export-save-btn"
+              disabled={seedPending}
               onClick={handleExportSave}
             >
               {t('export.saveToFile')}
@@ -3298,6 +4082,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
             <Button
               size="sm"
               data-testid="export-copy-btn"
+              disabled={seedPending}
               onClick={() => navigator.clipboard?.writeText(exportPreview)}
             >
               {t('export.copyToClipboard')}
