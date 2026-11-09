@@ -104,6 +104,7 @@
     "savedQueryDeleted": "Saved query deleted",
     "savedTitle": "Saved",
     "sortCleared": "Cleared sort parameters",
+    "tabMoving": "This tab is being moved to another window.",
     "updatedTitle": "Updated",
     "updateFailed": "Update failed: {{detail}}",
     "uploadFailed": "Upload failed: {{detail}}",

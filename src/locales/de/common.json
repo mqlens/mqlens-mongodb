@@ -104,6 +104,7 @@
     "savedQueryDeleted": "Gespeicherte Abfrage gelöscht",
     "savedTitle": "Gespeichert",
     "sortCleared": "Sortierparameter geleert",
+    "tabMoving": "Dieser Tab wird gerade in ein anderes Fenster verschoben.",
     "updateFailed": "Aktualisierung fehlgeschlagen: {{detail}}",
     "updatedTitle": "Aktualisiert",
     "uploadFailed": "Hochladen fehlgeschlagen: {{detail}}",

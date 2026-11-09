@@ -116,6 +116,47 @@ test.describe('Moving a tab with a document draft', () => {
     await release();
     await expect(modal).toHaveCount(0);
   });
+
+  test('waits for a value saved in place in the grid (#554 review)', async ({ app, page }) => {
+    await connectStaging(app, page);
+    await openCollection(page, 'sales_db', 'customers');
+    await expect(view(page).getByText('Alice Smith').first()).toBeVisible();
+    await announceSecondWindow(app, 70, [stagingTab('transactions')]);
+    await view(page).getByRole('button', { name: 'Table', exact: true }).click();
+    await view(page).getByText('alice@example.com', { exact: true }).dblclick();
+    await view(page).getByTestId('cell-editor').fill('"ada@example.com"');
+
+    const release = await app.hold('update_document');
+    await view(page).getByTestId('cell-editor').press('Enter');
+    await expect.poll(async () => (await app.calls('update_document')).length).toBe(1);
+
+    await openTabMenu(page, 'customers');
+    await page.getByTestId('context-menu').getByRole('menuitem', { name: /^Move to win-2/ }).click();
+    await expect(toast(page, 'Wait for the document save to finish before moving this tab.')).toBeVisible();
+    expect((await ops(app)).some((op) => op.type === 'move_tab_to_window')).toBe(false);
+
+    await release();
+    await expect(view(page).getByText('ada@example.com', { exact: true })).toBeVisible();
+  });
+
+  test('does not save a value in place while the tab is on its way out (#554 review)', async ({ app, page }) => {
+    await connectStaging(app, page);
+    await openCollection(page, 'sales_db', 'customers');
+    await expect(view(page).getByText('Alice Smith').first()).toBeVisible();
+    await announceSecondWindow(app, 70, [stagingTab('transactions')]);
+    await view(page).getByRole('button', { name: 'Table', exact: true }).click();
+
+    // No broadcast takes the tab away, so it stays in the moving state.
+    await openTabMenu(page, 'customers');
+    await page.getByTestId('context-menu').getByRole('menuitem', { name: /^Move to win-2/ }).click();
+    await expect.poll(async () => (await ops(app)).some((op) => op.type === 'move_tab_to_window')).toBe(true);
+
+    await view(page).getByText('alice@example.com', { exact: true }).dblclick();
+    await view(page).getByTestId('cell-editor').fill('"ada@example.com"');
+    await view(page).getByTestId('cell-editor').press('Enter');
+    await expect(view(page).getByTestId('cell-editor')).toHaveAttribute('title', 'This tab is being moved to another window.');
+    expect(await app.calls('update_document')).toHaveLength(0);
+  });
 });
 
 test.describe('Tabs another window holds', () => {
