@@ -2875,6 +2875,36 @@ describe('DataGrid — in-place cell edit', () => {
     expect(onEditField.mock.calls[0][1]).toEqual({ address: { city: 'Paris' }, _id: 1 });
   });
 
+  it('does not open another cell while a save is pending (#554 review)', async () => {
+    let finish!: () => void;
+    const onEditField = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
+    render(<DataGrid documents={docs()} onEditField={onEditField} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+
+    fireEvent.doubleClick(cell('free'));
+    fireEvent.change(editor(), { target: { value: '"pro"' } });
+    fireEvent.keyDown(editor(), { key: 'Enter' });
+    await vi.waitFor(() => expect(onEditField).toHaveBeenCalledTimes(1));
+
+    // A second cell would be closed, draft and all, when the first save lands.
+    fireEvent.doubleClick(cell('Alice'));
+    expect(screen.getAllByTestId('cell-editor')).toHaveLength(1);
+    expect(editor().value).toBe('"pro"');
+
+    finish();
+    await vi.waitFor(() => expect(screen.queryByTestId('cell-editor')).toBeNull());
+    fireEvent.doubleClick(cell('Alice'));
+    expect(editor().value).toBe('"Alice"');
+  });
+
+  it('does not edit a value inside an array, which the backend writes whole (#554 review)', () => {
+    render(<DataGrid documents={[{ tags: ['a', 'b'], _id: 1 }]} onEditField={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: /tree/i }));
+
+    fireEvent.doubleClick(cell('"a"'));
+    expect(screen.queryByTestId('cell-editor')).toBeNull();
+  });
+
   it('does not edit _id, sub-documents, or a read-only grid', () => {
     const { unmount } = render(<DataGrid documents={docs()} onEditField={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: /table/i }));

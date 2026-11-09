@@ -499,6 +499,9 @@ interface TreeRow {
   keyName: string;
   /** Keys from the document root down to this value; empty for the root. */
   path: string[];
+  /** Inside an array, which the backend writes back whole: not edited in place,
+   *  so a save cannot overwrite another element changed since the results loaded. */
+  underArray?: boolean;
   kind: 'scalar' | 'object' | 'array';
   value?: any; // scalar value
   childCount: number; // for object/array containers
@@ -908,7 +911,7 @@ const TreeRowComponent = ({
   if (!row) return null;
   const collapsed = row.foldId !== undefined && collapsedFolds.has(row.foldId);
   const editing = isCellEditing(cellEdit, row.docIndex, row.path);
-  const editable = startCellEdit && row.kind === 'scalar' && isEditablePath(row.path);
+  const editable = startCellEdit && row.kind === 'scalar' && !row.underArray && isEditablePath(row.path);
   return (
     <div
       style={style}
@@ -1030,6 +1033,9 @@ export const DataGrid: React.FC<DataGridProps> = ({
   // The Table or Tree cell open in the in-place editor. Closed by new results
   // (its document index may now point elsewhere) and by a view switch.
   const [cellEdit, setCellEdit] = useState<CellEdit | null>(null);
+  // A save and the refresh after it are in flight. No other cell opens until
+  // they settle: either one would close it and drop what was typed there.
+  const [cellSaving, setCellSaving] = useState(false);
 
   const [plainJson, setPlainJson] = useState(false);
   const [embeddedFields, setEmbeddedFields] = useState(false);
@@ -2043,7 +2049,8 @@ export const DataGrid: React.FC<DataGridProps> = ({
       ancestors: number[],
       docIndex: number,
       isDocRoot: boolean,
-      rawDoc?: Record<string, any>
+      rawDoc?: Record<string, any>,
+      underArray = false
     ) => {
       const isArr = Array.isArray(value);
       const isObj = value !== null && typeof value === 'object' && !isBsonObject(value) && !isArr;
@@ -2060,6 +2067,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
           type: bsonTypeLabel(value),
           ancestors,
           docIndex,
+          underArray,
         });
         return;
       }
@@ -2087,7 +2095,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
       });
 
       const childAncestors = [...ancestors, foldId];
-      entries.forEach(([k, v]) => walk(v, k, [...path, k], depth + 1, childAncestors, docIndex, false));
+      entries.forEach(([k, v]) => walk(v, k, [...path, k], depth + 1, childAncestors, docIndex, false, undefined, underArray || isArr));
     };
 
     parsedDocs.forEach((doc, di) => {
@@ -2237,7 +2245,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
     isReadOnly,
   };
 
-  const startCellEdit = onEditField && !isReadOnly ? setCellEdit : undefined;
+  const startCellEdit = onEditField && !isReadOnly && !cellSaving ? setCellEdit : undefined;
   // Saves the open cell. A value written as it was loaded is not a change and
   // closes without a write. Throws to keep the editor open with the reason.
   const commitCellEdit = async (text: string) => {
@@ -2257,7 +2265,12 @@ export const DataGrid: React.FC<DataGridProps> = ({
     const edited = structuredClone(doc);
     const parent = valueAtPath(edited, cellEdit.path.slice(0, -1));
     parent[cellEdit.path[cellEdit.path.length - 1]] = value;
-    await onEditField(doc, edited);
+    setCellSaving(true);
+    try {
+      await onEditField(doc, edited);
+    } finally {
+      setCellSaving(false);
+    }
     setCellEdit(null);
   };
   const renderCellEditor = () =>
