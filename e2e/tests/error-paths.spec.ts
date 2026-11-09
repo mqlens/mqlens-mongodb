@@ -104,16 +104,14 @@ test.describe('Writes', () => {
 
     await view(page).getByTestId('bulk-write-menu-btn').click();
     await page.getByTestId('update-many-btn').click();
-    await page.getByTestId('dialog-input').fill('[]');
-    await page.getByTestId('dialog-confirm').click();
-    await expect(page.getByTestId('dialog-error')).toContainText('Update must be a JSON object');
-    await page.getByTestId('dialog-input').fill('{ "tier": "Gold" }');
-    await page.getByTestId('dialog-confirm').click();
-    await expect(page.getByTestId('dialog-error')).toContainText('Update must use operators like $set');
-    await page.getByTestId('dialog-input').fill('{ "$set": { "tier": "Gold" } }');
-    await page.getByTestId('dialog-confirm').click();
+    const updateEditor = page.getByTestId('update-many-editor');
+    await setEditorText(page, updateEditor, '[]');
+    await expect(page.getByTestId('update-many-error')).toContainText('Update must be a JSON object');
+    await setEditorText(page, updateEditor, '{ "tier": "Gold" }');
+    await expect(page.getByTestId('update-many-error')).toContainText('Update must use operators like $set');
+    await setEditorText(page, updateEditor, '{ "$set": { "tier": "Gold" } }');
     await app.failNext('update_many', 'write conflict');
-    await page.getByTestId('dialog-confirm').click();
+    await page.getByTestId('update-many-submit').click();
     await expect(toast(page, 'write conflict')).toBeVisible();
   });
 

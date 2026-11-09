@@ -32,9 +32,9 @@ test.describe('Bulk writes', () => {
 
     await view(page).getByTestId('bulk-write-menu-btn').click();
     await page.getByTestId('update-many-btn').click();
-    await page.getByTestId('dialog-input').fill('{ "$set": { "tier": "Gold" } }');
-    await page.getByTestId('dialog-confirm').click();
-    // A second prompt, for the name.
+    await setEditorText(page, page.getByTestId('update-many-editor'), '{ $set: { tier: "Gold" } }');
+    await page.getByTestId('update-many-submit').click();
+    // Then a prompt for the name.
     await expect(page.getByTestId('dialog-input')).toHaveValue('');
     await page.getByTestId('dialog-input').fill('customers');
     const updated = await callFrom(app, 'update_many', () => page.getByTestId('dialog-confirm').click());
@@ -51,11 +51,9 @@ test.describe('Bulk writes', () => {
 
     await view(page).getByTestId('bulk-write-menu-btn').click();
     await page.getByTestId('update-many-btn').click();
-    await page.getByTestId('dialog-input').fill('{ "$set": { "tier": "Gold" } }');
-    await page.getByTestId('dialog-confirm').click();
-    await expect(page.getByTestId('dialog-input')).toHaveCount(0);
-    await page.getByTestId('dialog-cancel').click();
-    await expect(page.getByTestId('dialog-title')).toHaveCount(0);
+    await setEditorText(page, page.getByTestId('update-many-editor'), '{ $set: { tier: "Gold" } }');
+    await page.getByTestId('update-many-cancel').click();
+    await expect(page.getByTestId('update-many-modal')).toHaveCount(0);
 
     expect(await app.calls('delete_many')).toHaveLength(0);
     expect(await app.calls('update_many')).toHaveLength(0);

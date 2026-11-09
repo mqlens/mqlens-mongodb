@@ -85,6 +85,7 @@
       "updateMany": {
         "body_other": "将此更新应用到匹配以下条件的 {{count}} 个文档：\n{{filter}}",
         "confirmLabel": "更新",
+        "hint": "此处支持 Shell 语法：不带引号的键、ISODate()、ObjectId()。按 Ctrl+Enter 执行更新。",
         "promptMessage": "更新内容（使用操作符，例如 {\"$set\": {...}}）：",
         "title": "批量更新",
         "validation": {

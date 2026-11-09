@@ -46,6 +46,7 @@ import { MongoShell } from './components/MongoShell';
 import { ToolSetupDialog, type ManagedToolStatusUi, type InstallTaskUi } from './components/ToolSetupDialog';
 import { QuickStart } from './components/QuickStart';
 import { DocumentEditModal } from './components/DocumentEditModal';
+import { UpdateManyModal } from './components/UpdateManyModal';
 import {
   ExportView,
   DEFAULT_EXPORT_OPTIONS,
@@ -4653,32 +4654,15 @@ function Workspace() {
     }
   };
 
+  // Update Many counts first, then opens UpdateManyModal, which names the
+  // filter and the count, so submitting it is the confirmation. It belongs to
+  // the tab it was opened from and shows only while that tab does, since it
+  // does not name the collection it writes to (#550 review).
+  const [updateManyTarget, setUpdateManyTarget] = useState<{ tab: QueryTab; filter: string; count: number; openedAt: number } | null>(null);
+
   const handleUpdateMany = async (tab: QueryTab) => {
     if (tab.type !== 'collection') return;
     const filter = bulkFilter(tab);
-    const update = await prompt({
-      title: t('documents:dataGrid.dialogs.updateMany.title'),
-      message: t('documents:dataGrid.dialogs.updateMany.promptMessage'),
-      defaultValue: '{ "$set": {} }',
-      validate: (v) => {
-        let parsed: any;
-        try {
-          parsed = JSON.parse(v);
-        } catch {
-          return t('documents:dataGrid.dialogs.updateMany.validation.invalidJson');
-        }
-        if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-          return t('documents:dataGrid.dialogs.updateMany.validation.mustBeObject');
-        }
-        if (Object.keys(parsed).length === 0 || !Object.keys(parsed).every((k) => k.startsWith('$'))) {
-          return t('documents:dataGrid.dialogs.updateMany.validation.mustUseOperators');
-        }
-        return null;
-      },
-    });
-    if (!update) return; // cancelled
-    // #188 Task 3: see handleDeleteMany's comment on this same lookup.
-    const mode = activeConnections.find((c) => c.id === tab.connectionId)?.mode ?? 'normal';
     try {
       const count = await invoke<number>('count_documents', {
         id: tab.connectionId,
@@ -4686,6 +4670,20 @@ function Workspace() {
         collection: tab.collection,
         filter,
       });
+      setUpdateManyTarget({ tab, filter, count, openedAt: Date.now() });
+    } catch (err: any) {
+      toast(t('toast.updateFailed', { detail: err?.message || err }), 'error');
+    }
+  };
+
+  /** `update` is Extended JSON from UpdateManyModal. */
+  const runUpdateMany = async (update: string) => {
+    if (!updateManyTarget) return;
+    const { tab, filter, count } = updateManyTarget;
+    setUpdateManyTarget(null);
+    // #188 Task 3: see handleDeleteMany's comment on this same lookup.
+    const mode = activeConnections.find((c) => c.id === tab.connectionId)?.mode ?? 'normal';
+    try {
       let confirmed = false;
       if (mode === 'confirm_destructive') {
         const ok = await confirmByTypedName(prompt, {
@@ -4698,15 +4696,6 @@ function Workspace() {
         }, t);
         if (!ok) return;
         confirmed = true;
-      } else if (
-        !(await confirm({
-          title: t('documents:dataGrid.dialogs.updateMany.title'),
-          message: bulkConfirmMessage('update', count, filter),
-          confirmLabel: t('documents:dataGrid.dialogs.updateMany.confirmLabel'),
-          destructive: true,
-        }))
-      ) {
-        return;
       }
       const modified = await invoke<number>('update_many', {
         id: tab.connectionId,
@@ -5513,6 +5502,16 @@ function Workspace() {
             onJsonChange={(draft) => activeTab && setDocumentDraft(activeTab.id, draft)}
             onClose={() => activeTab && closeDocumentEdit(activeTab.id)}
             onSave={handleSaveDocument}
+          />
+
+          <UpdateManyModal
+            // A fresh draft per Update Many; hiding it on another tab keeps the draft.
+            key={updateManyTarget?.openedAt ?? 'none'}
+            isOpen={updateManyTarget !== null && updateManyTarget.tab.id === activeTab?.id}
+            filter={updateManyTarget?.filter ?? '{}'}
+            count={updateManyTarget?.count ?? 0}
+            onClose={() => setUpdateManyTarget(null)}
+            onSubmit={runUpdateMany}
           />
 
           <UpdatePrompt />
