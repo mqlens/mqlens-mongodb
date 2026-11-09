@@ -1353,6 +1353,15 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       return;
     }
 
+    // Asked as in `handleConnectClick`: the password goes to this connect only,
+    // never into the URI handed over or saved.
+    const connectUri = await uriWithAskedPassword(uri, prompt, {
+      title: t('passwordPrompt.title', { name: saved?.name ?? editorState.name }),
+      message: t('passwordPrompt.message'),
+      confirmLabel: t('actions.connect'),
+    });
+    if (connectUri === null) return;
+
     // Held by reference, which is a true snapshot: editorState is only ever
     // replaced with a fresh object, never mutated in place.
     const tested = editorState;
@@ -1368,7 +1377,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     setError(null);
     setConnectLoginId(loginId);
     try {
-      const connId = await invoke<string>('connect_db', { uri, ssh, oidc, loginId, profileId: saved?.id ?? null });
+      const connId = await invoke<string>('connect_db', { uri: connectUri, ssh, oidc, loginId, profileId: saved?.id ?? null });
       handedOverRef.current = null;
       // The editor was dismissed while this was in flight. There is no longer a
       // surface to offer the connection on, and `pendingSave` set now would be

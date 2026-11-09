@@ -4013,6 +4013,36 @@ describe('a saved connection without its password', () => {
     expect(onConnect.mock.calls[0][2]).toBe(profile.uri);
   });
 
+  it('asks for the password when connecting from the editor, and does not keep it', async () => {
+    const onConnect = mount();
+    fireEvent.click((await screen.findAllByText('Ask me'))[0]);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    fireEvent.click(await screen.findByTestId('editor-connect-btn'));
+
+    const input = await screen.findByTestId('dialog-input');
+    expect(input).toHaveAttribute('type', 'password');
+    fireEvent.change(input, { target: { value: 'p@ss' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    await waitFor(() => expect(onConnect).toHaveBeenCalled());
+    expect(mockInvoke).toHaveBeenCalledWith('connect_db', expect.objectContaining({ uri: 'mongodb://alice:p%40ss@db.example:27017/?authMechanism=SCRAM-SHA-256' }));
+    expect(onConnect.mock.calls[0][2]).toBe(profile.uri);
+  });
+
+  it('does not connect from the editor when the password prompt is cancelled', async () => {
+    const onConnect = mount();
+    fireEvent.click((await screen.findAllByText('Ask me'))[0]);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    fireEvent.click(await screen.findByTestId('editor-connect-btn'));
+    await screen.findByTestId('dialog-input');
+    fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+
+    await waitFor(() => expect(screen.queryByTestId('dialog-input')).toBeNull());
+    expect(mockInvoke).not.toHaveBeenCalledWith('connect_db', expect.anything());
+    expect(onConnect).not.toHaveBeenCalled();
+    expect(screen.getByTestId('editor-connect-btn')).not.toBeDisabled();
+  });
+
   it('does not connect when the password prompt is cancelled', async () => {
     const onConnect = mount();
     fireEvent.click((await screen.findAllByText('Ask me'))[0]);
