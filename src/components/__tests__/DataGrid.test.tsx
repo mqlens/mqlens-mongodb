@@ -2772,3 +2772,120 @@ describe('DataGrid — table null, missing and embedded fields', () => {
     expect(screen.getByText('Berlin')).toBeInTheDocument();
   });
 });
+
+describe('DataGrid — in-place cell edit', () => {
+  const docs = () => [
+    { _id: { $oid: '64b000000000000000000001' }, name: 'Alice', tier: 'free', address: { city: 'Berlin' } },
+  ];
+  const cell = (text: string) => screen.getByText(text);
+  const editor = () => screen.getByTestId('cell-editor') as HTMLInputElement;
+
+  it('opens a table cell in an editor that holds the value in shell syntax', () => {
+    render(<DataGrid documents={docs()} onEditField={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+
+    fireEvent.doubleClick(cell('free'));
+
+    expect(editor().value).toBe('"free"');
+  });
+
+  it('saves only the edited field on Enter', async () => {
+    const onEditField = vi.fn().mockResolvedValue(undefined);
+    const input = docs();
+    render(<DataGrid documents={input} onEditField={onEditField} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+
+    fireEvent.doubleClick(cell('free'));
+    fireEvent.change(editor(), { target: { value: '"pro"' } });
+    fireEvent.keyDown(editor(), { key: 'Enter' });
+
+    await vi.waitFor(() => expect(onEditField).toHaveBeenCalledTimes(1));
+    const [original, edited] = onEditField.mock.calls[0];
+    expect(original).toBe(input[0]);
+    expect(edited).toEqual({ ...input[0], tier: 'pro' });
+    // The loaded document is left as it was.
+    expect(input[0].tier).toBe('free');
+    await vi.waitFor(() => expect(screen.queryByTestId('cell-editor')).toBeNull());
+  });
+
+  it('takes typed shell values such as ISODate()', async () => {
+    const onEditField = vi.fn().mockResolvedValue(undefined);
+    render(<DataGrid documents={docs()} onEditField={onEditField} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+
+    fireEvent.doubleClick(cell('free'));
+    fireEvent.change(editor(), { target: { value: 'ISODate("2024-01-01T00:00:00Z")' } });
+    fireEvent.keyDown(editor(), { key: 'Enter' });
+
+    await vi.waitFor(() => expect(onEditField).toHaveBeenCalledTimes(1));
+    expect(onEditField.mock.calls[0][1].tier).toEqual({ $date: '2024-01-01T00:00:00Z' });
+  });
+
+  it('cancels on Escape without writing', () => {
+    const onEditField = vi.fn();
+    render(<DataGrid documents={docs()} onEditField={onEditField} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+
+    fireEvent.doubleClick(cell('free'));
+    fireEvent.change(editor(), { target: { value: '"pro"' } });
+    fireEvent.keyDown(editor(), { key: 'Escape' });
+
+    expect(screen.queryByTestId('cell-editor')).toBeNull();
+    expect(onEditField).not.toHaveBeenCalled();
+  });
+
+  it('keeps an invalid value in the editor and writes nothing', async () => {
+    const onEditField = vi.fn();
+    render(<DataGrid documents={docs()} onEditField={onEditField} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+
+    fireEvent.doubleClick(cell('free'));
+    fireEvent.change(editor(), { target: { value: 'pro' } });
+    fireEvent.keyDown(editor(), { key: 'Enter' });
+
+    await vi.waitFor(() => expect(editor()).toHaveAttribute('aria-invalid', 'true'));
+    expect(onEditField).not.toHaveBeenCalled();
+  });
+
+  it('keeps the editor open when the write fails', async () => {
+    const onEditField = vi.fn().mockRejectedValue(new Error('write refused'));
+    render(<DataGrid documents={docs()} onEditField={onEditField} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+
+    fireEvent.doubleClick(cell('free'));
+    fireEvent.change(editor(), { target: { value: '"pro"' } });
+    fireEvent.keyDown(editor(), { key: 'Enter' });
+
+    await vi.waitFor(() => expect(editor()).toHaveAttribute('title', 'write refused'));
+    expect(editor().value).toBe('"pro"');
+  });
+
+  it('edits a nested value in the tree by its full path', async () => {
+    const onEditField = vi.fn().mockResolvedValue(undefined);
+    // Nested field first: jsdom lays out only the first few virtualized rows.
+    render(<DataGrid documents={[{ address: { city: 'Berlin' }, _id: 1 }]} onEditField={onEditField} />);
+    fireEvent.click(screen.getByRole('button', { name: /tree/i }));
+
+    fireEvent.doubleClick(cell('"Berlin"'));
+    expect(editor().value).toBe('"Berlin"');
+    fireEvent.change(editor(), { target: { value: '"Paris"' } });
+    fireEvent.keyDown(editor(), { key: 'Enter' });
+
+    await vi.waitFor(() => expect(onEditField).toHaveBeenCalledTimes(1));
+    expect(onEditField.mock.calls[0][1]).toEqual({ address: { city: 'Paris' }, _id: 1 });
+  });
+
+  it('does not edit _id, sub-documents, or a read-only grid', () => {
+    const { unmount } = render(<DataGrid documents={docs()} onEditField={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+    fireEvent.doubleClick(screen.getByText(/64b000000000000000000001/));
+    fireEvent.doubleClick(cell('{"city":"Berlin"}'));
+    expect(screen.queryByTestId('cell-editor')).toBeNull();
+    unmount();
+
+    render(<DataGrid documents={docs()} onEditField={vi.fn()} connectionMode="read_only" />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+    fireEvent.doubleClick(cell('free'));
+    expect(screen.queryByTestId('cell-editor')).toBeNull();
+  });
+});

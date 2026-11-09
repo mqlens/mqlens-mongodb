@@ -4769,11 +4769,31 @@ function Workspace() {
       return;
     }
 
-    const target = edit.targetDoc;
+    await writeDocumentUpdate(tab, edit.targetDoc, json);
+    const savedIn = tabHoldingEdit(edit.id) ?? tab;
+    closeEditById(edit.id);
+    await refreshTabResults(savedIn);
+    toast(t('toast.documentSavedIn', { collection }), 'success', { title: t('toast.savedTitle') });
+  };
+
+  /** Saves one value edited in place in the results grid. Rejects, after a
+   *  toast, so the grid keeps the cell editor open with the value typed. */
+  const handleEditField = async (tab: QueryTab, doc: Record<string, any>, edited: Record<string, any>) => {
+    try {
+      await writeDocumentUpdate(tab, doc, shellToEjson(docToShell(edited)));
+    } catch (err: any) {
+      toast(t('toast.updateFailed', { detail: err?.message || err }), 'error');
+      throw err;
+    }
+    await refreshTabResults(tab);
+    toast(t('toast.documentSavedIn', { collection: tab.collection }), 'success', { title: t('toast.savedTitle') });
+  };
+
+  const writeDocumentUpdate = async (tab: QueryTab, target: Record<string, any> | null | undefined, json: string) => {
     if (!target || target._id === undefined) {
-      // Caught by handleSaveDocument and filed on the edit, which the dialog
-      // renders straight into its error banner — so the text is user-facing
-      // copy, not a dev invariant.
+      // A row shown without its `_id` would update by an empty filter. The
+      // message is user-facing: the document dialog shows it in its error
+      // banner, and the cell editor in its tooltip.
       throw new Error(t('documents:editModal.errors.noId'));
     }
     // Send the document as loaded *and* as edited so the backend can apply only
@@ -4783,7 +4803,7 @@ function Workspace() {
     await invoke('update_document', {
       id: tab.connectionId,
       database: tab.db,
-      collection,
+      collection: tab.collection,
       filter: JSON.stringify({ _id: target._id }),
       // Must be EJSON, not shell text: the backend parses both sides with strict
       // `serde_json`, and DocumentEditModal already converts the editor contents
@@ -4807,10 +4827,6 @@ function Workspace() {
         ? (pipelineYieldsWholeDocuments(tab.lastAggregate) ? '{}' : null)
         : (tab.lastQuery?.projection ?? '{}'),
     });
-    const savedIn = tabHoldingEdit(edit.id) ?? tab;
-    closeEditById(edit.id);
-    await refreshTabResults(savedIn);
-    toast(t('toast.documentSavedIn', { collection }), 'success', { title: t('toast.savedTitle') });
   };
 
   const handleExplainQuery = async (tab: QueryTab, filter: string): Promise<string> => {
@@ -4999,6 +5015,7 @@ function Workspace() {
                     querySpec={buildTabQuerySpec(tab)}
                     onInsertDocument={() => handleInsertDocument(tab)}
                     onEditDocument={rowsAreStoredDocuments(tab) ? (doc => handleEditDocument(tab, doc)) : undefined}
+                    onEditField={rowsAreStoredDocuments(tab) ? ((doc, edited) => handleEditField(tab, doc, edited)) : undefined}
                     onDuplicateDocument={doc => handleDuplicateDocument(tab, doc)}
                     onDeleteDocument={rowsAreStoredDocuments(tab) ? (doc => handleDeleteDocument(tab, doc)) : undefined}
                     onAnalyzeSchema={isCommandBlocked(tab.connectionId, 'analyze_schema') ? undefined : () => handleOpenSchemaTab(tab.connectionId, tab.db, tab.collection)}
