@@ -6,6 +6,7 @@ import {
   bsonCallText,
   bsonValueText,
   isBsonInstance,
+  isEjsonWrapper,
   jsonStringLiteral,
   plainBsonShape,
   tableValueText,
@@ -243,5 +244,22 @@ describe('tableValueText: null and missing', () => {
   it('reads null as null, so find matches the marker on screen, and missing as nothing', () => {
     expect(tableValueText(null)).toBe('null');
     expect(tableValueText(undefined)).toBe('');
+  });
+});
+
+describe('isEjsonWrapper', () => {
+  it('knows a typed value by its Extended JSON wrapper', () => {
+    expect(isEjsonWrapper({ $date: '2024-01-01T00:00:00Z' })).toBe(true);
+    expect(isEjsonWrapper({ $oid: '6af1b1a32e3d410c4868596b' })).toBe(true);
+    expect(isEjsonWrapper({ $numberLong: '7' })).toBe(true);
+    // Legacy two-key forms.
+    expect(isEjsonWrapper({ $regex: 'a', $options: 'i' })).toBe(true);
+  });
+
+  it('does not take an ordinary document with a $-prefixed field for one', () => {
+    expect(isEjsonWrapper({ $schema: 'v1' })).toBe(false);
+    expect(isEjsonWrapper({ $schema: 'v1', city: 'Berlin' })).toBe(false);
+    expect(isEjsonWrapper({ $date: '2024-01-01T00:00:00Z', city: 'Berlin' })).toBe(false);
+    expect(isEjsonWrapper({})).toBe(false);
   });
 });

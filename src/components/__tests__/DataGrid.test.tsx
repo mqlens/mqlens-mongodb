@@ -2744,4 +2744,24 @@ describe('DataGrid — table null, missing and embedded fields', () => {
     expect(screen.getByText('stored value')).toBeInTheDocument();
     expect(screen.queryByText(/native code/)).toBeNull();
   });
+
+  it('does not read an embedded path through an array (#551 review)', () => {
+    render(<DataGrid documents={[{ _id: 1, a: { length: 4 } }, { _id: 2, a: ['x', 'y', 'z'] }]} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+    fireEvent.click(screen.getByRole('checkbox', { name: /embedded fields/i }));
+
+    expect(headerCells()).toContain('a.length');
+    expect(screen.getByText('4')).toBeInTheDocument();
+    // The array's own length is not a stored a.length.
+    expect(screen.queryByText('3')).toBeNull();
+  });
+
+  it('opens an ordinary document that has a $-prefixed field (#551 review)', () => {
+    render(<DataGrid documents={[{ _id: 1, meta: { $schema: 'v1', city: 'Berlin' } }]} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+    fireEvent.click(screen.getByRole('checkbox', { name: /embedded fields/i }));
+
+    expect(headerCells()).toEqual(expect.arrayContaining(['meta.$schema', 'meta.city']));
+    expect(screen.getByText('Berlin')).toBeInTheDocument();
+  });
 });

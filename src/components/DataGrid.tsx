@@ -25,6 +25,7 @@ import {
   bsonInstanceTypeLabel,
   bsonValueText,
   isBsonInstance,
+  isEjsonWrapper,
   jsonStringLiteral,
   plainBsonShape,
   tableValueText,
@@ -689,6 +690,12 @@ const JsonRow = ({
   );
 };
 
+// A sub-document the table's "Embedded fields" opens into columns: not an
+// array, and not one typed value such as `{ $date: … }` or an ObjectId.
+const isEmbeddedDoc = (v: unknown): v is Record<string, any> =>
+  v !== null && typeof v === 'object' && !Array.isArray(v) && !isBsonInstance(v)
+  && Object.keys(v).length > 0 && !isEjsonWrapper(v as Record<string, unknown>);
+
 // Extra (per-render) data handed to the table view's virtualized rows.
 interface TableRowExtra {
   documents: Array<Record<string, any>>;
@@ -1273,9 +1280,6 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const flattenEmbedded = embeddedFields && viewMode === 'table';
   const columnPaths = useMemo(() => {
     const paths = new Map<string, string[]>();
-    const isEmbeddedDoc = (v: any) =>
-      v !== null && typeof v === 'object' && !Array.isArray(v) && !isBsonInstance(v)
-      && Object.keys(v).length > 0 && !Object.keys(v).some((k) => k.startsWith('$'));
     const walk = (obj: Record<string, any>, prefix: string[]) => {
       for (const [k, v] of Object.entries(obj)) {
         const path = [...prefix, k];
@@ -1288,10 +1292,11 @@ export const DataGrid: React.FC<DataGridProps> = ({
   }, [documents, flattenEmbedded]);
   const columns = useMemo(() => Array.from(columnPaths.keys()), [columnPaths]);
   // undefined when the document has no such field, which the table leaves blank.
-  // Own properties only: a missing `constructor` must not read Object's.
+  // Steps only into documents, by their own fields: an array's `length` or a
+  // missing `constructor` is not a stored value (#551 review).
   const cellValue = (doc: Record<string, any> | undefined, col: string): any =>
     (columnPaths.get(col) ?? [col]).reduce<any>(
-      (v, k) => (v !== null && typeof v === 'object' && Object.hasOwn(v, k) ? v[k] : undefined),
+      (v, k) => (isEmbeddedDoc(v) && Object.hasOwn(v, k) ? v[k] : undefined),
       doc,
     );
 

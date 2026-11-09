@@ -262,6 +262,22 @@ export function plainBsonShape(val: Record<string, any>, options?: BsonDisplayOp
   return null;
 }
 
+// Keys of the Extended JSON type wrappers, canonical and legacy forms.
+const EJSON_WRAPPER_KEYS = new Set([
+  "$binary", "$code", "$date", "$dbPointer", "$maxKey", "$minKey", "$numberDecimal",
+  "$numberDouble", "$numberInt", "$numberLong", "$oid", "$options", "$regex",
+  "$regularExpression", "$scope", "$symbol", "$timestamp", "$type", "$undefined", "$uuid",
+]);
+
+/**
+ * Whether a plain object is one typed value in Extended JSON (`{ $date: … }`),
+ * as opposed to a stored document that happens to have a `$`-prefixed field.
+ */
+export function isEjsonWrapper(val: Record<string, unknown>): boolean {
+  const keys = Object.keys(val);
+  return keys.length > 0 && keys.every((k) => EJSON_WRAPPER_KEYS.has(k));
+}
+
 /**
  * A value as the table view displays it.
  *
