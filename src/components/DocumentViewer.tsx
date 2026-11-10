@@ -973,6 +973,10 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   const handleInsertQuery = (query: GeneratedQuery) => {
     if (query.queryType === 'aggregate') {
       const pipeline = query.pipeline && query.pipeline.length > 0 ? query.pipeline : [{ $match: {} }];
+      // The new stages reuse ids like stage-1: drop the old previews so none
+      // shows under a stage it was not run for. A run still out finds its
+      // panel gone, or outdated by the new stage's own run.
+      setStagePreviews({});
       commitStages(stagesFromPipeline(pipeline));
       setQueryMode('aggregate');
       toast(t('toast.aggregationPipelineApplied'), 'success');

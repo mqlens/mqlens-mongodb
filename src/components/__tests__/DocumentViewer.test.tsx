@@ -1926,4 +1926,39 @@ describe('Aggregation stage input/output preview', () => {
     fireEvent.click(screen.getByLabelText('$group documentation'));
     expect(mockOpenUrl).toHaveBeenCalledWith('https://www.mongodb.com/docs/manual/reference/operator/aggregation/group/');
   });
+
+  it("drops the old pipeline's previews when a saved pipeline replaces it (#555 review)", async () => {
+    mockInvoke.mockImplementation((cmd: string) =>
+      Promise.resolve(cmd === 'load_collection_queries'
+        ? {
+            saved: [{ id: 'sq-agg', name: 'By tier', query: { queryType: 'aggregate', pipeline: [{ $match: { tier: 'pro' } }] }, createdAt: '2026-11-01T00:00:00Z' }],
+            history: [],
+            default: null,
+          }
+        : undefined),
+    );
+    // Every preview run waits until the test lets it finish.
+    const pending: Array<(rows: Record<string, unknown>[]) => void> = [];
+    renderAgg(vi.fn(() => new Promise<Record<string, unknown>[]>(resolve => pending.push(resolve))));
+
+    // A preview of the old first stage, still running.
+    fireEvent.click(screen.getByLabelText('Preview stage 1'));
+    await waitFor(() => expect(pending).toHaveLength(2));
+
+    fireEvent.click(screen.getByText('Load query'));
+    fireEvent.click(await screen.findByText('By tier'));
+    await waitFor(() => expect(screen.getByTestId('pipeline-stage-0').querySelector('textarea')!.value).toContain('"tier"'));
+    expect(screen.queryByTestId('stage-preview-0')).toBeNull();
+
+    // The new first stage's own preview is not filled by the old run.
+    fireEvent.click(screen.getByLabelText('Preview stage 1'));
+    await waitFor(() => expect(pending).toHaveLength(4));
+    pending[0]([{ name: 'Old input' }]);
+    pending[1]([{ name: 'Old output' }]);
+    await new Promise(r => setTimeout(r, 0));
+    expect(screen.getByTestId('stage-preview-0')).not.toHaveTextContent('Old');
+    pending[2]([{ name: 'Ada' }]);
+    pending[3]([{ name: 'Ada', tier: 'pro' }]);
+    await waitFor(() => expect(screen.getByTestId('stage-preview-output-0')).toHaveTextContent('"tier" : "pro"'));
+  });
 });
