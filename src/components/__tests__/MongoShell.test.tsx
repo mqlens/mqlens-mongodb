@@ -17,8 +17,16 @@ vi.mock('@tauri-apps/api/core', () => ({
 }));
 
 const mockOpenDialog = vi.fn();
+const mockSaveDialog = vi.fn();
 vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: (...args: any[]) => mockOpenDialog(...args),
+  save: (...args: any[]) => mockSaveDialog(...args),
+}));
+const mockReadTextFile = vi.fn();
+const mockWriteTextFile = vi.fn();
+vi.mock('@tauri-apps/plugin-fs', () => ({
+  readTextFile: (...args: any[]) => mockReadTextFile(...args),
+  writeTextFile: (...args: any[]) => mockWriteTextFile(...args),
 }));
 const mockOpenUrl = vi.fn();
 vi.mock('@tauri-apps/plugin-opener', () => ({
@@ -43,6 +51,186 @@ vi.mock('@monaco-editor/react', () => ({
 }));
 
 describe('MongoShell Component', () => {
+  describe('script files', () => {
+    const renderShell = async () => {
+      render(
+        <MongoShell connectionId="conn-1" connectionName="mock" connectionUri="mongodb://prod-replica-set" databaseName="sales_db" />,
+      );
+      await screen.findByText(/mongosh session attached/);
+      return screen.getByLabelText('mongosh editor') as HTMLTextAreaElement;
+    };
+
+    it('opens a script file into the editor', async () => {
+      mockOpenDialog.mockResolvedValue('/scripts/report.js');
+      mockReadTextFile.mockResolvedValue('db.orders.find()\nprint("done")');
+      const editor = await renderShell();
+
+      fireEvent.click(screen.getByTestId('shell-open-script'));
+
+      await waitFor(() => expect(editor.value).toBe('db.orders.find()\nprint("done")'));
+      expect(mockReadTextFile).toHaveBeenCalledWith('/scripts/report.js');
+    });
+
+    it('saves the editor to the file chosen, offering the last path again', async () => {
+      mockOpenDialog.mockResolvedValue('/scripts/report.js');
+      mockReadTextFile.mockResolvedValue('print(1)');
+      mockSaveDialog.mockResolvedValue('/scripts/report.js');
+      mockWriteTextFile.mockResolvedValue(undefined);
+      const editor = await renderShell();
+      fireEvent.click(screen.getByTestId('shell-open-script'));
+      await waitFor(() => expect(editor.value).toBe('print(1)'));
+
+      fireEvent.change(editor, { target: { value: 'print(2)' } });
+      fireEvent.click(screen.getByTestId('shell-save-script'));
+
+      await waitFor(() => expect(mockWriteTextFile).toHaveBeenCalledWith('/scripts/report.js', 'print(2)'));
+      expect(mockSaveDialog).toHaveBeenCalledWith(expect.objectContaining({ defaultPath: '/scripts/report.js' }));
+    });
+
+    it('still offers the opened file after the shell remounts', async () => {
+      mockOpenDialog.mockResolvedValue('/scripts/report.js');
+      mockReadTextFile.mockResolvedValue('print(1)');
+      mockSaveDialog.mockResolvedValue(null);
+      const shellTab = () => (
+        <MongoShell
+          connectionId="conn-1"
+          connectionName="mock"
+          connectionUri="mongodb://prod-replica-set"
+          databaseName="sales_db"
+          sessionKey="tab-shell-script"
+        />
+      );
+      const { unmount } = render(shellTab());
+      await screen.findByText(/mongosh session attached/);
+      fireEvent.click(screen.getByTestId('shell-open-script'));
+      await waitFor(() => expect(mockReadTextFile).toHaveBeenCalled());
+      await waitFor(() => expect(readShellSession('tab-shell-script')).toBeDefined());
+      unmount();
+
+      render(shellTab());
+      fireEvent.click(await screen.findByTestId('shell-save-script'));
+      await waitFor(() =>
+        expect(mockSaveDialog).toHaveBeenCalledWith(expect.objectContaining({ defaultPath: '/scripts/report.js' }))
+      );
+    });
+
+    it('keeps the edited script with its path across a remount, so Save writes it back', async () => {
+      mockOpenDialog.mockResolvedValue('/scripts/report.js');
+      mockReadTextFile.mockResolvedValue('print(1)');
+      mockSaveDialog.mockResolvedValue('/scripts/report.js');
+      mockWriteTextFile.mockResolvedValue(undefined);
+      const shellTab = () => (
+        <MongoShell
+          connectionId="conn-1"
+          connectionName="mock"
+          connectionUri="mongodb://prod-replica-set"
+          databaseName="sales_db"
+          sessionKey="tab-shell-script-text"
+        />
+      );
+      const { unmount } = render(shellTab());
+      await screen.findByText(/mongosh session attached/);
+      fireEvent.click(screen.getByTestId('shell-open-script'));
+      const editor = screen.getByLabelText('mongosh editor') as HTMLTextAreaElement;
+      await waitFor(() => expect(editor.value).toBe('print(1)'));
+      fireEvent.change(editor, { target: { value: 'print(2)' } });
+      unmount();
+
+      render(shellTab());
+      await waitFor(() =>
+        expect((screen.getByLabelText('mongosh editor') as HTMLTextAreaElement).value).toBe('print(2)')
+      );
+      fireEvent.click(screen.getByTestId('shell-save-script'));
+      await waitFor(() => expect(mockWriteTextFile).toHaveBeenCalledWith('/scripts/report.js', 'print(2)'));
+    });
+
+    it('opens a newly requested query over the edited text, but keeps the text for the same one', async () => {
+      const shellTab = (initialCommand: string) => (
+        <MongoShell
+          connectionId="conn-1"
+          connectionName="mock"
+          connectionUri="mongodb://prod-replica-set"
+          databaseName="sales_db"
+          collectionName="orders"
+          initialCommand={initialCommand}
+          sessionKey="tab-shell-reopened"
+        />
+      );
+      const editorValue = () => (screen.getByLabelText('mongosh editor') as HTMLTextAreaElement).value;
+      const first = render(shellTab('db.orders.find({a: 1})'));
+      await screen.findByText(/mongosh session attached/);
+      fireEvent.change(screen.getByLabelText('mongosh editor'), { target: { value: 'print(2)' } });
+      first.unmount();
+
+      const same = render(shellTab('db.orders.find({a: 1})'));
+      await waitFor(() => expect(editorValue()).toBe('print(2)'));
+      same.unmount();
+
+      render(shellTab('db.orders.find({a: 2})'));
+      await waitFor(() => expect(editorValue()).toBe('db.orders.find({a: 2})'));
+    });
+
+    it('keeps the editor text in the session while the tab still owns it', async () => {
+      render(
+        <MongoShell
+          connectionId="conn-1"
+          connectionName="mock"
+          connectionUri="mongodb://prod-replica-set"
+          databaseName="sales_db"
+          sessionKey="tab-shell-live-text"
+        />
+      );
+      await screen.findByText(/mongosh session attached/);
+      fireEvent.change(screen.getByLabelText('mongosh editor'), { target: { value: 'print(3)' } });
+      await waitFor(() => expect(readShellSession('tab-shell-live-text')?.editorText).toBe('print(3)'));
+    });
+
+    it('restores the script and its path from the backend when the cache is empty', async () => {
+      const base = mockInvoke.getMockImplementation()!;
+      mockInvoke.mockImplementation((cmd: string, args: any) =>
+        cmd === 'claim_shell_tab_state' && args?.tabId === 'tab-shell-moved'
+          ? Promise.resolve({
+              sessionId: null, entries: [], currentDb: 'sales_db', autoRanCommand: true,
+              aiOpen: false, aiMessages: [], scriptPath: '/scripts/moved.js', editorText: 'print("moved")',
+            })
+          : base(cmd, args)
+      );
+      mockSaveDialog.mockResolvedValue(null);
+      render(
+        <MongoShell
+          connectionId="conn-1"
+          connectionName="mock"
+          connectionUri="mongodb://prod-replica-set"
+          databaseName="sales_db"
+          sessionKey="tab-shell-moved"
+        />
+      );
+      await waitFor(() =>
+        expect((screen.getByLabelText('mongosh editor') as HTMLTextAreaElement).value).toBe('print("moved")')
+      );
+      fireEvent.click(screen.getByTestId('shell-save-script'));
+      await waitFor(() =>
+        expect(mockSaveDialog).toHaveBeenCalledWith(expect.objectContaining({ defaultPath: '/scripts/moved.js' }))
+      );
+    });
+
+    it('writes nothing when the save dialog is cancelled', async () => {
+      mockSaveDialog.mockResolvedValue(null);
+      await renderShell();
+      fireEvent.click(screen.getByTestId('shell-save-script'));
+      await waitFor(() => expect(mockSaveDialog).toHaveBeenCalled());
+      expect(mockWriteTextFile).not.toHaveBeenCalled();
+    });
+
+    it('reports a file that cannot be read in the console', async () => {
+      mockOpenDialog.mockResolvedValue('/scripts/gone.js');
+      mockReadTextFile.mockRejectedValue('No such file');
+      await renderShell();
+      fireEvent.click(screen.getByTestId('shell-open-script'));
+      expect(await screen.findByText(/No such file/)).toBeInTheDocument();
+    });
+  });
+
   describe('console output can be selected, copied and searched (#357)', () => {
     const withOutput = async () => {
       render(
