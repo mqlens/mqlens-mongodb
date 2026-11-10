@@ -4,19 +4,21 @@
 const CONTINUES_NEXT_LINE = /^(?:(?!\/[/*]|\+\+|--)[.?:,()[\]}+\-*/%=&|^<>]|(?:else|catch|finally)\b)/;
 // What, at the end of a line's code, leaves its statement open. A postfix
 // ++/-- does not; a sign after a different one (`+-`) does.
-const LEFT_OPEN = /(?:(?<!\+)\+|(?<!-)-|[=*/%&|^<>!?:,.]|\b(?:else|do))$/;
+const LEFT_OPEN = /(?:(?<!\+)\+|(?<!-)-|[=*/%&|^<>!?:,.]|\b(?:else|do|try|finally))$/;
 // Whitespace and comments, skipped when looking for the next code.
 const SPACE_AND_COMMENTS = /^(?:\s|\/\/[^\n]*|\/\*[\s\S]*?\*\/)*/;
 const nextCode = (text: string, from: number) => text.slice(from).replace(SPACE_AND_COMMENTS, '');
-// An if/for/while/with or function header, up to its opening parenthesis.
-const CONTROL_HEADER = /^\s*(?:(?:\}?\s*else\s+)?(?:if|for|while|with)|(?:async\s+)?function\b[\s*]*[\w$]*)\s*\($/;
-// A statement that, once its closing brace is in, takes no operand or call:
-// only an else/catch/finally can still follow it.
-const BLOCK_STATEMENT = /^(?:(?:if|for|while|with|switch|try|do|class)\b|(?:async\s+)?function\b|\{)/;
+// A control, catch or function header, up to its opening parenthesis, where a
+// statement or a block before it ends.
+const CONTROL_HEADER =
+  /(?:^|[;{}]|\belse)\s*(?:if|for|while|with|switch|catch|(?:async\s+)?function\b[\s*]*[\w$]*)\s*\($/;
+// What, just before a `{`, makes it open a block rather than an object.
+const BLOCK_AFTER = /\b(?:else|try|finally|do)$/;
 
 /**
  * Start/end offsets of each top-level statement in a shell script. A statement
- * ends after a `;`, or at a newline, outside brackets, strings and comments —
+ * ends after a `;`, or at a line break (one inside a block comment too) outside
+ * brackets and strings —
  * unless what follows clearly belongs to it (`.limit(1)`, `else`, `&& b`, a
  * `do` loop's `while`), comments aside, the
  * line leaves it open (`x =`), or it is a control or function header still
@@ -39,13 +41,37 @@ function statementSpans(text: string): Array<[number, number]> {
   let codeEnd = 0;
   // Whether a `do` statement has reached its `while` yet.
   let doWhileSeen = false;
-  const awaitingWhile = () => !doWhileSeen && /^do\b/.test(nextCode(text, start));
+  const isDo = () => /^do\b/.test(nextCode(text, start));
+  const awaitingWhile = () => !doWhileSeen && isDo();
+  // Whether the statement-level `{` open now starts a block (not an object),
+  // and where the last such block closed.
+  let openIsBlock = false;
+  let blockClose = -1;
+  // Whether the block comment being read spans a line break.
+  let commentBroke = false;
   const boundary = (end: number, next: number) => {
     spans.push([start, end]);
     start = next;
     codeEnd = next;
     headerClose = -1;
+    blockClose = -1;
     doWhileSeen = false;
+  };
+  // A line break at `end`, the next code from `from`: the statement ends there
+  // unless something keeps it open.
+  const lineBreak = (end: number, from: number) => {
+    const awaitingBody = headerClose >= 0 && text.slice(headerClose + 1, end).trim() === '';
+    const next = nextCode(text, from);
+    // A finished block takes no operand or call: only else/catch/finally follow it.
+    const continues = blockClose === codeEnd - 1 ? /^(?:else|catch|finally)\b/.test(next) : CONTINUES_NEXT_LINE.test(next);
+    if (
+      !awaitingBody &&
+      !continues &&
+      !(awaitingWhile() && /^while\b/.test(next)) &&
+      !LEFT_OPEN.test(text.slice(start, codeEnd))
+    ) {
+      boundary(end, from);
+    }
   };
   for (let i = 0; i < text.length; i++) {
     const c = text[i];
@@ -53,7 +79,14 @@ function statementSpans(text: string): Array<[number, number]> {
       if (c === '\n') comment = null;
       else continue;
     } else if (comment === '/*') {
-      if (c === '*' && text[i + 1] === '/') { comment = null; i++; }
+      // JavaScript reads a block comment with a line break in it as a line break.
+      if (c === '\n' && depth === 0) commentBroke = true;
+      if (c === '*' && text[i + 1] === '/') {
+        comment = null;
+        i++;
+        if (commentBroke) lineBreak(codeEnd, i + 1);
+        commentBroke = false;
+      }
       continue;
     } else if (quote) {
       if (c === '\\') i++;
@@ -70,29 +103,26 @@ function statementSpans(text: string): Array<[number, number]> {
     if (c === '"' || c === "'" || c === '`') quote = c;
     else if (depth === 0 && /^while\b/.test(text.slice(i, i + 6)) && !/[\w$]/.test(text[i - 1] ?? '')) doWhileSeen = true;
     else if ('([{'.includes(c)) {
-      if (c === '(' && depth === 0) headerOpen = CONTROL_HEADER.test(text.slice(start, i + 1));
+      if (c === '(' && depth === 0) {
+        const head = text.slice(start, i + 1);
+        headerOpen = CONTROL_HEADER.test(head) && !(isDo() && /\bwhile\s*\($/.test(head));
+      }
+      if (c === '{' && depth === 0) {
+        const before = text.slice(start, i).trimEnd();
+        openIsBlock = before === '' || start + before.length - 1 === headerClose || BLOCK_AFTER.test(before);
+      }
       depth++;
     } else if (')]}'.includes(c)) {
       depth = Math.max(0, depth - 1);
       if (c === ')' && depth === 0 && headerOpen) { headerClose = i; headerOpen = false; }
+      if (c === '}' && depth === 0) blockClose = openIsBlock ? i : -1;
     } else if (depth === 0 && c === ';') {
       const next = nextCode(text, i + 1);
       if (!/^(?:else|catch|finally)\b/.test(next) && !(awaitingWhile() && /^while\b/.test(next))) {
         boundary(i + 1, i + 1);
       }
     } else if (depth === 0 && c === '\n') {
-      const awaitingBody = headerClose >= 0 && text.slice(headerClose + 1, i).trim() === '';
-      const next = nextCode(text, i + 1);
-      const blockDone = text[codeEnd - 1] === '}' && BLOCK_STATEMENT.test(nextCode(text, start));
-      const continues = blockDone ? /^(?:else|catch|finally)\b/.test(next) : CONTINUES_NEXT_LINE.test(next);
-      if (
-        !awaitingBody &&
-        !continues &&
-        !(awaitingWhile() && /^while\b/.test(next)) &&
-        !LEFT_OPEN.test(text.slice(start, codeEnd))
-      ) {
-        boundary(i, i);
-      }
+      lineBreak(i, i);
     }
   }
   spans.push([start, text.length]);

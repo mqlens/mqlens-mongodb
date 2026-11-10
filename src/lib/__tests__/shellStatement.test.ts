@@ -113,4 +113,24 @@ describe('statementAt', () => {
     expect(at('if (a) {\n}\nelse {\n  b(|)\n}')).toBe('if (a) {\n}\nelse {\n  b()\n}');
     expect(at('const f = function () {}\n(|1)')).toBe('const f = function () {}\n(1)');
   });
+
+  it('keeps an object value under a condition joined to the next line', () => {
+    const both = 'if (false) globalThis.options = {}\n[db.orders.deleteMany({})]';
+    expect(at('if (false) globalThis.options = {}\n[db.orders.deleteMa|ny({})]')).toBe(both);
+  });
+
+  it('keeps try and switch with bodies that open on the next line', () => {
+    const tryCatch = 'try\n{\n  throw new Error("expected")\n}\ncatch (e)\n{ print("handled") }';
+    expect(at('try\n{\n  throw new Er|ror("expected")\n}\ncatch (e)\n{ print("handled") }')).toBe(tryCatch);
+    expect(at('try\n{\n  throw new Error("expected")\n}\ncatch (e)\n{ print("hand|led") }')).toBe(tryCatch);
+    const sw = 'switch (x)\n{\n  case 1: db.orders.deleteMany({})\n}';
+    expect(at('switch (x)\n{\n  case 1: db.orders.dele|teMany({})\n}')).toBe(sw);
+  });
+
+  it('ends a statement at a line break inside a block comment', () => {
+    expect(at('print("sa|fe") /* explanation\n*/ db.orders.deleteMany({})')).toBe('print("safe")');
+    expect(at('print("safe") /* explanation\n*/ db.orders.dele|teMany({})')).toBe('db.orders.deleteMany({})');
+    // A comment on one line still does not end it.
+    expect(at('db.a.find() /* x */ .lim|it(1)')).toBe('db.a.find() /* x */ .limit(1)');
+  });
 });
