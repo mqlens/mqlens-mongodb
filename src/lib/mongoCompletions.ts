@@ -189,11 +189,14 @@ export function shellCollectionAt(text: string): string | undefined {
 const STRING_OR_COMMENT =
   /"(?:[^"\\\n]|\\.)*"?|'(?:[^'\\\n]|\\.)*'?|\x60(?:[^\x60\\]|\\.)*\x60?|\/\/[^\n]*|\/\*[\s\S]*?(?:\*\/|$)/g;
 
+// Shell text with its strings, regex and comments emptied, so their brackets
+// do not count. acorn first, for regex literals; the pattern then also covers
+// a string still being typed, past which acorn stops.
+const shellCode = (text: string) => maskLiterals(text).replace(STRING_OR_COMMENT, '""');
+
 /** The `.method(` call the end of shell text is inside, and which argument (from 0). */
 export function shellCallAt(text: string): { method: string; arg: number } | null {
-  // acorn first, for regex literals; the pattern then also covers a string
-  // still being typed, past which acorn stops.
-  const code = maskLiterals(text).replace(STRING_OR_COMMENT, '""');
+  const code = shellCode(text);
   const open: Array<{ at: number; commas: number }> = [];
   for (let i = 0; i < code.length; i++) {
     const c = code[i];
@@ -538,8 +541,9 @@ export function getCompletions(ctx: CompletionCtx): CompletionItem[] {
       return byPrefix(CURSOR_METHODS.map((m) => ({ label: m, kind: 'method' as const, insertText: m })), token);
     }
     // top level (not after a dot, not inside an open ( or { ) → mongosh globals
-    const openParen = textBeforeCursor.lastIndexOf('(') > textBeforeCursor.lastIndexOf(')');
-    const openBrace = textBeforeCursor.lastIndexOf('{') > textBeforeCursor.lastIndexOf('}');
+    const code = shellCode(textBeforeCursor);
+    const openParen = code.lastIndexOf('(') > code.lastIndexOf(')');
+    const openBrace = code.lastIndexOf('{') > code.lastIndexOf('}');
     if (!openParen && !openBrace) {
       return byPrefix(SHELL_GLOBALS.map((g) => ({ label: g, kind: 'method' as const, insertText: g })), token);
     }

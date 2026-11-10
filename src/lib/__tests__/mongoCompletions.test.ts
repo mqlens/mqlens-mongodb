@@ -117,6 +117,11 @@ describe('getCompletions — shell globals & chain methods', () => {
     const items = getCompletions(base({ surface: 'shell', textBeforeCursor: 'pr', token: 'pr' }));
     expect(labels(items)).toEqual(expect.arrayContaining(['print', 'printjson']));
   });
+  it('still suggests globals after earlier lines with brackets in strings or comments', () => {
+    const textBeforeCursor = 'print("a(")\n// open {\npr';
+    const items = getCompletions(base({ surface: 'shell', textBeforeCursor, token: 'pr' }));
+    expect(labels(items)).toEqual(expect.arrayContaining(['print', 'printjson']));
+  });
   it('suggests cursor chain methods after find()', () => {
     const items = getCompletions(base({ surface: 'shell', textBeforeCursor: 'db.customers.find({}).', token: '' }));
     expect(labels(items)).toEqual(expect.arrayContaining(['forEach', 'toArray', 'sort', 'limit', 'map']));

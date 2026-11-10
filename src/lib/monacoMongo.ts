@@ -73,8 +73,12 @@ export function registerMongoCompletionProvider(monaco: Monaco) {
       });
       const fields = meta.getFields(textUpToCursor);
       const schema = meta.getSchema(textUpToCursor);
+      // A shell query often spans lines (`find({` above, `ti` here), so the
+      // shell's context comes from all the text before the cursor; the token
+      // and its range stay on this line.
       const items = getCompletions({
-        surface: meta.surface, textBeforeCursor, textAfterCursor, token,
+        surface: meta.surface, textAfterCursor, token,
+        textBeforeCursor: meta.surface === 'shell' ? textUpToCursor : textBeforeCursor,
         fields, schema, collections: meta.getCollections?.(),
         stageOperator: meta.getStageOperator?.(), shellSyntax: meta.getShellSyntax?.(),
       });
