@@ -11,6 +11,7 @@ import {
   saveQuery,
   deleteSavedQuery,
   setDefaultQuery,
+  QUERIES_CHANGED_EVENT,
   type SavedQuery,
   type HistoryEntry,
 } from '../lib/queryStore';
@@ -666,8 +667,12 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
     }
   }, [storeKey, databaseName, collectionName]);
 
+  // Runs are recorded by App, not here, so follow the store's change event too.
   useEffect(() => {
     refreshStoredQueries();
+    const onChange = () => { refreshStoredQueries(); };
+    window.addEventListener(QUERIES_CHANGED_EVENT, onChange);
+    return () => window.removeEventListener(QUERIES_CHANGED_EVENT, onChange);
   }, [refreshStoredQueries]);
 
   // Query mode: traditional find vs aggregate pipeline

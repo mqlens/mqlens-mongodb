@@ -100,6 +100,7 @@ export async function recordHistory(
     collection,
     entry: { query, ranAt: nowIso() },
   });
+  notifyQueriesChanged();
 }
 
 export async function setDefaultQuery(
