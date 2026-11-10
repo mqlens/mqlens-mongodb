@@ -98,6 +98,7 @@
     "savedQueryDeleted": "已删除保存的查询",
     "savedTitle": "已保存",
     "sortCleared": "已清除排序设置",
+    "tabMoving": "此标签页正在移到另一个窗口。",
     "updateFailed": "更新失败：{{detail}}",
     "updatedTitle": "已更新",
     "uploadFailed": "上传失败：{{detail}}",

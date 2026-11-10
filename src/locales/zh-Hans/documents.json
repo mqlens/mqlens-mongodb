@@ -135,6 +135,10 @@
       "placeholder": "在结果中查找…",
       "previous": "上一个匹配项（Shift+Enter）"
     },
+    "inlineEdit": {
+      "hint": "按 Enter 保存，按 Esc 取消。Shell 语法：\"文本\"、42、ISODate(\"…\")",
+      "invalidValue": "不是有效的值。文本需加引号，例如 \"pro\"。"
+    },
     "labels": {
       "plainJson": "普通 JSON",
       "plainJsonWarning": "仅用于显示或复制，可能丢失 BSON 类型信息。",

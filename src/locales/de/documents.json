@@ -340,6 +340,10 @@
       "placeholder": "In Ergebnissen suchen…",
       "previous": "Vorheriger Treffer (Shift+Enter)"
     },
+    "inlineEdit": {
+      "hint": "Enter speichert, Esc bricht ab. Shell-Syntax: \"Text\", 42, ISODate(\"…\")",
+      "invalidValue": "Kein gültiger Wert. Text in Anführungszeichen setzen, zum Beispiel \"pro\"."
+    },
     "labels": {
       "plainJson": "Einfaches JSON",
       "plainJsonWarning": "Nur zur Anzeige/zum Kopieren — BSON-Typinformationen können verloren gehen.",

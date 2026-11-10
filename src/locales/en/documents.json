@@ -140,6 +140,10 @@
       "placeholder": "Find in results…",
       "previous": "Previous match (Shift+Enter)"
     },
+    "inlineEdit": {
+      "hint": "Enter to save, Esc to cancel. Shell syntax: \"text\", 42, ISODate(\"…\")",
+      "invalidValue": "Not a valid value. Quote text, for example \"pro\"."
+    },
     "labels": {
       "actions": "Actions",
       "docsCountEstimated_one": "~{{count}} doc",
