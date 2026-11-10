@@ -577,6 +577,12 @@ describe('getCompletions — shell aggregate stages and callbacks', () => {
     expect(shell('db.customers.aggregate([{ $project: { ti', 'ti').find((i) => i.label === 'tier')?.insertText).toBe('tier: ${1|1,0|}');
     expect(shell('db.customers.aggregate([\n  { $sort: { ti', 'ti').find((i) => i.label === 'tier')?.insertText).toBe('tier: ${1|1,-1|}');
   });
+  it('completes an index key document with a direction, not a value', () => {
+    expect(shell('db.customers.createIndex({ ti', 'ti').find((i) => i.label === 'tier')?.insertText).toBe('tier: ${1|1,-1|}');
+    expect(shell('db.customers.find({}).hint({ ti', 'ti').find((i) => i.label === 'tier')?.insertText).toBe('tier: ${1|1,-1|}');
+    // Its options are not keys.
+    expect(shell('db.customers.createIndex({ tier: 1 }, { ti', 'ti').find((i) => i.label === 'tier')?.insertText).not.toContain('1,-1');
+  });
   it('still completes a $match body as a filter', () => {
     expect(shell('db.customers.aggregate([{ $match: { ti', 'ti').find((i) => i.label === 'tier')?.insertText).toContain('value');
   });

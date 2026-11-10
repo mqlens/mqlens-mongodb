@@ -597,7 +597,9 @@ export function getCompletions(ctx: CompletionCtx): CompletionItem[] {
     // sort() and a projection (find's second argument) take their own documents,
     // quoted keys too
     const call = shellCallAt(textBeforeCursor);
-    if (call?.method === 'sort') return getCompletions({ ...ctx, surface: 'sort', shellSyntax: true });
+    // An index key document (createIndex's keys, hint) takes directions, as sort() does.
+    const indexKeys = call?.arg === 0 && /^(?:createIndex|hint|dropIndex)$/.test(call.method);
+    if (call?.method === 'sort' || indexKeys) return getCompletions({ ...ctx, surface: 'sort', shellSyntax: true });
     if (call?.method === 'projection' || (call?.arg === 1 && /^find(?:One)?$/.test(call.method))) {
       return getCompletions({ ...ctx, surface: 'projection', shellSyntax: true });
     }
