@@ -5082,6 +5082,7 @@ function Workspace() {
             databaseName={tab.db}
             collectionName={tab.collection}
             onApplied={() => setCollectionMutationTrigger(prev => prev + 1)}
+            canSample={!isCommandBlocked(tab.connectionId, 'analyze_schema')}
           />
         )}
         {tab.type === 'generate' && (

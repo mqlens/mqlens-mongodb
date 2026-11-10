@@ -20,6 +20,8 @@ interface ValidationRulesViewProps {
   collectionName: string;
   /** Called after a successful `set_validator` apply. */
   onApplied: () => void;
+  /** Whether the connection may sample the collection, which Generate needs. */
+  canSample?: boolean;
 }
 
 interface CollectionValidationUi {
@@ -35,6 +37,7 @@ export const ValidationRulesView: React.FC<ValidationRulesViewProps> = ({
   databaseName,
   collectionName,
   onApplied,
+  canSample = true,
 }) => {
   const { t } = useTranslation('admin');
   const [validator, setValidator] = useState('{}');
@@ -258,6 +261,7 @@ export const ValidationRulesView: React.FC<ValidationRulesViewProps> = ({
             >
               {t('validationRulesView.actions.validate')}
             </Button>
+            {canSample && (
             <Button
               type="button"
               variant="outline"
@@ -269,6 +273,7 @@ export const ValidationRulesView: React.FC<ValidationRulesViewProps> = ({
               <Wand2 size={13} />
               {generating ? t('validationRulesView.actions.generating') : t('validationRulesView.actions.generate')}
             </Button>
+            )}
             <Button
               type="button"
               data-testid="validation-apply-btn"
