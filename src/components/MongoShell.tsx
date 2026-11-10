@@ -1561,8 +1561,8 @@ export const MongoShell: React.FC<MongoShellProps> = ({
               {t('mongoShell.notes.runningFor', { seconds: runningFor })}
             </span>
           ) : (
-            <span className="font-mono text-[10px] text-muted-foreground">
-              {formatShortcut(shortcutById('run-query')!)}
+            <span className="font-mono text-[10px] text-muted-foreground" data-testid="shell-run-hint">
+              {formatShortcut(shortcutById('shell-run-all')!)}
             </span>
           )}
           {running && inMongosh ? (
@@ -1580,7 +1580,16 @@ export const MongoShell: React.FC<MongoShellProps> = ({
           ) : (
             // Disabled rather than replaced while a recognised command is in
             // its driver phase: Stop could not end that, so it is not offered.
-            <Button size="sm" onClick={() => runRef.current()} disabled={running}>
+            <Button
+              size="sm"
+              onClick={() => runRef.current()}
+              disabled={running}
+              data-testid="shell-run"
+              title={t('mongoShell.toolbar.runTitle', {
+                all: formatShortcut(shortcutById('shell-run-all')!),
+                statement: formatShortcut(shortcutById('run-query')!),
+              })}
+            >
               <Play size={11} />
               {t('mongoShell.toolbar.run')}
             </Button>

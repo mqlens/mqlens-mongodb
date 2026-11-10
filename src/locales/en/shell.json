@@ -398,6 +398,7 @@
       "restartSession": "Restart",
       "restartSessionTitle": "Stop this mongosh session and start a new one",
       "run": "Run",
+      "runTitle": "Run everything ({{all}}). {{statement}} runs the selection or the statement at the cursor.",
       "stop": "Stop",
       "stopTitle": "Stop the running command by restarting the mongosh session"
     }

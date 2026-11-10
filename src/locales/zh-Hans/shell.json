@@ -335,11 +335,12 @@
     "toolbar": {
       "aiToggleLabel": "AI",
       "aiToggleTitle": "AI 助手",
-      "stop": "停止",
-      "stopTitle": "通过重启 mongosh 会话来停止正在运行的命令",
       "restartSession": "重启",
       "restartSessionTitle": "停止当前 mongosh 会话并启动新会话",
-      "run": "运行"
+      "run": "运行",
+      "runTitle": "全部运行（{{all}}）。{{statement}} 运行选中内容或光标处的语句。",
+      "stop": "停止",
+      "stopTitle": "通过重启 mongosh 会话来停止正在运行的命令"
     }
   },
   "quickStart": {
