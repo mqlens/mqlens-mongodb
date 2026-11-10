@@ -1682,6 +1682,14 @@ export const MongoShell: React.FC<MongoShellProps> = ({
                 void fetchSchema(id, db, coll).then((schema) => {
                   pending.delete(key);
                   sampled.set(key, schema);
+                  // A list still open while the sample was out is asked again,
+                  // now with the fields. `auto` so an empty answer closes it
+                  // instead of pinning "No suggestions" while the user types on.
+                  // The controller itself: editor.trigger() goes through the
+                  // command service, which did not reach this editor here.
+                  if (editor.hasTextFocus() && editor.getDomNode()?.querySelector('.suggest-widget.visible')) {
+                    editor.getContribution<{ dispose(): void; triggerSuggest(onlyFrom?: unknown, auto?: boolean): void }>('editor.contrib.suggestController')?.triggerSuggest(undefined, true);
+                  }
                 });
                 return new Map();
               };

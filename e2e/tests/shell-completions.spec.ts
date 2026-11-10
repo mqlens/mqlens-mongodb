@@ -102,6 +102,20 @@ test.describe('Completions in the shell', () => {
     }).toPass({ timeout: 20_000 });
   });
 
+  test('offer the sampled fields once the sample lands, to a user who waits', async ({ app, page }) => {
+    await openShell(app, page);
+    const release = await app.hold('analyze_schema');
+
+    await typeInto(page, 'db.customers.find({ ti');
+    await expect.poll(() => app.calls('analyze_schema').then((c) => c.length), { timeout: 20_000 }).toBe(1);
+    // The list is up, without the fields, while the user waits on it.
+    await expect(suggestions(page)).toBeVisible();
+    await expect(suggestions(page)).not.toContainText('tier');
+    await release();
+    // No further keystroke: the list comes up by itself.
+    await expect(suggestions(page)).toContainText('tier', { timeout: 10_000 });
+  });
+
   test('carry on when the collections of a database cannot be listed', async ({ app, page }) => {
     await openShell(app, page);
 
