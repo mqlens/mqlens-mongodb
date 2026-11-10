@@ -1,5 +1,5 @@
 import type { Monaco } from '@monaco-editor/react';
-import { getCompletions, inQuote, type Surface, type CompletionKind } from './mongoCompletions';
+import { getCompletions, inQuote, openQuote, type Surface, type CompletionKind } from './mongoCompletions';
 import type { SchemaMap } from './useCollectionSchema';
 
 // The getters get the editor's text up to the cursor, and may answer later.
@@ -85,9 +85,10 @@ export function registerMongoCompletionProvider(monaco: Monaco) {
       // Typing `"` makes Monaco auto-insert the closing one after the cursor. An
       // item that closes the quote itself (`city": "value"`) replaces that one
       // too, or the text ends up with `""`.
-      const autoClosed = inQuote(textBeforeCursor) && textAfterCursor.startsWith('"');
+      const quote = openQuote(textBeforeCursor);
+      const autoClosed = quote !== null && textAfterCursor.startsWith(quote);
       const rangeFor = (insertText: string) =>
-        autoClosed && insertText.includes('"') ? { ...range, endColumn: range.endColumn + 1 } : range;
+        autoClosed && insertText.includes(quote) ? { ...range, endColumn: range.endColumn + 1 } : range;
       return {
         incomplete: meta.isIncomplete?.() ?? false,
         // sortText preserves getCompletions' intentional order (e.g. the

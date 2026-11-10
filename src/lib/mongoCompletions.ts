@@ -1,3 +1,5 @@
+import { maskLiterals } from './jsLiterals';
+
 export type Surface = 'filter' | 'projection' | 'sort' | 'aggStage' | 'shell';
 export type CompletionKind = 'field' | 'operator' | 'stage' | 'method' | 'enum' | 'ejson';
 
@@ -159,11 +161,18 @@ function byPrefix<T extends { label: string }>(items: T[], token: string): T[] {
   return items.filter((i) => i.label.toLowerCase().startsWith(t));
 }
 
-// True when the caret sits just after an opening double-quote (user is already
-// typing a quoted key), so we must NOT add quotes again.
-export function inQuote(text: string): boolean {
-  return /"[\w$.]*$/.test(text);
+// The quote the caret sits just after (the user is already typing a quoted
+// key), so we must NOT add quotes again, and close with that one. A single
+// quote counts only where a key or value starts, not as an apostrophe.
+export function openQuote(text: string): '"' | "'" | null {
+  if (/"[\w$.]*$/.test(text)) return '"';
+  if (/(?:^|[^\w$])'[\w$.]*$/.test(text)) return "'";
+  return null;
 }
+export function inQuote(text: string): boolean {
+  return openQuote(text) !== null;
+}
+const quoteOf = (ctx: CompletionCtx) => openQuote(ctx.textBeforeCursor) ?? '"';
 
 // A collection access, or a string or comment to step over (so `db.x.` inside
 // one is not read as code). An unclosed string or comment runs to the end.
@@ -182,7 +191,9 @@ const STRING_OR_COMMENT =
 
 /** The `.method(` call the end of shell text is inside, and which argument (from 0). */
 export function shellCallAt(text: string): { method: string; arg: number } | null {
-  const code = text.replace(STRING_OR_COMMENT, '""');
+  // acorn first, for regex literals; the pattern then also covers a string
+  // still being typed, past which acorn stops.
+  const code = maskLiterals(text).replace(STRING_OR_COMMENT, '""');
   const open: Array<{ at: number; commas: number }> = [];
   for (let i = 0; i < code.length; i++) {
     const c = code[i];
@@ -226,7 +237,7 @@ function keyInsert(ctx: CompletionCtx, s: string): string {
 function snippetKey(ctx: CompletionCtx, key: string): string {
   const esc = key.startsWith('$') ? `\\${key}` : key;
   if (isShellStyle(ctx) && !inQuote(ctx.textBeforeCursor)) return esc;
-  return inQuote(ctx.textBeforeCursor) ? `${esc}"` : `"${esc}"`;
+  return inQuote(ctx.textBeforeCursor) ? `${esc}${quoteOf(ctx)}` : `"${esc}"`;
 }
 
 // Operator completions that auto-insert the operator's value shape.
@@ -262,7 +273,7 @@ function choiceFieldItems(ctx: CompletionCtx, choices: string): CompletionItem[]
   return ctx.fields.map((name) => {
     const fs = ctx.schema?.get(name);
     const bare = isShellStyle(ctx) && isBareIdentifier(name) && !inQuote(ctx.textBeforeCursor);
-    const key = bare ? name : inQuote(ctx.textBeforeCursor) ? `${name}"` : `"${name}"`;
+    const key = bare ? name : inQuote(ctx.textBeforeCursor) ? `${name}${quoteOf(ctx)}` : `"${name}"`;
     return { label: name, kind: 'field' as const, insertText: `${key}: \${1|${choices}|}`, detail: fs?.type, isSnippet: true };
   });
 }
@@ -311,7 +322,7 @@ function typedFieldItems(ctx: CompletionCtx): CompletionItem[] {
     // dotted path); JSON opens a quote unless the user already typed one, and
     // always closes it before the colon.
     const bare = shell && isBareIdentifier(name) && !inQuote(ctx.textBeforeCursor);
-    const key = bare ? name : inQuote(ctx.textBeforeCursor) ? `${name}"` : `"${name}"`;
+    const key = bare ? name : inQuote(ctx.textBeforeCursor) ? `${name}${quoteOf(ctx)}` : `"${name}"`;
     return { label: name, kind: 'field' as const, insertText: `${key}: ${shell ? scaffold.shell : scaffold.json}`, detail: fs?.type, isSnippet: true };
   });
 }
@@ -325,8 +336,9 @@ function quoteForType(value: string, type?: string): string {
 // When the user already typed `"`, Monaco may auto-insert a closing `"` ahead of
 // the cursor — only add our own closer when one is not already there.
 function closeQuotedValue(ctx: CompletionCtx, value: string): string {
-  if (ctx.textAfterCursor?.trimStart().startsWith('"')) return value;
-  return `${value}"`;
+  const q = quoteOf(ctx);
+  if (ctx.textAfterCursor?.trimStart().startsWith(q)) return value;
+  return `${value}${q}`;
 }
 
 function valueInsert(ctx: CompletionCtx, value: string, type?: string): string {
@@ -531,7 +543,10 @@ export function getCompletions(ctx: CompletionCtx): CompletionItem[] {
     if (!openParen && !openBrace) {
       return byPrefix(SHELL_GLOBALS.map((g) => ({ label: g, kind: 'method' as const, insertText: g })), token);
     }
-    // sort() and a projection (find's second argument) take their own documents
+  }
+  if (surface === 'shell') {
+    // sort() and a projection (find's second argument) take their own documents,
+    // quoted keys too
     const call = shellCallAt(textBeforeCursor);
     if (call?.method === 'sort') return getCompletions({ ...ctx, surface: 'sort', shellSyntax: true });
     if (call?.method === 'projection' || (call?.arg === 1 && /^find(?:One)?$/.test(call.method))) {

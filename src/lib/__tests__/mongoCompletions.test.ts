@@ -609,3 +609,20 @@ describe('getCompletions — shell sort and projection arguments', () => {
     expect(insertFor('db.customers.find({ $or: [{ a: 1 }, { ti', 'tier')).not.toMatch(/\$\{1\|1,/);
   });
 });
+
+describe('getCompletions — shell regex literals and single quotes', () => {
+  const schema = new Map([['tier', { type: 'string' }]]);
+  const insertFor = (textBeforeCursor: string) =>
+    getCompletions(base({ surface: 'shell', textBeforeCursor, token: 'ti', fields: ['tier'], schema }))
+      .find((i) => i.label === 'tier')?.insertText;
+
+  it('reads a regex literal in a filter as a value, not as brackets', () => {
+    expect(insertFor('db.customers.find({ note: /\}/, ti')).toBe('tier: "${1:value}"');
+    expect(insertFor('db.customers.find({ note: /[(]/ }, { ti')).toBe('tier: ${1|1,0|}');
+  });
+
+  it('closes a single-quoted key with a single quote', () => {
+    expect(insertFor("db.customers.find({ 'ti")).toBe('tier\': "${1:value}"');
+    expect(insertFor("db.customers.find({}).sort({ 'ti")).toBe("tier': ${1|1,-1|}");
+  });
+});
