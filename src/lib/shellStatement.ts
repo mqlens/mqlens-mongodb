@@ -10,10 +10,13 @@ const LEFT_OPEN = /(?:(?<!\+)\+|(?<!-)-|[=*/%&|^<>!?:,.]|\b(?:else|do|try|finall
 // Whitespace and comments, skipped when looking for the next code.
 const SPACE_AND_COMMENTS = /^(?:\s|\/\/[^\n]*|\/\*[\s\S]*?\*\/)*/;
 const nextCode = (text: string, from: number) => text.slice(from).replace(SPACE_AND_COMMENTS, '');
-// A control, catch or function header, up to its opening parenthesis, where a
-// statement or a block before it ends.
+// A control, catch or function-declaration header, up to its opening
+// parenthesis, where a statement, a block or another header before it ends.
 const CONTROL_HEADER =
-  /(?:^|[;{}]|\belse)\s*(?:if|for|while|with|switch|catch|(?:async\s+)?function\b[\s*]*[\w$]*)\s*\($/;
+  /(?:^|[;{})]|\belse)\s*(?:if|for|while|with|switch|catch|(?:async\s+)?function\b[\s*]*[\w$]*)\s*\($/;
+// Any function header, a function expression's too: its body may open on the
+// next line, but its braces are a value, not a block statement.
+const FUNCTION_HEADER = /\bfunction\b[\s*]*[\w$]*\s*\($/;
 // What, just before a `{`, makes it open a block rather than an object.
 const BLOCK_AFTER = /\b(?:else|try|finally|do)$|^\s*class\s+[\w$]+(?:\s+extends\b[^{]*)?$/;
 
@@ -37,15 +40,19 @@ function statementSpans(text: string): Array<[number, number]> {
   let depth = 0;
   let quote: string | null = null;
   let comment: '//' | '/*' | null = null;
-  // Where the current statement's control header closed its parenthesis, if it has one.
+  // Whether a header's parenthesis is open, where the last one closed, and
+  // whether its braces open a block statement (not a function expression's).
   let headerOpen = false;
+  let headerBlock = false;
   let headerClose = -1;
+  let headerCloseBlock = false;
   // Just past the statement's last character of code (not space or comment).
   let codeEnd = 0;
-  // Whether a `do` statement has reached its `while` yet.
-  let doWhileSeen = false;
-  const isDo = () => /^do\b/.test(nextCode(text, start));
-  const awaitingWhile = () => !doWhileSeen && isDo();
+  // `do` loops in this statement still waiting for their `while`, and whether
+  // the last `while` read ends one rather than starting a loop.
+  let pendingDo = 0;
+  let whileEndsDo = false;
+  const awaitingWhile = () => pendingDo > 0;
   // Whether the statement-level `{` open now starts a block (not an object),
   // and where the last such block closed.
   let openIsBlock = false;
@@ -58,7 +65,8 @@ function statementSpans(text: string): Array<[number, number]> {
     codeEnd = next;
     headerClose = -1;
     blockClose = -1;
-    doWhileSeen = false;
+    pendingDo = 0;
+    whileEndsDo = false;
   };
   // A line break at `end`, the next code from `from`: the statement ends there
   // unless something keeps it open.
@@ -107,20 +115,31 @@ function statementSpans(text: string): Array<[number, number]> {
     const codeBefore = codeEnd;
     if (!/\s/.test(c)) codeEnd = i + 1;
     if (c === '"' || c === "'" || c === '`') quote = c;
-    else if (depth === 0 && /^while\b/.test(text.slice(i, i + 6)) && !/[\w$]/.test(text[i - 1] ?? '')) doWhileSeen = true;
-    else if ('([{'.includes(c)) {
+    else if (depth === 0 && /^(?:do|while)\b/.test(text.slice(i, i + 6)) && !/[\w$.]/.test(text[i - 1] ?? '')) {
+      if (c === 'd') pendingDo++;
+      else {
+        whileEndsDo = pendingDo > 0;
+        if (whileEndsDo) pendingDo--;
+      }
+    } else if ('([{'.includes(c)) {
       if (c === '(' && depth === 0) {
         const head = text.slice(start, i + 1);
-        headerOpen = CONTROL_HEADER.test(head) && !(isDo() && /\bwhile\s*\($/.test(head));
+        headerBlock = CONTROL_HEADER.test(head) && !(whileEndsDo && /\bwhile\s*\($/.test(head));
+        headerOpen = headerBlock || FUNCTION_HEADER.test(head);
       }
       if (c === '{' && depth === 0) {
         const before = text.slice(start, codeBefore);
-        openIsBlock = before.trim() === '' || codeBefore - 1 === headerClose || BLOCK_AFTER.test(before);
+        openIsBlock =
+          before.trim() === '' || (codeBefore - 1 === headerClose && headerCloseBlock) || BLOCK_AFTER.test(before);
       }
       depth++;
     } else if (')]}'.includes(c)) {
       depth = Math.max(0, depth - 1);
-      if (c === ')' && depth === 0 && headerOpen) { headerClose = i; headerOpen = false; }
+      if (c === ')' && depth === 0 && headerOpen) {
+        headerClose = i;
+        headerCloseBlock = headerBlock;
+        headerOpen = false;
+      }
       if (c === '}' && depth === 0) {
         blockClose = openIsBlock ? i : -1;
         // A finished block ends its statement even on the same line, unless

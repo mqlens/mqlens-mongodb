@@ -144,6 +144,23 @@ describe('statementAt', () => {
     expect(at('x = {} && d|b.a.find()')).toBe('x = {} && db.a.find()');
   });
 
+  it('keeps nested headers joined to the body below them', () => {
+    const ifs = 'if (false) if (true)\n  db.orders.deleteMany({})';
+    expect(at('if (false) if (true)\n  db.orders.deleteMa|ny({})')).toBe(ifs);
+    const fors = 'for (const a of []) for (const b of [])\n  db.orders.deleteOne({})';
+    expect(at('for (const a of []) for (const b of [])\n  db.orders.deleteO|ne({})')).toBe(fors);
+  });
+
+  it('keeps a function expression with a body that opens on the next line', () => {
+    const fn = 'const wipe = function ()\n{\n  db.orders.deleteMany({})\n}';
+    expect(at('const wipe = function ()\n{\n  db.orders.deleteMa|ny({})\n}')).toBe(fn);
+  });
+
+  it('keeps a do loop under another control statement together', () => {
+    expect(at('if (false) do {} while (fa|lse);')).toBe('if (false) do {} while (false);');
+    expect(at('if (false) do { a() } while (false)\nb(|)')).toBe('b()');
+  });
+
   it('keeps a header with a trailing comment joined to its body', () => {
     const guarded = 'if (false) // keep guarded\n  db.orders.deleteMany({})';
     expect(at('if (false) // keep guarded\n  db.orders.deleteMa|ny({})')).toBe(guarded);
