@@ -185,6 +185,18 @@ describe('statementAt', () => {
     expect(at('use sales\ndb.orders.fi|nd()')).toBe('db.orders.find()');
   });
 
+  it('reads a mongosh helper line as a statement of its own', () => {
+    expect(at('use n|ew\ndb.orders.find()')).toBe('use new');
+    expect(at('use new\ndb.orders.fi|nd()')).toBe('db.orders.find()');
+    expect(at('show dbs;|\r\nprint(1)')).toBe('show dbs;');
+  });
+
+  it('reads the script around a helper line the parser could not read as one', () => {
+    const text = 'use 123sales\ndb.a.find({name: /[(]/})\ndb.orders.deleteMany({})';
+    const cursor = text.indexOf('find') + 2;
+    expect(at(`${text.slice(0, cursor)}|${text.slice(cursor)}`)).toBe('db.a.find({name: /[(]/})');
+  });
+
   it('keeps non-ASCII names in headers joined to their bodies beside a mongosh command', () => {
     const decl = 'function löschen()\n{\n  db.orders.deleteMany({})\n}';
     expect(at(`use sales\nfunction löschen()\n{\n  db.orders.deleteMa|ny({})\n}`)).toBe(decl);

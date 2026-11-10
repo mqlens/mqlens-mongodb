@@ -1,6 +1,9 @@
 import { parse } from 'acorn';
 import { maskLiterals } from './jsLiterals';
 
+// A whole line that is a mongosh helper command, which JavaScript cannot read.
+const HELPER_LINE = /^[^\S\n]*(?:use|show)[^\S\n]+[^\s;]+[^\S\n]*(?:;[^\S\n]*)?$/gm;
+
 /** Each top-level statement's offsets, from acorn's parser; null when the text is not plain JavaScript. */
 function parsedSpans(text: string): Array<[number, number]> | null {
   try {
@@ -217,10 +220,17 @@ function lexedSpans(text: string): Array<[number, number]> {
 
 /** The statement under `offset`, or the nearest one before it (else after it) when the cursor sits on blank space. */
 export function statementAt(text: string, offset: number): string {
+  // mongosh helper lines (`use sales`, `show dbs`) are statements of their
+  // own, blanked so that the JavaScript around them reads as if they were not there.
+  const helpers: Array<[number, number]> = [];
+  const js = text.replace(HELPER_LINE, (line: string, at: number) => {
+    helpers.push([at + line.length - line.trimStart().length, at + line.trimEnd().length]);
+    return line.replace(/[^\n]/g, ' ');
+  });
   // Each statement without the space and comments around it: JavaScript's own
-  // statements when the script parses, else the lexer's best reading of it
-  // (mongosh's `use db`, or a script still being typed).
-  const trimmed = parsedSpans(text) ?? lexedSpans(text);
+  // statements when the rest parses, else the lexer's best reading of it (a
+  // script still being typed).
+  const trimmed = [...(parsedSpans(js) ?? lexedSpans(js)), ...helpers].sort((a, b) => a[0] - b[0]);
   // Between two statements with nothing in between, the one starting there wins.
   const hit =
     trimmed.find(([s, e]) => s <= offset && offset < e) ??
