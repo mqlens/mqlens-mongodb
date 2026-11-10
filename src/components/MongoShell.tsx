@@ -2,9 +2,10 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next';
 import Editor from '@monaco-editor/react';
 import { invoke } from '@tauri-apps/api/core';
-import { open as openFileDialog } from '@tauri-apps/plugin-dialog';
+import { open as openFileDialog, save as saveFileDialog } from '@tauri-apps/plugin-dialog';
+import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
 import { openUrl } from '@tauri-apps/plugin-opener';
-import { AlertCircle, Braces, CornerDownLeft, Eraser, Play, RotateCcw, Sparkles, Square, Terminal } from 'lucide-react';
+import { AlertCircle, Braces, CornerDownLeft, Eraser, FolderOpen, Play, RotateCcw, Save, Sparkles, Square, Terminal } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -400,7 +401,12 @@ export const MongoShell: React.FC<MongoShellProps> = ({
     () => initialCommand || (collectionName ? `db.${collectionName}.find({}).limit(50)` : 'show collections'),
     [collectionName, initialCommand]
   );
-  const [command, setCommand] = useState(defaultCommand);
+  // The saved editor text, unless the shell now opens with another query:
+  // App remounts it for that, under the same session.
+  const openingCommand = initialCommand ?? '';
+  const savedText = (session?: ShellSession) =>
+    (session?.editorFor ?? '') === openingCommand ? session?.editorText : undefined;
+  const [command, setCommand] = useState(savedText(storedSession) ?? defaultCommand);
   const commandEditor = useMonacoValue(command, setCommand);
   const monacoTheme = useMonacoTheme();
   const monacoFontSize = useMonacoFontSize(13);
@@ -525,6 +531,9 @@ export const MongoShell: React.FC<MongoShellProps> = ({
         setIsAIOpenState(restored.aiOpen);
         setAiChatId(restored.aiChatId);
         autoRunRef.current = restored.autoRanCommand;
+        const text = savedText(restored);
+        if (text !== undefined) setCommand(text);
+        if (restored.scriptPath) scriptPathRef.current = restored.scriptPath;
         // A command recorded as running whose caller is not in this renderer:
         // the window was reloaded, or the tab arrived from another window,
         // while a script ran. Its result went to the view it started in. What
@@ -765,6 +774,13 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   }, [tab]);
   const wrapRef = useRef<HTMLDivElement>(null);
   const runRef = useRef<(script?: string) => void>(() => {});
+  // The script file last opened or saved, offered again by Save. Kept in the
+  // tab's session too, since a ref resets when the shell remounts.
+  const scriptPathRef = useRef<string | null>(storedSession?.scriptPath ?? null);
+  const rememberScriptPath = (path: string) => {
+    scriptPathRef.current = path;
+    persistSession({ scriptPath: path });
+  };
   // Seeded from the tab's session: the opening command must run once per TAB,
   // not once per mount, or switching tabs re-executes it (#240).
   const autoRunRef = useRef(storedSession?.autoRanCommand ?? false);
@@ -781,9 +797,26 @@ export const MongoShell: React.FC<MongoShellProps> = ({
     return () => { alive = false; };
   }, [connectionId, currentDb]);
 
+  // The default is read only at mount: App keys this view by tab id and
+  // opening command, so a new default (a rename, another command) remounts it.
+  // Keep the editor's text in the tab's session, with the script path it
+  // belongs to, while this view still owns that session: a rename or a move to
+  // another window re-keys it before this view unmounts. Not before hydration,
+  // which may bring back a saved text this would overwrite.
+  // ponytail: 300ms debounce, so the last 300ms of typing before a rename or
+  // move is lost; flush from those paths if that matters.
+  const commandRef = useRef(command);
+  commandRef.current = command;
+  const hydratedRef = useRef(hydrated);
+  hydratedRef.current = hydrated;
   useEffect(() => {
-    setCommand(defaultCommand);
-  }, [defaultCommand]);
+    if (!hydrated) return;
+    const timer = setTimeout(() => persistSession({ editorText: command, editorFor: openingCommand }), 300);
+    return () => clearTimeout(timer);
+  }, [command, hydrated]);
+  useEffect(() => () => {
+    if (hydratedRef.current) persistSession({ editorText: commandRef.current, editorFor: openingCommand });
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -1268,6 +1301,44 @@ export const MongoShell: React.FC<MongoShellProps> = ({
     appendEntries([{ kind: 'note', text: t('mongoShell.notes.destructiveCancelled') }]);
   };
 
+  const scriptFilters = [
+    { name: t('mongoShell.script.filter'), extensions: ['js', 'mongodb'] },
+    { name: t('mongoShell.script.allFiles'), extensions: ['*'] },
+  ];
+
+  const openScript = async () => {
+    try {
+      const path = await openFileDialog({
+        multiple: false,
+        directory: false,
+        title: t('mongoShell.toolbar.openScript'),
+        filters: scriptFilters,
+      });
+      if (typeof path !== 'string') return;
+      setCommand(await readTextFile(path));
+      rememberScriptPath(path);
+    } catch (err: any) {
+      appendEntries([{ kind: 'error', message: t('mongoShell.script.openFailed', { message: String(err?.message ?? err) }) }]);
+      setTab('console');
+    }
+  };
+
+  const saveScript = async () => {
+    try {
+      const path = await saveFileDialog({
+        title: t('mongoShell.toolbar.saveScript'),
+        defaultPath: scriptPathRef.current ?? 'script.js',
+        filters: scriptFilters,
+      });
+      if (!path) return;
+      await writeTextFile(path, command);
+      rememberScriptPath(path);
+    } catch (err: any) {
+      appendEntries([{ kind: 'error', message: t('mongoShell.script.saveFailed', { message: String(err?.message ?? err) }) }]);
+      setTab('console');
+    }
+  };
+
   const runCommand = async (commandOverride?: string) => {
     const raw = (commandOverride ?? command).trim().replace(/;$/, '');
     if (!raw || running) return;
@@ -1614,6 +1685,24 @@ export const MongoShell: React.FC<MongoShellProps> = ({
           >
             <Sparkles size={11} />
             {t('mongoShell.toolbar.aiToggleLabel')}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void openScript()}
+            data-testid="shell-open-script"
+            title={t('mongoShell.toolbar.openScript')}
+          >
+            <FolderOpen size={11} />
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void saveScript()}
+            data-testid="shell-save-script"
+            title={t('mongoShell.toolbar.saveScript')}
+          >
+            <Save size={11} />
           </Button>
         </div>
         <div className="min-h-0 flex-1">

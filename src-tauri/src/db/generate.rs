@@ -1315,6 +1315,7 @@ mod tests {
             presence,
             coverage: 1.0,
             enum_values,
+            enum_counts: None,
         }
     }
 

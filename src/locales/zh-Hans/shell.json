@@ -332,13 +332,21 @@
       "sessionUnavailable": "mongosh 会话不可用：{{detail}}",
       "switchedToDb": "已切换到数据库 {{db}}"
     },
+    "script": {
+      "allFiles": "所有文件",
+      "filter": "Shell 脚本",
+      "openFailed": "无法打开脚本：{{message}}",
+      "saveFailed": "无法保存脚本：{{message}}"
+    },
     "toolbar": {
       "aiToggleLabel": "AI",
       "aiToggleTitle": "AI 助手",
+      "openScript": "打开脚本…",
       "restartSession": "重启",
       "restartSessionTitle": "停止当前 mongosh 会话并启动新会话",
       "run": "运行",
       "runTitle": "全部运行（{{all}}）。{{statement}} 运行选中内容或光标处的语句。",
+      "saveScript": "保存脚本…",
       "stop": "停止",
       "stopTitle": "通过重启 mongosh 会话来停止正在运行的命令"
     }

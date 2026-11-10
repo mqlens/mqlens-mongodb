@@ -503,7 +503,10 @@
   "validationRulesView": {
     "actions": {
       "apply": "Apply",
-      "applying": "Applying…"
+      "applying": "Applying…",
+      "generate": "Generate from schema sample",
+      "generating": "Sampling…",
+      "validate": "Validate JSON"
     },
     "errors": {
       "invalidValidatorJson": "Invalid validator JSON: {{message}}",
@@ -521,7 +524,8 @@
     },
     "loading": "Loading validation rules…",
     "success": {
-      "applied": "Validation rules applied."
+      "applied": "Validation rules applied.",
+      "valid": "Validator JSON is valid."
     },
     "title": "Validation Rules — {{collection}}"
   }

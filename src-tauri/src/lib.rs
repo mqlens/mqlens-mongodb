@@ -3217,8 +3217,9 @@ async fn analyze_schema(
     database: String,
     collection: String,
     sample_size: i64,
+    first: Option<bool>,
 ) -> Result<String, String> {
-    analyze_schema_impl(&state, &id, &database, &collection, sample_size).await
+    db::schema::analyze_schema_sampled(&state, &id, &database, &collection, sample_size, first.unwrap_or(false)).await
 }
 
 /// No `state` param: preview only exercises the pure template engine

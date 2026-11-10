@@ -332,6 +332,45 @@ test.describe('A server connection', () => {
     expect(await app.calls('execute_aggregate')).toHaveLength(0);
   });
 
+  test('analyzes the schema without offering rules it may not set', async ({ app, page }) => {
+    await app.open({
+      servers,
+      serverAccounts: [WORK({ signedIn: true, connections: [{ ...ORDERS, blockedCommands: ['set_validator'] }] })],
+    });
+    await openServerAccounts(page);
+    await button(page, 'Connect to Orders').click();
+    await sidebar(page).getByText('sales_db', { exact: true }).click();
+    await dismissHoverCards(page);
+    await sidebar(page).getByText('Collections', { exact: true }).first().click();
+    await dismissHoverCards(page);
+    await sidebar(page).getByText('customers', { exact: true }).click();
+    await dismissHoverCards(page);
+
+    await view(page).getByTestId('analyze-schema-btn').click();
+    await expect(view(page).getByTestId('schema-tab-fields')).toBeVisible();
+    await expect(view(page).getByTestId('schema-tab-validation')).toHaveCount(0);
+    expect(await app.calls('get_collection_options')).toHaveLength(0);
+  });
+
+  test('edits validation rules without offering to generate them from a sample it may not take', async ({ app, page }) => {
+    await app.open({
+      servers,
+      serverAccounts: [WORK({ signedIn: true, connections: [{ ...ORDERS, blockedCommands: ['analyze_schema'] }] })],
+    });
+    await openServerAccounts(page);
+    await button(page, 'Connect to Orders').click();
+    await sidebar(page).getByText('sales_db', { exact: true }).click();
+    await dismissHoverCards(page);
+    await sidebar(page).getByText('Collections', { exact: true }).first().click();
+    await dismissHoverCards(page);
+    await sidebar(page).getByText('customers', { exact: true }).click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Validation Rules' }).click();
+    await dismissHoverCards(page);
+
+    await expect(view(page).getByTestId('validation-apply-btn')).toBeVisible();
+    await expect(view(page).getByTestId('validation-generate-btn')).toHaveCount(0);
+  });
+
   test('monitors what it can, and says what it cannot', async ({ app, page }) => {
     const blocked = ['current_ops', 'kill_op', 'read_profile', 'set_profiling_level'];
     await app.open({

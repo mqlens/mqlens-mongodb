@@ -70,7 +70,9 @@ test.describe('Schema analysis failures', () => {
     await view(page).getByTestId('analyze-schema-btn').click();
 
     await expect(view(page)).toContainText('not authorized to sample sales_db.customers');
-    await expect(view(page).getByTestId('schema-view')).toHaveCount(0);
+    // No fields to show, while the validation rules stay a click away.
+    await expect(view(page).locator('[data-testid^="schema-row-"]')).toHaveCount(0);
+    await expect(view(page).getByTestId('schema-tab-validation')).toBeVisible();
   });
 
   test('an empty collection has nothing to analyze, and coverage sorts the fields', async ({ app, page }) => {
@@ -96,6 +98,9 @@ test.describe('Schema analysis failures', () => {
     await openCollection(page, 'shop', 'empty');
     await view(page).getByTestId('analyze-schema-btn').click();
     await expect(view(page)).toContainText('Collection is empty — nothing to analyze.');
+    // Rules can still be written before the first document arrives.
+    await view(page).getByTestId('schema-tab-validation').click();
+    await expect(view(page).getByTestId('validation-rules-view')).toBeVisible();
 
     await sidebar(page).getByText('mixed', { exact: true }).click();
     await dismissHoverCards(page);

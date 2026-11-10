@@ -392,13 +392,21 @@
       "sessionUnavailable": "mongosh session unavailable: {{detail}}",
       "switchedToDb": "switched to db {{db}}"
     },
+    "script": {
+      "allFiles": "All files",
+      "filter": "Shell scripts",
+      "openFailed": "Could not open the script: {{message}}",
+      "saveFailed": "Could not save the script: {{message}}"
+    },
     "toolbar": {
       "aiToggleLabel": "AI",
       "aiToggleTitle": "AI assistant",
+      "openScript": "Open script…",
       "restartSession": "Restart",
       "restartSessionTitle": "Stop this mongosh session and start a new one",
       "run": "Run",
       "runTitle": "Run everything ({{all}}). {{statement}} runs the selection or the statement at the cursor.",
+      "saveScript": "Save script…",
       "stop": "Stop",
       "stopTitle": "Stop the running command by restarting the mongosh session"
     }
