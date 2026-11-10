@@ -167,6 +167,20 @@ describe('statementAt', () => {
     expect(at('const t = typeof\n  db.orders.fi|nd')).toBe('const t = typeof\n  db.orders.find');
   });
 
+  it('reads a while loop that is a do loop body as that body', () => {
+    const loop = 'do while (false)\n  db.orders.deleteMany({})\nwhile (false);';
+    expect(at('do while (false)\n  db.orders.deleteMa|ny({})\nwhile (false);')).toBe(loop);
+  });
+
+  it('keeps a function with a non-ASCII name joined to its body', () => {
+    const decl = 'function löschen()\n{\n  db.orders.deleteMany({})\n}';
+    expect(at('function löschen()\n{\n  db.orders.deleteMa|ny({})\n}')).toBe(decl);
+  });
+
+  it('falls back to reading the text when it is not plain JavaScript', () => {
+    expect(at('use sales\ndb.orders.fi|nd()')).toBe('db.orders.find()');
+  });
+
   it('keeps a template on the next line with its tag', () => {
     const tagged = 'if (false) tag\n\x60a ${db.orders.deleteMany({})}\x60';
     const cursor = tagged.indexOf('deleteMany') + 3;

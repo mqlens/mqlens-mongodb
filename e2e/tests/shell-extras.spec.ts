@@ -98,8 +98,9 @@ test.describe('mongosh commands', () => {
     await openShell(page);
     await expect(transcript(page)).toContainText('transactions');
 
-    // setValue leaves the cursor on the first line.
-    await setEditorText(page, shell(page), 'print("one")\nprint("two")\nprint("three")');
+    // setValue leaves the cursor on the first line. `show dbs` is mongosh, not
+    // JavaScript, so the statement comes from the fallback reading.
+    await setEditorText(page, shell(page), 'print("one")\nprint("two")\nprint("three")\nshow dbs');
     await page.keyboard.press('Control+Enter');
     await expect(transcript(page)).toContainText('one');
     await expect(transcript(page)).not.toContainText('two');

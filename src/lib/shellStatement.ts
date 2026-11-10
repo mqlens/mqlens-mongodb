@@ -1,4 +1,20 @@
+import { parse } from 'acorn';
 import { maskLiterals } from './jsLiterals';
+
+/** Each top-level statement's offsets, from acorn's parser; null when the text is not plain JavaScript. */
+function parsedSpans(text: string): Array<[number, number]> | null {
+  try {
+    const program = parse(text, {
+      ecmaVersion: 'latest',
+      allowAwaitOutsideFunction: true,
+      allowReturnOutsideFunction: true,
+      allowHashBang: true,
+    });
+    return program.body.map((s): [number, number] => [s.start, s.end]);
+  } catch {
+    return null;
+  }
+}
 
 // What, at the start of the next line's code, continues the statement before
 // it: a chained call, a call or index on its value (ASI joins those too), or
@@ -32,7 +48,8 @@ const FUNCTION_HEADER = /\bfunction\b[\s*]*[\w$]*\s*\($/;
 const BLOCK_AFTER = /\b(?:else|try|finally|do)$|^\s*class\s+[\w$]+(?:\s+extends\b[^{]*)?$/;
 
 /**
- * Start/end offsets of each top-level statement in a shell script. A statement
+ * Start/end offsets of each top-level statement in a shell script that acorn
+ * cannot parse (mongosh commands, half-typed code). A statement
  * ends after a `;`, or at a line break (one inside a block comment too) outside
  * brackets and strings —
  * unless what follows clearly belongs to it (`.limit(1)`, `else`, `&& b`, a
@@ -43,7 +60,8 @@ const BLOCK_AFTER = /\b(?:else|try|finally|do)$|^\s*class\s+[\w$]+(?:\s+extends\
  * body without its condition, so doubtful cases join.
  * acorn reads the strings, comments, regex and template literals first, so
  * nothing inside them counts as code.
- * ponytail: a lexer over acorn's tokens, not a parser.
+ * ponytail: a heuristic lexer, only for text the parser rejects; such text
+ * would not run as one script anyway.
  */
 function statementSpans(text: string): Array<[number, number]> {
   const spans: Array<[number, number]> = [];
@@ -181,17 +199,23 @@ function statementSpans(text: string): Array<[number, number]> {
   return spans;
 }
 
-/** The statement under `offset`, or the nearest one before it (else after it) when the cursor sits on blank space. */
-export function statementAt(text: string, offset: number): string {
-  // Each statement without the space and comments around it.
+function lexedSpans(text: string): Array<[number, number]> {
   // Templates keep their backticks, so a tag's template on the next line joins it.
   const code = maskLiterals(text).replace(/"/g, (q, i: number) => (text[i] === '\x60' ? '\x60' : q));
-  const trimmed = statementSpans(code)
+  return statementSpans(code)
     .map(([s, e]): [number, number] => {
       const body = code.slice(s, e);
       return [s + (body.length - body.trimStart().length), e - (body.length - body.trimEnd().length)];
     })
     .filter(([s, e]) => s < e);
+}
+
+/** The statement under `offset`, or the nearest one before it (else after it) when the cursor sits on blank space. */
+export function statementAt(text: string, offset: number): string {
+  // Each statement without the space and comments around it: JavaScript's own
+  // statements when the script parses, else the lexer's best reading of it
+  // (mongosh's `use db`, or a script still being typed).
+  const trimmed = parsedSpans(text) ?? lexedSpans(text);
   // Between two statements with nothing in between, the one starting there wins.
   const hit =
     trimmed.find(([s, e]) => s <= offset && offset < e) ??
