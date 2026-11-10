@@ -192,10 +192,12 @@ const STRING_OR_COMMENT =
 // Shell text with its strings, regex and comments emptied, so their brackets
 // do not count. acorn first, for regex literals; the pattern then also covers
 // a string still being typed, past which acorn stops.
-const shellCode = (text: string) => maskLiterals(text).replace(STRING_OR_COMMENT, '""');
+// Same length as the text, so positions in one are positions in the other.
+const shellCode = (text: string) =>
+  maskLiterals(text).replace(STRING_OR_COMMENT, (m) => m.replace(/[^\n]/g, ' '));
 
-/** The `.method(` call the end of shell text is inside, and which argument (from 0). */
-export function shellCallAt(text: string): { method: string; arg: number } | null {
+/** The brackets still open at the end of shell text, innermost last, with the commas read in each. */
+function openBrackets(text: string) {
   const code = shellCode(text);
   const open: Array<{ at: number; commas: number }> = [];
   for (let i = 0; i < code.length; i++) {
@@ -204,6 +206,12 @@ export function shellCallAt(text: string): { method: string; arg: number } | nul
     else if (')]}'.includes(c)) open.pop();
     else if (c === ',' && open.length) open[open.length - 1].commas++;
   }
+  return { code, open };
+}
+
+/** The `.method(` call the end of shell text is inside, and which argument (from 0). */
+export function shellCallAt(text: string): { method: string; arg: number } | null {
+  const { code, open } = openBrackets(text);
   for (let k = open.length - 1; k >= 0; k--) {
     if (code[open[k].at] !== '(') continue;
     const method = code.slice(0, open[k].at).match(/\.\s*([\w$]+)\s*$/)?.[1];
@@ -540,15 +548,27 @@ export function getCompletions(ctx: CompletionCtx): CompletionItem[] {
     if (/[)\]\w]\s*\.\w*$/.test(textBeforeCursor)) {
       return byPrefix(CURSOR_METHODS.map((m) => ({ label: m, kind: 'method' as const, insertText: m })), token);
     }
-    // top level (not after a dot, not inside an open ( or { ) → mongosh globals
-    const code = shellCode(textBeforeCursor);
-    const openParen = code.lastIndexOf('(') > code.lastIndexOf(')');
-    const openBrace = code.lastIndexOf('{') > code.lastIndexOf('}');
-    if (!openParen && !openBrace) {
+    // top level, or a code block (a callback's or an if's body, not an
+    // object) → mongosh globals
+    const { code, open } = openBrackets(textBeforeCursor);
+    const inner = open[open.length - 1];
+    const before = inner ? code.slice(0, inner.at).trimEnd() : '';
+    if (!inner || (code[inner.at] === '{' && (before === '' || /(?:=>|[);{}]|\b(?:else|do|try|finally))$/.test(before)))) {
       return byPrefix(SHELL_GLOBALS.map((g) => ({ label: g, kind: 'method' as const, insertText: g })), token);
     }
   }
   if (surface === 'shell') {
+    // An aggregation stage's body ({ $project: { …), read the way that stage reads it.
+    const { open } = openBrackets(textBeforeCursor);
+    const inner = open[open.length - 1];
+    const stage = inner && textBeforeCursor[inner.at] === '{'
+      ? textBeforeCursor.slice(0, inner.at).match(/["']?(\$[A-Za-z]+)["']?\s*:\s*$/)?.[1]
+      : undefined;
+    if (stage && AGG_STAGES.includes(stage)) {
+      return getCompletions({
+        ...ctx, surface: 'aggStage', stageOperator: stage, shellSyntax: true, textBeforeCursor: textBeforeCursor.slice(inner.at),
+      });
+    }
     // sort() and a projection (find's second argument) take their own documents,
     // quoted keys too
     const call = shellCallAt(textBeforeCursor);

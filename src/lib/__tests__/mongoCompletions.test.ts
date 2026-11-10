@@ -549,6 +549,23 @@ describe('getCompletions — shell-style projection/sort keys', () => {
   });
 });
 
+describe('getCompletions — shell aggregate stages and callbacks', () => {
+  const shell = (textBeforeCursor: string, token = '') =>
+    getCompletions(base({ surface: 'shell', textBeforeCursor, token, fields: ['tier'], schema: new Map([['tier', { type: 'string' }]]) }));
+  it('completes a $project or $sort body the way that stage reads it', () => {
+    expect(shell('db.customers.aggregate([{ $project: { ti', 'ti').find((i) => i.label === 'tier')?.insertText).toBe('tier: ${1|1,0|}');
+    expect(shell('db.customers.aggregate([\n  { $sort: { ti', 'ti').find((i) => i.label === 'tier')?.insertText).toBe('tier: ${1|1,-1|}');
+  });
+  it('still completes a $match body as a filter', () => {
+    expect(shell('db.customers.aggregate([{ $match: { ti', 'ti').find((i) => i.label === 'tier')?.insertText).toContain('value');
+  });
+  it('offers globals inside a callback body, not fields', () => {
+    const items = shell('db.customers.find().forEach(doc => {\n  pr', 'pr');
+    expect(labels(items)).toEqual(expect.arrayContaining(['print', 'printjson']));
+    expect(labels(shell('db.customers.find().forEach(function (doc) {\n  pr', 'pr'))).toContain('print');
+  });
+});
+
 describe('getCompletions — shell keys respect an already-typed quote (#222 review)', () => {
   it('filter: closes the quote instead of inserting a bare key when inQuote', () => {
     const items = getCompletions(base({ surface: 'filter', shellSyntax: true, textBeforeCursor: '{ "', token: '', fields: ['createdTime'], schema: new Map([['createdTime', { type: 'date' }]]) }));
