@@ -587,3 +587,25 @@ describe('shell: a quoted dotted key', () => {
     expect(items.map((i) => i.label)).toEqual(['address.city']);
   });
 });
+
+describe('getCompletions — shell sort and projection arguments', () => {
+  const schema = new Map([['tier', { type: 'string' }], ['age', { type: 'int' }]]);
+  const insertFor = (textBeforeCursor: string, label: string) =>
+    getCompletions(base({ surface: 'shell', textBeforeCursor, token: 'ti', fields: ['tier', 'age'], schema }))
+      .find((i) => i.label === label)?.insertText;
+
+  it('offers sort directions, not a filter value, inside sort()', () => {
+    expect(insertFor('db.customers.find({}).sort({ ti', 'tier')).toBe('tier: ${1|1,-1|}');
+  });
+
+  it('offers include or exclude in a projection', () => {
+    expect(insertFor('db.customers.find({}, { ti', 'tier')).toBe('tier: ${1|1,0|}');
+    expect(insertFor('db.customers.findOne({ a: [1, 2] }, { ti', 'tier')).toBe('tier: ${1|1,0|}');
+    expect(insertFor('db.customers.find({}).projection({ ti', 'tier')).toBe('tier: ${1|1,0|}');
+  });
+
+  it('still scaffolds a filter value in the filter argument', () => {
+    expect(insertFor('db.customers.find({ ti', 'tier')).not.toMatch(/\$\{1\|1,/);
+    expect(insertFor('db.customers.find({ $or: [{ a: 1 }, { ti', 'tier')).not.toMatch(/\$\{1\|1,/);
+  });
+});

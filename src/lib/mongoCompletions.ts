@@ -177,6 +177,27 @@ export function shellCollectionAt(text: string): string | undefined {
   return found;
 }
 
+const STRING_OR_COMMENT =
+  /"(?:[^"\\\n]|\\.)*"?|'(?:[^'\\\n]|\\.)*'?|\x60(?:[^\x60\\]|\\.)*\x60?|\/\/[^\n]*|\/\*[\s\S]*?(?:\*\/|$)/g;
+
+/** The `.method(` call the end of shell text is inside, and which argument (from 0). */
+export function shellCallAt(text: string): { method: string; arg: number } | null {
+  const code = text.replace(STRING_OR_COMMENT, '""');
+  const open: Array<{ at: number; commas: number }> = [];
+  for (let i = 0; i < code.length; i++) {
+    const c = code[i];
+    if ('([{'.includes(c)) open.push({ at: i, commas: 0 });
+    else if (')]}'.includes(c)) open.pop();
+    else if (c === ',' && open.length) open[open.length - 1].commas++;
+  }
+  for (let k = open.length - 1; k >= 0; k--) {
+    if (code[open[k].at] !== '(') continue;
+    const method = code.slice(0, open[k].at).match(/\.\s*([\w$]+)\s*$/)?.[1];
+    return method ? { method, arg: open[k].commas } : null;
+  }
+  return null;
+}
+
 // Whether to emit mongosh-style output (bare keys + shell constructors): the
 // dedicated shell surface, or any surface the caller marked shellSyntax (the
 // main query bar). `surface` still decides WHICH completions appear.
@@ -509,6 +530,12 @@ export function getCompletions(ctx: CompletionCtx): CompletionItem[] {
     const openBrace = textBeforeCursor.lastIndexOf('{') > textBeforeCursor.lastIndexOf('}');
     if (!openParen && !openBrace) {
       return byPrefix(SHELL_GLOBALS.map((g) => ({ label: g, kind: 'method' as const, insertText: g })), token);
+    }
+    // sort() and a projection (find's second argument) take their own documents
+    const call = shellCallAt(textBeforeCursor);
+    if (call?.method === 'sort') return getCompletions({ ...ctx, surface: 'sort', shellSyntax: true });
+    if (call?.method === 'projection' || (call?.arg === 1 && /^find(?:One)?$/.test(call.method))) {
+      return getCompletions({ ...ctx, surface: 'projection', shellSyntax: true });
     }
     // otherwise (inside find({...}), aggregate([...])) → behave like a filter (fall through)
   }
