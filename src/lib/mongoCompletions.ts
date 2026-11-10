@@ -182,8 +182,23 @@ const COLLECTION_OR_SKIP =
 /** The collection of the last `db.<coll>.` or `db.getCollection("<coll>")` in shell text. */
 export function shellCollectionAt(text: string): string | undefined {
   let found: string | undefined;
-  for (const m of text.matchAll(COLLECTION_OR_SKIP)) found = m[1] ?? m[2] ?? found;
+  for (const m of regexEmptied(text).matchAll(COLLECTION_OR_SKIP)) found = m[1] ?? m[2] ?? found;
   return found;
+}
+
+// The text with its regex literals emptied (acorn tells them from division)
+// and its strings kept, which getCollection("name") needs.
+function regexEmptied(text: string): string {
+  const masked = maskLiterals(text);
+  const out = text.split('');
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] !== '/' || masked[i] !== '"') continue;
+    const end = masked.indexOf('"', i + 1);
+    if (end < 0) break;
+    for (let k = i; k <= end; k++) out[k] = masked[k];
+    i = end;
+  }
+  return out.join('');
 }
 
 const STRING_OR_COMMENT =
