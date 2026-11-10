@@ -97,9 +97,10 @@ pub(crate) async fn sample(
     database: &str,
     collection: &str,
     size: i64,
+    first: bool,
 ) -> Result<Vec<Document>, String> {
     routes::require("analyze_schema", conn)?;
-    let stages = [mongodb::bson::doc! { "$sample": { "size": size } }];
+    let stages = [crate::db::schema::sample_stage(size, first)];
     run_pipeline(state, conn, database, collection, &stages, None).await
 }
 

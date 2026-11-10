@@ -358,6 +358,12 @@ const EXEMPT_HITS: Record<string, string[]> = {
     // A backtick-quoted `new URL` inside a JSDoc comment, read as a template
     // literal — the comment blindness this file's header warns about.
   ],
+  'src/lib/schemaExport.ts': [
+    // The exported Markdown schema file is a portable document, kept in
+    // English like the generated code queryCodeGen.ts writes.
+    '# Schema of ${namespace}',
+    'Sampled ${report.sampled} documents.',
+  ],
   'src/lib/generateTemplate.ts': [
     // The GEN_KIND_TOKENS DSL's own field token, matching the `$name`
     // exemption already recorded for GenerateView.tsx.

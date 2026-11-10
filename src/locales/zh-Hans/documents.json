@@ -394,17 +394,31 @@
     "empty": {
       "title": "该 Collection 为空 —— 没有可分析的内容。"
     },
+    "export": {
+      "failed": "无法导出架构：{{error}}",
+      "json": "JSON",
+      "markdown": "Markdown"
+    },
     "labels": {
       "analyzing": "正在分析结构…",
       "coverage": "覆盖率",
       "field": "字段",
       "fieldsCount_other": "{{count}} 个字段",
+      "noValues": "样本中没有重复的值。",
       "planned": "计划中",
       "sampledSummary": "已采样 {{sampled}} 个文档 · {{fields}} 个字段",
       "schemaPrefix": "结构：",
+      "showValues": "点击查看最常见的值",
       "types": "类型",
       "validationComingSoonPrefix": "Collection 校验规则查看器即将推出（#93）。该标签页将显示",
       "validationComingSoonSuffix": "以及 {{databaseName}}.{{collectionName}} 的校验规则。"
+    },
+    "sample": {
+      "docs_other": "{{count}} 个文档",
+      "first": "前 N 个",
+      "mode": "抽样方式",
+      "random": "随机",
+      "size": "样本大小"
     },
     "tabs": {
       "fieldAnalysis": "字段分析",

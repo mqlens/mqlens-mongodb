@@ -26,6 +26,9 @@ pub struct FieldStat {
     pub coverage: f64,
     #[serde(rename = "enumValues", skip_serializing_if = "Option::is_none")]
     pub enum_values: Option<Vec<String>>,
+    /// How many sampled documents hold each of `enum_values`.
+    #[serde(rename = "enumCounts", default, skip_serializing_if = "Option::is_none")]
+    pub enum_counts: Option<std::collections::BTreeMap<String, usize>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -87,7 +90,7 @@ pub fn infer_schema(docs: &[mongodb::bson::Document]) -> SchemaReport {
     let mut type_counts: BTreeMap<String, BTreeMap<String, usize>> = BTreeMap::new();
     // Enum tracking: distinct scalar values per path; disqualified = saw a
     // non-enumerable value (object/array/objectId/date/...) or exceeded ENUM_MAX.
-    let mut values: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut values: BTreeMap<String, BTreeMap<String, usize>> = BTreeMap::new();
     let mut disqualified: BTreeSet<String> = BTreeSet::new();
 
     fn walk(
@@ -95,7 +98,7 @@ pub fn infer_schema(docs: &[mongodb::bson::Document]) -> SchemaReport {
         doc: &mongodb::bson::Document,
         presence: &mut BTreeMap<String, usize>,
         type_counts: &mut BTreeMap<String, BTreeMap<String, usize>>,
-        values: &mut BTreeMap<String, BTreeSet<String>>,
+        values: &mut BTreeMap<String, BTreeMap<String, usize>>,
         disqualified: &mut BTreeSet<String>,
     ) {
         for (k, v) in doc.iter() {
@@ -111,7 +114,7 @@ pub fn infer_schema(docs: &[mongodb::bson::Document]) -> SchemaReport {
                 match enum_scalar(v) {
                     Some(s) => {
                         let set = values.entry(path.clone()).or_default();
-                        set.insert(s);
+                        *set.entry(s).or_insert(0) += 1;
                         if set.len() > ENUM_MAX {
                             disqualified.insert(path.clone());
                             values.remove(&path);
@@ -151,17 +154,27 @@ pub fn infer_schema(docs: &[mongodb::bson::Document]) -> SchemaReport {
                 })
                 .unwrap_or_default();
             let coverage = if sampled == 0 { 0.0 } else { pres as f64 / sampled as f64 };
-            let enum_values = if disqualified.contains(&path) {
+            let enum_counts = if disqualified.contains(&path) {
                 None
             } else {
-                values.get(&path).filter(|s| !s.is_empty() && s.len() <= ENUM_MAX)
-                    .map(|s| s.iter().cloned().collect::<Vec<_>>())
+                values.get(&path).filter(|s| !s.is_empty() && s.len() <= ENUM_MAX).cloned()
             };
-            FieldStat { path, types, presence: pres, coverage, enum_values }
+            let enum_values = enum_counts.as_ref().map(|c| c.keys().cloned().collect::<Vec<_>>());
+            FieldStat { path, types, presence: pres, coverage, enum_values, enum_counts }
         })
         .collect();
 
     SchemaReport { sampled, fields }
+}
+
+/// The stage that picks the sample: the first `size` documents in natural
+/// order, or `size` random ones.
+pub(crate) fn sample_stage(size: i64, first: bool) -> mongodb::bson::Document {
+    if first {
+        mongodb::bson::doc! { "$limit": size }
+    } else {
+        mongodb::bson::doc! { "$sample": { "size": size } }
+    }
 }
 
 pub async fn analyze_schema_impl(
@@ -171,8 +184,20 @@ pub async fn analyze_schema_impl(
     collection: &str,
     sample_size: i64,
 ) -> Result<String, String> {
+    analyze_schema_sampled(state, id, database, collection, sample_size, false).await
+}
+
+/// As `analyze_schema_impl`, choosing a random sample or the first documents.
+pub async fn analyze_schema_sampled(
+    state: &AppState,
+    id: &str,
+    database: &str,
+    collection: &str,
+    sample_size: i64,
+    first: bool,
+) -> Result<String, String> {
     let started = std::time::Instant::now();
-    let result = analyze_schema_impl_inner(state, id, database, collection, sample_size).await;
+    let result = analyze_schema_impl_inner(state, id, database, collection, sample_size, first).await;
     crate::audit::maybe_record_result(
         state,
         Some(id),
@@ -195,6 +220,7 @@ async fn analyze_schema_impl_inner(
     database: &str,
     collection: &str,
     sample_size: i64,
+    first: bool,
 ) -> Result<String, String> {
     let sample_size = normalize_schema_sample(sample_size);
     let is_mock = {
@@ -217,13 +243,13 @@ async fn analyze_schema_impl_inner(
         }
         out
     } else if let Some(conn) = state.server.remote(id)? {
-        crate::server::ops::query::sample(state, &conn, database, collection, sample_size).await?
+        crate::server::ops::query::sample(state, &conn, database, collection, sample_size, first).await?
     } else {
         let client = require_real_client(state, id)?;
         let coll = client
             .database(database)
             .collection::<mongodb::bson::Document>(collection);
-        let pipeline = vec![mongodb::bson::doc! { "$sample": { "size": sample_size } }];
+        let pipeline = vec![sample_stage(sample_size, first)];
         let mut cursor = coll
             .aggregate(pipeline)
             .with_type::<mongodb::bson::RawDocumentBuf>()
@@ -285,5 +311,27 @@ mod tests {
         let r = infer_schema(&docs);
         assert_eq!(field(&r, "seats").enum_values.clone().unwrap(), vec!["3".to_string(), "4".to_string()]);
         assert_eq!(field(&r, "active").enum_values.clone().unwrap(), vec!["false".to_string(), "true".to_string()]);
+    }
+
+    #[test]
+    fn counts_each_enum_value() {
+        let docs = vec![
+            doc! {"plan": "Free"}, doc! {"plan": "Team"},
+            doc! {"plan": "Free"}, doc! {"plan": "Business"},
+        ];
+        let r = infer_schema(&docs);
+        let counts = field(&r, "plan").enum_counts.clone().expect("counts");
+        assert_eq!(counts.get("Free"), Some(&2));
+        assert_eq!(counts.get("Team"), Some(&1));
+        assert_eq!(counts.get("Business"), Some(&1));
+        assert!(field(&r, "plan").enum_counts.is_some());
+        let many: Vec<_> = (0..30).map(|i| doc! {"name": format!("n{}", i)}).collect();
+        assert!(field(&infer_schema(&many), "name").enum_counts.is_none());
+    }
+
+    #[test]
+    fn sample_stage_takes_the_first_n_or_a_random_n() {
+        assert_eq!(super::sample_stage(50, true), doc! {"$limit": 50i64});
+        assert_eq!(super::sample_stage(50, false), doc! {"$sample": {"size": 50i64}});
     }
 }

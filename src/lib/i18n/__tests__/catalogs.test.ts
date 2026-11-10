@@ -90,6 +90,8 @@ const ALLOWED_IDENTICAL_VALUES = new Set([
   'settings:mcp.tabLabel', // MCP
   'connections:filePicker.jsonFilter', // JSON
   'documents:dataGrid.viewModes.json', // JSON
+  'documents:schemaView.export.json', // JSON
+  'documents:schemaView.export.markdown', // Markdown
   'connections:form.uriBadge', // URI
   'connections:tabs.tls', // TLS / SSL
   'connections:auth.methodScram1', // SCRAM-SHA-1
