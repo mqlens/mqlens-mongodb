@@ -297,10 +297,13 @@ mod tests {
 
     #[test]
     fn curates_db_stats_subset() {
+        // A real `dbStats` reply: index bytes are `indexSize` (only
+        // `collStats` calls it `totalIndexSize`).
         let raw = doc! {
             "db": "sales_db", "collections": 4i32, "views": 1i32, "objects": 12_345i64,
             "avgObjSize": 512.5, "dataSize": 6_324_712i64, "storageSize": 2_502_656i64,
-            "indexes": 9i32, "totalIndexSize": 1_105_920i64, "ok": 1.0,
+            "indexes": 9i32, "indexSize": 1_105_920i64, "totalSize": 3_608_576i64,
+            "scaleFactor": 1i32, "fsUsedSize": 0i64, "fsTotalSize": 0i64, "ok": 1.0,
         };
         let s = curate_db_stats(&raw);
         assert_eq!(s.collections, 4);
