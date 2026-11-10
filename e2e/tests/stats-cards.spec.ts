@@ -96,6 +96,9 @@ test.describe('Schema analysis failures', () => {
     await openCollection(page, 'shop', 'empty');
     await view(page).getByTestId('analyze-schema-btn').click();
     await expect(view(page)).toContainText('Collection is empty — nothing to analyze.');
+    // Rules can still be written before the first document arrives.
+    await view(page).getByTestId('schema-tab-validation').click();
+    await expect(view(page).getByTestId('validation-rules-view')).toBeVisible();
 
     await sidebar(page).getByText('mixed', { exact: true }).click();
     await dismissHoverCards(page);

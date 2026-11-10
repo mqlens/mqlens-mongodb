@@ -193,14 +193,7 @@ export const SchemaView: React.FC<SchemaViewProps> = ({
     );
   }
 
-  if (!report || report.sampled === 0) {
-    return (
-      <div className="flex h-full flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
-        <Table2 size={20} />
-        {t('schemaView.empty.title')}
-      </div>
-    );
-  }
+  if (!report) return null;
 
   return (
     <div className="flex h-full flex-col overflow-hidden" data-testid="schema-view">
@@ -237,11 +230,18 @@ export const SchemaView: React.FC<SchemaViewProps> = ({
         </div>
 
         <TabsContent value="fields" className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden">
-          <SchemaFieldTable
-            report={report}
-            onSortKeyChange={setSortKey}
-            sortedFields={sortedFields}
-          />
+          {report.sampled === 0 ? (
+            <div className="flex flex-1 flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
+              <Table2 size={20} />
+              {t('schemaView.empty.title')}
+            </div>
+          ) : (
+            <SchemaFieldTable
+              report={report}
+              onSortKeyChange={setSortKey}
+              sortedFields={sortedFields}
+            />
+          )}
         </TabsContent>
 
         {/* Kept mounted while hidden, so an unapplied validator survives a look at the fields. */}

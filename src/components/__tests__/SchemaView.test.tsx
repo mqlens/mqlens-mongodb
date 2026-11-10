@@ -110,6 +110,17 @@ describe('SchemaView (M6)', () => {
   it('shows an empty state when the collection has no documents', async () => {
     mockInvoke.mockResolvedValue(JSON.stringify({ sampled: 0, fields: [] }));
     render(<SchemaView connectionId="c1" databaseName="shop" collectionName="empty" />);
-    expect(await screen.findByText(/empty/i)).toBeInTheDocument();
+    expect(await screen.findByText(/nothing to analyze/i)).toBeInTheDocument();
+  });
+
+  it('still offers the validation rules for an empty collection', async () => {
+    mockInvoke.mockImplementation((cmd: string) =>
+      cmd === 'get_collection_options'
+        ? Promise.resolve({ validator: '{}', validationLevel: '', validationAction: '' })
+        : Promise.resolve(JSON.stringify({ sampled: 0, fields: [] }))
+    );
+    render(<SchemaView connectionId="c1" databaseName="shop" collectionName="empty" />);
+    fireEvent.mouseDown(await screen.findByTestId('schema-tab-validation'), { button: 0 });
+    expect(await screen.findByTestId('validation-rules-view')).toBeInTheDocument();
   });
 });
