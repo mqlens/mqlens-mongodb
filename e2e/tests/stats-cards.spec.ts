@@ -70,7 +70,9 @@ test.describe('Schema analysis failures', () => {
     await view(page).getByTestId('analyze-schema-btn').click();
 
     await expect(view(page)).toContainText('not authorized to sample sales_db.customers');
-    await expect(view(page).getByTestId('schema-view')).toHaveCount(0);
+    // No fields to show, while the validation rules stay a click away.
+    await expect(view(page).locator('[data-testid^="schema-row-"]')).toHaveCount(0);
+    await expect(view(page).getByTestId('schema-tab-validation')).toBeVisible();
   });
 
   test('an empty collection has nothing to analyze, and coverage sorts the fields', async ({ app, page }) => {

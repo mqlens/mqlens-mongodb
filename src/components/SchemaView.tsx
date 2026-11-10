@@ -249,27 +249,35 @@ export const SchemaView: React.FC<SchemaViewProps> = ({
     return fields;
   }, [report, sortKey]);
 
+  // Loading and errors stay inside Field Analysis: the Validation Rules tab
+  // must stay mounted while the fields are sampled again, or its draft is lost.
+  let fieldsBody: React.ReactNode;
   if (loading) {
-    return (
-      <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
+    fieldsBody = (
+      <div className="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
         <Loader2 size={16} className="animate-spin" />
         {t('schemaView.labels.analyzing')}
       </div>
     );
-  }
-
-  if (error) {
-    return (
-      <div className="flex h-full items-center justify-center p-6">
+  } else if (error || !report) {
+    fieldsBody = (
+      <div className="flex flex-1 items-center justify-center p-6">
         <div className="flex items-center gap-2 font-mono text-sm text-destructive">
           <AlertCircle size={16} className="flex-shrink-0" />
           <span>{error}</span>
         </div>
       </div>
     );
+  } else if (report.sampled === 0) {
+    fieldsBody = (
+      <div className="flex flex-1 flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
+        <Table2 size={20} />
+        {t('schemaView.empty.title')}
+      </div>
+    );
+  } else {
+    fieldsBody = <SchemaFieldTable report={report} onSortKeyChange={setSortKey} sortedFields={sortedFields} />;
   }
-
-  if (!report) return null;
 
   return (
     <div className="flex h-full flex-col overflow-hidden" data-testid="schema-view">
@@ -310,6 +318,7 @@ export const SchemaView: React.FC<SchemaViewProps> = ({
             size="sm"
             className="h-7 gap-1 px-2 text-[11px]"
             onClick={() => exportSchema('json')}
+            disabled={!report}
             data-testid="schema-export-json"
           >
             <Download size={12} /> {t('schemaView.export.json')}
@@ -320,13 +329,16 @@ export const SchemaView: React.FC<SchemaViewProps> = ({
             size="sm"
             className="h-7 gap-1 px-2 text-[11px]"
             onClick={() => exportSchema('md')}
+            disabled={!report}
             data-testid="schema-export-md"
           >
             <Download size={12} /> {t('schemaView.export.markdown')}
           </Button>
-          <Badge variant="outline" className="text-[10px]">
-            {t('schemaView.labels.fieldsCount', { count: report.fields.length })}
-          </Badge>
+          {report && (
+            <Badge variant="outline" className="text-[10px]">
+              {t('schemaView.labels.fieldsCount', { count: report.fields.length })}
+            </Badge>
+          )}
         </div>
       </div>
       {exportError && (
@@ -358,18 +370,7 @@ export const SchemaView: React.FC<SchemaViewProps> = ({
         </div>
 
         <TabsContent value="fields" className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden">
-          {report.sampled === 0 ? (
-            <div className="flex flex-1 flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
-              <Table2 size={20} />
-              {t('schemaView.empty.title')}
-            </div>
-          ) : (
-            <SchemaFieldTable
-              report={report}
-              onSortKeyChange={setSortKey}
-              sortedFields={sortedFields}
-            />
-          )}
+          {fieldsBody}
         </TabsContent>
 
         {/* Kept mounted while hidden, so an unapplied validator survives a look at the fields. */}

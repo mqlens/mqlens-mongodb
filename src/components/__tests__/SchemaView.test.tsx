@@ -139,7 +139,11 @@ describe('SchemaView (M6)', () => {
   });
 
   it('shows an error state when analysis fails', async () => {
-    mockInvoke.mockRejectedValue('Sampling failed: boom');
+    mockInvoke.mockImplementation((cmd: string) =>
+      cmd === 'analyze_schema'
+        ? Promise.reject('Sampling failed: boom')
+        : Promise.resolve({ validator: '{}', validationLevel: '', validationAction: '' })
+    );
     render(<SchemaView connectionId="c1" databaseName="shop" collectionName="products" />);
     expect(await screen.findByText(/Sampling failed/)).toBeInTheDocument();
   });
@@ -178,6 +182,25 @@ describe('SchemaView (M6)', () => {
     fireEvent.mouseDown(screen.getByTestId('schema-tab-validation'), { button: 0 });
 
     expect((screen.getByTestId('validation-editor') as HTMLTextAreaElement).value).toBe('{"draft":1}');
+    expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === 'get_collection_options')).toHaveLength(1);
+  });
+
+  it('keeps a validator draft while the fields are sampled again', async () => {
+    mockInvoke.mockImplementation((cmd: string) =>
+      cmd === 'get_collection_options'
+        ? Promise.resolve({ validator: '{}', validationLevel: '', validationAction: '' })
+        : Promise.resolve(JSON.stringify(report))
+    );
+    render(<SchemaView connectionId="c1" databaseName="shop" collectionName="products" />);
+    fireEvent.mouseDown(await screen.findByTestId('schema-tab-validation'), { button: 0 });
+    fireEvent.change(await screen.findByTestId('validation-editor'), { target: { value: '{"draft":1}' } });
+
+    fireEvent.change(screen.getByTestId('schema-sample-size'), { target: { value: '250' } });
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith('analyze_schema', expect.objectContaining({ sampleSize: 250 }))
+    );
+
+    expect((await screen.findByTestId('validation-editor') as HTMLTextAreaElement).value).toBe('{"draft":1}');
     expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === 'get_collection_options')).toHaveLength(1);
   });
 
