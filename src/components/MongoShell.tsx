@@ -400,7 +400,12 @@ export const MongoShell: React.FC<MongoShellProps> = ({
     () => initialCommand || (collectionName ? `db.${collectionName}.find({}).limit(50)` : 'show collections'),
     [collectionName, initialCommand]
   );
-  const [command, setCommand] = useState(storedSession?.editorText ?? defaultCommand);
+  // The saved editor text, unless the shell now opens with another query:
+  // App remounts it for that, under the same session.
+  const openingCommand = initialCommand ?? '';
+  const savedText = (session?: ShellSession) =>
+    (session?.editorFor ?? '') === openingCommand ? session?.editorText : undefined;
+  const [command, setCommand] = useState(savedText(storedSession) ?? defaultCommand);
   const commandEditor = useMonacoValue(command, setCommand);
   const monacoTheme = useMonacoTheme();
   const monacoFontSize = useMonacoFontSize(13);
@@ -525,7 +530,8 @@ export const MongoShell: React.FC<MongoShellProps> = ({
         setIsAIOpenState(restored.aiOpen);
         setAiChatId(restored.aiChatId);
         autoRunRef.current = restored.autoRanCommand;
-        if (restored.editorText !== undefined) setCommand(restored.editorText);
+        const text = savedText(restored);
+        if (text !== undefined) setCommand(text);
         if (restored.scriptPath) scriptPathRef.current = restored.scriptPath;
         // A command recorded as running whose caller is not in this renderer:
         // the window was reloaded, or the tab arrived from another window,
@@ -804,11 +810,11 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   hydratedRef.current = hydrated;
   useEffect(() => {
     if (!hydrated) return;
-    const timer = setTimeout(() => persistSession({ editorText: command }), 300);
+    const timer = setTimeout(() => persistSession({ editorText: command, editorFor: openingCommand }), 300);
     return () => clearTimeout(timer);
   }, [command, hydrated]);
   useEffect(() => () => {
-    if (hydratedRef.current) persistSession({ editorText: commandRef.current });
+    if (hydratedRef.current) persistSession({ editorText: commandRef.current, editorFor: openingCommand });
   }, []);
 
   useEffect(() => {

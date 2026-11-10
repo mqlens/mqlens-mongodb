@@ -144,6 +144,32 @@ describe('MongoShell Component', () => {
       await waitFor(() => expect(mockWriteTextFile).toHaveBeenCalledWith('/scripts/report.js', 'print(2)'));
     });
 
+    it('opens a newly requested query over the edited text, but keeps the text for the same one', async () => {
+      const shellTab = (initialCommand: string) => (
+        <MongoShell
+          connectionId="conn-1"
+          connectionName="mock"
+          connectionUri="mongodb://prod-replica-set"
+          databaseName="sales_db"
+          collectionName="orders"
+          initialCommand={initialCommand}
+          sessionKey="tab-shell-reopened"
+        />
+      );
+      const editorValue = () => (screen.getByLabelText('mongosh editor') as HTMLTextAreaElement).value;
+      const first = render(shellTab('db.orders.find({a: 1})'));
+      await screen.findByText(/mongosh session attached/);
+      fireEvent.change(screen.getByLabelText('mongosh editor'), { target: { value: 'print(2)' } });
+      first.unmount();
+
+      const same = render(shellTab('db.orders.find({a: 1})'));
+      await waitFor(() => expect(editorValue()).toBe('print(2)'));
+      same.unmount();
+
+      render(shellTab('db.orders.find({a: 2})'));
+      await waitFor(() => expect(editorValue()).toBe('db.orders.find({a: 2})'));
+    });
+
     it('keeps the editor text in the session while the tab still owns it', async () => {
       render(
         <MongoShell

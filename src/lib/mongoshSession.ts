@@ -52,6 +52,9 @@ export interface ShellSession {
   /** The editor's text when the shell last unmounted, so a script and its
    *  path come back together. */
   editorText?: string;
+  /** The opening command that text was edited from: a shell opened with
+   *  another query shows that query, not this text. */
+  editorFor?: string;
   /** The command running in this tab's session right now, if any.
    *
    *  Held here for the same reason the transcript is: the tab can unmount while
@@ -303,6 +306,7 @@ function normalizeStoredSession(stored: unknown): ShellSession | undefined {
     aiChatId: typeof candidate.aiChatId === 'string' ? candidate.aiChatId : undefined,
     scriptPath: typeof candidate.scriptPath === 'string' ? candidate.scriptPath : undefined,
     editorText: typeof candidate.editorText === 'string' ? candidate.editorText : undefined,
+    editorFor: typeof candidate.editorFor === 'string' ? candidate.editorFor : undefined,
     activeCommand: normaliseActiveCommand(candidate.activeCommand),
   };
 }
@@ -401,6 +405,7 @@ export function writeShellSession(
     aiChatId: patch.aiChatId ?? prev?.aiChatId,
     scriptPath: patch.scriptPath ?? prev?.scriptPath,
     editorText: patch.editorText ?? prev?.editorText,
+    editorFor: patch.editorFor ?? prev?.editorFor,
     // `null` is a deliberate write ("nothing running now"); only an absent key
     // keeps the previous value, like `sessionId`.
     activeCommand:
