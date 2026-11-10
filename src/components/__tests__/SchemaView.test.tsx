@@ -9,9 +9,15 @@ vi.mock('@tauri-apps/api/core', () => ({
 
 // Monaco does not render under jsdom.
 vi.mock('../QueryEditor', () => ({
-  QueryEditor: ({ value, 'data-testid': testId }: { value: string; 'data-testid'?: string }) => (
-    <textarea data-testid={testId} value={value} readOnly />
-  ),
+  QueryEditor: ({
+    value,
+    onChange,
+    'data-testid': testId,
+  }: {
+    value: string;
+    onChange: (v: string) => void;
+    'data-testid'?: string;
+  }) => <textarea data-testid={testId} value={value} onChange={(e) => onChange(e.target.value)} />,
 }));
 
 describe('SchemaView (M6)', () => {
@@ -81,6 +87,24 @@ describe('SchemaView (M6)', () => {
       database: 'shop',
       collection: 'products',
     });
+  });
+
+  it('keeps a validator draft across a switch to Field Analysis and back', async () => {
+    mockInvoke.mockImplementation((cmd: string) =>
+      cmd === 'get_collection_options'
+        ? Promise.resolve({ validator: '{}', validationLevel: '', validationAction: '' })
+        : Promise.resolve(JSON.stringify(report))
+    );
+    render(<SchemaView connectionId="c1" databaseName="shop" collectionName="products" />);
+    fireEvent.mouseDown(await screen.findByTestId('schema-tab-validation'), { button: 0 });
+    const editor = (await screen.findByTestId('validation-editor')) as HTMLTextAreaElement;
+    fireEvent.change(editor, { target: { value: '{"draft":1}' } });
+
+    fireEvent.mouseDown(screen.getByTestId('schema-tab-fields'), { button: 0 });
+    fireEvent.mouseDown(screen.getByTestId('schema-tab-validation'), { button: 0 });
+
+    expect((screen.getByTestId('validation-editor') as HTMLTextAreaElement).value).toBe('{"draft":1}');
+    expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === 'get_collection_options')).toHaveLength(1);
   });
 
   it('shows an empty state when the collection has no documents', async () => {

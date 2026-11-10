@@ -244,7 +244,12 @@ export const SchemaView: React.FC<SchemaViewProps> = ({
           />
         </TabsContent>
 
-        <TabsContent value="validation" className="mt-0 flex min-h-0 flex-1 flex-col">
+        {/* Kept mounted while hidden, so an unapplied validator survives a look at the fields. */}
+        <TabsContent
+          value="validation"
+          forceMount
+          className="mt-0 flex min-h-0 flex-1 flex-col data-[state=inactive]:hidden"
+        >
           <ValidationRulesView
             connectionId={connectionId}
             databaseName={databaseName}

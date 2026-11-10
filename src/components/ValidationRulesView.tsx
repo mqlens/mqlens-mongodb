@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { ShieldCheck, Loader2, AlertCircle, CheckCircle2, Wand2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -101,9 +101,15 @@ export const ValidationRulesView: React.FC<ValidationRulesViewProps> = ({
     return true;
   };
 
+  // The editor stays editable while sampling; the result only fills it if
+  // nothing was typed in the meantime.
+  const validatorRef = useRef(validator);
+  validatorRef.current = validator;
+
   const handleGenerate = async () => {
     setError(null);
     setGenerating(true);
+    const before = validatorRef.current;
     try {
       const json = await invoke<string>('analyze_schema', {
         id: connectionId,
@@ -111,6 +117,7 @@ export const ValidationRulesView: React.FC<ValidationRulesViewProps> = ({
         collection: collectionName,
         sampleSize: 1000,
       });
+      if (validatorRef.current !== before) return;
       editValidator(JSON.stringify(validatorFromSchemaReport(JSON.parse(json) as SchemaReport), null, 2));
     } catch (err: any) {
       setError(String(err?.message || err));

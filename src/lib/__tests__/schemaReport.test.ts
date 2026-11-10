@@ -37,4 +37,14 @@ describe('validatorFromSchemaReport', () => {
       },
     });
   });
+
+  it('keeps a field named __proto__ as an ordinary property', () => {
+    const v = validatorFromSchemaReport({
+      sampled: 1,
+      fields: [{ path: '__proto__', types: [{ type: 'string', count: 1 }], presence: 1, coverage: 1 }],
+    });
+    expect(JSON.parse(JSON.stringify(v)).$jsonSchema.properties).toEqual(
+      JSON.parse('{"__proto__": {"bsonType": "string"}}')
+    );
+  });
 });

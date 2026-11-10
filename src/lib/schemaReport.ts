@@ -45,7 +45,8 @@ export function validatorFromSchemaReport(report: SchemaReport): { $jsonSchema: 
     const key = f.path.slice(dot + 1);
     const types = f.types.map((t) => bsonTypeAlias(t.type));
     const node: JsonSchemaNode = { bsonType: types.length === 1 ? types[0] : types };
-    (parent.node.properties ??= {})[key] = node;
+    // No prototype, so a field named `__proto__` is just a property.
+    (parent.node.properties ??= Object.create(null) as Record<string, JsonSchemaNode>)[key] = node;
     if (f.presence === parent.presence) (parent.node.required ??= []).push(key);
     nodes.set(f.path, { node, presence: f.presence });
   }

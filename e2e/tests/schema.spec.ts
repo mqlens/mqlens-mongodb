@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from '../fixtures';
-import { callFrom, loadSample, openCollection } from '../helpers';
+import { callFrom, getEditorText, loadSample, openCollection, setEditorText } from '../helpers';
 
 const view = (page: Page) => page.locator('[data-testid^="tab-content-"]:not([hidden])');
 
@@ -67,5 +67,30 @@ test.describe('Schema analysis', () => {
     expect(schema.required).toContain('name');
     expect(schema.properties.address.properties.city).toEqual({ bsonType: 'string' });
     await expect(view(page).getByTestId('validation-success')).toBeVisible();
+  });
+
+  test('the validator reports bad JSON and a failed sample, and keeps its draft across tabs', async ({ app, page }) => {
+    await app.open();
+    await loadSample(page);
+    await openCollection(page, 'sales_db', 'customers');
+    await view(page).getByTestId('analyze-schema-btn').click();
+    await view(page).getByTestId('schema-tab-validation').click();
+    const rules = view(page).getByTestId('validation-rules-view');
+
+    await setEditorText(page, rules, '{ not json');
+    await rules.getByTestId('validation-check-btn').click();
+    await expect(rules.getByTestId('validation-error')).toContainText('Invalid validator JSON');
+
+    await setEditorText(page, rules, '[]');
+    await rules.getByTestId('validation-check-btn').click();
+    await expect(rules.getByTestId('validation-error')).toContainText('must be a JSON object');
+
+    await app.failNext('analyze_schema', 'Sampling failed: boom');
+    await rules.getByTestId('validation-generate-btn').click();
+    await expect(rules.getByTestId('validation-error')).toContainText('Sampling failed: boom');
+
+    await view(page).getByTestId('schema-tab-fields').click();
+    await view(page).getByTestId('schema-tab-validation').click();
+    expect(await getEditorText(page, rules)).toBe('[]');
   });
 });

@@ -249,3 +249,29 @@ describe('ValidationRulesView validator tools', () => {
     });
   });
 });
+
+describe('ValidationRulesView generate race', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('does not overwrite what was typed while the sample was being taken', async () => {
+    let finishSample: (json: string) => void = () => {};
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'get_collection_options') {
+        return Promise.resolve({ validator: '{}', validationLevel: '', validationAction: '' });
+      }
+      if (cmd === 'analyze_schema') return new Promise<string>((resolve) => { finishSample = resolve; });
+      return Promise.reject(new Error(`unhandled ${cmd}`));
+    });
+    renderWithProviders(
+      <ValidationRulesView connectionId="c1" databaseName="shop" collectionName="customers" onApplied={() => {}} />
+    );
+    const editor = (await screen.findByTestId('validation-editor')) as HTMLTextAreaElement;
+
+    fireEvent.click(screen.getByTestId('validation-generate-btn'));
+    fireEvent.change(editor, { target: { value: '{"typed":true}' } });
+    finishSample(JSON.stringify({ sampled: 1, fields: [{ path: 'a', types: [{ type: 'int', count: 1 }], presence: 1, coverage: 1 }] }));
+
+    await waitFor(() => expect(screen.getByTestId('validation-generate-btn')).not.toBeDisabled());
+    expect(editor.value).toBe('{"typed":true}');
+  });
+});
