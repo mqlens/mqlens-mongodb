@@ -5,15 +5,24 @@ import { maskLiterals } from './jsLiterals';
 // an operator (not a comment, nor a prefix ++/--), or the rest of an if/try.
 const CONTINUES_NEXT_LINE = /^(?:(?!\/[/*]|\+\+|--)[.?:,()[\]}+\-*/%=&|^<>]|(?:else|catch|finally)\b)/;
 // What, at the end of a line's code, leaves its statement open. A postfix
-// ++/-- does not; a sign after a different one (`+-`) does.
-const LEFT_OPEN = /(?:(?<!\+)\+|(?<!-)-|[=*/%&|^<>!?:,.]|\b(?:else|do|try|finally))$/;
+// ++/-- does not; a sign after a different one (`+-`) does, and so does a
+// keyword operator (`void`, `typeof`) still waiting for its operand.
+const LEFT_OPEN =
+  /(?:(?<!\+)\+|(?<!-)-|[=*/%&|^<>!?:,.]|\b(?:else|do|try|finally|void|typeof|instanceof|in|new|delete|await))$/;
 // Whitespace and comments, skipped when looking for the next code.
 const SPACE_AND_COMMENTS = /^(?:\s|\/\/[^\n]*|\/\*[\s\S]*?\*\/)*/;
 const nextCode = (text: string, from: number) => text.slice(from).replace(SPACE_AND_COMMENTS, '');
+// Whether the word at `i` is a property name: a `.` (spaces aside) comes before it.
+const isProperty = (text: string, i: number) => {
+  let k = i - 1;
+  while (k >= 0 && /\s/.test(text[k])) k--;
+  return text[k] === '.';
+};
 // A control, catch or function-declaration header, up to its opening
-// parenthesis, where a statement, a block or another header before it ends.
+// parenthesis, where a statement, a block or another header before it ends,
+// labels (`outer:`) aside.
 const CONTROL_HEADER =
-  /(?:^|[;{})]|\belse)\s*(?:if|for|while|with|switch|catch|(?:async\s+)?function\b[\s*]*[\w$]*)\s*\($/;
+  /(?:^|[;{})]|\belse)\s*(?:[A-Za-z_$][\w$]*\s*:\s*)*(?:if|for|while|with|switch|catch|(?:async\s+)?function\b[\s*]*[\w$]*)\s*\($/;
 // Any function header, a function expression's too: its body may open on the
 // next line, but its braces are a value, not a block statement.
 const FUNCTION_HEADER = /\bfunction\b[\s*]*[\w$]*\s*\($/;
@@ -115,7 +124,10 @@ function statementSpans(text: string): Array<[number, number]> {
     const codeBefore = codeEnd;
     if (!/\s/.test(c)) codeEnd = i + 1;
     if (c === '"' || c === "'" || c === '`') quote = c;
-    else if (depth === 0 && /^(?:do|while)\b/.test(text.slice(i, i + 6)) && !/[\w$.]/.test(text[i - 1] ?? '')) {
+    else if (
+      depth === 0 && /^(?:do|while)\b/.test(text.slice(i, i + 6)) &&
+      !/[\w$]/.test(text[i - 1] ?? '') && !isProperty(text, i)
+    ) {
       if (c === 'd') pendingDo++;
       else {
         whileEndsDo = pendingDo > 0;

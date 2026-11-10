@@ -161,6 +161,23 @@ describe('statementAt', () => {
     expect(at('if (false) do { a() } while (false)\nb(|)')).toBe('b()');
   });
 
+  it('keeps a keyword operator at a line end joined to its operand', () => {
+    const both = 'if (false) void\n  db.orders.deleteMany({})';
+    expect(at('if (false) void\n  db.orders.deleteMa|ny({})')).toBe(both);
+    expect(at('const t = typeof\n  db.orders.fi|nd')).toBe('const t = typeof\n  db.orders.find');
+  });
+
+  it('keeps a labelled header joined to its body', () => {
+    const guarded = 'guard: if (false)\n  db.orders.deleteMany({})';
+    expect(at('guard: if (false)\n  db.orders.deleteMa|ny({})')).toBe(guarded);
+  });
+
+  it('does not count a property named do as a loop', () => {
+    const text = 'db. do.findOne()\nwhile (false)\n  db.orders.deleteMany({})';
+    expect(at('db. do.findOne()\nwhile (false)\n  db.orders.deleteMa|ny({})')).toBe('while (false)\n  db.orders.deleteMany({})');
+    expect(at(`${text.slice(0, 5)}|${text.slice(5)}`)).toBe('db. do.findOne()');
+  });
+
   it('keeps a header with a trailing comment joined to its body', () => {
     const guarded = 'if (false) // keep guarded\n  db.orders.deleteMany({})';
     expect(at('if (false) // keep guarded\n  db.orders.deleteMa|ny({})')).toBe(guarded);
