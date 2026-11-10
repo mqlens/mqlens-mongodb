@@ -1,27 +1,17 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { save } from '@tauri-apps/plugin-dialog';
+import { writeTextFile } from '@tauri-apps/plugin-fs';
 import { useTranslation } from 'react-i18next';
-import { Table2, Loader2, AlertCircle, ArrowUpDown, ShieldCheck } from 'lucide-react';
+import { Table2, Loader2, AlertCircle, ArrowUpDown, ShieldCheck, Download } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
-interface TypeCount {
-  type: string;
-  count: number;
-}
-interface FieldStat {
-  path: string;
-  types: TypeCount[];
-  presence: number;
-  coverage: number;
-  enumValues?: string[];
-}
-interface SchemaReport {
-  sampled: number;
-  fields: FieldStat[];
-}
+import { type FieldStat, type SchemaReport, schemaToMarkdown, topValues } from '@/lib/schemaExport';
+
+const SAMPLE_SIZES = [100, 250, 500, 1000];
 
 interface SchemaViewProps {
   connectionId: string;
@@ -31,6 +21,39 @@ interface SchemaViewProps {
 }
 
 type SortKey = 'field' | 'coverage';
+
+const ValuesRow: React.FC<{ field: FieldStat }> = ({ field }) => {
+  const { t } = useTranslation('documents');
+  const values = topValues(field);
+  return (
+    <tr className="bg-muted/30" data-testid={`schema-values-${field.path}`}>
+      <td colSpan={3} className="px-6 py-2">
+        {values.length === 0 ? (
+          <span className="text-muted-foreground">{t('schemaView.labels.noValues')}</span>
+        ) : (
+          <div className="space-y-1">
+            {values.map(([value, count]) => {
+              const pct = Math.round((count / (field.presence || 1)) * 100);
+              return (
+                <div key={value} className="flex items-center gap-2">
+                  <span className="w-40 truncate font-mono text-foreground" title={value}>
+                    {value}
+                  </span>
+                  <div className="h-1.5 w-32 overflow-hidden rounded-full bg-muted">
+                    <div className="h-full bg-chart-2" style={{ width: `${pct}%` }} />
+                  </div>
+                  <span className="tabular-nums text-muted-foreground">
+                    {count} · {pct}%
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </td>
+    </tr>
+  );
+};
 
 const TypesCell: React.FC<{ field: FieldStat }> = ({ field }) => {
   const total = field.types.reduce((sum, ty) => sum + ty.count, 0) || 1;
@@ -54,6 +77,7 @@ const SchemaFieldTable: React.FC<{
   sortedFields: FieldStat[];
 }> = ({ report, onSortKeyChange, sortedFields }) => {
   const { t } = useTranslation('documents');
+  const [openPath, setOpenPath] = useState<string | null>(null);
   return (
   <>
     <div className="flex items-center justify-between border-b border-border px-4 py-3">
@@ -102,12 +126,22 @@ const SchemaFieldTable: React.FC<{
           {sortedFields.map((field) => {
             const pct = Math.round(field.coverage * 100);
             return (
+              <React.Fragment key={field.path}>
               <tr
-                key={field.path}
                 className="border-t border-border hover:bg-accent/50"
                 data-testid={`schema-row-${field.path}`}
               >
-                <td className="px-4 py-1.5 font-mono text-foreground">{field.path}</td>
+                <td className="px-4 py-1.5 font-mono text-foreground">
+                  <button
+                    type="button"
+                    className="text-left hover:underline focus-visible:underline focus-visible:outline-none"
+                    aria-expanded={openPath === field.path}
+                    title={t('schemaView.labels.showValues')}
+                    onClick={() => setOpenPath((p) => (p === field.path ? null : field.path))}
+                  >
+                    {field.path}
+                  </button>
+                </td>
                 <td className="px-4 py-1.5">
                   <TypesCell field={field} />
                 </td>
@@ -123,6 +157,8 @@ const SchemaFieldTable: React.FC<{
                   </div>
                 </td>
               </tr>
+              {openPath === field.path && <ValuesRow field={field} />}
+              </React.Fragment>
             );
           })}
         </tbody>
@@ -136,7 +172,7 @@ export const SchemaView: React.FC<SchemaViewProps> = ({
   connectionId,
   databaseName,
   collectionName,
-  sampleSize = 1000,
+  sampleSize: initialSampleSize = 1000,
 }) => {
   const { t } = useTranslation('documents');
   const [report, setReport] = useState<SchemaReport | null>(null);
@@ -144,6 +180,28 @@ export const SchemaView: React.FC<SchemaViewProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>('field');
   const [tab, setTab] = useState('fields');
+  const [sampleSize, setSampleSize] = useState(initialSampleSize);
+  const [first, setFirst] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+
+  const exportSchema = async (format: 'json' | 'md') => {
+    if (!report) return;
+    setExportError(null);
+    try {
+      const path = await save({
+        defaultPath: `${databaseName}.${collectionName}.schema.${format}`,
+        filters: [{ name: format === 'json' ? 'JSON' : 'Markdown', extensions: [format] }],
+      });
+      if (!path) return;
+      const text =
+        format === 'json'
+          ? JSON.stringify(report, null, 2)
+          : schemaToMarkdown(`${databaseName}.${collectionName}`, report);
+      await writeTextFile(path, text);
+    } catch (err: any) {
+      setExportError(t('schemaView.export.failed', { error: String(err?.message || err) }));
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -158,6 +216,7 @@ export const SchemaView: React.FC<SchemaViewProps> = ({
           database: databaseName,
           collection: collectionName,
           sampleSize,
+          first,
         });
         if (cancelled) return;
         setReport(JSON.parse(json) as SchemaReport);
@@ -171,7 +230,7 @@ export const SchemaView: React.FC<SchemaViewProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [connectionId, databaseName, collectionName, sampleSize]);
+  }, [connectionId, databaseName, collectionName, sampleSize, first]);
 
   const sortedFields = useMemo(() => {
     if (!report) return [];
@@ -222,10 +281,60 @@ export const SchemaView: React.FC<SchemaViewProps> = ({
             {databaseName}.{collectionName}
           </span>
         </div>
-        <Badge variant="outline" className="text-[10px]">
-          {t('schemaView.labels.fieldsCount', { count: report.fields.length })}
-        </Badge>
+        <div className="flex items-center gap-2">
+          <select
+            value={sampleSize}
+            onChange={(e) => setSampleSize(Number(e.target.value))}
+            className="h-7 rounded-md border border-border bg-background px-1 text-[11px]"
+            aria-label={t('schemaView.sample.size')}
+            data-testid="schema-sample-size"
+          >
+            {SAMPLE_SIZES.map((n) => (
+              <option key={n} value={n}>
+                {t('schemaView.sample.docs', { count: n })}
+              </option>
+            ))}
+          </select>
+          <select
+            value={first ? 'first' : 'random'}
+            onChange={(e) => setFirst(e.target.value === 'first')}
+            className="h-7 rounded-md border border-border bg-background px-1 text-[11px]"
+            aria-label={t('schemaView.sample.mode')}
+            data-testid="schema-sample-mode"
+          >
+            <option value="random">{t('schemaView.sample.random')}</option>
+            <option value="first">{t('schemaView.sample.first')}</option>
+          </select>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 gap-1 px-2 text-[11px]"
+            onClick={() => exportSchema('json')}
+            data-testid="schema-export-json"
+          >
+            <Download size={12} /> {t('schemaView.export.json')}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 gap-1 px-2 text-[11px]"
+            onClick={() => exportSchema('md')}
+            data-testid="schema-export-md"
+          >
+            <Download size={12} /> {t('schemaView.export.markdown')}
+          </Button>
+          <Badge variant="outline" className="text-[10px]">
+            {t('schemaView.labels.fieldsCount', { count: report.fields.length })}
+          </Badge>
+        </div>
       </div>
+      {exportError && (
+        <div className="border-b border-border px-4 py-1.5 text-xs text-destructive" data-testid="schema-export-error">
+          {exportError}
+        </div>
+      )}
 
       <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
         <div className="border-b border-border px-4">
