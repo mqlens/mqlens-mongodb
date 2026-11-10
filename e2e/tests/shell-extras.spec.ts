@@ -93,6 +93,27 @@ test.describe('mongosh commands', () => {
     await expect(transcript(page)).toContainText('from the keyboard');
   });
 
+  test('Ctrl+Enter runs the statement or selection at the cursor, Shift+Enter runs everything', async ({ app, page }) => {
+    await connectStaging(app, page);
+    await openShell(page);
+    await expect(transcript(page)).toContainText('transactions');
+
+    // setValue leaves the cursor on the first line.
+    await setEditorText(page, shell(page), 'print("one")\nprint("two")\nprint("three")');
+    await page.keyboard.press('Control+Enter');
+    await expect(transcript(page)).toContainText('one');
+    await expect(transcript(page)).not.toContainText('two');
+
+    await page.keyboard.press('Control+End');
+    await page.keyboard.press('Shift+Home');
+    await page.keyboard.press('Control+Enter');
+    await expect(transcript(page)).toContainText('three');
+    await expect(transcript(page)).not.toContainText('two');
+
+    await page.keyboard.press('Shift+Enter');
+    await expect(transcript(page)).toContainText('two');
+  });
+
   test('inserts or runs what the AI helper writes, and Escape cancels a destructive command', async ({ app, page }) => {
     const find: AiReplySeed = { query: { explanation: 'Premium customers.', queryType: 'script', script: 'db.customers.find({ tier: "Premium" })' } };
     const wipe: AiReplySeed = { query: { explanation: 'Removes every customer.', queryType: 'script', script: 'db.customers.deleteMany({})' } };

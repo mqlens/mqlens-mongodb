@@ -23,6 +23,7 @@ import { DataGrid } from './DataGrid';
 import { registerMongoCompletionProvider, setModelMeta, clearModelMeta } from '../lib/monacoMongo';
 import { useMonacoTheme, useMonacoFontSize } from '../lib/useMonacoTheme';
 import { useMonacoValue } from '../lib/useMonacoValue';
+import { statementAt } from '../lib/shellStatement';
 import { attachMonaco } from '../lib/monacoAppTheme';
 import { formatShortcut, shortcutById } from '@/lib/shortcuts';
 import { windowLabel } from '../workspace/workspaceStore';
@@ -763,7 +764,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
     return () => document.removeEventListener('keydown', onKeyDown, true);
   }, [tab]);
   const wrapRef = useRef<HTMLDivElement>(null);
-  const runRef = useRef<() => void>(() => {});
+  const runRef = useRef<(script?: string) => void>(() => {});
   // Seeded from the tab's session: the opening command must run once per TAB,
   // not once per mount, or switching tabs re-executes it (#240).
   const autoRunRef = useRef(storedSession?.autoRanCommand ?? false);
@@ -1415,7 +1416,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
     void restartSession();
   };
 
-  runRef.current = () => runCommand();
+  runRef.current = (script) => runCommand(script);
   viewerRef.current = viewer;
 
   useEffect(() => {
@@ -1637,12 +1638,24 @@ export const MongoShell: React.FC<MongoShellProps> = ({
               attachMonaco(monaco);
               monaco.editor.setTheme(monacoTheme);
               // Enter accepts an open suggestion, else newline. Ctrl/Cmd+Enter
-              // runs — scoped via onKeyDown (not addCommand, which leaks globally).
+              // runs the selection, or the statement under the cursor; Shift+Enter
+              // runs everything. Scoped via onKeyDown (not addCommand, which leaks
+              // globally).
               editor.onKeyDown((e) => {
-                if ((e.ctrlKey || e.metaKey) && e.keyCode === monaco.KeyCode.Enter) {
-                  e.preventDefault();
-                  e.stopPropagation();
+                if (e.keyCode !== monaco.KeyCode.Enter || e.altKey) return;
+                const mod = e.ctrlKey || e.metaKey;
+                if (mod === e.shiftKey) return;
+                e.preventDefault();
+                e.stopPropagation();
+                const model = editor.getModel();
+                const selection = editor.getSelection();
+                const position = editor.getPosition();
+                if (e.shiftKey || !model || !position) {
                   runRef.current();
+                } else if (selection && !selection.isEmpty()) {
+                  runRef.current(model.getValueInRange(selection));
+                } else {
+                  runRef.current(statementAt(model.getValue(), model.getOffsetAt(position)));
                 }
               });
               editor.focus();

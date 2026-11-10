@@ -20,6 +20,7 @@ describe('shortcuts', () => {
   it('formats known shortcuts for settings display', () => {
     const run = shortcutById('run-query')!;
     expect(formatShortcut(run, 'Win32')).toBe('Ctrl ↵');
+    expect(formatShortcut(shortcutById('shell-run-all')!, 'Win32')).toBe('Shift ↵');
     expect(formatShortcut(shortcutById('palette-navigate')!, 'MacIntel')).toBe('↑ / ↓');
   });
 
