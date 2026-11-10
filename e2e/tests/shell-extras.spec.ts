@@ -112,13 +112,18 @@ test.describe('mongosh commands', () => {
   });
 
   test('says why a script could not be opened or saved, and does nothing when the dialog is cancelled', async ({ app, page }) => {
-    await connectStaging(app, page, { dialog: { open: '/scripts/missing.js', save: null } });
+    await connectStaging(app, page, { dialog: { open: null, save: null } });
     await openShell(page);
     await expect(transcript(page)).toContainText('transactions');
     await setEditorText(page, shell(page), 'print("kept")');
 
+    await callFrom(app, 'plugin:dialog|open', () => shell(page).getByTestId('shell-open-script').click());
+    expect(await app.calls('plugin:fs|read_text_file')).toHaveLength(0);
+    expect(await getEditorText(page, shell(page))).toBe('print("kept")');
+
+    await app.failNext('plugin:dialog|open', 'the open dialog is unavailable');
     await shell(page).getByTestId('shell-open-script').click();
-    await expect(transcript(page)).toContainText('/scripts/missing.js');
+    await expect(transcript(page)).toContainText('the open dialog is unavailable');
     expect(await getEditorText(page, shell(page))).toBe('print("kept")');
 
     await callFrom(app, 'plugin:dialog|save', () => shell(page).getByTestId('shell-save-script').click());

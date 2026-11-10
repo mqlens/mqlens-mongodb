@@ -790,14 +790,8 @@ export const MongoShell: React.FC<MongoShellProps> = ({
     return () => { alive = false; };
   }, [connectionId, currentDb]);
 
-  // A new default replaces the editor's text, but not at mount, where a
-  // restored text wins.
-  const lastDefaultRef = useRef(defaultCommand);
-  useEffect(() => {
-    if (lastDefaultRef.current === defaultCommand) return;
-    lastDefaultRef.current = defaultCommand;
-    setCommand(defaultCommand);
-  }, [defaultCommand]);
+  // The default is read only at mount: App keys this view by tab id and
+  // opening command, so a new default (a rename, another command) remounts it.
   // Keep the editor's text in the tab's session, with the script path it
   // belongs to, while this view still owns that session: a rename or a move to
   // another window re-keys it before this view unmounts. Not before hydration,
