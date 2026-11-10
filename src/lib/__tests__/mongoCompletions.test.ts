@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getCompletions, TYPE_VALUE_SCAFFOLDS, type CompletionCtx } from '../mongoCompletions';
+import { getCompletions, shellCollectionAt, TYPE_VALUE_SCAFFOLDS, type CompletionCtx } from '../mongoCompletions';
 
 const base = (over: Partial<CompletionCtx>): CompletionCtx => ({
   surface: 'filter', textBeforeCursor: '', token: '', fields: ['region', 'plan', '_id'], ...over,
@@ -554,5 +554,27 @@ describe('getCompletions — shell keys respect an already-typed quote (#222 rev
     const items = getCompletions(base({ surface: 'projection', shellSyntax: true, textBeforeCursor: '{ "', token: '', fields: ['total'] }));
     const f = items.find((i) => i.label === 'total');
     expect(f?.insertText).toBe('total": ${1|1,0|}');
+  });
+});
+
+describe('shellCollectionAt', () => {
+  it('names the collection of the last db.<coll> before the cursor', () => {
+    expect(shellCollectionAt('db.orders.find({}).limit(1)\ndb.customers.find({ ti')).toBe('customers');
+    expect(shellCollectionAt('db.getCollection("audit-log").find({ ')).toBe('audit-log');
+  });
+
+  it('names none for db methods or text without a collection', () => {
+    expect(shellCollectionAt('db.getCollectionNames()')).toBeUndefined();
+    expect(shellCollectionAt('show collections')).toBeUndefined();
+  });
+});
+
+describe('shell: a quoted dotted key', () => {
+  it('completes the field path, not cursor methods, inside the quote', () => {
+    const items = getCompletions(base({
+      surface: 'shell', textBeforeCursor: 'db.customers.find({ "address.ci', token: 'address.ci',
+      fields: ['address.city', 'tier'],
+    }));
+    expect(items.map((i) => i.label)).toEqual(['address.city']);
   });
 });

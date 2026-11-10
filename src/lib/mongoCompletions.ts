@@ -161,8 +161,17 @@ function byPrefix<T extends { label: string }>(items: T[], token: string): T[] {
 
 // True when the caret sits just after an opening double-quote (user is already
 // typing a quoted key), so we must NOT add quotes again.
-function inQuote(text: string): boolean {
+export function inQuote(text: string): boolean {
   return /"[\w$.]*$/.test(text);
+}
+
+/** The collection of the last `db.<coll>.` or `db.getCollection("<coll>")` in shell text. */
+export function shellCollectionAt(text: string): string | undefined {
+  let found: string | undefined;
+  for (const m of text.matchAll(/\bdb\.([A-Za-z_$][\w$]*)\s*\.|\bdb\.getCollection\(\s*["']([^"']+)["']\s*\)/g)) {
+    found = m[1] ?? m[2];
+  }
+  return found;
 }
 
 // Whether to emit mongosh-style output (bare keys + shell constructors): the
@@ -480,7 +489,8 @@ export function getCompletions(ctx: CompletionCtx): CompletionItem[] {
     }
     return byPrefix(choiceFieldItems(ctx, '1,-1'), token);
   }
-  if (surface === 'shell') {
+  // Inside a quoted key (`{ "address.ci`) the dots belong to a field path.
+  if (surface === 'shell' && !inQuote(textBeforeCursor)) {
     // db.<partial> (collection slot — exactly one dot after db) → collection names + db methods
     if (/\bdb\.\w*$/.test(textBeforeCursor)) {
       const colls = (ctx.collections ?? []).map((c) => ({ label: c, kind: 'field' as const, insertText: c, detail: 'collection' }));

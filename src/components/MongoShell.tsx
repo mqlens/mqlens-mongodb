@@ -21,6 +21,8 @@ import type { IndexInfo } from './Sidebar';
 import { buildRunnableCommand, guardScriptRun, type GeneratedQuery } from '../lib/mongoCommand';
 import { DataGrid } from './DataGrid';
 import { registerMongoCompletionProvider, setModelMeta, clearModelMeta } from '../lib/monacoMongo';
+import { shellCollectionAt } from '../lib/mongoCompletions';
+import { fetchSchema } from '../lib/useCollectionSchema';
 import { useMonacoTheme, useMonacoFontSize } from '../lib/useMonacoTheme';
 import { useMonacoValue } from '../lib/useMonacoValue';
 import { attachMonaco } from '../lib/monacoAppTheme';
@@ -770,6 +772,10 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   // Tracks the latest result docs so the Monaco completion provider (registered
   // once in onMount) can derive field names from the current results.
   const viewerRef = useRef<{ docs: Record<string, any>[] } | null>(null);
+  // What the completion provider (registered once in onMount) samples field
+  // paths from: the collection a statement names, else the shell's own.
+  const schemaScopeRef = useRef({ connectionId, db: currentDb, collection: collectionName });
+  schemaScopeRef.current = { connectionId, db: currentDb, collection: collectionName };
   // Collection names for the current db, for `db.<coll>` completions in the shell.
   const collectionsRef = useRef<string[]>([]);
   useEffect(() => {
@@ -1631,6 +1637,8 @@ export const MongoShell: React.FC<MongoShellProps> = ({
               contextmenu: false,
               // Enter accepts an open suggestion; otherwise inserts a newline.
               acceptSuggestionOnEnter: 'on',
+              // Suggest while typing, in quoted keys too: a dotted path needs quotes.
+              quickSuggestions: { other: true, comments: false, strings: true },
             }}
             onMount={(editor, monaco) => {
               commandEditor.onMount(editor, monaco);
@@ -1657,20 +1665,26 @@ export const MongoShell: React.FC<MongoShellProps> = ({
                 noSyntaxValidation: true,
                 noSuggestionDiagnostics: true,
               });
+              const sampledSchema = (text: string) => {
+                const { connectionId: id, db, collection } = schemaScopeRef.current;
+                const coll = shellCollectionAt(text) ?? collection;
+                return coll ? fetchSchema(id, db, coll) : Promise.resolve(new Map());
+              };
               const model = editor.getModel();
               if (model) {
                 const uri = model.uri.toString();
                 setModelMeta(uri, {
                   surface: 'shell',
-                  getFields: () => {
+                  getFields: async (text) => {
                     const docs = viewerRef.current?.docs ?? [];
                     const keys = new Set<string>(['_id']);
                     docs.forEach((d) => {
                       if (d && typeof d === 'object') Object.keys(d).forEach((k) => keys.add(k));
                     });
+                    (await sampledSchema(text)).forEach((_, path) => keys.add(path));
                     return Array.from(keys);
                   },
-                  getSchema: () => undefined,
+                  getSchema: sampledSchema,
                   getCollections: () => collectionsRef.current,
                 });
                 editor.onDidDispose(() => clearModelMeta(uri));

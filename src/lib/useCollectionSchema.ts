@@ -21,7 +21,8 @@ function buildMap(report: RawReport): SchemaMap {
   return m;
 }
 
-function fetchSchema(connectionId: string, db: string, coll: string): Promise<SchemaMap> {
+/** The sampled schema of a collection, fetched once and cached; empty if sampling fails. */
+export function fetchSchema(connectionId: string, db: string, coll: string): Promise<SchemaMap> {
   const key = `${connectionId}::${db}::${coll}`;
   let p = cache.get(key);
   if (!p) {

@@ -1,8 +1,10 @@
 import type { Monaco } from '@monaco-editor/react';
-import { getCompletions, type Surface, type CompletionKind } from './mongoCompletions';
+import { getCompletions, inQuote, type Surface, type CompletionKind } from './mongoCompletions';
 import type { SchemaMap } from './useCollectionSchema';
 
-interface ModelMeta { surface: Surface; getFields: () => string[]; getSchema: () => SchemaMap | undefined; getCollections?: () => string[]; getStageOperator?: () => string | undefined; getShellSyntax?: () => boolean | undefined; }
+// The getters get the editor's text up to the cursor, and may answer later.
+type Lookup<T> = (textBeforeCursor: string) => T | Promise<T>;
+interface ModelMeta { surface: Surface; getFields: Lookup<string[]>; getSchema: Lookup<SchemaMap | undefined>; getCollections?: () => string[]; getStageOperator?: () => string | undefined; getShellSyntax?: () => boolean | undefined; }
 const modelMeta = new Map<string, ModelMeta>();
 let registered = false;
 
@@ -49,7 +51,7 @@ export function registerMongoCompletionProvider(monaco: Monaco) {
     // it the dropdown never opens for field names (Monaco's quickSuggestions
     // are disabled inside strings by default).
     triggerCharacters: ['.', '$', '"'],
-    provideCompletionItems(model: any, position: any) {
+    async provideCompletionItems(model: any, position: any) {
       const meta = modelMeta.get(model.uri.toString());
       if (!meta) return { suggestions: [] };
       const textBeforeCursor: string = model.getValueInRange({
@@ -62,23 +64,35 @@ export function registerMongoCompletionProvider(monaco: Monaco) {
       });
       // In the query surfaces a dotted field path (usage.total) is ONE token, so
       // a half-typed nested key like "usage.to" matches and replaces the whole
-      // path. The shell surface keeps db.coll.method segmented (dot-free token).
-      const token = textBeforeCursor.match(meta.surface === 'shell' ? /[\w$]*$/ : /[\w$.]*$/)?.[0] ?? '';
+      // path. The shell surface keeps db.coll.method segmented (dot-free token),
+      // except inside a quoted key, where the dot is part of the path.
+      const segmented = meta.surface === 'shell' && !inQuote(textBeforeCursor);
+      const token = textBeforeCursor.match(segmented ? /[\w$]*$/ : /[\w$.]*$/)?.[0] ?? '';
+      const textUpToCursor: string = model.getValueInRange({
+        startLineNumber: 1, startColumn: 1, endLineNumber: position.lineNumber, endColumn: position.column,
+      });
+      const [fields, schema] = await Promise.all([meta.getFields(textUpToCursor), meta.getSchema(textUpToCursor)]);
       const items = getCompletions({
         surface: meta.surface, textBeforeCursor, textAfterCursor, token,
-        fields: meta.getFields(), schema: meta.getSchema(), collections: meta.getCollections?.(),
+        fields, schema, collections: meta.getCollections?.(),
         stageOperator: meta.getStageOperator?.(), shellSyntax: meta.getShellSyntax?.(),
       });
       const range = {
         startLineNumber: position.lineNumber, endLineNumber: position.lineNumber,
         startColumn: position.column - token.length, endColumn: position.column,
       };
+      // Typing `"` makes Monaco auto-insert the closing one after the cursor. An
+      // item that closes the quote itself (`city": "value"`) replaces that one
+      // too, or the text ends up with `""`.
+      const autoClosed = inQuote(textBeforeCursor) && textAfterCursor.startsWith('"');
+      const rangeFor = (insertText: string) =>
+        autoClosed && insertText.includes('"') ? { ...range, endColumn: range.endColumn + 1 } : range;
       return {
         // sortText preserves getCompletions' intentional order (e.g. the
         // schema-matched EJSON wrapper first) against Monaco's default sort.
         suggestions: items.map((it, idx) => ({
           label: it.label, kind: kindToMonaco(monaco, it.kind),
-          insertText: it.insertText, detail: it.detail, range,
+          insertText: it.insertText, detail: it.detail, range: rangeFor(it.insertText),
           sortText: String(idx).padStart(4, '0'),
           insertTextRules: it.isSnippet
             ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet

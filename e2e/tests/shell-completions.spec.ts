@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 import { test, expect, type App } from '../fixtures';
-import { connectStaging, dismissHoverCards, setEditorText } from '../helpers';
+import { connectStaging, dismissHoverCards, getEditorText, setEditorText } from '../helpers';
 
 // What the shell editor knows about (#396): the fields of what it last
 // printed, and the collections of the database it is pointed at.
@@ -48,6 +48,33 @@ test.describe('Completions in the shell', () => {
       await expect(suggestions(page)).toContainText('tier', { timeout: 2_000 });
     }).toPass({ timeout: 20_000 });
     await page.keyboard.press('Escape');
+  });
+
+  test('offer the sampled fields of the collection being queried, nested paths too, while typing', async ({ app, page }) => {
+    await openShell(app, page);
+    // Nothing has run yet, and Ctrl+Space is never pressed. Under load the JS
+    // service's parameter hint can win the race for the first quick suggestion,
+    // so retype the last character, which asks again the way typing does.
+    const typeAndSee = async (text: string, label: string) => {
+      await setEditorText(page, shell(page), '');
+      await shell(page).locator('.monaco-editor').first().click();
+      await page.keyboard.type(text, { delay: 40 });
+      await expect(async () => {
+        if (!(await suggestions(page).isVisible())) {
+          await page.keyboard.press('Backspace');
+          await page.keyboard.type(text.slice(-1));
+        }
+        await expect(suggestions(page)).toContainText(label, { timeout: 2_000 });
+      }).toPass({ timeout: 20_000 });
+    };
+
+    await typeAndSee('db.customers.find({ ti', 'tier');
+    expect(await app.calls('analyze_schema')).not.toHaveLength(0);
+
+    await page.keyboard.press('Escape');
+    await typeAndSee('db.customers.find({ "address.ci', 'address.city');
+    await page.keyboard.press('Enter');
+    await expect.poll(() => getEditorText(page, shell(page))).toBe('db.customers.find({ "address.city": "value"})');
   });
 
   test('carry on when the collections of a database cannot be listed', async ({ app, page }) => {
