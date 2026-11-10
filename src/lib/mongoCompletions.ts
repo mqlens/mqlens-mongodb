@@ -575,9 +575,9 @@ export function getCompletions(ctx: CompletionCtx): CompletionItem[] {
       });
     }
     // A string straight inside a call's parentheses (distinct("ti) names a
-    // field: the name alone, no key or value around it.
+    // field: the name, closing the string unless its quote already follows.
     if (inner && textBeforeCursor[inner.at] === '(' && inQuote(textBeforeCursor)) {
-      return byPrefix(ctx.fields.map((name) => keyOnlyItem(ctx, name)), token);
+      return byPrefix(fieldStringItems(ctx), token);
     }
     // sort() and a projection (find's second argument) take their own documents,
     // quoted keys too

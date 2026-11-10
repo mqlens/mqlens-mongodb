@@ -561,6 +561,9 @@ describe('getCompletions — a key that already has a value', () => {
   it('inserts only the name for a field-name string argument', () => {
     expect(insertFor({ surface: 'shell', textBeforeCursor: 'db.customers.distinct("ti', textAfterCursor: '")', token: 'ti' }, 'tier')).toBe('tier');
     expect(insertFor({ surface: 'shell', textBeforeCursor: "db.customers.distinct('ti", textAfterCursor: "')", token: 'ti' }, 'tier')).toBe('tier');
+    // With no closing quote yet, the name closes the string.
+    expect(insertFor({ surface: 'shell', textBeforeCursor: 'db.customers.distinct("ti', textAfterCursor: '', token: 'ti' }, 'tier')).toBe('tier"');
+    expect(insertFor({ surface: 'shell', textBeforeCursor: "db.customers.distinct('ti", textAfterCursor: ')', token: 'ti' }, 'tier')).toBe("tier'");
   });
   it('still scaffolds the value when none follows', () => {
     expect(insertFor({ surface: 'shell', textBeforeCursor: 'db.customers.find({ ti', textAfterCursor: ' })', token: 'ti' }, 'tier')).toBe('tier: "${1:value}"');
