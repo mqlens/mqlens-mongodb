@@ -377,11 +377,15 @@
       "mustBeObject": "Der Validator muss ein JSON-Objekt sein."
     },
     "success": {
-      "applied": "Validierungsregeln angewendet."
+      "applied": "Validierungsregeln angewendet.",
+      "valid": "Validator-JSON ist gültig."
     },
     "actions": {
+      "apply": "Anwenden",
       "applying": "Wird angewendet…",
-      "apply": "Anwenden"
+      "generate": "Aus Schema-Stichprobe erzeugen",
+      "generating": "Stichprobe läuft…",
+      "validate": "JSON prüfen"
     }
   },
   "createViewView": {

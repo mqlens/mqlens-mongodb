@@ -421,13 +421,10 @@
       "fieldsCount_one": "{{count}} field",
       "fieldsCount_other": "{{count}} fields",
       "noValues": "No repeated values in the sample.",
-      "planned": "Planned",
       "sampledSummary": "sampled {{sampled}} docs · {{fields}} fields",
       "schemaPrefix": "Schema:",
       "showValues": "Click to show the most common values",
-      "types": "types",
-      "validationComingSoonPrefix": "Collection validation schema viewer coming soon (#93). This tab will show",
-      "validationComingSoonSuffix": "and validator rules for {{databaseName}}.{{collectionName}}."
+      "types": "types"
     },
     "sample": {
       "docs_one": "{{count}} doc",

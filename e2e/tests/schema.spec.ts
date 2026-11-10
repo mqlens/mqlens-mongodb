@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from '../fixtures';
-import { callFrom, loadSample, openCollection } from '../helpers';
+import { callFrom, getEditorText, loadSample, openCollection, setEditorText } from '../helpers';
 
 const view = (page: Page) => page.locator('[data-testid^="tab-content-"]:not([hidden])');
 
@@ -49,6 +49,49 @@ test.describe('Schema analysis', () => {
     const schema = view(page).getByTestId('schema-view');
     await expect(schema.getByTestId('schema-row-price')).toContainText('50%');
     await expect(schema.getByTestId('schema-row-name')).toContainText('100%');
+  });
+  test('the Validation Rules tab generates a validator from the sample and applies it', async ({ app, page }) => {
+    await app.open();
+    await loadSample(page);
+    await openCollection(page, 'sales_db', 'customers');
+    await view(page).getByTestId('analyze-schema-btn').click();
+
+    await view(page).getByTestId('schema-tab-validation').click();
+    await expect(view(page)).not.toContainText(/coming soon/i);
+    await view(page).getByTestId('validation-generate-btn').click();
+    await view(page).getByTestId('validation-check-btn').click();
+    await expect(view(page).getByTestId('validation-valid')).toBeVisible();
+
+    const applied = await callFrom(app, 'set_validator', () => view(page).getByTestId('validation-apply-btn').click());
+    const schema = JSON.parse(String(applied.validator)).$jsonSchema;
+    expect(schema.required).toContain('name');
+    expect(schema.properties.address.properties.city).toEqual({ bsonType: 'string' });
+    await expect(view(page).getByTestId('validation-success')).toBeVisible();
+  });
+
+  test('the validator reports bad JSON and a failed sample, and keeps its draft across tabs', async ({ app, page }) => {
+    await app.open();
+    await loadSample(page);
+    await openCollection(page, 'sales_db', 'customers');
+    await view(page).getByTestId('analyze-schema-btn').click();
+    await view(page).getByTestId('schema-tab-validation').click();
+    const rules = view(page).getByTestId('validation-rules-view');
+
+    await setEditorText(page, rules, '{ not json');
+    await rules.getByTestId('validation-check-btn').click();
+    await expect(rules.getByTestId('validation-error')).toContainText('Invalid validator JSON');
+
+    await setEditorText(page, rules, '[]');
+    await rules.getByTestId('validation-check-btn').click();
+    await expect(rules.getByTestId('validation-error')).toContainText('must be a JSON object');
+
+    await app.failNext('analyze_schema', 'Sampling failed: boom');
+    await rules.getByTestId('validation-generate-btn').click();
+    await expect(rules.getByTestId('validation-error')).toContainText('Sampling failed: boom');
+
+    await view(page).getByTestId('schema-tab-fields').click();
+    await view(page).getByTestId('schema-tab-validation').click();
+    expect(await getEditorText(page, rules)).toBe('[]');
   });
 
   test('re-samples on demand, shows a field’s top values and exports the schema', async ({ app, page }) => {

@@ -3,13 +3,13 @@ import { invoke } from '@tauri-apps/api/core';
 import { save } from '@tauri-apps/plugin-dialog';
 import { writeTextFile } from '@tauri-apps/plugin-fs';
 import { useTranslation } from 'react-i18next';
-import { Table2, Loader2, AlertCircle, ArrowUpDown, ShieldCheck, Download } from 'lucide-react';
+import { Table2, Loader2, AlertCircle, ArrowUpDown, Download } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-
 import { type FieldStat, type SchemaReport, schemaToMarkdown, topValues } from '@/lib/schemaExport';
+import { ValidationRulesView } from './ValidationRulesView';
 
 const SAMPLE_SIZES = [100, 250, 500, 1000];
 
@@ -18,6 +18,10 @@ interface SchemaViewProps {
   databaseName: string;
   collectionName: string;
   sampleSize?: number;
+  /** Called after the Validation Rules tab applies a validator. */
+  onValidatorApplied?: () => void;
+  /** The connection may not set validators (set_validator is blocked): no Validation Rules tab. */
+  validationBlocked?: boolean;
 }
 
 type SortKey = 'field' | 'coverage';
@@ -173,6 +177,8 @@ export const SchemaView: React.FC<SchemaViewProps> = ({
   databaseName,
   collectionName,
   sampleSize: initialSampleSize = 1000,
+  onValidatorApplied = () => {},
+  validationBlocked = false,
 }) => {
   const { t } = useTranslation('documents');
   const [report, setReport] = useState<SchemaReport | null>(null);
@@ -243,33 +249,34 @@ export const SchemaView: React.FC<SchemaViewProps> = ({
     return fields;
   }, [report, sortKey]);
 
+  // Loading and errors stay inside Field Analysis: the Validation Rules tab
+  // must stay mounted while the fields are sampled again, or its draft is lost.
+  let fieldsBody: React.ReactNode;
   if (loading) {
-    return (
-      <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
+    fieldsBody = (
+      <div className="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
         <Loader2 size={16} className="animate-spin" />
         {t('schemaView.labels.analyzing')}
       </div>
     );
-  }
-
-  if (error) {
-    return (
-      <div className="flex h-full items-center justify-center p-6">
+  } else if (error || !report) {
+    fieldsBody = (
+      <div className="flex flex-1 items-center justify-center p-6">
         <div className="flex items-center gap-2 font-mono text-sm text-destructive">
           <AlertCircle size={16} className="flex-shrink-0" />
           <span>{error}</span>
         </div>
       </div>
     );
-  }
-
-  if (!report || report.sampled === 0) {
-    return (
-      <div className="flex h-full flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
+  } else if (report.sampled === 0) {
+    fieldsBody = (
+      <div className="flex flex-1 flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
         <Table2 size={20} />
         {t('schemaView.empty.title')}
       </div>
     );
+  } else {
+    fieldsBody = <SchemaFieldTable report={report} onSortKeyChange={setSortKey} sortedFields={sortedFields} />;
   }
 
   return (
@@ -311,6 +318,7 @@ export const SchemaView: React.FC<SchemaViewProps> = ({
             size="sm"
             className="h-7 gap-1 px-2 text-[11px]"
             onClick={() => exportSchema('json')}
+            disabled={!report}
             data-testid="schema-export-json"
           >
             <Download size={12} /> {t('schemaView.export.json')}
@@ -321,13 +329,16 @@ export const SchemaView: React.FC<SchemaViewProps> = ({
             size="sm"
             className="h-7 gap-1 px-2 text-[11px]"
             onClick={() => exportSchema('md')}
+            disabled={!report}
             data-testid="schema-export-md"
           >
             <Download size={12} /> {t('schemaView.export.markdown')}
           </Button>
-          <Badge variant="outline" className="text-[10px]">
-            {t('schemaView.labels.fieldsCount', { count: report.fields.length })}
-          </Badge>
+          {report && (
+            <Badge variant="outline" className="text-[10px]">
+              {t('schemaView.labels.fieldsCount', { count: report.fields.length })}
+            </Badge>
+          )}
         </div>
       </div>
       {exportError && (
@@ -346,6 +357,7 @@ export const SchemaView: React.FC<SchemaViewProps> = ({
             >
               {t('schemaView.tabs.fieldAnalysis')}
             </TabsTrigger>
+            {!validationBlocked && (
             <TabsTrigger
               value="validation"
               className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent"
@@ -353,37 +365,29 @@ export const SchemaView: React.FC<SchemaViewProps> = ({
             >
               {t('schemaView.tabs.validationRules')}
             </TabsTrigger>
+            )}
           </TabsList>
         </div>
 
         <TabsContent value="fields" className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden">
-          <SchemaFieldTable
-            report={report}
-            onSortKeyChange={setSortKey}
-            sortedFields={sortedFields}
-          />
+          {fieldsBody}
         </TabsContent>
 
+        {/* Kept mounted while hidden, so an unapplied validator survives a look at the fields. */}
+        {!validationBlocked && (
         <TabsContent
           value="validation"
-          className="mt-0 flex min-h-0 flex-1 flex-col"
-          data-testid="schema-validation-placeholder"
+          forceMount
+          className="mt-0 flex min-h-0 flex-1 flex-col data-[state=inactive]:hidden"
         >
-          <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
-            <ShieldCheck size={28} className="text-muted-foreground/50" />
-            <div className="space-y-1">
-              <p className="text-sm font-medium text-foreground">{t('schemaView.tabs.validationRules')}</p>
-              <p className="max-w-sm text-xs text-muted-foreground">
-                {t('schemaView.labels.validationComingSoonPrefix')}{' '}
-                <code className="mx-1 rounded bg-muted px-1 py-0.5 font-mono text-[10px]">$jsonSchema</code>{' '}
-                {t('schemaView.labels.validationComingSoonSuffix', { databaseName, collectionName })}
-              </p>
-            </div>
-            <Badge variant="secondary" className="text-[10px]">
-              {t('schemaView.labels.planned')}
-            </Badge>
-          </div>
+          <ValidationRulesView
+            connectionId={connectionId}
+            databaseName={databaseName}
+            collectionName={collectionName}
+            onApplied={onValidatorApplied}
+          />
         </TabsContent>
+        )}
       </Tabs>
     </div>
   );
