@@ -19,14 +19,15 @@ const bsonTypeAlias = (t: string): string => (t === 'binary' ? 'binData' : t);
  */
 export function validatorFromSchemaReport(report: SchemaReport): { $jsonSchema: JsonSchemaNode } {
   const root: JsonSchemaNode = { bsonType: 'object' };
-  const nodes = new Map<string, { node: JsonSchemaNode; presence: number }>([
-    ['', { node: root, presence: report.sampled }],
-  ]);
+  const top = { node: root, presence: report.sampled };
+  // Field paths only: a field may be named with the empty string, so the top
+  // level is kept apart rather than under the '' key.
+  const nodes = new Map<string, { node: JsonSchemaNode; presence: number }>();
   // Parents sort before their children.
   const fields = [...report.fields].sort((a, b) => a.path.localeCompare(b.path));
   for (const f of fields) {
     const dot = f.path.lastIndexOf('.');
-    const parent = nodes.get(dot < 0 ? '' : f.path.slice(0, dot));
+    const parent = dot < 0 ? top : nodes.get(f.path.slice(0, dot));
     if (!parent) continue;
     const key = f.path.slice(dot + 1);
     const types = f.types.map((t) => bsonTypeAlias(t.type));

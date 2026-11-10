@@ -47,4 +47,19 @@ describe('validatorFromSchemaReport', () => {
       JSON.parse('{"__proto__": {"bsonType": "string"}}')
     );
   });
+
+  it('keeps a field named with the empty string apart from the top level', () => {
+    const v = validatorFromSchemaReport({
+      sampled: 1,
+      fields: [
+        { path: '', types: [{ type: 'string', count: 1 }], presence: 1, coverage: 1 },
+        { path: 'name', types: [{ type: 'string', count: 1 }], presence: 1, coverage: 1 },
+      ],
+    });
+    expect(JSON.parse(JSON.stringify(v)).$jsonSchema).toEqual({
+      bsonType: 'object',
+      properties: { '': { bsonType: 'string' }, name: { bsonType: 'string' } },
+      required: ['', 'name'],
+    });
+  });
 });

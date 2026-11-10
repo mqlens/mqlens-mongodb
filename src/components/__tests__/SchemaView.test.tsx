@@ -187,6 +187,15 @@ describe('SchemaView (M6)', () => {
     expect(await screen.findByText(/nothing to analyze/i)).toBeInTheDocument();
   });
 
+  it('hides the validation rules where the connection may not set them', async () => {
+    mockInvoke.mockResolvedValue(JSON.stringify(report));
+    render(<SchemaView connectionId="c1" databaseName="shop" collectionName="products" validationBlocked />);
+    expect(await screen.findByTestId('schema-tab-fields')).toBeInTheDocument();
+    expect(screen.queryByTestId('schema-tab-validation')).toBeNull();
+    expect(screen.queryByTestId('validation-rules-view')).toBeNull();
+    expect(mockInvoke).not.toHaveBeenCalledWith('get_collection_options', expect.anything());
+  });
+
   it('still offers the validation rules for an empty collection', async () => {
     mockInvoke.mockImplementation((cmd: string) =>
       cmd === 'get_collection_options'

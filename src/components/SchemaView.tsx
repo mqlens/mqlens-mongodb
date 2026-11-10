@@ -20,6 +20,8 @@ interface SchemaViewProps {
   sampleSize?: number;
   /** Called after the Validation Rules tab applies a validator. */
   onValidatorApplied?: () => void;
+  /** The connection may not set validators (set_validator is blocked): no Validation Rules tab. */
+  validationBlocked?: boolean;
 }
 
 type SortKey = 'field' | 'coverage';
@@ -176,6 +178,7 @@ export const SchemaView: React.FC<SchemaViewProps> = ({
   collectionName,
   sampleSize: initialSampleSize = 1000,
   onValidatorApplied = () => {},
+  validationBlocked = false,
 }) => {
   const { t } = useTranslation('documents');
   const [report, setReport] = useState<SchemaReport | null>(null);
@@ -342,6 +345,7 @@ export const SchemaView: React.FC<SchemaViewProps> = ({
             >
               {t('schemaView.tabs.fieldAnalysis')}
             </TabsTrigger>
+            {!validationBlocked && (
             <TabsTrigger
               value="validation"
               className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent"
@@ -349,6 +353,7 @@ export const SchemaView: React.FC<SchemaViewProps> = ({
             >
               {t('schemaView.tabs.validationRules')}
             </TabsTrigger>
+            )}
           </TabsList>
         </div>
 
@@ -368,6 +373,7 @@ export const SchemaView: React.FC<SchemaViewProps> = ({
         </TabsContent>
 
         {/* Kept mounted while hidden, so an unapplied validator survives a look at the fields. */}
+        {!validationBlocked && (
         <TabsContent
           value="validation"
           forceMount
@@ -380,6 +386,7 @@ export const SchemaView: React.FC<SchemaViewProps> = ({
             onApplied={onValidatorApplied}
           />
         </TabsContent>
+        )}
       </Tabs>
     </div>
   );

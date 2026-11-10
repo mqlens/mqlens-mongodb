@@ -5063,6 +5063,7 @@ function Workspace() {
             databaseName={tab.db}
             collectionName={tab.collection}
             onValidatorApplied={() => setCollectionMutationTrigger(prev => prev + 1)}
+            validationBlocked={isCommandBlocked(tab.connectionId, 'set_validator')}
           />
         )}
         {tab.type === 'create-view' && (
