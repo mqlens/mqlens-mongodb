@@ -111,6 +111,24 @@ test.describe('mongosh commands', () => {
     expect(JSON.stringify(saveCall.args)).toContain('/scripts/report.js');
   });
 
+  test('says why a script could not be opened or saved, and does nothing when the dialog is cancelled', async ({ app, page }) => {
+    await connectStaging(app, page, { dialog: { open: '/scripts/missing.js', save: null } });
+    await openShell(page);
+    await expect(transcript(page)).toContainText('transactions');
+    await setEditorText(page, shell(page), 'print("kept")');
+
+    await shell(page).getByTestId('shell-open-script').click();
+    await expect(transcript(page)).toContainText('/scripts/missing.js');
+    expect(await getEditorText(page, shell(page))).toBe('print("kept")');
+
+    await callFrom(app, 'plugin:dialog|save', () => shell(page).getByTestId('shell-save-script').click());
+    expect(await app.calls('plugin:fs|write_text_file')).toHaveLength(0);
+
+    await app.failNext('plugin:dialog|save', 'the file picker is unavailable');
+    await shell(page).getByTestId('shell-save-script').click();
+    await expect(transcript(page)).toContainText('the file picker is unavailable');
+  });
+
   test('inserts or runs what the AI helper writes, and Escape cancels a destructive command', async ({ app, page }) => {
     const find: AiReplySeed = { query: { explanation: 'Premium customers.', queryType: 'script', script: 'db.customers.find({ tier: "Premium" })' } };
     const wipe: AiReplySeed = { query: { explanation: 'Removes every customer.', queryType: 'script', script: 'db.customers.deleteMany({})' } };
