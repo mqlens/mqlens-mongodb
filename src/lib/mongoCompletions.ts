@@ -168,7 +168,7 @@ export function inQuote(text: string): boolean {
 // A collection access, or a string or comment to step over (so `db.x.` inside
 // one is not read as code). An unclosed string or comment runs to the end.
 const COLLECTION_OR_SKIP =
-  /\bdb\.getCollection\(\s*["']([^"'\n]+)["']\s*\)|\bdb\.([A-Za-z_$][\w$]*)\s*\.|"(?:[^"\\\n]|\\.)*"?|'(?:[^'\\\n]|\\.)*'?|`(?:[^`\\]|\\.)*`?|\/\/[^\n]*|\/\*[\s\S]*?(?:\*\/|$)/g;
+  /\bdb\.getCollection\(\s*["']([^"'\n]+)["']\s*\)|\bdb\.([A-Za-z_$][\w$]*)\s*\.|"(?:[^"\\\n]|\\.)*"?|'(?:[^'\\\n]|\\.)*'?|\x60(?:[^\x60\\]|\\.)*\x60?|\/\/[^\n]*|\/\*[\s\S]*?(?:\*\/|$)/g;
 
 /** The collection of the last `db.<coll>.` or `db.getCollection("<coll>")` in shell text. */
 export function shellCollectionAt(text: string): string | undefined {

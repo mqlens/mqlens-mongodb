@@ -569,6 +569,7 @@ describe('shellCollectionAt', () => {
     expect(shellCollectionAt('db.customers.find({ // db.orders.find\n ti')).toBe('customers');
     expect(shellCollectionAt('db.customers.find({ /* db.orders. */ ti')).toBe('customers');
     expect(shellCollectionAt('db.customers.find({ note: "db.orders.')).toBe('customers');
+    expect(shellCollectionAt('db.customers.find({ note: \x60db.orders.x\x60, ti')).toBe('customers');
   });
 
   it('names none for db methods or text without a collection', () => {
