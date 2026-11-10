@@ -22,7 +22,7 @@ import { buildRunnableCommand, guardScriptRun, type GeneratedQuery } from '../li
 import { DataGrid } from './DataGrid';
 import { registerMongoCompletionProvider, setModelMeta, clearModelMeta } from '../lib/monacoMongo';
 import { shellCollectionAt } from '../lib/mongoCompletions';
-import { fetchSchema } from '../lib/useCollectionSchema';
+import { fetchSchema, type SchemaMap } from '../lib/useCollectionSchema';
 import { useMonacoTheme, useMonacoFontSize } from '../lib/useMonacoTheme';
 import { useMonacoValue } from '../lib/useMonacoValue';
 import { attachMonaco } from '../lib/monacoAppTheme';
@@ -1665,27 +1665,43 @@ export const MongoShell: React.FC<MongoShellProps> = ({
                 noSyntaxValidation: true,
                 noSuggestionDiagnostics: true,
               });
-              const sampledSchema = (text: string) => {
+              // Sampled schemas that have arrived. Suggestions never wait for a
+              // sample: the first ask starts it and offers what needs none, and
+              // the list stays "incomplete" meanwhile, so the next keystroke
+              // asks again and picks the fields up once they are in.
+              const sampled = new Map<string, SchemaMap>();
+              const pending = new Set<string>();
+              const sampledSchema = (text: string): SchemaMap => {
                 const { connectionId: id, db, collection } = schemaScopeRef.current;
                 const coll = shellCollectionAt(text) ?? collection;
-                return coll ? fetchSchema(id, db, coll) : Promise.resolve(new Map());
+                if (!coll) return new Map();
+                const key = `${id}::${db}::${coll}`;
+                const ready = sampled.get(key);
+                if (ready || pending.has(key)) return ready ?? new Map();
+                pending.add(key);
+                void fetchSchema(id, db, coll).then((schema) => {
+                  pending.delete(key);
+                  sampled.set(key, schema);
+                });
+                return new Map();
               };
               const model = editor.getModel();
               if (model) {
                 const uri = model.uri.toString();
                 setModelMeta(uri, {
                   surface: 'shell',
-                  getFields: async (text) => {
+                  getFields: (text) => {
                     const docs = viewerRef.current?.docs ?? [];
                     const keys = new Set<string>(['_id']);
                     docs.forEach((d) => {
                       if (d && typeof d === 'object') Object.keys(d).forEach((k) => keys.add(k));
                     });
-                    (await sampledSchema(text)).forEach((_, path) => keys.add(path));
+                    sampledSchema(text).forEach((_, path) => keys.add(path));
                     return Array.from(keys);
                   },
                   getSchema: sampledSchema,
                   getCollections: () => collectionsRef.current,
+                  isIncomplete: () => pending.size > 0,
                 });
                 editor.onDidDispose(() => clearModelMeta(uri));
               }

@@ -3,8 +3,8 @@ import { getCompletions, inQuote, type Surface, type CompletionKind } from './mo
 import type { SchemaMap } from './useCollectionSchema';
 
 // The getters get the editor's text up to the cursor, and may answer later.
-type Lookup<T> = (textBeforeCursor: string) => T | Promise<T>;
-interface ModelMeta { surface: Surface; getFields: Lookup<string[]>; getSchema: Lookup<SchemaMap | undefined>; getCollections?: () => string[]; getStageOperator?: () => string | undefined; getShellSyntax?: () => boolean | undefined; }
+type Lookup<T> = (textBeforeCursor: string) => T;
+interface ModelMeta { surface: Surface; getFields: Lookup<string[]>; getSchema: Lookup<SchemaMap | undefined>; getCollections?: () => string[]; getStageOperator?: () => string | undefined; getShellSyntax?: () => boolean | undefined; /** True while a lookup is still loading, so Monaco asks again as the user types. */ isIncomplete?: () => boolean; }
 const modelMeta = new Map<string, ModelMeta>();
 let registered = false;
 
@@ -51,7 +51,7 @@ export function registerMongoCompletionProvider(monaco: Monaco) {
     // it the dropdown never opens for field names (Monaco's quickSuggestions
     // are disabled inside strings by default).
     triggerCharacters: ['.', '$', '"'],
-    async provideCompletionItems(model: any, position: any) {
+    provideCompletionItems(model: any, position: any) {
       const meta = modelMeta.get(model.uri.toString());
       if (!meta) return { suggestions: [] };
       const textBeforeCursor: string = model.getValueInRange({
@@ -71,7 +71,8 @@ export function registerMongoCompletionProvider(monaco: Monaco) {
       const textUpToCursor: string = model.getValueInRange({
         startLineNumber: 1, startColumn: 1, endLineNumber: position.lineNumber, endColumn: position.column,
       });
-      const [fields, schema] = await Promise.all([meta.getFields(textUpToCursor), meta.getSchema(textUpToCursor)]);
+      const fields = meta.getFields(textUpToCursor);
+      const schema = meta.getSchema(textUpToCursor);
       const items = getCompletions({
         surface: meta.surface, textBeforeCursor, textAfterCursor, token,
         fields, schema, collections: meta.getCollections?.(),
@@ -88,6 +89,7 @@ export function registerMongoCompletionProvider(monaco: Monaco) {
       const rangeFor = (insertText: string) =>
         autoClosed && insertText.includes('"') ? { ...range, endColumn: range.endColumn + 1 } : range;
       return {
+        incomplete: meta.isIncomplete?.() ?? false,
         // sortText preserves getCompletions' intentional order (e.g. the
         // schema-matched EJSON wrapper first) against Monaco's default sort.
         suggestions: items.map((it, idx) => ({

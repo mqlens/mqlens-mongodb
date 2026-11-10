@@ -77,6 +77,31 @@ test.describe('Completions in the shell', () => {
     await expect.poll(() => getEditorText(page, shell(page))).toBe('db.customers.find({ "address.city": "value"})');
   });
 
+  test('do not wait for a slow schema sample before offering methods', async ({ app, page }) => {
+    await openShell(app, page);
+    const release = await app.hold('analyze_schema');
+
+    await setEditorText(page, shell(page), '');
+    await shell(page).locator('.monaco-editor').first().click();
+    await page.keyboard.type('db.customers.fin', { delay: 40 });
+    await expect(async () => {
+      await page.keyboard.press('Escape');
+      await page.keyboard.press('Control+Space');
+      await expect(suggestions(page)).toContainText('find', { timeout: 2_000 });
+    }).toPass({ timeout: 20_000 });
+    // The sample is still held while the methods are already on offer.
+    expect(await app.calls('analyze_schema')).toHaveLength(1);
+    await page.keyboard.press('Escape');
+    await release();
+
+    await typeInto(page, 'db.customers.find({ ti');
+    await expect(async () => {
+      await page.keyboard.press('Escape');
+      await page.keyboard.press('Control+Space');
+      await expect(suggestions(page)).toContainText('tier', { timeout: 2_000 });
+    }).toPass({ timeout: 20_000 });
+  });
+
   test('carry on when the collections of a database cannot be listed', async ({ app, page }) => {
     await openShell(app, page);
 

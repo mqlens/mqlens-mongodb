@@ -563,6 +563,14 @@ describe('shellCollectionAt', () => {
     expect(shellCollectionAt('db.getCollection("audit-log").find({ ')).toBe('audit-log');
   });
 
+  it('ignores collection-like text in strings and comments', () => {
+    expect(shellCollectionAt('db.customers.find({ note: "see db.orders.find()", ti')).toBe('customers');
+    expect(shellCollectionAt("db.customers.find({ note: 'db.orders.x', ti")).toBe('customers');
+    expect(shellCollectionAt('db.customers.find({ // db.orders.find\n ti')).toBe('customers');
+    expect(shellCollectionAt('db.customers.find({ /* db.orders. */ ti')).toBe('customers');
+    expect(shellCollectionAt('db.customers.find({ note: "db.orders.')).toBe('customers');
+  });
+
   it('names none for db methods or text without a collection', () => {
     expect(shellCollectionAt('db.getCollectionNames()')).toBeUndefined();
     expect(shellCollectionAt('show collections')).toBeUndefined();
