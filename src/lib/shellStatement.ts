@@ -14,8 +14,6 @@ const CONTROL_HEADER =
   /(?:^|[;{}]|\belse)\s*(?:if|for|while|with|switch|catch|(?:async\s+)?function\b[\s*]*[\w$]*)\s*\($/;
 // What, just before a `{`, makes it open a block rather than an object.
 const BLOCK_AFTER = /\b(?:else|try|finally|do)$|^\s*class\s+[\w$]+(?:\s+extends\b[^{]*)?$/;
-// Trailing whitespace and comments (each block comment ends at its first `*/`).
-const TRAILING_SPACE_AND_COMMENTS = /(?:\s|\/\/[^\n]*|\/\*[^*]*\*+(?:[^/*][^*]*\*+)*\/)*$/;
 
 /**
  * Start/end offsets of each top-level statement in a shell script. A statement
@@ -101,6 +99,8 @@ function statementSpans(text: string): Array<[number, number]> {
       i++;
       continue;
     }
+    // Where the code before this character ended, comments and space skipped.
+    const codeBefore = codeEnd;
     if (!/\s/.test(c)) codeEnd = i + 1;
     if (c === '"' || c === "'" || c === '`') quote = c;
     else if (depth === 0 && /^while\b/.test(text.slice(i, i + 6)) && !/[\w$]/.test(text[i - 1] ?? '')) doWhileSeen = true;
@@ -110,8 +110,8 @@ function statementSpans(text: string): Array<[number, number]> {
         headerOpen = CONTROL_HEADER.test(head) && !(isDo() && /\bwhile\s*\($/.test(head));
       }
       if (c === '{' && depth === 0) {
-        const before = text.slice(start, i).replace(TRAILING_SPACE_AND_COMMENTS, '');
-        openIsBlock = before === '' || start + before.length - 1 === headerClose || BLOCK_AFTER.test(before);
+        const before = text.slice(start, codeBefore);
+        openIsBlock = before.trim() === '' || codeBefore - 1 === headerClose || BLOCK_AFTER.test(before);
       }
       depth++;
     } else if (')]}'.includes(c)) {

@@ -122,6 +122,11 @@ describe('statementAt', () => {
     expect(at('const K = class {}\n(|1)')).toBe('const K = class {}\n(1)');
   });
 
+  it('stays fast on a run of comment slashes before a brace', { timeout: 2_000 }, () => {
+    const text = `a +${'//'.repeat(40)}\nb {}`;
+    expect(at(`${text}|`)).toBe(text);
+  });
+
   it('keeps an object value under a condition joined to the next line', () => {
     const both = 'if (false) globalThis.options = {}\n[db.orders.deleteMany({})]';
     expect(at('if (false) globalThis.options = {}\n[db.orders.deleteMa|ny({})]')).toBe(both);
