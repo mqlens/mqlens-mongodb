@@ -167,6 +167,22 @@ describe('statementAt', () => {
     expect(at('const t = typeof\n  db.orders.fi|nd')).toBe('const t = typeof\n  db.orders.find');
   });
 
+  it('keeps a template on the next line with its tag', () => {
+    const tagged = 'if (false) tag\n\x60a ${db.orders.deleteMany({})}\x60';
+    const cursor = tagged.indexOf('deleteMany') + 3;
+    expect(at(`${tagged.slice(0, cursor)}|${tagged.slice(cursor)}`)).toBe(tagged);
+  });
+
+  it('keeps a for await header joined to its body', () => {
+    const loop = 'if (false) for await (const x of [])\n  db.orders.deleteMany({})';
+    expect(at('if (false) for await (const x of [])\n  db.orders.deleteMa|ny({})')).toBe(loop);
+  });
+
+  it('does not read a property named like a keyword operator as one', () => {
+    expect(at('db.ne|w\ndb.orders.deleteMany({})')).toBe('db.new');
+    expect(at('x. delete|\ndb.orders.deleteMany({})')).toBe('x. delete');
+  });
+
   it('keeps a labelled header joined to its body', () => {
     const guarded = 'guard: if (false)\n  db.orders.deleteMany({})';
     expect(at('guard: if (false)\n  db.orders.deleteMa|ny({})')).toBe(guarded);

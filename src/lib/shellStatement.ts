@@ -2,13 +2,15 @@ import { maskLiterals } from './jsLiterals';
 
 // What, at the start of the next line's code, continues the statement before
 // it: a chained call, a call or index on its value (ASI joins those too), or
-// an operator (not a comment, nor a prefix ++/--), or the rest of an if/try.
-const CONTINUES_NEXT_LINE = /^(?:(?!\/[/*]|\+\+|--)[.?:,()[\]}+\-*/%=&|^<>]|(?:else|catch|finally)\b)/;
+// an operator (not a comment, nor a prefix ++/--), a template its tag takes,
+// or the rest of an if/try.
+const CONTINUES_NEXT_LINE = /^(?:(?!\/[/*]|\+\+|--)[.?:,()[\]}+\-*/%=&|^<>\x60]|(?:else|catch|finally)\b)/;
 // What, at the end of a line's code, leaves its statement open. A postfix
 // ++/-- does not; a sign after a different one (`+-`) does, and so does a
-// keyword operator (`void`, `typeof`) still waiting for its operand.
+// keyword operator (`void`, `typeof`) still waiting for its operand — not a
+// property of that name (`db.new`).
 const LEFT_OPEN =
-  /(?:(?<!\+)\+|(?<!-)-|[=*/%&|^<>!?:,.]|\b(?:else|do|try|finally|void|typeof|instanceof|in|new|delete|await))$/;
+  /(?:(?<!\+)\+|(?<!-)-|[=*/%&|^<>!?:,.]|(?<!\.\s*)\b(?:else|do|try|finally|void|typeof|instanceof|in|new|delete|await))$/;
 // Whitespace and comments, skipped when looking for the next code.
 const SPACE_AND_COMMENTS = /^(?:\s|\/\/[^\n]*|\/\*[\s\S]*?\*\/)*/;
 const nextCode = (text: string, from: number) => text.slice(from).replace(SPACE_AND_COMMENTS, '');
@@ -22,7 +24,7 @@ const isProperty = (text: string, i: number) => {
 // parenthesis, where a statement, a block or another header before it ends,
 // labels (`outer:`) aside.
 const CONTROL_HEADER =
-  /(?:^|[;{})]|\belse)\s*(?:[A-Za-z_$][\w$]*\s*:\s*)*(?:if|for|while|with|switch|catch|(?:async\s+)?function\b[\s*]*[\w$]*)\s*\($/;
+  /(?:^|[;{})]|\belse)\s*(?:[A-Za-z_$][\w$]*\s*:\s*)*(?:if|for(?:\s+await)?|while|with|switch|catch|(?:async\s+)?function\b[\s*]*[\w$]*)\s*\($/;
 // Any function header, a function expression's too: its body may open on the
 // next line, but its braces are a value, not a block statement.
 const FUNCTION_HEADER = /\bfunction\b[\s*]*[\w$]*\s*\($/;
@@ -182,7 +184,8 @@ function statementSpans(text: string): Array<[number, number]> {
 /** The statement under `offset`, or the nearest one before it (else after it) when the cursor sits on blank space. */
 export function statementAt(text: string, offset: number): string {
   // Each statement without the space and comments around it.
-  const code = maskLiterals(text);
+  // Templates keep their backticks, so a tag's template on the next line joins it.
+  const code = maskLiterals(text).replace(/"/g, (q, i: number) => (text[i] === '\x60' ? '\x60' : q));
   const trimmed = statementSpans(code)
     .map(([s, e]): [number, number] => {
       const body = code.slice(s, e);
