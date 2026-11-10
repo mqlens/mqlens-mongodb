@@ -498,7 +498,10 @@
   "validationRulesView": {
     "actions": {
       "apply": "应用",
-      "applying": "正在应用…"
+      "applying": "正在应用…",
+      "generate": "根据 Schema 采样生成",
+      "generating": "采样中…",
+      "validate": "校验 JSON"
     },
     "errors": {
       "invalidValidatorJson": "校验器 JSON 无效：{{message}}",
@@ -516,7 +519,8 @@
     },
     "loading": "正在加载校验规则…",
     "success": {
-      "applied": "校验规则已应用。"
+      "applied": "校验规则已应用。",
+      "valid": "校验器 JSON 有效。"
     },
     "title": "校验规则 —— {{collection}}"
   }

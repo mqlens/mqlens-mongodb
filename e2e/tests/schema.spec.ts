@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from '../fixtures';
-import { loadSample, openCollection } from '../helpers';
+import { callFrom, loadSample, openCollection } from '../helpers';
 
 const view = (page: Page) => page.locator('[data-testid^="tab-content-"]:not([hidden])');
 
@@ -49,5 +49,23 @@ test.describe('Schema analysis', () => {
     const schema = view(page).getByTestId('schema-view');
     await expect(schema.getByTestId('schema-row-price')).toContainText('50%');
     await expect(schema.getByTestId('schema-row-name')).toContainText('100%');
+  });
+  test('the Validation Rules tab generates a validator from the sample and applies it', async ({ app, page }) => {
+    await app.open();
+    await loadSample(page);
+    await openCollection(page, 'sales_db', 'customers');
+    await view(page).getByTestId('analyze-schema-btn').click();
+
+    await view(page).getByTestId('schema-tab-validation').click();
+    await expect(view(page)).not.toContainText(/coming soon/i);
+    await view(page).getByTestId('validation-generate-btn').click();
+    await view(page).getByTestId('validation-check-btn').click();
+    await expect(view(page).getByTestId('validation-valid')).toBeVisible();
+
+    const applied = await callFrom(app, 'set_validator', () => view(page).getByTestId('validation-apply-btn').click());
+    const schema = JSON.parse(String(applied.validator)).$jsonSchema;
+    expect(schema.required).toContain('name');
+    expect(schema.properties.address.properties.city).toEqual({ bsonType: 'string' });
+    await expect(view(page).getByTestId('validation-success')).toBeVisible();
   });
 });

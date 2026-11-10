@@ -412,12 +412,9 @@
       "field": "Feld",
       "fieldsCount_one": "{{count}} Feld",
       "fieldsCount_other": "{{count}} Felder",
-      "planned": "Geplant",
       "sampledSummary": "{{sampled}} Dokumente untersucht · {{fields}} Felder",
       "schemaPrefix": "Schema:",
-      "types": "Typen",
-      "validationComingSoonPrefix": "Der Viewer für Collection-Validierungsschemas folgt in Kürze (#93). Dieser Tab zeigt",
-      "validationComingSoonSuffix": "und Validierungsregeln für {{databaseName}}.{{collectionName}}."
+      "types": "Typen"
     },
     "tabs": {
       "fieldAnalysis": "Feldanalyse",

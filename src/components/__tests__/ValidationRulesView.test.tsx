@@ -181,3 +181,71 @@ describe('ValidationRulesView', () => {
     await waitFor(() => expect(onApplied).toHaveBeenCalled());
   });
 });
+
+describe('ValidationRulesView validator tools', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const renderView = () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'get_collection_options') {
+        return Promise.resolve({ validator: '{}', validationLevel: '', validationAction: '' });
+      }
+      if (cmd === 'analyze_schema') {
+        return Promise.resolve(
+          JSON.stringify({
+            sampled: 2,
+            fields: [
+              { path: '_id', types: [{ type: 'objectId', count: 2 }], presence: 2, coverage: 1 },
+              { path: 'name', types: [{ type: 'string', count: 1 }], presence: 1, coverage: 0.5 },
+            ],
+          })
+        );
+      }
+      return Promise.reject(new Error(`unhandled ${cmd}`));
+    });
+    renderWithProviders(
+      <ValidationRulesView connectionId="c1" databaseName="shop" collectionName="customers" onApplied={() => {}} />
+    );
+    return screen.findByTestId('validation-editor') as Promise<HTMLTextAreaElement>;
+  };
+
+  it('Validate JSON reports a syntax error without applying', async () => {
+    const editor = await renderView();
+    fireEvent.change(editor, { target: { value: '{ not json' } });
+    fireEvent.click(screen.getByTestId('validation-check-btn'));
+
+    expect(await screen.findByTestId('validation-error')).toHaveTextContent(/Invalid validator JSON/);
+    expect(mockInvoke).not.toHaveBeenCalledWith('set_validator', expect.anything());
+  });
+
+  it('Validate JSON confirms a valid validator without applying', async () => {
+    const editor = await renderView();
+    fireEvent.change(editor, { target: { value: '{"$jsonSchema":{"bsonType":"object"}}' } });
+    fireEvent.click(screen.getByTestId('validation-check-btn'));
+
+    expect(await screen.findByTestId('validation-valid')).toBeInTheDocument();
+    expect(screen.queryByTestId('validation-error')).toBeNull();
+    expect(mockInvoke).not.toHaveBeenCalledWith('set_validator', expect.anything());
+  });
+
+  it('generates a $jsonSchema validator from a schema sample', async () => {
+    const editor = await renderView();
+    fireEvent.click(screen.getByTestId('validation-generate-btn'));
+
+    await waitFor(() =>
+      expect(JSON.parse(editor.value)).toEqual({
+        $jsonSchema: {
+          bsonType: 'object',
+          required: ['_id'],
+          properties: { _id: { bsonType: 'objectId' }, name: { bsonType: 'string' } },
+        },
+      })
+    );
+    expect(mockInvoke).toHaveBeenCalledWith('analyze_schema', {
+      id: 'c1',
+      database: 'shop',
+      collection: 'customers',
+      sampleSize: 1000,
+    });
+  });
+});

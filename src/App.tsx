@@ -5062,6 +5062,7 @@ function Workspace() {
             connectionId={tab.connectionId}
             databaseName={tab.db}
             collectionName={tab.collection}
+            onValidatorApplied={() => setCollectionMutationTrigger(prev => prev + 1)}
           />
         )}
         {tab.type === 'create-view' && (

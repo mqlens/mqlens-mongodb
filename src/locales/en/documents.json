@@ -415,12 +415,9 @@
       "field": "field",
       "fieldsCount_one": "{{count}} field",
       "fieldsCount_other": "{{count}} fields",
-      "planned": "Planned",
       "sampledSummary": "sampled {{sampled}} docs · {{fields}} fields",
       "schemaPrefix": "Schema:",
-      "types": "types",
-      "validationComingSoonPrefix": "Collection validation schema viewer coming soon (#93). This tab will show",
-      "validationComingSoonSuffix": "and validator rules for {{databaseName}}.{{collectionName}}."
+      "types": "types"
     },
     "tabs": {
       "fieldAnalysis": "Field Analysis",

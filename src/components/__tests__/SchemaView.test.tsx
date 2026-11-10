@@ -1,10 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { SchemaView } from '../SchemaView';
 
 const mockInvoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: (...args: any[]) => mockInvoke(...args),
+}));
+
+// Monaco does not render under jsdom.
+vi.mock('../QueryEditor', () => ({
+  QueryEditor: ({ value, 'data-testid': testId }: { value: string; 'data-testid'?: string }) => (
+    <textarea data-testid={testId} value={value} readOnly />
+  ),
 }));
 
 describe('SchemaView (M6)', () => {
@@ -55,6 +62,25 @@ describe('SchemaView (M6)', () => {
     mockInvoke.mockRejectedValue('Sampling failed: boom');
     render(<SchemaView connectionId="c1" databaseName="shop" collectionName="products" />);
     expect(await screen.findByText(/Sampling failed/)).toBeInTheDocument();
+  });
+
+  it('shows the validation rules editor in the Validation Rules tab', async () => {
+    mockInvoke.mockImplementation((cmd: string) =>
+      cmd === 'get_collection_options'
+        ? Promise.resolve({ validator: '{}', validationLevel: '', validationAction: '' })
+        : Promise.resolve(JSON.stringify(report))
+    );
+    render(<SchemaView connectionId="c1" databaseName="shop" collectionName="products" />);
+
+    fireEvent.mouseDown(await screen.findByTestId('schema-tab-validation'), { button: 0 });
+
+    expect(await screen.findByTestId('validation-rules-view')).toBeInTheDocument();
+    expect(screen.queryByText(/coming soon/i)).toBeNull();
+    expect(mockInvoke).toHaveBeenCalledWith('get_collection_options', {
+      id: 'c1',
+      database: 'shop',
+      collection: 'products',
+    });
   });
 
   it('shows an empty state when the collection has no documents', async () => {

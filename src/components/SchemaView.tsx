@@ -1,33 +1,21 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useTranslation } from 'react-i18next';
-import { Table2, Loader2, AlertCircle, ArrowUpDown, ShieldCheck } from 'lucide-react';
+import { Table2, Loader2, AlertCircle, ArrowUpDown } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-
-interface TypeCount {
-  type: string;
-  count: number;
-}
-interface FieldStat {
-  path: string;
-  types: TypeCount[];
-  presence: number;
-  coverage: number;
-  enumValues?: string[];
-}
-interface SchemaReport {
-  sampled: number;
-  fields: FieldStat[];
-}
+import type { FieldStat, SchemaReport } from '@/lib/schemaReport';
+import { ValidationRulesView } from './ValidationRulesView';
 
 interface SchemaViewProps {
   connectionId: string;
   databaseName: string;
   collectionName: string;
   sampleSize?: number;
+  /** Called after the Validation Rules tab applies a validator. */
+  onValidatorApplied?: () => void;
 }
 
 type SortKey = 'field' | 'coverage';
@@ -137,6 +125,7 @@ export const SchemaView: React.FC<SchemaViewProps> = ({
   databaseName,
   collectionName,
   sampleSize = 1000,
+  onValidatorApplied = () => {},
 }) => {
   const { t } = useTranslation('documents');
   const [report, setReport] = useState<SchemaReport | null>(null);
@@ -255,25 +244,13 @@ export const SchemaView: React.FC<SchemaViewProps> = ({
           />
         </TabsContent>
 
-        <TabsContent
-          value="validation"
-          className="mt-0 flex min-h-0 flex-1 flex-col"
-          data-testid="schema-validation-placeholder"
-        >
-          <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
-            <ShieldCheck size={28} className="text-muted-foreground/50" />
-            <div className="space-y-1">
-              <p className="text-sm font-medium text-foreground">{t('schemaView.tabs.validationRules')}</p>
-              <p className="max-w-sm text-xs text-muted-foreground">
-                {t('schemaView.labels.validationComingSoonPrefix')}{' '}
-                <code className="mx-1 rounded bg-muted px-1 py-0.5 font-mono text-[10px]">$jsonSchema</code>{' '}
-                {t('schemaView.labels.validationComingSoonSuffix', { databaseName, collectionName })}
-              </p>
-            </div>
-            <Badge variant="secondary" className="text-[10px]">
-              {t('schemaView.labels.planned')}
-            </Badge>
-          </div>
+        <TabsContent value="validation" className="mt-0 flex min-h-0 flex-1 flex-col">
+          <ValidationRulesView
+            connectionId={connectionId}
+            databaseName={databaseName}
+            collectionName={collectionName}
+            onApplied={onValidatorApplied}
+          />
         </TabsContent>
       </Tabs>
     </div>
