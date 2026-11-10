@@ -130,6 +130,9 @@ describe('statementAt', () => {
   it('keeps an object value under a condition joined to the next line', () => {
     const both = 'if (false) globalThis.options = {}\n[db.orders.deleteMany({})]';
     expect(at('if (false) globalThis.options = {}\n[db.orders.deleteMa|ny({})]')).toBe(both);
+    // A // inside a string is not a comment.
+    const str = 'if (false) globalThis.options = "try // note" + {}\n[db.orders.deleteMany({})]';
+    expect(at('if (false) globalThis.options = "try // note" + {}\n[db.orders.deleteMa|ny({})]')).toBe(str);
   });
 
   it('keeps try and switch with bodies that open on the next line', () => {
