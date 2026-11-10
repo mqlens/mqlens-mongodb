@@ -97,4 +97,20 @@ describe('statementAt', () => {
     expect(at('db.orders.find\n({active: tr|ue})')).toBe('db.orders.find\n({active: true})');
     expect(at('db.orders.find()\n["limit"](|1)')).toBe('db.orders.find()\n["limit"](1)');
   });
+
+  it('keeps a function declaration with a body that opens on the next line', () => {
+    const decl = 'function wipe()\n{\n  db.orders.deleteMany({})\n}';
+    expect(at('function wipe()\n{\n  db.orders.deleteMa|ny({})\n}')).toBe(decl);
+    const asyncDecl = 'async function wipe(a)\n{\n  await db.orders.deleteMany(a)\n}';
+    expect(at('async function wipe(a)\n{\n  await db.orders.deleteMa|ny(a)\n}')).toBe(asyncDecl);
+  });
+
+  it('starts a new statement after a finished block statement', () => {
+    expect(at('if (fal|se) {}\n(db.orders.deleteMany({}))')).toBe('if (false) {}');
+    expect(at('function f() {}\n[db.orders.deleteMany({})]|')).toBe('[db.orders.deleteMany({})]');
+    expect(at('for (const x of []) {\n}\n-db.orders.dele|teMany({})')).toBe('-db.orders.deleteMany({})');
+    // An else, or a value that only looks like a block, still continues.
+    expect(at('if (a) {\n}\nelse {\n  b(|)\n}')).toBe('if (a) {\n}\nelse {\n  b()\n}');
+    expect(at('const f = function () {}\n(|1)')).toBe('const f = function () {}\n(1)');
+  });
 });

@@ -8,17 +8,21 @@ const LEFT_OPEN = /(?:(?<!\+)\+|(?<!-)-|[=*/%&|^<>!?:,.]|\b(?:else|do))$/;
 // Whitespace and comments, skipped when looking for the next code.
 const SPACE_AND_COMMENTS = /^(?:\s|\/\/[^\n]*|\/\*[\s\S]*?\*\/)*/;
 const nextCode = (text: string, from: number) => text.slice(from).replace(SPACE_AND_COMMENTS, '');
-// An if/for/while/with header, up to its opening parenthesis.
-const CONTROL_HEADER = /^\s*(?:\}?\s*else\s+)?(?:if|for|while|with)\s*\($/;
+// An if/for/while/with or function header, up to its opening parenthesis.
+const CONTROL_HEADER = /^\s*(?:(?:\}?\s*else\s+)?(?:if|for|while|with)|(?:async\s+)?function\b[\s*]*[\w$]*)\s*\($/;
+// A statement that, once its closing brace is in, takes no operand or call:
+// only an else/catch/finally can still follow it.
+const BLOCK_STATEMENT = /^(?:(?:if|for|while|with|switch|try|do|class)\b|(?:async\s+)?function\b|\{)/;
 
 /**
  * Start/end offsets of each top-level statement in a shell script. A statement
  * ends after a `;`, or at a newline, outside brackets, strings and comments —
  * unless what follows clearly belongs to it (`.limit(1)`, `else`, `&& b`, a
  * `do` loop's `while`), comments aside, the
- * line leaves it open (`x =`), or it is a control header still waiting for its
- * body (`if (x)`). Running too much is safer than running a body without its
- * condition, so doubtful cases join.
+ * line leaves it open (`x =`), or it is a control or function header still
+ * waiting for its body (`if (x)`). After a finished block statement (`if (x) {}`)
+ * only else/catch/finally continue. Running too much is safer than running a
+ * body without its condition, so doubtful cases join.
  * ponytail: a lexer, not a parser. Regex literals and `${}` inside template
  * strings are not tracked.
  */
@@ -79,9 +83,11 @@ function statementSpans(text: string): Array<[number, number]> {
     } else if (depth === 0 && c === '\n') {
       const awaitingBody = headerClose >= 0 && text.slice(headerClose + 1, i).trim() === '';
       const next = nextCode(text, i + 1);
+      const blockDone = text[codeEnd - 1] === '}' && BLOCK_STATEMENT.test(nextCode(text, start));
+      const continues = blockDone ? /^(?:else|catch|finally)\b/.test(next) : CONTINUES_NEXT_LINE.test(next);
       if (
         !awaitingBody &&
-        !CONTINUES_NEXT_LINE.test(next) &&
+        !continues &&
         !(awaitingWhile() && /^while\b/.test(next)) &&
         !LEFT_OPEN.test(text.slice(start, codeEnd))
       ) {
