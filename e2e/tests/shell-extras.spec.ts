@@ -104,8 +104,8 @@ test.describe('mongosh commands', () => {
     await expect(transcript(page)).toContainText('one');
     await expect(transcript(page)).not.toContainText('two');
 
-    await page.keyboard.press('Control+End');
-    await page.keyboard.press('Shift+Home');
+    // Select the last line with the mouse: WebKit's Ctrl+End/Shift+Home differ.
+    await shell(page).locator('.view-line', { hasText: 'print("three")' }).click({ clickCount: 3 });
     await page.keyboard.press('Control+Enter');
     await expect(transcript(page)).toContainText('three');
     await expect(transcript(page)).not.toContainText('two');

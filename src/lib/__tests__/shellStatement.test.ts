@@ -4,7 +4,7 @@ import { statementAt } from '../shellStatement';
 // `|` marks the cursor.
 const at = (withCursor: string): string => {
   const offset = withCursor.indexOf('|');
-  return statementAt(withCursor.replace('|', ''), offset);
+  return statementAt(withCursor.slice(0, offset) + withCursor.slice(offset + 1), offset);
 };
 
 describe('statementAt', () => {
@@ -39,5 +39,28 @@ describe('statementAt', () => {
 
   it('takes the next statement when nothing comes before the cursor', () => {
     expect(at('|\n\nb()')).toBe('b()');
+  });
+
+  it('takes the next statement when the cursor sits between two with no space', () => {
+    expect(at('a();|b()')).toBe('b()');
+  });
+
+  it('keeps a control-flow header with its body on the next line', () => {
+    expect(at('if (false)\n  db.orders.deleteMany(|{})')).toBe('if (false)\n  db.orders.deleteMany({})');
+    expect(at('if (x)\n{\n  del(|)\n}')).toBe('if (x)\n{\n  del()\n}');
+    expect(at('for (const d of docs)\n  print(|d)')).toBe('for (const d of docs)\n  print(d)');
+    expect(at('if (x) a()\nelse\n  b(|)')).toBe('if (x) a()\nelse\n  b()');
+  });
+
+  it('keeps else, catch and finally with the block before them', () => {
+    expect(at('if (x) {\n  a()\n}\nelse {\n  b(|)\n}')).toBe('if (x) {\n  a()\n}\nelse {\n  b()\n}');
+    expect(at('try {\n  a()\n}\ncatch (e) {\n  pri|nt(e)\n}\nfinally {\n  c()\n}')).toBe(
+      'try {\n  a()\n}\ncatch (e) {\n  print(e)\n}\nfinally {\n  c()\n}'
+    );
+  });
+
+  it('keeps an expression that continues after an operator or before one', () => {
+    expect(at('const n =\n  db.a.countDocu|ments()')).toBe('const n =\n  db.a.countDocuments()');
+    expect(at('const ok = a()\n  && b(|)')).toBe('const ok = a()\n  && b()');
   });
 });
