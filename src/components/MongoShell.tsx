@@ -22,6 +22,8 @@ import type { IndexInfo } from './Sidebar';
 import { buildRunnableCommand, guardScriptRun, type GeneratedQuery } from '../lib/mongoCommand';
 import { DataGrid } from './DataGrid';
 import { registerMongoCompletionProvider, setModelMeta, clearModelMeta } from '../lib/monacoMongo';
+import { shellCollectionAt } from '../lib/mongoCompletions';
+import { fetchSchema, type SchemaMap } from '../lib/useCollectionSchema';
 import { useMonacoTheme, useMonacoFontSize } from '../lib/useMonacoTheme';
 import { useMonacoValue } from '../lib/useMonacoValue';
 import { statementAt } from '../lib/shellStatement';
@@ -787,6 +789,10 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   // Tracks the latest result docs so the Monaco completion provider (registered
   // once in onMount) can derive field names from the current results.
   const viewerRef = useRef<{ docs: Record<string, any>[] } | null>(null);
+  // What the completion provider (registered once in onMount) samples field
+  // paths from: the collection a statement names, else the shell's own.
+  const schemaScopeRef = useRef({ connectionId, db: currentDb, collection: collectionName });
+  schemaScopeRef.current = { connectionId, db: currentDb, collection: collectionName };
   // Collection names for the current db, for `db.<coll>` completions in the shell.
   const collectionsRef = useRef<string[]>([]);
   useEffect(() => {
@@ -1730,6 +1736,8 @@ export const MongoShell: React.FC<MongoShellProps> = ({
               contextmenu: false,
               // Enter accepts an open suggestion; otherwise inserts a newline.
               acceptSuggestionOnEnter: 'on',
+              // Suggest while typing, in quoted keys too: a dotted path needs quotes.
+              quickSuggestions: { other: true, comments: false, strings: true },
             }}
             onMount={(editor, monaco) => {
               commandEditor.onMount(editor, monaco);
@@ -1768,21 +1776,51 @@ export const MongoShell: React.FC<MongoShellProps> = ({
                 noSyntaxValidation: true,
                 noSuggestionDiagnostics: true,
               });
+              // Sampled schemas that have arrived. Suggestions never wait for a
+              // sample: the first ask starts it and offers what needs none, and
+              // the list stays "incomplete" meanwhile, so the next keystroke
+              // asks again and picks the fields up once they are in.
+              const sampled = new Map<string, SchemaMap>();
+              const pending = new Set<string>();
+              const sampledSchema = (text: string): SchemaMap => {
+                const { connectionId: id, db, collection } = schemaScopeRef.current;
+                const coll = shellCollectionAt(text) ?? collection;
+                if (!coll) return new Map();
+                const key = `${id}::${db}::${coll}`;
+                const ready = sampled.get(key);
+                if (ready || pending.has(key)) return ready ?? new Map();
+                pending.add(key);
+                void fetchSchema(id, db, coll).then((schema) => {
+                  pending.delete(key);
+                  sampled.set(key, schema);
+                  // A list still open while the sample was out is asked again,
+                  // now with the fields. `auto` so an empty answer closes it
+                  // instead of pinning "No suggestions" while the user types on.
+                  // The controller itself: editor.trigger() goes through the
+                  // command service, which did not reach this editor here.
+                  if (editor.hasTextFocus() && editor.getDomNode()?.querySelector('.suggest-widget.visible')) {
+                    editor.getContribution<{ dispose(): void; triggerSuggest(onlyFrom?: unknown, auto?: boolean): void }>('editor.contrib.suggestController')?.triggerSuggest(undefined, true);
+                  }
+                });
+                return new Map();
+              };
               const model = editor.getModel();
               if (model) {
                 const uri = model.uri.toString();
                 setModelMeta(uri, {
                   surface: 'shell',
-                  getFields: () => {
+                  getFields: (text) => {
                     const docs = viewerRef.current?.docs ?? [];
                     const keys = new Set<string>(['_id']);
                     docs.forEach((d) => {
                       if (d && typeof d === 'object') Object.keys(d).forEach((k) => keys.add(k));
                     });
+                    sampledSchema(text).forEach((_, path) => keys.add(path));
                     return Array.from(keys);
                   },
-                  getSchema: () => undefined,
+                  getSchema: sampledSchema,
                   getCollections: () => collectionsRef.current,
+                  isIncomplete: () => pending.size > 0,
                 });
                 editor.onDidDispose(() => clearModelMeta(uri));
               }
