@@ -3,6 +3,7 @@ import React, { type ReactElement } from 'react';
 import { render as rtlRender, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { DocumentViewer, DocumentViewerContext, builderStateToQuery } from '../DocumentViewer';
 import { DialogProvider } from '../dialogs/DialogProvider';
+import { recordHistory } from '@/lib/queryStore';
 
 const render = (ui: ReactElement) => rtlRender(<DialogProvider>{ui}</DialogProvider>);
 
@@ -1284,6 +1285,40 @@ describe('DocumentViewer query persistence (H1)', () => {
       const input = screen.getByTestId('query-filter-input') as HTMLTextAreaElement;
       expect(input.value).toContain('"age"');
     });
+  });
+
+  it('shows a run recorded after mount in the history dropdown', async () => {
+    let history: unknown[] = [];
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      if (cmd === 'load_collection_queries') {
+        return Promise.resolve({ saved: [], history, default: null });
+      }
+      if (cmd === 'record_history') history = [args.entry];
+      return Promise.resolve(undefined);
+    });
+
+    render(
+      <DocumentViewer
+        connectionName="Local"
+        databaseName="sales_db"
+        collectionName="customers"
+        onExecute={onExecute}
+        onExecuteAggregate={onExecuteAggregate}
+        onExplain={onExplain}
+        loading={false}
+      />
+    );
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith('load_collection_queries', expect.anything())
+    );
+
+    // App records the run while this viewer is already mounted.
+    await act(() =>
+      recordHistory('Local', 'sales_db', 'customers', { queryType: 'find', filter: { age: 1 } })
+    );
+
+    fireEvent.click(screen.getByTestId('history-btn'));
+    expect(await screen.findByTestId('history-item-0')).toHaveTextContent('"age":1');
   });
 });
 
