@@ -13,7 +13,9 @@ const nextCode = (text: string, from: number) => text.slice(from).replace(SPACE_
 const CONTROL_HEADER =
   /(?:^|[;{}]|\belse)\s*(?:if|for|while|with|switch|catch|(?:async\s+)?function\b[\s*]*[\w$]*)\s*\($/;
 // What, just before a `{`, makes it open a block rather than an object.
-const BLOCK_AFTER = /\b(?:else|try|finally|do)$/;
+const BLOCK_AFTER = /\b(?:else|try|finally|do)$|^\s*class\s+[\w$]+(?:\s+extends\b[^{]*)?$/;
+// Trailing whitespace and comments (each block comment ends at its first `*/`).
+const TRAILING_SPACE_AND_COMMENTS = /(?:\s|\/\/[^\n]*|\/\*[^*]*\*+(?:[^/*][^*]*\*+)*\/)*$/;
 
 /**
  * Start/end offsets of each top-level statement in a shell script. A statement
@@ -108,7 +110,7 @@ function statementSpans(text: string): Array<[number, number]> {
         headerOpen = CONTROL_HEADER.test(head) && !(isDo() && /\bwhile\s*\($/.test(head));
       }
       if (c === '{' && depth === 0) {
-        const before = text.slice(start, i).trimEnd();
+        const before = text.slice(start, i).replace(TRAILING_SPACE_AND_COMMENTS, '');
         openIsBlock = before === '' || start + before.length - 1 === headerClose || BLOCK_AFTER.test(before);
       }
       depth++;

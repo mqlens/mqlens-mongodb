@@ -114,6 +114,14 @@ describe('statementAt', () => {
     expect(at('const f = function () {}\n(|1)')).toBe('const f = function () {}\n(1)');
   });
 
+  it('ends a block statement whose brace follows a comment, or a class body', () => {
+    expect(at('if (fal|se) /* note */ {}\n(db.orders.deleteMany({}))')).toBe('if (false) /* note */ {}');
+    expect(at('class C {}\n(db.orders.deleteMa|ny({}))')).toBe('(db.orders.deleteMany({}))');
+    expect(at('class D extends C {}\n[db.orders.deleteMa|ny({})]')).toBe('[db.orders.deleteMany({})]');
+    // A class expression is a value, and still takes a call.
+    expect(at('const K = class {}\n(|1)')).toBe('const K = class {}\n(1)');
+  });
+
   it('keeps an object value under a condition joined to the next line', () => {
     const both = 'if (false) globalThis.options = {}\n[db.orders.deleteMany({})]';
     expect(at('if (false) globalThis.options = {}\n[db.orders.deleteMa|ny({})]')).toBe(both);
