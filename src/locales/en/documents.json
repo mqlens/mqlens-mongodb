@@ -409,15 +409,30 @@
     "empty": {
       "title": "Collection is empty — nothing to analyze."
     },
+    "export": {
+      "failed": "Could not export the schema: {{error}}",
+      "json": "JSON",
+      "markdown": "Markdown"
+    },
     "labels": {
       "analyzing": "Analyzing schema…",
       "coverage": "coverage",
       "field": "field",
       "fieldsCount_one": "{{count}} field",
       "fieldsCount_other": "{{count}} fields",
+      "noValues": "No repeated values in the sample.",
       "sampledSummary": "sampled {{sampled}} docs · {{fields}} fields",
       "schemaPrefix": "Schema:",
+      "showValues": "Click to show the most common values",
       "types": "types"
+    },
+    "sample": {
+      "docs_one": "{{count}} doc",
+      "docs_other": "{{count}} docs",
+      "first": "First N",
+      "mode": "Sample mode",
+      "random": "Random",
+      "size": "Sample size"
     },
     "tabs": {
       "fieldAnalysis": "Field Analysis",

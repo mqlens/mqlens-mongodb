@@ -1,20 +1,6 @@
 // The result of the backend's `analyze_schema` sample (src-tauri/src/db/schema.rs).
-export interface TypeCount {
-  type: string;
-  count: number;
-}
-export interface FieldStat {
-  /** Dot path; nested documents add their children as `parent.child`. */
-  path: string;
-  types: TypeCount[];
-  presence: number;
-  coverage: number;
-  enumValues?: string[];
-}
-export interface SchemaReport {
-  sampled: number;
-  fields: FieldStat[];
-}
+import type { SchemaReport } from './schemaExport';
+export type { TypeCount, FieldStat, SchemaReport } from './schemaExport';
 
 interface JsonSchemaNode {
   bsonType: string | string[];

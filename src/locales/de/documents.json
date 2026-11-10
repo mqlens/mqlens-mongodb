@@ -406,15 +406,30 @@
     "empty": {
       "title": "Collection ist leer — nichts zu analysieren."
     },
+    "export": {
+      "failed": "Schema konnte nicht exportiert werden: {{error}}",
+      "json": "JSON",
+      "markdown": "Markdown"
+    },
     "labels": {
       "analyzing": "Schema wird analysiert…",
       "coverage": "Abdeckung",
       "field": "Feld",
       "fieldsCount_one": "{{count}} Feld",
       "fieldsCount_other": "{{count}} Felder",
+      "noValues": "Keine wiederholten Werte in der Stichprobe.",
       "sampledSummary": "{{sampled}} Dokumente untersucht · {{fields}} Felder",
       "schemaPrefix": "Schema:",
+      "showValues": "Klicken, um die häufigsten Werte anzuzeigen",
       "types": "Typen"
+    },
+    "sample": {
+      "docs_one": "{{count}} Dokument",
+      "docs_other": "{{count}} Dokumente",
+      "first": "Erste N",
+      "mode": "Stichprobenart",
+      "random": "Zufällig",
+      "size": "Stichprobengröße"
     },
     "tabs": {
       "fieldAnalysis": "Feldanalyse",

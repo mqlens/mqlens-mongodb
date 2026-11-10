@@ -93,4 +93,48 @@ test.describe('Schema analysis', () => {
     await view(page).getByTestId('schema-tab-validation').click();
     expect(await getEditorText(page, rules)).toBe('[]');
   });
+
+  test('re-samples on demand, shows a field’s top values and exports the schema', async ({ app, page }) => {
+    await app.open({ dialog: { save: '/exports/customers.schema' } });
+    await loadSample(page);
+    await openCollection(page, 'sales_db', 'customers');
+    await view(page).getByTestId('analyze-schema-btn').click();
+    const schema = view(page).getByTestId('schema-view');
+
+    await schema.getByTestId('schema-sample-size').selectOption('100');
+    await schema.getByTestId('schema-sample-mode').selectOption('first');
+    await expect
+      .poll(async () => (await app.calls('analyze_schema')).at(-1)?.args)
+      .toMatchObject({ sampleSize: 100, first: true });
+
+    // Keyboard users open a field's values from its name.
+    await schema.getByRole('button', { name: 'tier', exact: true }).focus();
+    await page.keyboard.press('Enter');
+    const values = schema.getByTestId('schema-values-tier');
+    await expect(values).toContainText('Premium');
+    await expect(values).toContainText('2 · 67%');
+    await expect(values).toContainText('Standard');
+    await expect(values).toContainText('1 · 33%');
+    await schema.getByRole('button', { name: 'tier', exact: true }).click();
+    await expect(values).toHaveCount(0);
+
+    const jsonSave = await callFrom(app, 'plugin:dialog|save', () => schema.getByTestId('schema-export-json').click());
+    expect(jsonSave).toMatchObject({ options: { defaultPath: 'sales_db.customers.schema.json' } });
+    await expect.poll(async () => (await app.calls('plugin:fs|write_text_file')).length).toBe(1);
+    const mdSave = await callFrom(app, 'plugin:dialog|save', () => schema.getByTestId('schema-export-md').click());
+    expect(mdSave).toMatchObject({ options: { defaultPath: 'sales_db.customers.schema.md' } });
+    await expect.poll(async () => (await app.calls('plugin:fs|write_text_file')).length).toBe(2);
+  });
+
+  test('says when the schema export fails', async ({ app, page }) => {
+    await app.open({ dialog: { save: '/exports/customers.schema.json' } });
+    await loadSample(page);
+    await openCollection(page, 'sales_db', 'customers');
+    await view(page).getByTestId('analyze-schema-btn').click();
+    const schema = view(page).getByTestId('schema-view');
+
+    await app.failNext('plugin:fs|write_text_file', 'disk full');
+    await schema.getByTestId('schema-export-json').click();
+    await expect(schema.getByTestId('schema-export-error')).toContainText('disk full');
+  });
 });
