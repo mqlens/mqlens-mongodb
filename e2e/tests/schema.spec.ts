@@ -64,13 +64,15 @@ test.describe('Schema analysis', () => {
       .poll(async () => (await app.calls('analyze_schema')).at(-1)?.args)
       .toMatchObject({ sampleSize: 100, first: true });
 
-    await schema.getByTestId('schema-row-tier').click();
+    // Keyboard users open a field's values from its name.
+    await schema.getByRole('button', { name: 'tier', exact: true }).focus();
+    await page.keyboard.press('Enter');
     const values = schema.getByTestId('schema-values-tier');
     await expect(values).toContainText('Premium');
     await expect(values).toContainText('2 · 67%');
     await expect(values).toContainText('Standard');
     await expect(values).toContainText('1 · 33%');
-    await schema.getByTestId('schema-row-tier').click();
+    await schema.getByRole('button', { name: 'tier', exact: true }).click();
     await expect(values).toHaveCount(0);
 
     const jsonSave = await callFrom(app, 'plugin:dialog|save', () => schema.getByTestId('schema-export-json').click());

@@ -89,10 +89,13 @@ describe('SchemaView (M6)', () => {
     };
     mockInvoke.mockResolvedValue(JSON.stringify(withValues));
     render(<SchemaView connectionId="c1" databaseName="shop" collectionName="customers" />);
-    fireEvent.click(await screen.findByTestId('schema-row-tier'));
+    const toggle = await screen.findByRole('button', { name: 'tier' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
     const values = screen.getByTestId('schema-values-tier');
     expect(values).toHaveTextContent(/Silver.*3.*75%.*Gold.*1.*25%/);
-    fireEvent.click(screen.getByTestId('schema-row-tier'));
+    fireEvent.click(toggle);
     expect(screen.queryByTestId('schema-values-tier')).not.toBeInTheDocument();
   });
 

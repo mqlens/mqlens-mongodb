@@ -26,11 +26,29 @@ describe('schemaToMarkdown', () => {
         '',
         '| Field | Types | Coverage | Values |',
         '|---|---|---:|---|',
-        '| `_id` | objectId | 100% |  |',
-        '| `tier` | string 75%, null 25% | 100% | Standard (2), Premium (1) |',
-        '| `a\\|b` | int | 25% |  |',
+        '| \\_id | objectId | 100% |  |',
+        '| tier | string 75%, null 25% | 100% | Standard (2), Premium (1) |',
+        '| a\\|b | int | 25% |  |',
         '',
       ].join('\n')
     );
+  });
+
+  it('keeps each cell on one line and shows markup and backslashes literally', () => {
+    const md = schemaToMarkdown('db.c', {
+      sampled: 2,
+      fields: [
+        {
+          path: 'note',
+          types: [{ type: 'string', count: 2 }],
+          presence: 2,
+          coverage: 1,
+          enumValues: ['a\\|b', 'line one\r\nline *two* <b>`x`</b>'],
+          enumCounts: { 'a\\|b': 1, 'line one\r\nline *two* <b>`x`</b>': 1 },
+        },
+      ],
+    });
+    const row = md.split('\n').find((line) => line.startsWith('| note'));
+    expect(row).toBe('| note | string | 100% | a\\\\\\|b (1), line one line \\*two\\* \\<b\\>\\`x\\`\\</b\\> (1) |');
   });
 });

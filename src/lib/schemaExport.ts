@@ -21,7 +21,8 @@ export function topValues(field: FieldStat): Array<[string, number]> {
 }
 
 const pct = (part: number, whole: number) => `${Math.round((part / (whole || 1)) * 100)}%`;
-const cell = (text: string) => text.replace(/\|/g, '\\|');
+/** Table-cell text: one line, with Markdown's own characters shown literally. */
+const cell = (text: string) => text.replace(/\r\n|[\r\n]/g, ' ').replace(/[\\|`*_[\]<>#~]/g, '\\$&');
 
 export function schemaToMarkdown(namespace: string, report: SchemaReport): string {
   const rows = report.fields.map((f) => {
@@ -32,7 +33,7 @@ export function schemaToMarkdown(namespace: string, report: SchemaReport): strin
     const values = topValues(f)
       .map(([v, n]) => `${v} (${n})`)
       .join(', ');
-    return `| \`${cell(f.path)}\` | ${cell(types)} | ${pct(f.coverage, 1)} | ${cell(values)} |`;
+    return `| ${cell(f.path)} | ${cell(types)} | ${pct(f.coverage, 1)} | ${cell(values)} |`;
   });
   return [
     `# Schema of ${namespace}`,

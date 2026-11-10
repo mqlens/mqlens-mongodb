@@ -128,13 +128,20 @@ const SchemaFieldTable: React.FC<{
             return (
               <React.Fragment key={field.path}>
               <tr
-                className="cursor-pointer border-t border-border hover:bg-accent/50"
+                className="border-t border-border hover:bg-accent/50"
                 data-testid={`schema-row-${field.path}`}
-                aria-expanded={openPath === field.path}
-                title={t('schemaView.labels.showValues')}
-                onClick={() => setOpenPath((p) => (p === field.path ? null : field.path))}
               >
-                <td className="px-4 py-1.5 font-mono text-foreground">{field.path}</td>
+                <td className="px-4 py-1.5 font-mono text-foreground">
+                  <button
+                    type="button"
+                    className="text-left hover:underline focus-visible:underline focus-visible:outline-none"
+                    aria-expanded={openPath === field.path}
+                    title={t('schemaView.labels.showValues')}
+                    onClick={() => setOpenPath((p) => (p === field.path ? null : field.path))}
+                  >
+                    {field.path}
+                  </button>
+                </td>
                 <td className="px-4 py-1.5">
                   <TypesCell field={field} />
                 </td>
