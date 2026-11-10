@@ -47,6 +47,8 @@ export interface ShellSession {
   /** Which conversation in the backend chat store this tab has open. The
    *  transcript is not stored here — only the choice of which one. */
   aiChatId?: string;
+  /** The script file last opened or saved, which Save offers again. */
+  scriptPath?: string;
   /** The command running in this tab's session right now, if any.
    *
    *  Held here for the same reason the transcript is: the tab can unmount while
@@ -296,6 +298,7 @@ function normalizeStoredSession(stored: unknown): ShellSession | undefined {
     aiOpen: candidate.aiOpen ?? false,
     aiMessages: Array.isArray(candidate.aiMessages) ? candidate.aiMessages : [],
     aiChatId: typeof candidate.aiChatId === 'string' ? candidate.aiChatId : undefined,
+    scriptPath: typeof candidate.scriptPath === 'string' ? candidate.scriptPath : undefined,
     activeCommand: normaliseActiveCommand(candidate.activeCommand),
   };
 }
@@ -392,6 +395,7 @@ export function writeShellSession(
     aiOpen: patch.aiOpen ?? prev?.aiOpen ?? false,
     aiMessages: patch.aiMessages ?? prev?.aiMessages ?? [],
     aiChatId: patch.aiChatId ?? prev?.aiChatId,
+    scriptPath: patch.scriptPath ?? prev?.scriptPath,
     // `null` is a deliberate write ("nothing running now"); only an absent key
     // keeps the previous value, like `sessionId`.
     activeCommand:

@@ -87,6 +87,33 @@ describe('MongoShell Component', () => {
       expect(mockSaveDialog).toHaveBeenCalledWith(expect.objectContaining({ defaultPath: '/scripts/report.js' }));
     });
 
+    it('still offers the opened file after the shell remounts', async () => {
+      mockOpenDialog.mockResolvedValue('/scripts/report.js');
+      mockReadTextFile.mockResolvedValue('print(1)');
+      mockSaveDialog.mockResolvedValue(null);
+      const shellTab = () => (
+        <MongoShell
+          connectionId="conn-1"
+          connectionName="mock"
+          connectionUri="mongodb://prod-replica-set"
+          databaseName="sales_db"
+          sessionKey="tab-shell-script"
+        />
+      );
+      const { unmount } = render(shellTab());
+      await screen.findByText(/mongosh session attached/);
+      fireEvent.click(screen.getByTestId('shell-open-script'));
+      await waitFor(() => expect(mockReadTextFile).toHaveBeenCalled());
+      await waitFor(() => expect(readShellSession('tab-shell-script')).toBeDefined());
+      unmount();
+
+      render(shellTab());
+      fireEvent.click(await screen.findByTestId('shell-save-script'));
+      await waitFor(() =>
+        expect(mockSaveDialog).toHaveBeenCalledWith(expect.objectContaining({ defaultPath: '/scripts/report.js' }))
+      );
+    });
+
     it('writes nothing when the save dialog is cancelled', async () => {
       mockSaveDialog.mockResolvedValue(null);
       await renderShell();

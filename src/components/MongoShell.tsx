@@ -765,8 +765,13 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   }, [tab]);
   const wrapRef = useRef<HTMLDivElement>(null);
   const runRef = useRef<() => void>(() => {});
-  // The script file last opened or saved, offered again by Save.
-  const scriptPathRef = useRef<string | null>(null);
+  // The script file last opened or saved, offered again by Save. Kept in the
+  // tab's session too, since a ref resets when the shell remounts.
+  const scriptPathRef = useRef<string | null>(storedSession?.scriptPath ?? null);
+  const rememberScriptPath = (path: string) => {
+    scriptPathRef.current = path;
+    persistSession({ scriptPath: path });
+  };
   // Seeded from the tab's session: the opening command must run once per TAB,
   // not once per mount, or switching tabs re-executes it (#240).
   const autoRunRef = useRef(storedSession?.autoRanCommand ?? false);
@@ -1285,7 +1290,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
       });
       if (typeof path !== 'string') return;
       setCommand(await readTextFile(path));
-      scriptPathRef.current = path;
+      rememberScriptPath(path);
     } catch (err: any) {
       appendEntries([{ kind: 'error', message: t('mongoShell.script.openFailed', { message: String(err?.message ?? err) }) }]);
       setTab('console');
@@ -1301,7 +1306,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
       });
       if (!path) return;
       await writeTextFile(path, command);
-      scriptPathRef.current = path;
+      rememberScriptPath(path);
     } catch (err: any) {
       appendEntries([{ kind: 'error', message: t('mongoShell.script.saveFailed', { message: String(err?.message ?? err) }) }]);
       setTab('console');
