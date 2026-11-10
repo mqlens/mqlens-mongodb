@@ -144,6 +144,50 @@ describe('MongoShell Component', () => {
       await waitFor(() => expect(mockWriteTextFile).toHaveBeenCalledWith('/scripts/report.js', 'print(2)'));
     });
 
+    it('keeps the editor text in the session while the tab still owns it', async () => {
+      render(
+        <MongoShell
+          connectionId="conn-1"
+          connectionName="mock"
+          connectionUri="mongodb://prod-replica-set"
+          databaseName="sales_db"
+          sessionKey="tab-shell-live-text"
+        />
+      );
+      await screen.findByText(/mongosh session attached/);
+      fireEvent.change(screen.getByLabelText('mongosh editor'), { target: { value: 'print(3)' } });
+      await waitFor(() => expect(readShellSession('tab-shell-live-text')?.editorText).toBe('print(3)'));
+    });
+
+    it('restores the script and its path from the backend when the cache is empty', async () => {
+      const base = mockInvoke.getMockImplementation()!;
+      mockInvoke.mockImplementation((cmd: string, args: any) =>
+        cmd === 'claim_shell_tab_state' && args?.tabId === 'tab-shell-moved'
+          ? Promise.resolve({
+              sessionId: null, entries: [], currentDb: 'sales_db', autoRanCommand: true,
+              aiOpen: false, aiMessages: [], scriptPath: '/scripts/moved.js', editorText: 'print("moved")',
+            })
+          : base(cmd, args)
+      );
+      mockSaveDialog.mockResolvedValue(null);
+      render(
+        <MongoShell
+          connectionId="conn-1"
+          connectionName="mock"
+          connectionUri="mongodb://prod-replica-set"
+          databaseName="sales_db"
+          sessionKey="tab-shell-moved"
+        />
+      );
+      await waitFor(() =>
+        expect((screen.getByLabelText('mongosh editor') as HTMLTextAreaElement).value).toBe('print("moved")')
+      );
+      fireEvent.click(screen.getByTestId('shell-save-script'));
+      await waitFor(() =>
+        expect(mockSaveDialog).toHaveBeenCalledWith(expect.objectContaining({ defaultPath: '/scripts/moved.js' }))
+      );
+    });
+
     it('writes nothing when the save dialog is cancelled', async () => {
       mockSaveDialog.mockResolvedValue(null);
       await renderShell();

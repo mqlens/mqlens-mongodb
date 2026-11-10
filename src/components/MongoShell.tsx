@@ -525,6 +525,8 @@ export const MongoShell: React.FC<MongoShellProps> = ({
         setIsAIOpenState(restored.aiOpen);
         setAiChatId(restored.aiChatId);
         autoRunRef.current = restored.autoRanCommand;
+        if (restored.editorText !== undefined) setCommand(restored.editorText);
+        if (restored.scriptPath) scriptPathRef.current = restored.scriptPath;
         // A command recorded as running whose caller is not in this renderer:
         // the window was reloaded, or the tab arrived from another window,
         // while a script ran. Its result went to the view it started in. What
@@ -796,10 +798,24 @@ export const MongoShell: React.FC<MongoShellProps> = ({
     lastDefaultRef.current = defaultCommand;
     setCommand(defaultCommand);
   }, [defaultCommand]);
-  // Keep the editor's text for the next mount, with the script path it belongs to.
+  // Keep the editor's text in the tab's session, with the script path it
+  // belongs to, while this view still owns that session: a rename or a move to
+  // another window re-keys it before this view unmounts. Not before hydration,
+  // which may bring back a saved text this would overwrite.
+  // ponytail: 300ms debounce, so the last 300ms of typing before a rename or
+  // move is lost; flush from those paths if that matters.
   const commandRef = useRef(command);
   commandRef.current = command;
-  useEffect(() => () => persistSession({ editorText: commandRef.current }), []);
+  const hydratedRef = useRef(hydrated);
+  hydratedRef.current = hydrated;
+  useEffect(() => {
+    if (!hydrated) return;
+    const timer = setTimeout(() => persistSession({ editorText: command }), 300);
+    return () => clearTimeout(timer);
+  }, [command, hydrated]);
+  useEffect(() => () => {
+    if (hydratedRef.current) persistSession({ editorText: commandRef.current });
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
