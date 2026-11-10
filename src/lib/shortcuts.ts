@@ -172,6 +172,13 @@ export const KEYBOARD_SHORTCUTS: KeyboardShortcut[] = [
     keywords: 'execute mongosh shell builder',
   },
   {
+    id: 'shell-run-all',
+    group: 'query-editor',
+    labelKey: 'keyboardShortcuts.items.shell-run-all',
+    chords: [{ shift: true, key: 'Enter' }],
+    keywords: 'execute mongosh shell script whole',
+  },
+  {
     id: 'submit-dialog',
     group: 'query-editor',
     labelKey: 'keyboardShortcuts.items.submit-dialog',

@@ -245,7 +245,8 @@
       "palette-navigate": "Durch die Palettenergebnisse navigieren",
       "palette-open": "Befehlspalette öffnen oder schließen",
       "palette-run": "Die ausgewählte Palettenaktion ausführen",
-      "run-query": "Die aktuelle Abfrage ausführen",
+      "run-query": "Die aktuelle Abfrage oder Shell-Anweisung ausführen",
+      "shell-run-all": "Das ganze Shell-Skript ausführen",
       "sidebar-search": "Baumsuche der Seitenleiste fokussieren",
       "submit-dialog": "Einen mehrzeiligen Dialog absenden (URI-Import, Eingabedialoge)",
       "tab-close": "Den aktiven Tab schließen",
@@ -348,6 +349,7 @@
       "restartSession": "Neu starten",
       "restartSessionTitle": "Diese mongosh-Sitzung beenden und eine neue starten",
       "run": "Ausführen",
+      "runTitle": "Alles ausführen ({{all}}). {{statement}} führt die Auswahl oder die Anweisung am Cursor aus.",
       "saveScript": "Skript speichern…",
       "stop": "Stopp",
       "stopTitle": "Laufenden Befehl stoppen, indem die mongosh-Sitzung neu gestartet wird"

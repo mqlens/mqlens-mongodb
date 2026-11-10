@@ -51,6 +51,16 @@ vi.mock('@monaco-editor/react', () => ({
 }));
 
 describe('MongoShell Component', () => {
+  it('labels Run with Shift+Enter, and its tooltip names Ctrl+Enter for the statement at the cursor', async () => {
+    render(
+      <MongoShell connectionId="conn-1" connectionName="mock" connectionUri="mongodb://prod-replica-set" databaseName="sales_db" />,
+    );
+    const run = await screen.findByTestId('shell-run');
+    expect(screen.getByTestId('shell-run-hint')).toHaveTextContent('Shift ↵');
+    expect(run).toHaveAttribute('title', expect.stringContaining('Shift ↵'));
+    expect(run).toHaveAttribute('title', expect.stringContaining('Ctrl ↵'));
+  });
+
   describe('script files', () => {
     const renderShell = async () => {
       render(

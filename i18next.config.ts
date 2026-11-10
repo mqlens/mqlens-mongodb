@@ -228,6 +228,7 @@ export default defineConfig({
       'shell:keyboardShortcuts.groups.command-palette',
       'shell:keyboardShortcuts.items.close-dialog',
       'shell:keyboardShortcuts.items.run-query',
+      'shell:keyboardShortcuts.items.shell-run-all',
       'shell:keyboardShortcuts.items.submit-dialog',
       'shell:keyboardShortcuts.items.sidebar-search',
       'shell:keyboardShortcuts.items.zoom-in',
