@@ -1,3 +1,5 @@
+import { maskLiterals } from './jsLiterals';
+
 // What, at the start of the next line's code, continues the statement before
 // it: a chained call, a call or index on its value (ASI joins those too), or
 // an operator (not a comment, nor a prefix ++/--), or the rest of an if/try.
@@ -25,8 +27,9 @@ const BLOCK_AFTER = /\b(?:else|try|finally|do)$|^\s*class\s+[\w$]+(?:\s+extends\
  * waiting for its body (`if (x)`). After a finished block statement (`if (x) {}`)
  * only else/catch/finally continue. Running too much is safer than running a
  * body without its condition, so doubtful cases join.
- * ponytail: a lexer, not a parser. Regex literals and `${}` inside template
- * strings are not tracked.
+ * acorn reads the strings, comments, regex and template literals first, so
+ * nothing inside them counts as code.
+ * ponytail: a lexer over acorn's tokens, not a parser.
  */
 function statementSpans(text: string): Array<[number, number]> {
   const spans: Array<[number, number]> = [];
@@ -118,7 +121,20 @@ function statementSpans(text: string): Array<[number, number]> {
     } else if (')]}'.includes(c)) {
       depth = Math.max(0, depth - 1);
       if (c === ')' && depth === 0 && headerOpen) { headerClose = i; headerOpen = false; }
-      if (c === '}' && depth === 0) blockClose = openIsBlock ? i : -1;
+      if (c === '}' && depth === 0) {
+        blockClose = openIsBlock ? i : -1;
+        // A finished block ends its statement even on the same line, unless
+        // its else/catch/finally (or a do loop's while) follows.
+        let k = i + 1;
+        while (text[k] === ' ' || text[k] === '\t') k++;
+        const rest = text.slice(k, k + 8);
+        if (
+          openIsBlock && k < text.length && !/^[\r\n;]/.test(rest) &&
+          !/^(?:else|catch|finally)\b/.test(rest) && !(awaitingWhile() && /^while\b/.test(rest))
+        ) {
+          boundary(i + 1, i + 1);
+        }
+      }
     } else if (depth === 0 && c === ';') {
       const next = nextCode(text, i + 1);
       if (!/^(?:else|catch|finally)\b/.test(next) && !(awaitingWhile() && /^while\b/.test(next))) {
@@ -134,10 +150,11 @@ function statementSpans(text: string): Array<[number, number]> {
 
 /** The statement under `offset`, or the nearest one before it (else after it) when the cursor sits on blank space. */
 export function statementAt(text: string, offset: number): string {
-  // Each statement's text without its surrounding whitespace.
-  const trimmed = statementSpans(text)
+  // Each statement without the space and comments around it.
+  const code = maskLiterals(text);
+  const trimmed = statementSpans(code)
     .map(([s, e]): [number, number] => {
-      const body = text.slice(s, e);
+      const body = code.slice(s, e);
       return [s + (body.length - body.trimStart().length), e - (body.length - body.trimEnd().length)];
     })
     .filter(([s, e]) => s < e);

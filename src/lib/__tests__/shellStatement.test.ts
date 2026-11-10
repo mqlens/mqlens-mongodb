@@ -29,7 +29,7 @@ describe('statementAt', () => {
     expect(at('print("a;b|")')).toBe('print("a;b")');
     expect(at('print(`a\n\nb|`)')).toBe('print(`a\n\nb`)');
     expect(at('f(/* x;\n\ny */ 1|)')).toBe('f(/* x;\n\ny */ 1)');
-    expect(at('f(1) // a; b|')).toBe('f(1) // a; b');
+    expect(at('f(1) // a; b|')).toBe('f(1)');
   });
 
   it('falls back to the statement before the cursor on a blank spot', () => {
@@ -78,7 +78,7 @@ describe('statementAt', () => {
   });
 
   it('does not read a trailing comment as an unfinished operator', () => {
-    expect(at('print("ch|eck") /* note */\ndb.orders.deleteMany({})')).toBe('print("check") /* note */');
+    expect(at('print("ch|eck") /* note */\ndb.orders.deleteMany({})')).toBe('print("check")');
   });
 
   it('ends a statement after a postfix increment or decrement', () => {
@@ -120,6 +120,28 @@ describe('statementAt', () => {
     expect(at('class D extends C {}\n[db.orders.deleteMa|ny({})]')).toBe('[db.orders.deleteMany({})]');
     // A class expression is a value, and still takes a call.
     expect(at('const K = class {}\n(|1)')).toBe('const K = class {}\n(1)');
+  });
+
+  it('reads brackets inside a regex literal as part of it', () => {
+    expect(at('db.a.find({name: /[(]/}|)\ndb.orders.deleteMany({})')).toBe('db.a.find({name: /[(]/})');
+    expect(at('db.a.find({name: /[{]/})\ndb.orders.deleteMa|ny({})')).toBe('db.orders.deleteMany({})');
+    // Division is still division.
+    expect(at('const half = total / 2 / (|1)\ndb.orders.deleteMany({})')).toBe('const half = total / 2 / (1)');
+  });
+
+  it('reads a nested template literal as one string', () => {
+    const tpl = 'print(\x60outer ${\x60inner (\x60} end\x60)';
+    expect(at(`${tpl.slice(0, 3)}|${tpl.slice(3)}\ndb.orders.deleteMany({})`)).toBe(tpl);
+  });
+
+  it('ends a finished block before a statement on the same line', () => {
+    expect(at('if (fal|se) {} db.orders.deleteMany({})')).toBe('if (false) {}');
+    expect(at('if (false) {} db.orders.deleteMa|ny({})')).toBe('db.orders.deleteMany({})');
+    // else, catch, finally and a do loop's while stay with it, and an object value is not a block.
+    expect(at('if (a) {} el|se { b() }')).toBe('if (a) {} else { b() }');
+    expect(at('try { a() } catch (e) {} final|ly {}')).toBe('try { a() } catch (e) {} finally {}');
+    expect(at('do { a() } wh|ile (x)')).toBe('do { a() } while (x)');
+    expect(at('x = {} && d|b.a.find()')).toBe('x = {} && db.a.find()');
   });
 
   it('keeps a header with a trailing comment joined to its body', () => {
