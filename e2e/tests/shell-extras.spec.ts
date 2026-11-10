@@ -115,6 +115,33 @@ test.describe('mongosh commands', () => {
     await expect(transcript(page)).toContainText('two');
   });
 
+  test('Ctrl+Enter still runs only the statement at the cursor in a script that is not plain JavaScript', async ({ app, page }) => {
+    await connectStaging(app, page);
+    await openShell(page);
+    await expect(transcript(page)).toContainText('transactions');
+
+    // `use` is mongosh and `@` is no JavaScript at all, so the whole script is
+    // read by the fallback: blocks, loops, templates, and the comments after
+    // the `@`, which nothing masks.
+    const script = [
+      'print("first"); print("second")',
+      'use sales_db',
+      'if (true) { print("block") } print("same line")',
+      'do { print("loop") } while (false)',
+      'globalThis. do',
+      'print(\x60t ${\x60n\x60}\x60) // masked',
+      '@',
+      '// a note',
+      '/* a longer',
+      '   note */ print("after")',
+    ].join('\n');
+    // setValue leaves the cursor at the start of the first line.
+    await setEditorText(page, shell(page), script);
+    await page.keyboard.press('Control+Enter');
+    await expect(transcript(page)).toContainText('first');
+    await expect(transcript(page)).not.toContainText('second');
+  });
+
   test('opens a script file into the editor and saves it back', async ({ app, page }) => {
     await connectStaging(app, page, {
       dialog: { open: '/scripts/report.js', save: '/scripts/report.js' },
