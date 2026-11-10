@@ -93,6 +93,24 @@ test.describe('mongosh commands', () => {
     await expect(transcript(page)).toContainText('from the keyboard');
   });
 
+  test('opens a script file into the editor and saves it back', async ({ app, page }) => {
+    await connectStaging(app, page, {
+      dialog: { open: '/scripts/report.js', save: '/scripts/report.js' },
+      files: { '/scripts/report.js': 'print("from a file")' },
+    });
+    await openShell(page);
+    await expect(transcript(page)).toContainText('transactions');
+
+    await shell(page).getByTestId('shell-open-script').click();
+    await expect.poll(() => getEditorText(page, shell(page))).toBe('print("from a file")');
+    await shell(page).getByRole('button', { name: 'Run', exact: true }).click();
+    await expect(transcript(page)).toContainText('from a file');
+
+    await callFrom(app, 'plugin:fs|write_text_file', () => shell(page).getByTestId('shell-save-script').click());
+    const [saveCall] = await app.calls('plugin:dialog|save');
+    expect(JSON.stringify(saveCall.args)).toContain('/scripts/report.js');
+  });
+
   test('inserts or runs what the AI helper writes, and Escape cancels a destructive command', async ({ app, page }) => {
     const find: AiReplySeed = { query: { explanation: 'Premium customers.', queryType: 'script', script: 'db.customers.find({ tier: "Premium" })' } };
     const wipe: AiReplySeed = { query: { explanation: 'Removes every customer.', queryType: 'script', script: 'db.customers.deleteMany({})' } };

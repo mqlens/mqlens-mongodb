@@ -335,14 +335,22 @@
       "sessionUnavailable": "mongosh-Sitzung nicht verfügbar: {{detail}}",
       "switchedToDb": "zur Datenbank {{db}} gewechselt"
     },
+    "script": {
+      "allFiles": "Alle Dateien",
+      "filter": "Shell-Skripte",
+      "openFailed": "Das Skript konnte nicht geöffnet werden: {{message}}",
+      "saveFailed": "Das Skript konnte nicht gespeichert werden: {{message}}"
+    },
     "toolbar": {
       "aiToggleLabel": "KI",
       "aiToggleTitle": "KI-Assistent",
-      "stop": "Stopp",
-      "stopTitle": "Laufenden Befehl stoppen, indem die mongosh-Sitzung neu gestartet wird",
+      "openScript": "Skript öffnen…",
       "restartSession": "Neu starten",
       "restartSessionTitle": "Diese mongosh-Sitzung beenden und eine neue starten",
-      "run": "Ausführen"
+      "run": "Ausführen",
+      "saveScript": "Skript speichern…",
+      "stop": "Stopp",
+      "stopTitle": "Laufenden Befehl stoppen, indem die mongosh-Sitzung neu gestartet wird"
     }
   },
   "quickStart": {

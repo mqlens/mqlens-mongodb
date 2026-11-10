@@ -2,9 +2,10 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next';
 import Editor from '@monaco-editor/react';
 import { invoke } from '@tauri-apps/api/core';
-import { open as openFileDialog } from '@tauri-apps/plugin-dialog';
+import { open as openFileDialog, save as saveFileDialog } from '@tauri-apps/plugin-dialog';
+import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
 import { openUrl } from '@tauri-apps/plugin-opener';
-import { AlertCircle, Braces, CornerDownLeft, Eraser, Play, RotateCcw, Sparkles, Square, Terminal } from 'lucide-react';
+import { AlertCircle, Braces, CornerDownLeft, Eraser, FolderOpen, Play, RotateCcw, Save, Sparkles, Square, Terminal } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -764,6 +765,8 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   }, [tab]);
   const wrapRef = useRef<HTMLDivElement>(null);
   const runRef = useRef<() => void>(() => {});
+  // The script file last opened or saved, offered again by Save.
+  const scriptPathRef = useRef<string | null>(null);
   // Seeded from the tab's session: the opening command must run once per TAB,
   // not once per mount, or switching tabs re-executes it (#240).
   const autoRunRef = useRef(storedSession?.autoRanCommand ?? false);
@@ -1267,6 +1270,44 @@ export const MongoShell: React.FC<MongoShellProps> = ({
     appendEntries([{ kind: 'note', text: t('mongoShell.notes.destructiveCancelled') }]);
   };
 
+  const scriptFilters = [
+    { name: t('mongoShell.script.filter'), extensions: ['js', 'mongodb'] },
+    { name: t('mongoShell.script.allFiles'), extensions: ['*'] },
+  ];
+
+  const openScript = async () => {
+    try {
+      const path = await openFileDialog({
+        multiple: false,
+        directory: false,
+        title: t('mongoShell.toolbar.openScript'),
+        filters: scriptFilters,
+      });
+      if (typeof path !== 'string') return;
+      setCommand(await readTextFile(path));
+      scriptPathRef.current = path;
+    } catch (err: any) {
+      appendEntries([{ kind: 'error', message: t('mongoShell.script.openFailed', { message: String(err?.message ?? err) }) }]);
+      setTab('console');
+    }
+  };
+
+  const saveScript = async () => {
+    try {
+      const path = await saveFileDialog({
+        title: t('mongoShell.toolbar.saveScript'),
+        defaultPath: scriptPathRef.current ?? 'script.js',
+        filters: scriptFilters,
+      });
+      if (!path) return;
+      await writeTextFile(path, command);
+      scriptPathRef.current = path;
+    } catch (err: any) {
+      appendEntries([{ kind: 'error', message: t('mongoShell.script.saveFailed', { message: String(err?.message ?? err) }) }]);
+      setTab('console');
+    }
+  };
+
   const runCommand = async (commandOverride?: string) => {
     const raw = (commandOverride ?? command).trim().replace(/;$/, '');
     if (!raw || running) return;
@@ -1604,6 +1645,24 @@ export const MongoShell: React.FC<MongoShellProps> = ({
           >
             <Sparkles size={11} />
             {t('mongoShell.toolbar.aiToggleLabel')}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void openScript()}
+            data-testid="shell-open-script"
+            title={t('mongoShell.toolbar.openScript')}
+          >
+            <FolderOpen size={11} />
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void saveScript()}
+            data-testid="shell-save-script"
+            title={t('mongoShell.toolbar.saveScript')}
+          >
+            <Save size={11} />
           </Button>
         </div>
         <div className="min-h-0 flex-1">
