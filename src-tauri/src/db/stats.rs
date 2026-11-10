@@ -68,7 +68,8 @@ pub fn curate_db_stats(raw: &Document) -> DbStatsUi {
         data_size: num(raw, "dataSize"),
         storage_size: num(raw, "storageSize"),
         indexes: num(raw, "indexes"),
-        total_index_size: num(raw, "totalIndexSize"),
+        // dbStats calls it `indexSize`; `totalIndexSize` is the collStats name.
+        total_index_size: num(raw, "indexSize"),
     }
 }
 
