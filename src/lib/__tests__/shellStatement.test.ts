@@ -122,6 +122,13 @@ describe('statementAt', () => {
     expect(at('const K = class {}\n(|1)')).toBe('const K = class {}\n(1)');
   });
 
+  it('keeps a header with a trailing comment joined to its body', () => {
+    const guarded = 'if (false) // keep guarded\n  db.orders.deleteMany({})';
+    expect(at('if (false) // keep guarded\n  db.orders.deleteMa|ny({})')).toBe(guarded);
+    const blockGuarded = 'while (x) /* wait */\n  db.orders.deleteOne({})';
+    expect(at('while (x) /* wait */\n  db.orders.deleteO|ne({})')).toBe(blockGuarded);
+  });
+
   it('stays fast on a run of comment slashes before a brace', { timeout: 2_000 }, () => {
     const text = `a +${'//'.repeat(40)}\nb {}`;
     expect(at(`${text}|`)).toBe(text);

@@ -60,7 +60,8 @@ function statementSpans(text: string): Array<[number, number]> {
   // A line break at `end`, the next code from `from`: the statement ends there
   // unless something keeps it open.
   const lineBreak = (end: number, from: number) => {
-    const awaitingBody = headerClose >= 0 && text.slice(headerClose + 1, end).trim() === '';
+    // No code (comments aside) since the header's closing parenthesis.
+    const awaitingBody = headerClose >= 0 && codeEnd - 1 === headerClose;
     const next = nextCode(text, from);
     // A finished block takes no operand or call: only else/catch/finally follow it.
     const continues = blockClose === codeEnd - 1 ? /^(?:else|catch|finally)\b/.test(next) : CONTINUES_NEXT_LINE.test(next);
