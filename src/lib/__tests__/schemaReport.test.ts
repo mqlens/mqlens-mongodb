@@ -62,4 +62,22 @@ describe('validatorFromSchemaReport', () => {
       required: ['', 'name'],
     });
   });
+
+  it('allows JavaScript with scope where the sample saw JavaScript', () => {
+    // The sampler labels both BSON code types `javascript`.
+    const v = validatorFromSchemaReport({
+      sampled: 2,
+      fields: [
+        { path: 'fn', types: [{ type: 'javascript', count: 2 }], presence: 2, coverage: 1 },
+        {
+          path: 'maybe',
+          types: [{ type: 'javascript', count: 1 }, { type: 'null', count: 1 }],
+          presence: 2,
+          coverage: 1,
+        },
+      ],
+    });
+    expect(v.$jsonSchema.properties?.fn.bsonType).toEqual(['javascript', 'javascriptWithScope']);
+    expect(v.$jsonSchema.properties?.maybe.bsonType).toEqual(['javascript', 'javascriptWithScope', 'null']);
+  });
 });

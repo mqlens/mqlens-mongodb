@@ -8,8 +8,10 @@ interface JsonSchemaNode {
   properties?: Record<string, JsonSchemaNode>;
 }
 
-// The sampler's type labels are $jsonSchema bsonType aliases, except this one.
-const bsonTypeAlias = (t: string): string => (t === 'binary' ? 'binData' : t);
+// The sampler's type labels as $jsonSchema bsonType aliases. It labels both
+// BSON code types `javascript`, so that one allows either.
+const bsonTypeAliases = (t: string): string[] =>
+  t === 'binary' ? ['binData'] : t === 'javascript' ? ['javascript', 'javascriptWithScope'] : [t];
 
 /**
  * A `{ $jsonSchema }` validator describing the sample: every field's observed
@@ -30,7 +32,7 @@ export function validatorFromSchemaReport(report: SchemaReport): { $jsonSchema: 
     const parent = dot < 0 ? top : nodes.get(f.path.slice(0, dot));
     if (!parent) continue;
     const key = f.path.slice(dot + 1);
-    const types = f.types.map((t) => bsonTypeAlias(t.type));
+    const types = f.types.flatMap((t) => bsonTypeAliases(t.type));
     const node: JsonSchemaNode = { bsonType: types.length === 1 ? types[0] : types };
     // No prototype, so a field named `__proto__` is just a property.
     (parent.node.properties ??= Object.create(null) as Record<string, JsonSchemaNode>)[key] = node;
