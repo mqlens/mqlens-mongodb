@@ -63,4 +63,27 @@ describe('statementAt', () => {
     expect(at('const n =\n  db.a.countDocu|ments()')).toBe('const n =\n  db.a.countDocuments()');
     expect(at('const ok = a()\n  && b(|)')).toBe('const ok = a()\n  && b()');
   });
+
+  it('keeps a do loop with its while on the next line', () => {
+    const loop = 'do {\n  print("once")\n}\nwhile (false);';
+    expect(at('do {\n  print(|"once")\n}\nwhile (false);')).toBe(loop);
+    expect(at('do {\n  print("once")\n}\nwhile (fal|se);')).toBe(loop);
+    expect(at('do a(); while (x)\nb(|)')).toBe('b()');
+    expect(at('do {\n  a()\n}\nwhile (x)\nb(|)')).toBe('b()');
+  });
+
+  it('looks past comments to see whether the next line continues a chain', () => {
+    expect(at('db.a.find()\n  // only one\n  .limi|t(1)')).toBe('db.a.find()\n  // only one\n  .limit(1)');
+    expect(at('db.a.find()\n  /* one */ .limi|t(1)')).toBe('db.a.find()\n  /* one */ .limit(1)');
+  });
+
+  it('does not read a trailing comment as an unfinished operator', () => {
+    expect(at('print("ch|eck") /* note */\ndb.orders.deleteMany({})')).toBe('print("check") /* note */');
+  });
+
+  it('ends a statement after a postfix increment or decrement', () => {
+    expect(at('globalThis.counter+|+\ndb.orders.deleteMany({})')).toBe('globalThis.counter++');
+    expect(at('n-|-\ndb.orders.deleteMany({})')).toBe('n--');
+    expect(at('a\n++|b')).toBe('++b');
+  });
 });

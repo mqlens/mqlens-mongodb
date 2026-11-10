@@ -1,15 +1,21 @@
-// What, at the start of the next line, continues the statement before it: a
-// chained call or an operator (not a comment), or the rest of an if/try.
-const CONTINUES_NEXT_LINE = /^\s*(?:(?!\/[/*])[.?:,)\]}+\-*/%=&|^<>]|(?:else|catch|finally)\b)/;
-// What, at the end of a line, leaves its statement open.
-const LEFT_OPEN = /(?:[=+\-*/%&|^<>!?:,.]|\b(?:else|do))\s*$/;
+// What, at the start of the next line's code, continues the statement before
+// it: a chained call or an operator (not a comment, nor a prefix ++/--), or
+// the rest of an if/try.
+const CONTINUES_NEXT_LINE = /^(?:(?!\/[/*]|\+\+|--)[.?:,)\]}+\-*/%=&|^<>]|(?:else|catch|finally)\b)/;
+// What, at the end of a line's code, leaves its statement open. A postfix
+// ++/-- does not.
+const LEFT_OPEN = /(?:(?<![+-])[+-]|[=*/%&|^<>!?:,.]|\b(?:else|do))$/;
+// Whitespace and comments, skipped when looking for the next code.
+const SPACE_AND_COMMENTS = /^(?:\s|\/\/[^\n]*|\/\*[\s\S]*?\*\/)*/;
+const nextCode = (text: string, from: number) => text.slice(from).replace(SPACE_AND_COMMENTS, '');
 // An if/for/while/with header, up to its opening parenthesis.
 const CONTROL_HEADER = /^\s*(?:\}?\s*else\s+)?(?:if|for|while|with)\s*\($/;
 
 /**
  * Start/end offsets of each top-level statement in a shell script. A statement
  * ends after a `;`, or at a newline, outside brackets, strings and comments —
- * unless what follows clearly belongs to it (`.limit(1)`, `else`, `&& b`), the
+ * unless what follows clearly belongs to it (`.limit(1)`, `else`, `&& b`, a
+ * `do` loop's `while`), comments aside, the
  * line leaves it open (`x =`), or it is a control header still waiting for its
  * body (`if (x)`). Running too much is safer than running a body without its
  * condition, so doubtful cases join.
@@ -25,10 +31,17 @@ function statementSpans(text: string): Array<[number, number]> {
   // Where the current statement's control header closed its parenthesis, if it has one.
   let headerOpen = false;
   let headerClose = -1;
+  // Just past the statement's last character of code (not space or comment).
+  let codeEnd = 0;
+  // Whether a `do` statement has reached its `while` yet.
+  let doWhileSeen = false;
+  const awaitingWhile = () => !doWhileSeen && /^do\b/.test(nextCode(text, start));
   const boundary = (end: number, next: number) => {
     spans.push([start, end]);
     start = next;
+    codeEnd = next;
     headerClose = -1;
+    doWhileSeen = false;
   };
   for (let i = 0; i < text.length; i++) {
     const c = text[i];
@@ -41,10 +54,17 @@ function statementSpans(text: string): Array<[number, number]> {
     } else if (quote) {
       if (c === '\\') i++;
       else if (c === quote) quote = null;
+      codeEnd = i + 1;
       continue;
     }
+    if (c === '/' && (text[i + 1] === '/' || text[i + 1] === '*')) {
+      comment = text[i + 1] === '/' ? '//' : '/*';
+      i++;
+      continue;
+    }
+    if (!/\s/.test(c)) codeEnd = i + 1;
     if (c === '"' || c === "'" || c === '`') quote = c;
-    else if (c === '/' && (text[i + 1] === '/' || text[i + 1] === '*')) { comment = text[i + 1] === '/' ? '//' : '/*'; i++; }
+    else if (depth === 0 && /^while\b/.test(text.slice(i, i + 6)) && !/[\w$]/.test(text[i - 1] ?? '')) doWhileSeen = true;
     else if ('([{'.includes(c)) {
       if (c === '(' && depth === 0) headerOpen = CONTROL_HEADER.test(text.slice(start, i + 1));
       depth++;
@@ -52,10 +72,19 @@ function statementSpans(text: string): Array<[number, number]> {
       depth = Math.max(0, depth - 1);
       if (c === ')' && depth === 0 && headerOpen) { headerClose = i; headerOpen = false; }
     } else if (depth === 0 && c === ';') {
-      if (!/^\s*(?:else|catch|finally)\b/.test(text.slice(i + 1))) boundary(i + 1, i + 1);
+      const next = nextCode(text, i + 1);
+      if (!/^(?:else|catch|finally)\b/.test(next) && !(awaitingWhile() && /^while\b/.test(next))) {
+        boundary(i + 1, i + 1);
+      }
     } else if (depth === 0 && c === '\n') {
       const awaitingBody = headerClose >= 0 && text.slice(headerClose + 1, i).trim() === '';
-      if (!awaitingBody && !CONTINUES_NEXT_LINE.test(text.slice(i + 1)) && !LEFT_OPEN.test(text.slice(start, i))) {
+      const next = nextCode(text, i + 1);
+      if (
+        !awaitingBody &&
+        !CONTINUES_NEXT_LINE.test(next) &&
+        !(awaitingWhile() && /^while\b/.test(next)) &&
+        !LEFT_OPEN.test(text.slice(start, codeEnd))
+      ) {
         boundary(i, i);
       }
     }
