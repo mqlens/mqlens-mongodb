@@ -297,6 +297,14 @@
       "regexFlagsIgnored": "正则表达式标志 {{flags}} 在 MongoDB 中不起作用，已被忽略。"
     },
     "pipeline": {
+      "preview": {
+        "caption": "阶段输入和输出的前 {{count}} 个文档",
+        "docCount_other": "{{count}} 个文档",
+        "empty": "没有文档",
+        "input": "输入",
+        "output": "输出",
+        "refresh": "刷新预览"
+      },
       "stageCount_other": "{{count}} 个阶段",
       "stageGroups": {
         "arraysJoins": "数组与联接",
@@ -325,12 +333,15 @@
       "moveStageDown": "将第 {{n}} 个阶段下移",
       "moveStageUp": "将第 {{n}} 个阶段上移",
       "openExportWorkspace": "打开导出工作区",
+      "previewStage": "预览第 {{n}} 个阶段",
+      "previewWriteStage": "写入数据的阶段不提供预览",
       "redoPipelineChange": "重做管道更改",
       "removeFromFavorites": "从收藏中移除",
       "removeRule": "删除规则",
       "removeStage": "删除第 {{n}} 个阶段",
       "runDisabled": "请先修正查询语法再运行",
       "runPipelineToStage": "运行管道至第 {{n}} 个阶段",
+      "stageDocs": "{{operator}} 文档",
       "undoPipelineChange": "撤销管道更改"
     }
   },
