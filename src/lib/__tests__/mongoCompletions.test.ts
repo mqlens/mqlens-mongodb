@@ -549,6 +549,20 @@ describe('getCompletions — shell-style projection/sort keys', () => {
   });
 });
 
+describe('getCompletions — a key that already has a value', () => {
+  const schema = new Map([['tier', { type: 'string' }], ['total', { type: 'int' }]]);
+  const insertFor = (over: Partial<CompletionCtx>, label: string) =>
+    getCompletions(base({ fields: ['tier', 'total'], schema, ...over })).find((i) => i.label === label)?.insertText;
+  it('inserts only the key when a colon already follows it', () => {
+    expect(insertFor({ surface: 'shell', textBeforeCursor: 'db.customers.find({ ti', textAfterCursor: ': "gold" })', token: 'ti' }, 'tier')).toBe('tier');
+    expect(insertFor({ surface: 'shell', textBeforeCursor: 'db.customers.find({ "ti', textAfterCursor: '": "gold" })', token: 'ti' }, 'tier')).toBe('tier');
+    expect(insertFor({ surface: 'projection', shellSyntax: true, textBeforeCursor: '{ to', textAfterCursor: 'tal : 1 }', token: 'to' }, 'total')).toBe('total');
+  });
+  it('still scaffolds the value when none follows', () => {
+    expect(insertFor({ surface: 'shell', textBeforeCursor: 'db.customers.find({ ti', textAfterCursor: ' })', token: 'ti' }, 'tier')).toBe('tier: "${1:value}"');
+  });
+});
+
 describe('getCompletions — shell aggregate stages and callbacks', () => {
   const shell = (textBeforeCursor: string, token = '') =>
     getCompletions(base({ surface: 'shell', textBeforeCursor, token, fields: ['tier'], schema: new Map([['tier', { type: 'string' }]]) }));

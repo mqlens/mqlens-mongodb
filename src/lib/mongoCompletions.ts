@@ -278,10 +278,17 @@ function fieldItems(ctx: CompletionCtx): CompletionItem[] {
   });
 }
 
+// Whether the key being typed already has its value after the cursor (`ti|: "gold"`):
+// then only the key is replaced, not scaffolded again.
+const hasValueAfter = (ctx: CompletionCtx) => /^[\w$.]*["']?\s*:/.test(ctx.textAfterCursor ?? '');
+const keyOnlyItem = (ctx: CompletionCtx, name: string): CompletionItem =>
+  ({ label: name, kind: 'field', insertText: keyInsert(ctx, name), detail: ctx.schema?.get(name)?.type });
+
 // Field completions for projection/sort key positions: the value is a fixed
 // choice (include/exclude or direction), offered as a snippet choice dropdown.
 function choiceFieldItems(ctx: CompletionCtx, choices: string): CompletionItem[] {
   return ctx.fields.map((name) => {
+    if (hasValueAfter(ctx)) return keyOnlyItem(ctx, name);
     const fs = ctx.schema?.get(name);
     const bare = isShellStyle(ctx) && isBareIdentifier(name) && !inQuote(ctx.textBeforeCursor);
     const key = bare ? name : inQuote(ctx.textBeforeCursor) ? `${name}${quoteOf(ctx)}` : `"${name}"`;
@@ -326,9 +333,7 @@ function typedFieldItems(ctx: CompletionCtx): CompletionItem[] {
     const fs = ctx.schema?.get(name);
     const shell = isShellStyle(ctx);
     const scaffold = fs?.type ? TYPE_VALUE_SCAFFOLDS[fs.type] : undefined;
-    if (!scaffold) {
-      return { label: name, kind: 'field' as const, insertText: keyInsert(ctx, name), detail: fs?.type };
-    }
+    if (!scaffold || hasValueAfter(ctx)) return keyOnlyItem(ctx, name);
     // Shell style leaves a bare-identifier key unquoted (but still quotes a
     // dotted path); JSON opens a quote unless the user already typed one, and
     // always closes it before the colon.
