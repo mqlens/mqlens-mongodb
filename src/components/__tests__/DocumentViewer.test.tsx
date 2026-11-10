@@ -15,6 +15,11 @@ vi.mock('@tauri-apps/api/core', () => ({
 // (QueryEditor) wraps @monaco-editor/react, so mock it with a plain <textarea>
 // that round-trips value/onChange — this keeps the existing stage tests, which
 // drive `pipeline-stage-N textarea`, working against the real component shape.
+const mockOpenUrl = vi.fn();
+vi.mock('@tauri-apps/plugin-opener', () => ({
+  openUrl: (...args: any[]) => mockOpenUrl(...args),
+}));
+
 vi.mock('@monaco-editor/react', () => ({
   // QueryEditor hands the library only `defaultValue` (it writes later values
   // into the model itself), so show whichever one the editor was given.
@@ -1842,5 +1847,118 @@ describe('query favorites on a connection that was never saved (#369 review)', (
     await waitFor(() =>
       expect(localStorage.getItem('mqlens_favorites')).not.toBeNull(),
     );
+  });
+});
+
+describe('Aggregation stage input/output preview', () => {
+  const renderAgg = (onPreviewAggregate = vi.fn().mockResolvedValue([])) => {
+    const onExecuteAggregate = vi.fn();
+    render(
+      <DocumentViewer
+        connectionName="test-conn"
+        databaseName="test-db"
+        collectionName="test-coll"
+        onExecute={vi.fn()}
+        onExecuteAggregate={onExecuteAggregate}
+        onPreviewAggregate={onPreviewAggregate}
+        onExplain={vi.fn()}
+        loading={false}
+      />
+    );
+    fireEvent.click(screen.getByTestId('mode-aggregate-tab'));
+    return { onExecuteAggregate, onPreviewAggregate };
+  };
+  const addStage = (index: number, operator: string, body: string) => {
+    fireEvent.click(screen.getByRole('button', { name: /add stage/i }));
+    const stage = screen.getByTestId(`pipeline-stage-${index}`);
+    fireEvent.change(stage.querySelector('select')!, { target: { value: operator } });
+    fireEvent.change(stage.querySelector('textarea')!, { target: { value: body } });
+  };
+
+  it("shows a stage's first 20 inputs next to its first 20 outputs, without touching the results", async () => {
+    const onPreviewAggregate = vi.fn((pipeline: Record<string, unknown>[]) =>
+      Promise.resolve(pipeline.length === 3 ? [{ _id: 'pro', n: 2 }] : [{ name: 'Ada', tier: 'pro' }]),
+    );
+    const { onExecuteAggregate } = renderAgg(onPreviewAggregate);
+    fireEvent.change(screen.getByTestId('pipeline-stage-0').querySelector('textarea')!, { target: { value: '{ tier: "pro" }' } });
+    addStage(1, '$group', '{ _id: "$tier", n: { $sum: 1 } }');
+
+    fireEvent.click(screen.getByLabelText('Preview stage 2'));
+
+    await waitFor(() => expect(screen.getByTestId('stage-preview-output-1')).toHaveTextContent('"n" : 2'));
+    expect(screen.getByTestId('stage-preview-input-1')).toHaveTextContent('"name" : "Ada"');
+    expect(onPreviewAggregate).toHaveBeenCalledWith([{ $match: { tier: 'pro' } }, { $limit: 20 }]);
+    expect(onPreviewAggregate).toHaveBeenCalledWith([
+      { $match: { tier: 'pro' } },
+      { $group: { _id: '$tier', n: { $sum: 1 } } },
+      { $limit: 20 },
+    ]);
+    expect(onExecuteAggregate).not.toHaveBeenCalled();
+
+    // A second click hides it again.
+    fireEvent.click(screen.getByLabelText('Preview stage 2'));
+    expect(screen.queryByTestId('stage-preview-1')).toBeNull();
+  });
+
+  it('takes the collection itself as the first stage input', async () => {
+    const { onPreviewAggregate } = renderAgg();
+    fireEvent.click(screen.getByLabelText('Preview stage 1'));
+    await waitFor(() => expect(onPreviewAggregate).toHaveBeenCalledWith([{ $limit: 20 }]));
+    expect(onPreviewAggregate).toHaveBeenCalledWith([{ $match: {} }, { $limit: 20 }]);
+  });
+
+  it('says why a preview could not run', async () => {
+    renderAgg(vi.fn().mockRejectedValue('unknown group operator $summ'));
+    fireEvent.click(screen.getByLabelText('Preview stage 1'));
+    await waitFor(() => expect(screen.getByTestId('stage-preview-0')).toHaveTextContent('unknown group operator $summ'));
+  });
+
+  it('does not preview a stage that writes', () => {
+    const { onPreviewAggregate } = renderAgg();
+    addStage(1, '$out', '"archive"');
+    expect(screen.getByLabelText('Preview stage 2')).toBeDisabled();
+    expect(onPreviewAggregate).not.toHaveBeenCalled();
+  });
+
+  it("links each stage to its operator's documentation", () => {
+    renderAgg();
+    addStage(1, '$group', '{ _id: null }');
+    fireEvent.click(screen.getByLabelText('$group documentation'));
+    expect(mockOpenUrl).toHaveBeenCalledWith('https://www.mongodb.com/docs/manual/reference/operator/aggregation/group/');
+  });
+
+  it("drops the old pipeline's previews when a saved pipeline replaces it (#555 review)", async () => {
+    mockInvoke.mockImplementation((cmd: string) =>
+      Promise.resolve(cmd === 'load_collection_queries'
+        ? {
+            saved: [{ id: 'sq-agg', name: 'By tier', query: { queryType: 'aggregate', pipeline: [{ $match: { tier: 'pro' } }] }, createdAt: '2026-11-01T00:00:00Z' }],
+            history: [],
+            default: null,
+          }
+        : undefined),
+    );
+    // Every preview run waits until the test lets it finish.
+    const pending: Array<(rows: Record<string, unknown>[]) => void> = [];
+    renderAgg(vi.fn(() => new Promise<Record<string, unknown>[]>(resolve => pending.push(resolve))));
+
+    // A preview of the old first stage, still running.
+    fireEvent.click(screen.getByLabelText('Preview stage 1'));
+    await waitFor(() => expect(pending).toHaveLength(2));
+
+    fireEvent.click(screen.getByText('Load query'));
+    fireEvent.click(await screen.findByText('By tier'));
+    await waitFor(() => expect(screen.getByTestId('pipeline-stage-0').querySelector('textarea')!.value).toContain('"tier"'));
+    expect(screen.queryByTestId('stage-preview-0')).toBeNull();
+
+    // The new first stage's own preview is not filled by the old run.
+    fireEvent.click(screen.getByLabelText('Preview stage 1'));
+    await waitFor(() => expect(pending).toHaveLength(4));
+    pending[0]([{ name: 'Old input' }]);
+    pending[1]([{ name: 'Old output' }]);
+    await new Promise(r => setTimeout(r, 0));
+    expect(screen.getByTestId('stage-preview-0')).not.toHaveTextContent('Old');
+    pending[2]([{ name: 'Ada' }]);
+    pending[3]([{ name: 'Ada', tier: 'pro' }]);
+    await waitFor(() => expect(screen.getByTestId('stage-preview-output-0')).toHaveTextContent('"tier" : "pro"'));
   });
 });

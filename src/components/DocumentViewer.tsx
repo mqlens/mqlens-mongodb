@@ -5,7 +5,8 @@ import { QueryEditor } from './QueryEditor';
 import { FindQueryBar } from './FindQueryBar';
 import { useCollectionSchema } from '../lib/useCollectionSchema';
 import { collectionRef, type GeneratedQuery } from '../lib/mongoCommand';
-import { parseShellJson, parseQueryObject, shellDocErrorKey, shellDocErrorParams, type ShellDocNotices } from '../lib/shellDoc';
+import { docToShell, parseShellJson, parseQueryObject, shellDocErrorKey, shellDocErrorParams, type ShellDocNotices } from '../lib/shellDoc';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import {
   loadCollectionQueries,
   saveQuery,
@@ -68,6 +69,9 @@ import {
   Eye,
   EyeOff,
   GripVertical,
+  HelpCircle,
+  ScanEye,
+  RefreshCw,
   Undo2,
   Redo2,
   Heart,
@@ -219,6 +223,9 @@ interface DocumentViewerProps {
   collectionName: string;
   onExecute: (query: { filter: string; sort: string; projection: string; limit: number; skip: number }) => void;
   onExecuteAggregate?: (pipeline: Record<string, unknown>[]) => void;
+  /** Runs a pipeline for a stage preview and returns its rows, leaving the
+   *  results grid alone. Omit to hide the per-stage preview. */
+  onPreviewAggregate?: (pipeline: Record<string, unknown>[]) => Promise<Record<string, any>[]>;
   onExplain: (filter: string) => Promise<string>;
   // Explain a full aggregation pipeline (M1). Receives the pipeline as a JSON string.
   onExplainAggregate?: (pipeline: string) => Promise<string>;
@@ -322,6 +329,62 @@ const STAGE_OPERATORS: { group: string; labelKey: string; stages: string[] }[] =
     stages: ['$documents', '$out', '$merge'],
   },
 ];
+
+// How many documents a stage preview shows on each side.
+const PREVIEW_LIMIT = 20;
+// Stages that write: previewing one would run the write.
+const WRITE_STAGES = new Set(['$out', '$merge']);
+
+interface StagePreview {
+  loading: boolean;
+  input?: Record<string, any>[];
+  output?: Record<string, any>[];
+  error?: string;
+}
+
+// A stage's preview: what goes in (the previous stages' output, or the
+// collection for the first stage) beside what comes out.
+const StagePreviewPanel = ({ index, preview, onRefresh }: { index: number; preview: StagePreview; onRefresh: () => void }) => {
+  const { t: td } = useTranslation('documents');
+  const side = (key: 'input' | 'output', docs: Record<string, any>[] | undefined) => (
+    <div className="flex min-w-0 flex-col" data-testid={`stage-preview-${key}-${index}`}>
+      <div className="px-2 py-1 text-[9px] font-bold uppercase tracking-wide text-muted-foreground">
+        {td(`documentViewer.pipeline.preview.${key}`)}
+        {docs && <span className="ml-1 font-normal normal-case">{td('documentViewer.pipeline.preview.docCount', { count: docs.length })}</span>}
+      </div>
+      <div className="max-h-56 min-h-0 overflow-auto px-2 pb-2">
+        {docs?.length === 0 && <div className="text-[11px] italic text-muted-foreground">{td('documentViewer.pipeline.preview.empty')}</div>}
+        {docs?.map((doc, i) => (
+          <pre key={i} className="select-text whitespace-pre-wrap break-all border-b border-border/50 py-1 font-mono text-[11px] text-foreground last:border-0">
+            {docToShell(doc)}
+          </pre>
+        ))}
+      </div>
+    </div>
+  );
+  return (
+    <div className="border-t border-border bg-muted/20" data-testid={`stage-preview-${index}`}>
+      <div className="flex items-center gap-1 px-2 pt-1 text-[10px] text-muted-foreground">
+        <span>{td('documentViewer.pipeline.preview.caption', { count: PREVIEW_LIMIT })}</span>
+        <div className="flex-grow" />
+        <Button variant="ghost" size="icon" className="h-5 w-5" onClick={onRefresh} disabled={preview.loading} title={td('documentViewer.pipeline.preview.refresh')} aria-label={td('documentViewer.pipeline.preview.refresh')}>
+          <RefreshCw size={10} className={cn(preview.loading && 'animate-spin')} />
+        </Button>
+      </div>
+      {preview.error ? (
+        <div className="px-2 pb-2 font-mono text-[11px] text-destructive" role="alert">{preview.error}</div>
+      ) : (
+        <div className={cn('grid grid-cols-2 divide-x divide-border', preview.loading && 'opacity-60')}>
+          {side('input', preview.input)}
+          {side('output', preview.output)}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const stageDocsUrl = (operator: string) =>
+  `https://www.mongodb.com/docs/manual/reference/operator/aggregation/${operator.replace(/^\$/, '')}/`;
 
 // Runnable starter body per stage operator, inserted when the user switches
 // the operator on a stage whose body they haven't edited yet.
@@ -581,6 +644,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   collectionName,
   onExecute,
   onExecuteAggregate,
+  onPreviewAggregate,
   onExplain,
   onExplainAggregate,
   onOpenShell,
@@ -842,6 +906,55 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
     }
   };
 
+  // Per-stage preview: the first PREVIEW_LIMIT documents going into a stage and
+  // coming out of it, side by side, run apart from the results grid. Keyed by
+  // stage id; a key present means the panel is open.
+  // ponytail: a preview is a snapshot, re-run with its refresh button; add a
+  // debounced re-run on edit if people expect it to follow typing.
+  const [stagePreviews, setStagePreviews] = useState<Record<string, StagePreview>>({});
+  const previewRuns = useRef<Record<string, number>>({});
+  const runStagePreview = async (index: number) => {
+    const stage = stages[index];
+    if (!onPreviewAggregate || !stage) return;
+    const run = (previewRuns.current[stage.id] ?? 0) + 1;
+    previewRuns.current[stage.id] = run;
+    setStagePreviews(prev => ({ ...prev, [stage.id]: { ...prev[stage.id], loading: true, error: undefined } }));
+    let next: StagePreview;
+    try {
+      const upTo = (end: number) => [
+        ...stages.slice(0, end)
+          .filter(s => !s.disabled && s.content.trim())
+          .map(s => ({ [s.operator]: parseShellJson(s.content) })),
+        { $limit: PREVIEW_LIMIT },
+      ];
+      const [input, output] = await Promise.all([
+        onPreviewAggregate(upTo(index)),
+        onPreviewAggregate(upTo(index + 1)),
+      ]);
+      next = { loading: false, input, output };
+    } catch (e: any) {
+      next = {
+        loading: false,
+        error: shellDocErrorKey(e)
+          ? td(shellDocErrorKey(e)!, shellDocErrorParams(e))
+          : String(e?.message ?? e),
+      };
+    }
+    // A later refresh, or closing the panel, wins over this one.
+    if (previewRuns.current[stage.id] !== run) return;
+    setStagePreviews(prev => (stage.id in prev ? { ...prev, [stage.id]: next } : prev));
+  };
+  const toggleStagePreview = (index: number) => {
+    const id = stages[index]?.id;
+    if (!id) return;
+    if (id in stagePreviews) {
+      previewRuns.current[id] = (previewRuns.current[id] ?? 0) + 1;
+      setStagePreviews(({ [id]: _closed, ...rest }) => rest);
+    } else {
+      void runStagePreview(index);
+    }
+  };
+
   const moveStageUp = (index: number) => {
     if (index === 0) return;
     const next = [...stages];
@@ -860,6 +973,10 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   const handleInsertQuery = (query: GeneratedQuery) => {
     if (query.queryType === 'aggregate') {
       const pipeline = query.pipeline && query.pipeline.length > 0 ? query.pipeline : [{ $match: {} }];
+      // The new stages reuse ids like stage-1: drop the old previews so none
+      // shows under a stage it was not run for. A run still out finds its
+      // panel gone, or outdated by the new stage's own run.
+      setStagePreviews({});
       commitStages(stagesFromPipeline(pipeline));
       setQueryMode('aggregate');
       toast(t('toast.aggregationPipelineApplied'), 'success');
@@ -2006,7 +2123,24 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                             </select>
                             <ChevronDown size={10} className="pointer-events-none absolute right-0.5 text-muted-foreground" />
                           </div>
+                          <Button variant="ghost" size="icon" className="h-5 w-5 text-muted-foreground" onClick={() => void openUrl(stageDocsUrl(stage.operator))} title={td('documentViewer.tooltips.stageDocs', { operator: stage.operator })} aria-label={td('documentViewer.tooltips.stageDocs', { operator: stage.operator })}>
+                            <HelpCircle size={11} />
+                          </Button>
                           <div className="flex-grow" />
+                          {onPreviewAggregate && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className={cn('h-6 w-6', stage.id in stagePreviews && 'bg-accent text-primary')}
+                              onClick={() => toggleStagePreview(index)}
+                              disabled={stage.disabled || WRITE_STAGES.has(stage.operator)}
+                              aria-pressed={stage.id in stagePreviews}
+                              title={WRITE_STAGES.has(stage.operator) ? td('documentViewer.tooltips.previewWriteStage') : td('documentViewer.tooltips.previewStage', { n: index + 1 })}
+                              aria-label={td('documentViewer.tooltips.previewStage', { n: index + 1 })}
+                            >
+                              <ScanEye size={11} />
+                            </Button>
+                          )}
                           <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => runToStage(index)} disabled={loading || stage.disabled} title={td('documentViewer.tooltips.runPipelineToStage', { n: index + 1 })} aria-label={td('documentViewer.tooltips.runPipelineToStage', { n: index + 1 })}>
                             <Play size={11} />
                           </Button>
@@ -2049,6 +2183,13 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                             fields={fields}
                             schema={schema}
                             height={120}
+                          />
+                        )}
+                        {!stage.collapsed && stagePreviews[stage.id] && (
+                          <StagePreviewPanel
+                            index={index}
+                            preview={stagePreviews[stage.id]}
+                            onRefresh={() => void runStagePreview(index)}
                           />
                         )}
                       </div>
