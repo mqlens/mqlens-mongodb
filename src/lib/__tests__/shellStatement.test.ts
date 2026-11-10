@@ -172,6 +172,10 @@ describe('statementAt', () => {
     expect(at('do while (false)\n  db.orders.deleteMa|ny({})\nwhile (false);')).toBe(loop);
   });
 
+  it('ends a do loop before a template on the next line', () => {
+    expect(at('do {} while (fal|se)\n\x60${db.orders.deleteMany({})}\x60')).toBe('do {} while (false)');
+  });
+
   it('keeps a function with a non-ASCII name joined to its body', () => {
     const decl = 'function löschen()\n{\n  db.orders.deleteMany({})\n}';
     expect(at('function löschen()\n{\n  db.orders.deleteMa|ny({})\n}')).toBe(decl);
