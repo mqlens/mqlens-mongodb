@@ -185,6 +185,15 @@ describe('statementAt', () => {
     expect(at('use sales\ndb.orders.fi|nd()')).toBe('db.orders.find()');
   });
 
+  it('keeps non-ASCII names in headers joined to their bodies beside a mongosh command', () => {
+    const decl = 'function löschen()\n{\n  db.orders.deleteMany({})\n}';
+    expect(at(`use sales\nfunction löschen()\n{\n  db.orders.deleteMa|ny({})\n}`)).toBe(decl);
+    const fn = 'const wipe = function löschen()\n{\n  db.orders.deleteMany({})\n}';
+    expect(at(`use sales\nconst wipe = function löschen()\n{\n  db.orders.deleteMa|ny({})\n}`)).toBe(fn);
+    const labelled = 'größe: if (false)\n  db.orders.deleteMany({})';
+    expect(at(`use sales\ngröße: if (false)\n  db.orders.deleteMa|ny({})`)).toBe(labelled);
+  });
+
   it('keeps a template on the next line with its tag', () => {
     const tagged = 'if (false) tag\n\x60a ${db.orders.deleteMany({})}\x60';
     const cursor = tagged.indexOf('deleteMany') + 3;

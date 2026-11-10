@@ -36,16 +36,21 @@ const isProperty = (text: string, i: number) => {
   while (k >= 0 && /\s/.test(text[k])) k--;
   return text[k] === '.';
 };
+// A JavaScript identifier, and its optional rest (names need not be ASCII: `löschen`).
+const NAME_REST = String.raw`[\p{ID_Continue}$‌‍]*`;
+const NAME = String.raw`[\p{ID_Start}$_]${NAME_REST}`;
 // A control, catch or function-declaration header, up to its opening
 // parenthesis, where a statement, a block or another header before it ends,
 // labels (`outer:`) aside.
-const CONTROL_HEADER =
-  /(?:^|[;{})]|\belse)\s*(?:[A-Za-z_$][\w$]*\s*:\s*)*(?:if|for(?:\s+await)?|while|with|switch|catch|(?:async\s+)?function\b[\s*]*[\w$]*)\s*\($/;
+const CONTROL_HEADER = new RegExp(
+  String.raw`(?:^|[;{})]|\belse)\s*(?:${NAME}\s*:\s*)*(?:if|for(?:\s+await)?|while|with|switch|catch|(?:async\s+)?function\b[\s*]*${NAME_REST})\s*\($`,
+  'u'
+);
 // Any function header, a function expression's too: its body may open on the
 // next line, but its braces are a value, not a block statement.
-const FUNCTION_HEADER = /\bfunction\b[\s*]*[\w$]*\s*\($/;
+const FUNCTION_HEADER = new RegExp(String.raw`\bfunction\b[\s*]*${NAME_REST}\s*\($`, 'u');
 // What, just before a `{`, makes it open a block rather than an object.
-const BLOCK_AFTER = /\b(?:else|try|finally|do)$|^\s*class\s+[\w$]+(?:\s+extends\b[^{]*)?$/;
+const BLOCK_AFTER = new RegExp(String.raw`\b(?:else|try|finally|do)$|^\s*class\s+${NAME}(?:\s+extends\b[^{]*)?$`, 'u');
 
 /**
  * Start/end offsets of each top-level statement in a shell script that acorn
