@@ -77,6 +77,40 @@ test.describe('Completions in the shell', () => {
     await expect.poll(() => getEditorText(page, shell(page))).toBe('db.customers.find({ "address.city": "value"})');
   });
 
+  test('complete a stage body, a projection and a field-name argument the way each reads it', async ({ app, page }) => {
+    await openShell(app, page);
+    // Set, not typed, so no quote is auto-closed; then ask at the end of the text.
+    const complete = async (text: string, label: string) => {
+      await setEditorText(page, shell(page), text);
+      await shell(page).locator('.monaco-editor').first().click();
+      await page.keyboard.press('Control+End');
+      await expect(async () => {
+        await page.keyboard.press('Escape');
+        await page.keyboard.press('Control+Space');
+        await expect(suggestions(page)).toContainText(label, { timeout: 2_000 });
+      }).toPass({ timeout: 20_000 });
+      await page.keyboard.press('Enter');
+    };
+    // Strings, a regex, a template and a comment before the cursor are read as
+    // literals, not code.
+    const before = '// a note { (\nconst tag = "a;b" + /[{(]/.source + \x60t ${\x60(\x60}\x60\n';
+
+    await complete(`${before}db.customers.aggregate([{ $project: { ti`, 'tier');
+    await expect.poll(() => getEditorText(page, shell(page))).toBe(`${before}db.customers.aggregate([{ $project: { tier: 1`);
+
+    await complete('db.customers.find({}, { ti', 'tier');
+    await expect.poll(() => getEditorText(page, shell(page))).toBe('db.customers.find({}, { tier: 1');
+
+    await complete('db.customers.distinct("ti', 'tier');
+    await expect.poll(() => getEditorText(page, shell(page))).toBe('db.customers.distinct("tier"');
+
+    // A plain call's document, or a document outside any call, reads as a filter.
+    await complete('db.customers.find()\nprintjson({ ti', 'tier');
+    await expect.poll(() => getEditorText(page, shell(page))).toBe('db.customers.find()\nprintjson({ tier: "value"');
+    await complete('db.customers.find()\nconst filter = { ti', 'tier');
+    await expect.poll(() => getEditorText(page, shell(page))).toBe('db.customers.find()\nconst filter = { tier: "value"');
+  });
+
   test('do not wait for a slow schema sample before offering methods', async ({ app, page }) => {
     await openShell(app, page);
     const release = await app.hold('analyze_schema');
