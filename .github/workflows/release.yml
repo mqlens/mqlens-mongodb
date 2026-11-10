@@ -342,7 +342,10 @@ jobs:
           # latest.json here; dev keeps a placeholder filled in by release-notes.
           releaseBody: ${{ needs.version.outputs.notes || 'Generating release notes…' }}
           prerelease: ${{ github.ref_name != 'main' }}
-          args: ${{ matrix.args }}
+          # Dev versions (0.21.1-289) have a "-", which tauri-cli 2.12.4 rejects in
+          # RPM's Version field, so Linux dev builds skip the .rpm. Remove this once
+          # a tauri-cli release past 2.12.4 ships tauri-apps/tauri#16336.
+          args: ${{ matrix.args }}${{ matrix.platform == 'ubuntu-22.04' && github.ref_name != 'main' && ' --bundles deb,appimage' || '' }}
           # Each matrix job uploads its own binaries + signatures, but NOT
           # latest.json — the parallel jobs would race on that single asset
           # (causing "Not Found - update-a-release-asset"). The updater-manifest
