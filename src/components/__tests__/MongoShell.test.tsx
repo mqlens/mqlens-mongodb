@@ -114,6 +114,36 @@ describe('MongoShell Component', () => {
       );
     });
 
+    it('keeps the edited script with its path across a remount, so Save writes it back', async () => {
+      mockOpenDialog.mockResolvedValue('/scripts/report.js');
+      mockReadTextFile.mockResolvedValue('print(1)');
+      mockSaveDialog.mockResolvedValue('/scripts/report.js');
+      mockWriteTextFile.mockResolvedValue(undefined);
+      const shellTab = () => (
+        <MongoShell
+          connectionId="conn-1"
+          connectionName="mock"
+          connectionUri="mongodb://prod-replica-set"
+          databaseName="sales_db"
+          sessionKey="tab-shell-script-text"
+        />
+      );
+      const { unmount } = render(shellTab());
+      await screen.findByText(/mongosh session attached/);
+      fireEvent.click(screen.getByTestId('shell-open-script'));
+      const editor = screen.getByLabelText('mongosh editor') as HTMLTextAreaElement;
+      await waitFor(() => expect(editor.value).toBe('print(1)'));
+      fireEvent.change(editor, { target: { value: 'print(2)' } });
+      unmount();
+
+      render(shellTab());
+      await waitFor(() =>
+        expect((screen.getByLabelText('mongosh editor') as HTMLTextAreaElement).value).toBe('print(2)')
+      );
+      fireEvent.click(screen.getByTestId('shell-save-script'));
+      await waitFor(() => expect(mockWriteTextFile).toHaveBeenCalledWith('/scripts/report.js', 'print(2)'));
+    });
+
     it('writes nothing when the save dialog is cancelled', async () => {
       mockSaveDialog.mockResolvedValue(null);
       await renderShell();

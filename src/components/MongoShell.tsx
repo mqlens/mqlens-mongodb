@@ -400,7 +400,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
     () => initialCommand || (collectionName ? `db.${collectionName}.find({}).limit(50)` : 'show collections'),
     [collectionName, initialCommand]
   );
-  const [command, setCommand] = useState(defaultCommand);
+  const [command, setCommand] = useState(storedSession?.editorText ?? defaultCommand);
   const commandEditor = useMonacoValue(command, setCommand);
   const monacoTheme = useMonacoTheme();
   const monacoFontSize = useMonacoFontSize(13);
@@ -788,9 +788,18 @@ export const MongoShell: React.FC<MongoShellProps> = ({
     return () => { alive = false; };
   }, [connectionId, currentDb]);
 
+  // A new default replaces the editor's text, but not at mount, where a
+  // restored text wins.
+  const lastDefaultRef = useRef(defaultCommand);
   useEffect(() => {
+    if (lastDefaultRef.current === defaultCommand) return;
+    lastDefaultRef.current = defaultCommand;
     setCommand(defaultCommand);
   }, [defaultCommand]);
+  // Keep the editor's text for the next mount, with the script path it belongs to.
+  const commandRef = useRef(command);
+  commandRef.current = command;
+  useEffect(() => () => persistSession({ editorText: commandRef.current }), []);
 
   useEffect(() => {
     let cancelled = false;
