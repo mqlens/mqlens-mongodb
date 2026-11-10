@@ -1,8 +1,24 @@
-import { parse } from 'acorn';
+import { parse, tokenizer } from 'acorn';
 import { maskLiterals } from './jsLiterals';
 
 // A whole line that is a mongosh helper command, which JavaScript cannot read.
 const HELPER_LINE = /^[^\S\n]*(?:use|show)[^\S\n]+[^\s;]+[^\S\n]*(?:;[^\S\n]*)?$/gm;
+
+/** Whether `code` ends outside every comment, literal and bracket it opens. */
+function atTopLevel(code: string): boolean {
+  let depth = 0;
+  try {
+    for (const token of tokenizer(code, { ecmaVersion: 'latest', allowHashBang: true })) {
+      const label = token.type.label;
+      if (label === '(' || label === '[' || label === '{' || label === '${') depth++;
+      else if (label === ')' || label === ']' || label === '}') depth--;
+    }
+  } catch {
+    // An unclosed comment, string or template.
+    return false;
+  }
+  return depth === 0;
+}
 
 /** Each top-level statement's offsets, from acorn's parser; null when the text is not plain JavaScript. */
 function parsedSpans(text: string): Array<[number, number]> | null {
@@ -221,16 +237,25 @@ function lexedSpans(text: string): Array<[number, number]> {
 /** The statement under `offset`, or the nearest one before it (else after it) when the cursor sits on blank space. */
 export function statementAt(text: string, offset: number): string {
   // mongosh helper lines (`use sales`, `show dbs`) are statements of their
-  // own, blanked so that the JavaScript around them reads as if they were not there.
-  const helpers: Array<[number, number]> = [];
-  const js = text.replace(HELPER_LINE, (line: string, at: number) => {
-    helpers.push([at + line.length - line.trimStart().length, at + line.trimEnd().length]);
-    return line.replace(/[^\n]/g, ' ');
-  });
+  // own, and end the JavaScript before them: each run of JavaScript between
+  // them is read on its own.
+  const trimmed: Array<[number, number]> = [];
   // Each statement without the space and comments around it: JavaScript's own
-  // statements when the rest parses, else the lexer's best reading of it (a
+  // statements when the code parses, else the lexer's best reading of it (a
   // script still being typed).
-  const trimmed = [...(parsedSpans(js) ?? lexedSpans(js)), ...helpers].sort((a, b) => a[0] - b[0]);
+  const readJs = (from: number, to: number) => {
+    const js = text.slice(from, to);
+    for (const [s, e] of parsedSpans(js) ?? lexedSpans(js)) trimmed.push([from + s, from + e]);
+  };
+  let from = 0;
+  for (const m of text.matchAll(HELPER_LINE)) {
+    // Not a command inside a comment, a literal or brackets the JavaScript before it left open.
+    if (!atTopLevel(text.slice(from, m.index))) continue;
+    readJs(from, m.index);
+    trimmed.push([m.index + m[0].length - m[0].trimStart().length, m.index + m[0].trimEnd().length]);
+    from = m.index + m[0].length;
+  }
+  readJs(from, text.length);
   // Between two statements with nothing in between, the one starting there wins.
   const hit =
     trimmed.find(([s, e]) => s <= offset && offset < e) ??

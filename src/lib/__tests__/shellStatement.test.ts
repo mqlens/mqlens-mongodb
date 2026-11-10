@@ -191,6 +191,18 @@ describe('statementAt', () => {
     expect(at('show dbs;|\r\nprint(1)')).toBe('show dbs;');
   });
 
+  it('does not read a helper line inside a comment or a template as a command', () => {
+    expect(at('/*\nuse produ|ction\n*/\ndb.orders.find()')).toBe('db.orders.find()');
+    const template = 'const note = \x60\nuse production\n\x60';
+    expect(at('const note = \x60\nuse produ|ction\n\x60')).toBe(template);
+  });
+
+  it('ends the JavaScript on either side of a helper line at that line', () => {
+    expect(at('print("sa|fe")\nuse sales\n(db.orders.deleteMany({}))')).toBe('print("safe")');
+    expect(at('print("safe")\nuse sa|les\n(db.orders.deleteMany({}))')).toBe('use sales');
+    expect(at('print("one")\nshow dbs\n[1,2].forEach(pr|int)')).toBe('[1,2].forEach(print)');
+  });
+
   it('reads the script around a helper line the parser could not read as one', () => {
     const text = 'use 123sales\ndb.a.find({name: /[(]/})\ndb.orders.deleteMany({})';
     const cursor = text.indexOf('find') + 2;
