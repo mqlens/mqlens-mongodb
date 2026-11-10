@@ -86,4 +86,15 @@ describe('statementAt', () => {
     expect(at('n-|-\ndb.orders.deleteMany({})')).toBe('n--');
     expect(at('a\n++|b')).toBe('++b');
   });
+
+  it('keeps a trailing sign after another sign open', () => {
+    const both = 'const delta = total+-\n  db.orders.countDocuments({})';
+    expect(at('const del|ta = total+-\n  db.orders.countDocuments({})')).toBe(both);
+    expect(at('const delta = total+-\n  db.orders.countDoc|uments({})')).toBe(both);
+  });
+
+  it('keeps a call or computed access that opens on the next line', () => {
+    expect(at('db.orders.find\n({active: tr|ue})')).toBe('db.orders.find\n({active: true})');
+    expect(at('db.orders.find()\n["limit"](|1)')).toBe('db.orders.find()\n["limit"](1)');
+  });
 });

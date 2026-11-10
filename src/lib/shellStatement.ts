@@ -1,10 +1,10 @@
 // What, at the start of the next line's code, continues the statement before
-// it: a chained call or an operator (not a comment, nor a prefix ++/--), or
-// the rest of an if/try.
-const CONTINUES_NEXT_LINE = /^(?:(?!\/[/*]|\+\+|--)[.?:,)\]}+\-*/%=&|^<>]|(?:else|catch|finally)\b)/;
+// it: a chained call, a call or index on its value (ASI joins those too), or
+// an operator (not a comment, nor a prefix ++/--), or the rest of an if/try.
+const CONTINUES_NEXT_LINE = /^(?:(?!\/[/*]|\+\+|--)[.?:,()[\]}+\-*/%=&|^<>]|(?:else|catch|finally)\b)/;
 // What, at the end of a line's code, leaves its statement open. A postfix
-// ++/-- does not.
-const LEFT_OPEN = /(?:(?<![+-])[+-]|[=*/%&|^<>!?:,.]|\b(?:else|do))$/;
+// ++/-- does not; a sign after a different one (`+-`) does.
+const LEFT_OPEN = /(?:(?<!\+)\+|(?<!-)-|[=*/%&|^<>!?:,.]|\b(?:else|do))$/;
 // Whitespace and comments, skipped when looking for the next code.
 const SPACE_AND_COMMENTS = /^(?:\s|\/\/[^\n]*|\/\*[\s\S]*?\*\/)*/;
 const nextCode = (text: string, from: number) => text.slice(from).replace(SPACE_AND_COMMENTS, '');
