@@ -574,6 +574,11 @@ export function getCompletions(ctx: CompletionCtx): CompletionItem[] {
         ...ctx, surface: 'aggStage', stageOperator: stage, shellSyntax: true, textBeforeCursor: textBeforeCursor.slice(inner.at),
       });
     }
+    // A string straight inside a call's parentheses (distinct("ti) names a
+    // field: the name alone, no key or value around it.
+    if (inner && textBeforeCursor[inner.at] === '(' && inQuote(textBeforeCursor)) {
+      return byPrefix(ctx.fields.map((name) => keyOnlyItem(ctx, name)), token);
+    }
     // sort() and a projection (find's second argument) take their own documents,
     // quoted keys too
     const call = shellCallAt(textBeforeCursor);

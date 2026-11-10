@@ -558,6 +558,10 @@ describe('getCompletions — a key that already has a value', () => {
     expect(insertFor({ surface: 'shell', textBeforeCursor: 'db.customers.find({ "ti', textAfterCursor: '": "gold" })', token: 'ti' }, 'tier')).toBe('tier');
     expect(insertFor({ surface: 'projection', shellSyntax: true, textBeforeCursor: '{ to', textAfterCursor: 'tal : 1 }', token: 'to' }, 'total')).toBe('total');
   });
+  it('inserts only the name for a field-name string argument', () => {
+    expect(insertFor({ surface: 'shell', textBeforeCursor: 'db.customers.distinct("ti', textAfterCursor: '")', token: 'ti' }, 'tier')).toBe('tier');
+    expect(insertFor({ surface: 'shell', textBeforeCursor: "db.customers.distinct('ti", textAfterCursor: "')", token: 'ti' }, 'tier')).toBe('tier');
+  });
   it('still scaffolds the value when none follows', () => {
     expect(insertFor({ surface: 'shell', textBeforeCursor: 'db.customers.find({ ti', textAfterCursor: ' })', token: 'ti' }, 'tier')).toBe('tier: "${1:value}"');
   });
