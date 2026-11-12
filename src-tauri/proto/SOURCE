@@ -1,0 +1,7 @@
+These .proto files are a verbatim copy of proto/ from MQLens Server
+(https://github.com/mqlens/mqlens-server). Do not edit them here: change them
+in the server repository, then refresh this copy and the generated client with
+scripts/refresh-server-protos.sh.
+
+repository: https://github.com/mqlens/mqlens-server
+commit: 5c52e4947d327e3b7901ec7985a8e0e88b73318b

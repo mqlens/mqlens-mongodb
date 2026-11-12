@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 import { test, expect, type App } from '../fixtures';
-import { connectStaging, dismissHoverCards, expandCollections, openCollection, setEditorText, view } from '../helpers';
+import { confirmTypedName, connectStaging, dismissHoverCards, expandCollections, openCollection, setEditorText, switchTab, view } from '../helpers';
 
 // Dropping and renaming from the sidebar (#396): what it refuses while a
 // document is still being saved there, what it asks for on a connection that
@@ -11,11 +11,17 @@ const toast = (page: Page, text: string | RegExp) => page.getByTestId('dialog-to
 
 const collectionMenu = async (page: Page, name: string, item: string) => {
   await sidebar(page).getByText(name, { exact: true }).click({ button: 'right' });
+  if (item.startsWith('Drop ')) {
+    await page.getByRole('menuitem', { name: 'Manage', exact: true }).press('ArrowRight');
+  }
   await page.getByRole('menuitem', { name: item, exact: true }).click();
 };
 
 const databaseMenu = async (page: Page, name: string, item: string) => {
   await sidebar(page).getByRole('button', { name: `Database ${name}` }).click({ button: 'right' });
+  if (item.startsWith('Drop ')) {
+    await page.getByRole('menuitem', { name: 'Manage', exact: true }).press('ArrowRight');
+  }
   await page.getByRole('menuitem', { name: item, exact: true }).click();
 };
 
@@ -87,9 +93,11 @@ test.describe('After a drop', () => {
     await sidebar(page).getByText('indexes', { exact: true }).first().click();
     await dismissHoverCards(page);
     await expect(sidebar(page).getByText('email_1', { exact: true })).toBeVisible();
+    // The label also opens the Indexes view (#512); the collection's own tab is the one under test.
+    await switchTab(page, 'customers');
 
     await collectionMenu(page, 'customers', 'Drop Collection');
-    await page.getByTestId('dialog-confirm').click();
+    await confirmTypedName(page, 'customers');
     await expect.poll(async () => (await app.calls('drop_collection')).length).toBe(1);
     await expect(sidebar(page).getByText('customers', { exact: true })).toHaveCount(0);
     // The tab it was open in keeps what it had loaded; closing it is the user's move.
@@ -97,9 +105,91 @@ test.describe('After a drop', () => {
 
     // And the whole database goes the same way, indexes and all.
     await databaseMenu(page, 'sales_db', 'Drop Database');
-    await page.getByTestId('dialog-confirm').click();
+    await confirmTypedName(page, 'sales_db');
     await expect.poll(async () => (await app.calls('drop_database')).length).toBe(1);
     await expect(sidebar(page).getByRole('button', { name: 'Database sales_db' })).toHaveCount(0);
     await expect(sidebar(page).getByText('email_1', { exact: true })).toHaveCount(0);
+  });
+});
+
+test.describe('Deleting several at once (#543)', () => {
+  test('drops what was confirmed, reports the one that failed, and skips system databases', async ({ app, page }) => {
+    await connectStaging(app, page);
+    await expandCollections(page, 'sales_db');
+    for (const row of [
+      sidebar(page).getByText('products', { exact: true }),
+      sidebar(page).getByText('transactions', { exact: true }),
+      sidebar(page).getByRole('button', { name: 'Database user_analytics' }),
+      sidebar(page).getByRole('button', { name: 'Database admin' }),
+    ]) {
+      await row.click({ modifiers: ['ControlOrMeta'] });
+      await dismissHoverCards(page);
+    }
+
+    await sidebar(page).getByText('products', { exact: true }).click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Manage', exact: true }).press('ArrowRight');
+    await page.getByRole('menuitem', { name: 'Delete selected (3)', exact: true }).click();
+    const dialog = page.getByTestId('bulk-drop-dialog');
+    await expect(dialog).toContainText('cannot be undone');
+    await expect(dialog.getByTestId('bulk-drop-excluded')).toContainText('admin');
+
+    await app.failNext('drop_collection', 'not authorized on sales_db to execute command');
+    await dialog.getByTestId('bulk-drop-confirm-input').fill('3');
+    await dialog.getByTestId('bulk-drop-confirm').click();
+    await expect(dialog.getByTestId('bulk-drop-summary')).toHaveText(/1 of 3 failed/);
+    await expect(dialog).toContainText('not authorized on sales_db');
+    expect((await app.calls('drop_database')).map((c) => c.args.database)).toEqual(['user_analytics']);
+    expect((await app.calls('drop_collection')).map((c) => c.args.collection)).toEqual(['products', 'transactions']);
+    await dialog.getByTestId('bulk-drop-close').click();
+
+    // The tree shows what is left: the failed collection, and admin untouched.
+    await expect(sidebar(page).getByRole('button', { name: 'Database user_analytics' })).toHaveCount(0);
+    await expect(sidebar(page).getByText('transactions', { exact: true })).toHaveCount(0);
+    await expect(sidebar(page).getByText('products', { exact: true })).toBeVisible();
+    await expect(sidebar(page).getByRole('button', { name: 'Database admin' })).toBeVisible();
+  });
+
+  test('Shift+click picks a range; Escape cancels, Enter confirms', async ({ app, page }) => {
+    await connectStaging(app, page);
+    await expandCollections(page, 'sales_db');
+    const rows = sidebar(page).locator('[data-tree-key^=\'["sales_db",\']');
+    const count = await rows.count();
+    expect(count).toBeGreaterThanOrEqual(3);
+    await rows.first().click();
+    await dismissHoverCards(page);
+    await rows.last().click({ modifiers: ['Shift'] });
+    await dismissHoverCards(page);
+    await expect(sidebar(page).locator('[data-selected="true"]')).toHaveCount(count);
+
+    const openDialog = async () => {
+      await rows.last().click({ button: 'right' });
+      await page.getByRole('menuitem', { name: 'Manage', exact: true }).press('ArrowRight');
+      await page.getByRole('menuitem', { name: `Delete selected (${count})`, exact: true }).click();
+      return page.getByTestId('bulk-drop-dialog');
+    };
+    await (await openDialog()).press('Escape');
+    await expect(page.getByTestId('bulk-drop-dialog')).toHaveCount(0);
+    expect(await app.calls('drop_collection')).toHaveLength(0);
+
+    const dialog = await openDialog();
+    await dialog.getByTestId('bulk-drop-confirm-input').fill(String(count));
+    await dialog.getByTestId('bulk-drop-confirm-input').press('Enter');
+    await expect(dialog.getByTestId('bulk-drop-summary')).toBeVisible();
+    expect(await app.calls('drop_collection')).toHaveLength(count);
+  });
+
+  test('a read-only connection refuses a bulk delete', async ({ app, page }) => {
+    await connectStaging(app, page, {}, { connection_mode: 'read_only' });
+    await expandCollections(page, 'sales_db');
+    for (const name of ['products', 'transactions']) {
+      await sidebar(page).getByText(name, { exact: true }).click({ modifiers: ['ControlOrMeta'] });
+      await dismissHoverCards(page);
+    }
+    await sidebar(page).getByText('products', { exact: true }).click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Manage', exact: true }).press('ArrowRight');
+    await page.getByRole('menuitem', { name: 'Delete selected (2)', exact: true }).click();
+    await expect(toast(page, 'read-only')).toBeVisible();
+    await expect(page.getByTestId('bulk-drop-dialog')).toHaveCount(0);
+    expect(await app.calls('drop_collection')).toHaveLength(0);
   });
 });

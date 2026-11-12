@@ -11,6 +11,22 @@ const jsonLine = (page: Page, text: string) => view(page).locator('[data-json-li
 const clipboard = (page: Page) => page.evaluate(() => navigator.clipboard.readText());
 const findInput = (page: Page) => view(page).getByTestId('results-find-input');
 
+/** The text of one table cell, by its row number (1-based, as shown) and column name. */
+async function tableCellText(page: Page, row: number, column: string): Promise<string> {
+  return view(page).getByTestId('table-header').evaluate((header, [row, column]) => {
+    const headings = Array.from(header.children);
+    const index = headings.findIndex((h) => h.textContent === column);
+    if (index < 0) throw new Error(`No column ${column}`);
+    const body = header.parentElement!.querySelector('[data-testid="table-body-scroll"]')!;
+    // A row lines up with the header: the row number, then a cell per column.
+    const line = Array.from(body.querySelectorAll('div')).find(
+      (d) => d.children.length === headings.length && d.firstElementChild?.textContent === String(row),
+    );
+    if (!line) throw new Error(`No row ${row}`);
+    return line.children[index].textContent ?? '';
+  }, [row, column] as const);
+}
+
 /** Open shop.things on a saved connection whose server holds only `docs`. */
 async function openThings(app: App, page: Page, docs: Doc[]): Promise<void> {
   await connectStaging(app, page, { servers: { [STAGING_URI]: { databases: { shop: { things: { docs } } } } } });
@@ -36,7 +52,7 @@ async function copyValueOf(page: Page, target: Locator, expected: string): Promi
 }
 
 test.describe('Explain plans', () => {
-  test('names each stage of a plan, and shows a collection scan when the plan has none', async ({ app, page }) => {
+  test('names each stage of a plan, and says so when the plan has none', async ({ app, page }) => {
     await openThings(app, page, [{ _id: 1, name: 'one' }]);
     const plans = [
       {
@@ -77,10 +93,12 @@ test.describe('Explain plans', () => {
       await expect(panel).toContainText(label);
     }
 
-    // Asked again, the plan has no winning plan at all.
+    // Asked again, the plan has no winning plan at all: say so rather than
+    // draw a collection scan the server never reported.
     await callFrom(app, 'explain_mql_query', () => view(page).getByTestId('explain-plan-tab').click());
     await expect(panel).not.toContainText('OR Merge');
-    await expect(panel).toContainText('Collection scan');
+    await expect(panel).toContainText('Plan unavailable');
+    await expect(panel).not.toContainText('Collection scan');
   });
 
   test('shows a pipeline plan from its cursor stage up', async ({ app, page }) => {
@@ -193,6 +211,42 @@ test.describe('Typed values and find', () => {
       await expect(view(page).getByTestId('results-find-status'), `a match for ${text}`).toContainText('1');
       await page.keyboard.press('Escape');
     }
+  });
+
+  test('the table tells null from missing, and opens embedded fields into columns', async ({ app, page }) => {
+    await openThings(app, page, [
+      {
+        _id: 1,
+        email: null,
+        address: { city: 'Berlin', geo: { lat: 52.5 } },
+        since: { $date: '2025-05-01T12:00:00Z' },
+        meta: { $schema: 'v1' },
+      },
+      { _id: 2, address: { city: 'Lima' }, meta: ['x', 'y', 'z'] },
+    ]);
+    await viewButton(page, 'Table').click();
+    const header = view(page).getByTestId('table-header');
+    await expect(header).toContainText(/email/i);
+
+    // The first has a null email, the second none at all: one marker, which find matches.
+    await expect(view(page).getByTestId('table-null')).toHaveCount(1);
+    await findInResults(page, header, 'null');
+    await expect(view(page).getByTestId('results-find-status')).toContainText('1');
+    await page.keyboard.press('Escape');
+
+    await view(page).getByRole('checkbox', { name: 'Embedded fields' }).check();
+    for (const col of [/address\.city/i, /address\.geo\.lat/i, /meta\.\$schema/i]) await expect(header).toContainText(col);
+    // A date is one value, not a document to open.
+    await expect(header).not.toContainText('$date');
+    await expect(view(page).getByText('Lima')).toBeVisible();
+    await expect(view(page).getByText('52.5')).toBeVisible();
+    // Lima has no geo, and its `meta` is an array: blank, not null or anything else.
+    await expect(view(page).getByTestId('table-null')).toHaveCount(1);
+    expect(await tableCellText(page, 2, 'address.geo.lat')).toBe('');
+    expect(await tableCellText(page, 2, 'meta.$schema')).toBe('');
+    expect(await tableCellText(page, 2, 'address.city')).toBe('Lima');
+    await findInResults(page, header, 'Berlin');
+    await expect(view(page).getByTestId('results-find-status')).toContainText('1');
   });
 
   test('find brings a match in an off-screen column into view, and back', async ({ app, page }) => {

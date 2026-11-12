@@ -30,6 +30,24 @@ export interface BsonCallArg {
 export interface BsonCall {
   ctor: string;
   args: BsonCallArg[];
+  /** Optional hover detail that does not change the displayed BSON value. */
+  title?: string;
+}
+
+export type DateDisplayTimezone = "utc" | "local";
+
+export interface BsonDisplayOptions {
+  dateTimezone?: DateDisplayTimezone;
+}
+
+function displayDate(value: Date, timezone: DateDisplayTimezone = "utc"): string {
+  if (Number.isNaN(value.getTime())) return "";
+  if (timezone === "utc") return value.toISOString();
+  const pad = (n: number, width = 2) => String(n).padStart(width, "0");
+  const offsetMinutes = -value.getTimezoneOffset();
+  const sign = offsetMinutes >= 0 ? "+" : "-";
+  const absoluteOffset = Math.abs(offsetMinutes);
+  return `${pad(value.getFullYear(), 4)}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}T${pad(value.getHours())}:${pad(value.getMinutes())}:${pad(value.getSeconds())}.${pad(value.getMilliseconds(), 3)}${sign}${pad(Math.floor(absoluteOffset / 60))}:${pad(absoluteOffset % 60)}`;
 }
 
 /**
@@ -59,24 +77,25 @@ interface BsonKind {
   /** BSON type name, as the tree's Type column shows it. */
   label: string;
   matches: (val: unknown) => boolean;
-  call: (val: any) => BsonCall;
+  call: (val: any, options?: BsonDisplayOptions) => BsonCall;
 }
 
 const BSON_KINDS: readonly BsonKind[] = [
   {
     label: "ObjectId",
     matches: (v) => v instanceof ObjectId,
-    call: (v: ObjectId) => ({
+    call: (v: ObjectId, options) => ({
       ctor: "ObjectId",
       args: [{ text: jsonStringLiteral(v.toString()), kind: "string" }],
+      title: displayDate(v.getTimestamp(), options?.dateTimezone),
     }),
   },
   {
     label: "Date",
     matches: (v) => v instanceof Date,
-    call: (v: Date) => ({
+    call: (v: Date, options) => ({
       ctor: "ISODate",
-      args: [{ text: jsonStringLiteral(v.toISOString()), kind: "string" }],
+      args: [{ text: jsonStringLiteral(displayDate(v, options?.dateTimezone)), kind: "string" }],
     }),
   },
   {
@@ -136,9 +155,9 @@ function bsonKindOf(val: unknown): BsonKind | undefined {
  * extended-JSON shapes instead and the grid displays those differently — see
  * [`plainBsonShape`].
  */
-export function bsonCallOf(val: unknown): BsonCall | null {
+export function bsonCallOf(val: unknown, options?: BsonDisplayOptions): BsonCall | null {
   const kind = bsonKindOf(val);
-  return kind ? kind.call(val) : null;
+  return kind ? kind.call(val, options) : null;
 }
 
 /**
@@ -169,13 +188,13 @@ export function isBsonInstance(val: unknown): boolean {
  * renderer's own `String(val)` fallback — the views normally expand containers
  * into their own rows rather than printing them.
  */
-export function bsonValueText(val: unknown): string {
+export function bsonValueText(val: unknown, options?: BsonDisplayOptions): string {
   if (val === null) return "null";
   if (val === undefined) return "";
   if (typeof val === "boolean") return val ? "true" : "false";
   if (typeof val === "number") return String(val);
   if (typeof val === "string") return jsonStringLiteral(val);
-  const call = bsonCallOf(val);
+  const call = bsonCallOf(val, options);
   if (call) return bsonCallText(call);
   return String(val);
 }
@@ -185,6 +204,7 @@ export interface PlainShapeDisplay {
   text: string;
   /** `raw` is the muted JSON fallback for a shape with no special display. */
   kind: "string" | "number" | "raw";
+  title?: string;
 }
 
 /**
@@ -196,12 +216,31 @@ export interface PlainShapeDisplay {
  * `ObjectId("…")`, which is what the parsed views show. Both are mirrored, each
  * for the view that produces it.
  */
-export function plainBsonShape(val: Record<string, any>): PlainShapeDisplay | null {
-  if (typeof val.$oid === "string") return { text: val.$oid, kind: "string" };
+export function plainBsonShape(val: Record<string, any>, options?: BsonDisplayOptions): PlainShapeDisplay | null {
+  if (typeof val.$oid === "string") {
+    try {
+      return {
+        text: val.$oid,
+        kind: "string",
+        title: displayDate(
+          ObjectId.createFromHexString(val.$oid).getTimestamp(),
+          options?.dateTimezone,
+        ),
+      };
+    } catch {
+      return { text: val.$oid, kind: "string" };
+    }
+  }
   if (val.$date !== undefined) {
-    if (typeof val.$date === "string") return { text: val.$date, kind: "string" };
+    if (typeof val.$date === "string") {
+      const date = new Date(val.$date);
+      const text = displayDate(date, options?.dateTimezone);
+      return { text: text || val.$date, kind: "string" };
+    }
     if (val.$date?.$numberLong) {
-      return { text: new Date(Number(val.$date.$numberLong)).toISOString(), kind: "string" };
+      const raw = String(val.$date.$numberLong);
+      const text = displayDate(new Date(Number(raw)), options?.dateTimezone);
+      return { text: text || raw, kind: "string" };
     }
     return { text: JSON.stringify(val.$date), kind: "string" };
   }
@@ -211,7 +250,32 @@ export function plainBsonShape(val: Record<string, any>): PlainShapeDisplay | nu
   }
   if (val.$numberInt !== undefined) return { text: String(val.$numberInt), kind: "number" };
   if (val.$numberDouble !== undefined) return { text: String(val.$numberDouble), kind: "number" };
+  const binary = val.$binary;
+  if (
+    Object.keys(val).length === 1 &&
+    typeof binary?.base64 === "string" &&
+    typeof binary?.subType === "string"
+  ) {
+    const subType = parseInt(binary.subType, 16);
+    return { text: `BinData(${subType}, ${jsonStringLiteral(binary.base64)})`, kind: "string" };
+  }
   return null;
+}
+
+// Keys of the Extended JSON type wrappers, canonical and legacy forms.
+const EJSON_WRAPPER_KEYS = new Set([
+  "$binary", "$code", "$date", "$dbPointer", "$maxKey", "$minKey", "$numberDecimal",
+  "$numberDouble", "$numberInt", "$numberLong", "$oid", "$options", "$regex",
+  "$regularExpression", "$scope", "$symbol", "$timestamp", "$type", "$undefined", "$uuid",
+]);
+
+/**
+ * Whether a plain object is one typed value in Extended JSON (`{ $date: … }`),
+ * as opposed to a stored document that happens to have a `$`-prefixed field.
+ */
+export function isEjsonWrapper(val: Record<string, unknown>): boolean {
+  const keys = Object.keys(val);
+  return keys.length > 0 && keys.every((k) => EJSON_WRAPPER_KEYS.has(k));
 }
 
 /**
@@ -221,15 +285,17 @@ export function plainBsonShape(val: Record<string, any>): PlainShapeDisplay | nu
  * raw text in a fixed-width cell — so the same value reads differently in the
  * table than in the JSON view, and find follows whichever view is on screen.
  */
-export function tableValueText(val: unknown): string {
-  if (val === null || val === undefined) return "";
+export function tableValueText(val: unknown, options?: BsonDisplayOptions): string {
+  // null is drawn as a marker; a missing field (undefined) is a blank cell.
+  if (val === null) return "null";
+  if (val === undefined) return "";
   if (typeof val === "string") return val;
   if (typeof val === "number") return String(val);
   if (typeof val === "boolean") return val ? "true" : "false";
   if (typeof val === "object") {
-    const call = bsonCallOf(val);
+    const call = bsonCallOf(val, options);
     if (call) return bsonCallText(call);
-    const plain = plainBsonShape(val as Record<string, any>);
+    const plain = plainBsonShape(val as Record<string, any>, options);
     if (plain) return plain.text;
     return JSON.stringify(val);
   }

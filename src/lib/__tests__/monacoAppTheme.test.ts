@@ -71,6 +71,21 @@ describe('monaco theme colours come from the config, not the DOM (#282)', () => 
     expect(defined.get('mqlens-dark')!.colors['editor.background']).toBe('#1e1e1e');
   });
 
+  it('uses dedicated editor selection tokens', () => {
+    applyTokens(
+      {
+        accent: '0 100% 50%',
+        muted: '0 100% 50%',
+        'editor-selection': '210 100% 83%',
+        'editor-inactive-selection': '215 25% 83%',
+      },
+      'mqlens-light'
+    );
+    const colors = defined.get('mqlens-light')!.colors;
+    expect(colors['editor.selectionBackground']).toBe(hslComponentsToHex('210 100% 83%'));
+    expect(colors['editor.inactiveSelectionBackground']).toBe(hslComponentsToHex('215 25% 83%'));
+  });
+
   it('defines the same colours every time it is applied', () => {
     // The definition path used to exist twice, hand-written, which is how one
     // copy gets corrected and the other left stale.

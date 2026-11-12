@@ -1,0 +1,144 @@
+syntax = "proto3";
+package mqlens.v1;
+option go_package = "github.com/mqlens/mqlens-server/gen/mqlens/v1;mqlensv1";
+
+// TaskService runs long work on the server, apart from the request that
+// starts it: a task goes on when its client disconnects, and its owner can
+// follow it, cancel it, fetch what it produced and clear it. A user sees only
+// the tasks they started. API version 6; StartRestore needs version 7.
+service TaskService {
+  // Runs mongodump against a connection into the task's artifact. Needs read
+  // on the connection; users and roles, and the oplog, need admin.
+  rpc StartDump(StartDumpRequest) returns (Task);
+  // Uploads a dump and runs mongorestore from it against a connection. The
+  // first message is the options, then the dump's files, chunk by chunk:
+  // the task starts once the upload is complete. Needs ddl on the
+  // connection; users and roles, and the oplog, need admin. API version 7.
+  rpc StartRestore(stream StartRestoreRequest) returns (Task);
+  // The caller's tasks, newest first.
+  rpc ListTasks(ListTasksRequest) returns (ListTasksResponse);
+  // The task now and each time it changes, ending once it has finished.
+  rpc WatchTask(WatchTaskRequest) returns (stream Task);
+  // Ends a running task as cancelled. A finished task is left as it is.
+  rpc CancelTask(CancelTaskRequest) returns (CancelTaskResponse);
+  // Removes the caller's finished tasks and their artifacts.
+  rpc ClearFinishedTasks(ClearFinishedTasksRequest) returns (ClearFinishedTasksResponse);
+  // Removes one of the caller's finished tasks and its artifact, as a client
+  // does once it has fetched what the task produced. A running task is
+  // refused: cancel it, then delete it. API version 8.
+  rpc DeleteTask(DeleteTaskRequest) returns (DeleteTaskResponse);
+  // Every file a completed task produced, in chunks.
+  rpc DownloadArtifact(DownloadArtifactRequest) returns (stream ArtifactChunk);
+}
+
+message Task {
+  string id = 1;
+  string connection_id = 2;
+  string kind = 3; // "dump" | "restore"
+  string label = 4;
+  string state = 5; // "running" | "completed" | "failed" | "cancelled"
+  string message = 6;
+  string error = 7;
+  // Namespaces finished so far.
+  int64 processed = 8;
+  // Unix milliseconds; finished_at_ms is 0 while the task runs.
+  int64 created_at_ms = 9;
+  int64 finished_at_ms = 10;
+}
+
+message StartDumpRequest {
+  string connection_id = 1;
+  // Empty dumps every database.
+  string database = 2;
+  // Empty dumps the whole database.
+  string collection = 3;
+  // One archive file (dump.archive) rather than a folder of each database's
+  // files (shop/orders.bson, ...).
+  bool archive = 4;
+  bool gzip = 5;
+  // Extended JSON filter; needs a collection.
+  string query = 6;
+  bool force_table_scan = 7;
+  // Needs a database and no collection.
+  bool dump_users_and_roles = 8;
+  // Needs the whole server.
+  bool oplog = 9;
+}
+
+message StartRestoreRequest {
+  oneof kind {
+    RestoreOptions options = 1;
+    // Part of one of the dump's files, as DownloadArtifact sends them. The
+    // path is relative to the dump folder (shop/orders.bson), so a folder
+    // dump's download restores as it is; an archive is its one file.
+    ArtifactChunk file = 2;
+  }
+}
+
+message RestoreOptions {
+  string connection_id = 1;
+  // The upload is one archive file rather than a dump folder.
+  bool archive = 2;
+  bool gzip = 3;
+  // A folder's namespaces to restore; none restores all. Refused for an
+  // archive.
+  repeated RestoreNamespace selections = 4;
+  // An archive's database, and optionally collection, to restore. Refused
+  // for a folder.
+  string filter_db = 5;
+  string filter_coll = 6;
+  bool drop = 7;
+  bool keep_index_version = 8;
+  bool no_index_restore = 9;
+  bool no_options_restore = 10;
+  bool maintain_insertion_order = 11;
+  bool stop_on_error = 12;
+  bool bypass_document_validation = 13;
+  // Needs a single database, not admin, and restores that whole database.
+  bool restore_db_users_and_roles = 14;
+  // Needs no namespace filter.
+  bool oplog_replay = 15;
+}
+
+message RestoreNamespace {
+  string db = 1;
+  string coll = 2;
+  // Restore under this name: "coll" in the same database, or "db.coll".
+  string rename_to = 3;
+}
+
+message ListTasksRequest {}
+message ListTasksResponse {
+  repeated Task tasks = 1;
+}
+
+message WatchTaskRequest {
+  string id = 1;
+}
+
+message CancelTaskRequest {
+  string id = 1;
+}
+message CancelTaskResponse {}
+
+message ClearFinishedTasksRequest {}
+message ClearFinishedTasksResponse {}
+
+message DeleteTaskRequest {
+  string id = 1;
+}
+message DeleteTaskResponse {}
+
+message DownloadArtifactRequest {
+  string id = 1;
+}
+
+// Part of one file. A file's chunks come together and in order; path is set
+// on each, relative to the artifact with '/' separators ("dump.archive",
+// "shop/orders.bson"); a version-6 request gets a folder dump's files under
+// dump/ ("dump/shop/orders.bson"). An empty file comes as one chunk with no
+// data.
+message ArtifactChunk {
+  string path = 1;
+  bytes data = 2;
+}

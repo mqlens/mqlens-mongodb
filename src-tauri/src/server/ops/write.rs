@@ -1,0 +1,822 @@
+//! Document writes and index changes on a server connection. Each reports
+//! what local mode reports for the same write.
+
+use crate::server::channel::client;
+use crate::server::ejson;
+use crate::server::ops::session_for;
+use crate::server::pb::mqlens::v1::metadata_service_client::MetadataServiceClient;
+use crate::server::pb::mqlens::v1::write_service_client::WriteServiceClient;
+use crate::server::pb::mqlens::v1::{
+    CreateIndexRequest, DeleteDocumentRequest, DeleteManyRequest, DropIndexRequest,
+    InsertDocumentRequest, ReplaceDocumentRequest, UpdateDocumentRequest, UpdateManyRequest,
+};
+use crate::server::remote::RemoteConn;
+use crate::server::routes;
+use crate::AppState;
+use mongodb::bson::{Bson, Document};
+
+fn count(n: i64) -> Result<u64, String> {
+    u64::try_from(n).map_err(|_| "MQLens Server reported a negative count".to_string())
+}
+
+/// Inserts `document`; the new id as local mode reports it, in relaxed
+/// Extended JSON.
+pub(crate) async fn insert(
+    state: &AppState,
+    conn: &RemoteConn,
+    database: &str,
+    collection: &str,
+    document: &Document,
+) -> Result<String, String> {
+    routes::require("insert_document", conn)?;
+    let request = InsertDocumentRequest {
+        connection_id: conn.remote_id.clone(),
+        database: database.to_string(),
+        collection: collection.to_string(),
+        document_json: ejson::doc_to_wire(document),
+    };
+    let response = session_for(state, conn)
+        .await?
+        .call(request, |channel, request| async move {
+            client!(WriteServiceClient, channel)
+                .insert_document(request)
+                .await
+        })
+        .await?;
+    let id: serde_json::Value = serde_json::from_str(&response.inserted_id_json)
+        .map_err(|e| format!("MQLens Server reported an unreadable id: {e}"))?;
+    let id =
+        Bson::try_from(id).map_err(|e| format!("MQLens Server reported an unreadable id: {e}"))?;
+    Ok(id.into_relaxed_extjson().to_string())
+}
+
+/// Applies `update` to the document `filter` matches; how many changed.
+pub(crate) async fn update_one(
+    state: &AppState,
+    conn: &RemoteConn,
+    database: &str,
+    collection: &str,
+    filter: &Document,
+    update: &Document,
+) -> Result<u64, String> {
+    routes::require("update_document", conn)?;
+    let request = UpdateDocumentRequest {
+        connection_id: conn.remote_id.clone(),
+        database: database.to_string(),
+        collection: collection.to_string(),
+        filter_json: ejson::doc_to_wire(filter),
+        update_json: ejson::doc_to_wire(update),
+    };
+    let result = session_for(state, conn)
+        .await?
+        .call(request, |channel, request| async move {
+            client!(WriteServiceClient, channel)
+                .update_document(request)
+                .await
+        })
+        .await?;
+    count(result.modified_count)
+}
+
+/// Replaces the document `filter` matches; how many changed.
+pub(crate) async fn replace_one(
+    state: &AppState,
+    conn: &RemoteConn,
+    database: &str,
+    collection: &str,
+    filter: &Document,
+    replacement: &Document,
+) -> Result<u64, String> {
+    routes::require("update_document", conn)?;
+    let request = ReplaceDocumentRequest {
+        connection_id: conn.remote_id.clone(),
+        database: database.to_string(),
+        collection: collection.to_string(),
+        filter_json: ejson::doc_to_wire(filter),
+        replacement_json: ejson::doc_to_wire(replacement),
+    };
+    let result = session_for(state, conn)
+        .await?
+        .call(request, |channel, request| async move {
+            client!(WriteServiceClient, channel)
+                .replace_document(request)
+                .await
+        })
+        .await?;
+    count(result.modified_count)
+}
+
+/// Deletes the document `filter` matches; how many went.
+pub(crate) async fn delete_one(
+    state: &AppState,
+    conn: &RemoteConn,
+    database: &str,
+    collection: &str,
+    filter: &Document,
+) -> Result<u64, String> {
+    routes::require("delete_document", conn)?;
+    let request = DeleteDocumentRequest {
+        connection_id: conn.remote_id.clone(),
+        database: database.to_string(),
+        collection: collection.to_string(),
+        filter_json: ejson::doc_to_wire(filter),
+    };
+    let result = session_for(state, conn)
+        .await?
+        .call(request, |channel, request| async move {
+            client!(WriteServiceClient, channel)
+                .delete_document(request)
+                .await
+        })
+        .await?;
+    count(result.deleted_count)
+}
+
+/// Applies `update` to every document `filter` matches; how many changed.
+pub(crate) async fn update_many(
+    state: &AppState,
+    conn: &RemoteConn,
+    database: &str,
+    collection: &str,
+    filter: &Document,
+    update: &Document,
+) -> Result<u64, String> {
+    routes::require("update_many", conn)?;
+    let request = UpdateManyRequest {
+        connection_id: conn.remote_id.clone(),
+        database: database.to_string(),
+        collection: collection.to_string(),
+        filter_json: ejson::doc_to_wire(filter),
+        update_json: ejson::doc_to_wire(update),
+    };
+    let result = session_for(state, conn)
+        .await?
+        .call(request, |channel, request| async move {
+            client!(WriteServiceClient, channel)
+                .update_many(request)
+                .await
+        })
+        .await?;
+    count(result.modified_count)
+}
+
+/// Deletes every document `filter` matches; how many went.
+pub(crate) async fn delete_many(
+    state: &AppState,
+    conn: &RemoteConn,
+    database: &str,
+    collection: &str,
+    filter: &Document,
+) -> Result<u64, String> {
+    routes::require("delete_many", conn)?;
+    let request = DeleteManyRequest {
+        connection_id: conn.remote_id.clone(),
+        database: database.to_string(),
+        collection: collection.to_string(),
+        filter_json: ejson::doc_to_wire(filter),
+    };
+    let result = session_for(state, conn)
+        .await?
+        .call(request, |channel, request| async move {
+            client!(WriteServiceClient, channel)
+                .delete_many(request)
+                .await
+        })
+        .await?;
+    count(result.deleted_count)
+}
+
+/// What a server before API version 5 takes as plain fields.
+const PLAIN_INDEX_FIELDS: [&str; 4] = ["key", "name", "unique", "sparse"];
+
+/// API version 5 takes an index as its whole document, the only way to send
+/// anything else.
+const INDEX_SPEC_SINCE: u32 = 5;
+
+pub(crate) async fn create_index(
+    state: &AppState,
+    conn: &RemoteConn,
+    database: &str,
+    collection: &str,
+    spec: &Document,
+) -> Result<(), String> {
+    routes::require("create_index", conn)?;
+    let plain = spec.keys().all(|field| PLAIN_INDEX_FIELDS.contains(&field.as_str()));
+    if !plain && conn.api_version < INDEX_SPEC_SINCE {
+        return Err(format!(
+            "These index options need MQLens API version {INDEX_SPEC_SINCE}, and this MQLens Server speaks {}. Update MQLens Server.",
+            conn.api_version
+        ));
+    }
+    let spec_bson = if plain {
+        Vec::new()
+    } else {
+        mongodb::bson::to_vec(spec).map_err(|e| e.to_string())?
+    };
+    let keys = spec.get_document("key").map_err(|e| e.to_string())?;
+    let request = CreateIndexRequest {
+        connection_id: conn.remote_id.clone(),
+        database: database.to_string(),
+        collection: collection.to_string(),
+        keys_json: ejson::doc_to_wire(keys),
+        unique: spec.get_bool("unique").unwrap_or(false),
+        sparse: spec.get_bool("sparse").unwrap_or(false),
+        name: spec.get_str("name").unwrap_or_default().to_string(),
+        spec_bson: spec_bson.into(),
+    };
+    // No deadline: an index build takes as long as the collection is large,
+    // as it may in local mode. The channel's keepalive ends the call if the
+    // server goes away.
+    session_for(state, conn)
+        .await?
+        .call_unbounded(request, |channel, request| async move {
+            client!(MetadataServiceClient, channel)
+                .create_index(request)
+                .await
+        })
+        .await?;
+    Ok(())
+}
+
+pub(crate) async fn drop_index(
+    state: &AppState,
+    conn: &RemoteConn,
+    database: &str,
+    collection: &str,
+    name: &str,
+) -> Result<(), String> {
+    routes::require("delete_index", conn)?;
+    let request = DropIndexRequest {
+        connection_id: conn.remote_id.clone(),
+        database: database.to_string(),
+        collection: collection.to_string(),
+        name: name.to_string(),
+    };
+    session_for(state, conn)
+        .await?
+        .call(request, |channel, request| async move {
+            client!(MetadataServiceClient, channel)
+                .drop_index(request)
+                .await
+        })
+        .await?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::db::documents::{
+        delete_document_impl, delete_many_impl, insert_document_impl, update_document_impl,
+        update_many_impl,
+    };
+    use crate::db::metadata::{create_index_impl, create_index_spec_impl, delete_index_impl};
+    use crate::server::ejson;
+    use crate::server::fake::{Env, FakeWrite};
+    use crate::server::ops::connected;
+    use crate::server::session::CALL_TIMEOUT;
+    use mongodb::bson::doc;
+    use std::time::Duration;
+
+    fn writes(env: &Env) -> Vec<FakeWrite> {
+        env.fake.with(|s| s.writes.clone())
+    }
+
+    // An insert sends the document as local mode parses it, and reports the
+    // new id as local mode does: relaxed Extended JSON.
+    #[tokio::test]
+    async fn an_insert_reports_the_new_id_as_local_mode_does() {
+        let env = Env::new().await;
+        let (state, id) = connected(&env).await;
+
+        let inserted = insert_document_impl(&state, &id, "orders", "customers", r#"{"n": 5}"#)
+            .await
+            .unwrap();
+
+        assert_eq!(inserted, r#"{"$oid":"64b7f0c2a1b2c3d4e5f60718"}"#);
+        match writes(&env).as_slice() {
+            [FakeWrite::Insert(r)] => {
+                assert_eq!(
+                    (r.database.as_str(), r.collection.as_str()),
+                    ("orders", "customers")
+                );
+                assert_eq!(
+                    ejson::doc_from_wire(&r.document_json).unwrap(),
+                    doc! { "n": 5_i32 }
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    // An edit of a document holding a wrapper-shaped sub-document is refused
+    // through the server as locally, with nothing written.
+    #[tokio::test]
+    async fn an_edit_of_a_wrapper_shaped_document_is_refused() {
+        let env = Env::new().await;
+        env.fake.with(|s| {
+            s.documents = vec![doc! { "_id": 1, "money": { "$numberLong": "7" }, "name": "Ada" }]
+        });
+        let (state, id) = connected(&env).await;
+
+        let err = update_document_impl(
+            &state,
+            &id,
+            "orders",
+            "customers",
+            r#"{"_id": 1}"#,
+            r#"{"_id": 1, "money": {"$numberLong": "7"}, "name": "Ada"}"#,
+            r#"{"_id": 1, "money": {"$numberLong": "7"}, "name": "Bo"}"#,
+            Some("{}"),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(err.contains("Extended JSON"), "{err}");
+        assert!(writes(&env).is_empty());
+    }
+
+    // A `$`-prefixed key that no Extended JSON type uses does not block an
+    // edit through the server either.
+    #[tokio::test]
+    async fn an_edit_beside_a_dollar_key_that_is_no_type_wrapper_goes_through() {
+        let env = Env::new().await;
+        env.fake.with(|s| {
+            s.documents = vec![doc! { "_id": 1, "meta": { "$weird": 1 }, "name": "Ada" }]
+        });
+        let (state, id) = connected(&env).await;
+
+        let modified = update_document_impl(
+            &state,
+            &id,
+            "orders",
+            "customers",
+            r#"{"_id": 1}"#,
+            r#"{"_id": 1, "meta": {"$weird": 1}, "name": "Ada"}"#,
+            r#"{"_id": 1, "meta": {"$weird": 1}, "name": "Bo"}"#,
+            Some("{}"),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(modified, 1);
+        assert_eq!(writes(&env).len(), 1);
+    }
+
+    // An edit sends the field update local mode would make, and falls back to
+    // replacing the document where local mode does.
+    #[tokio::test]
+    async fn an_edit_sends_the_update_local_mode_would_make() {
+        let env = Env::new().await;
+        let (state, id) = connected(&env).await;
+        let filter = r#"{"_id": 1}"#;
+
+        let modified = update_document_impl(
+            &state,
+            &id,
+            "orders",
+            "customers",
+            filter,
+            r#"{"_id": 1, "n": 1}"#,
+            r#"{"_id": 1, "n": 2}"#,
+            Some("{}"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(modified, 1);
+
+        // A field named with a dot cannot be set, so the whole document is replaced.
+        update_document_impl(
+            &state,
+            &id,
+            "orders",
+            "customers",
+            filter,
+            r#"{"_id": 1, "a.b": 1}"#,
+            r#"{"_id": 1, "a.b": 2}"#,
+            Some("{}"),
+        )
+        .await
+        .unwrap();
+
+        match writes(&env).as_slice() {
+            [FakeWrite::Update(u), FakeWrite::Replace(r)] => {
+                assert_eq!(
+                    ejson::doc_from_wire(&u.filter_json).unwrap(),
+                    doc! { "_id": 1_i32 }
+                );
+                assert_eq!(
+                    ejson::doc_from_wire(&u.update_json).unwrap(),
+                    doc! { "$set": { "n": 2_i32 } }
+                );
+                assert_eq!(
+                    ejson::doc_from_wire(&r.replacement_json).unwrap(),
+                    doc! { "_id": 1_i32, "a.b": 2_i32 }
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    // The bulk writes and deletes report the counts local mode reports.
+    #[tokio::test]
+    async fn bulk_writes_and_deletes_report_their_counts() {
+        let env = Env::new().await;
+        env.fake.with(|s| {
+            s.write_result.modified_count = 7;
+            s.write_result.deleted_count = 3;
+        });
+        let (state, id) = connected(&env).await;
+        let f = r#"{"n": {"$gt": 1}}"#;
+
+        assert_eq!(
+            update_many_impl(
+                &state,
+                &id,
+                "orders",
+                "customers",
+                f,
+                r#"{"$set": {"x": 1}}"#,
+                false
+            )
+            .await,
+            Ok(7)
+        );
+        assert_eq!(
+            delete_many_impl(&state, &id, "orders", "customers", f, false).await,
+            Ok(3)
+        );
+        assert_eq!(
+            delete_document_impl(&state, &id, "orders", "customers", r#"{"_id": 1}"#).await,
+            Ok(3)
+        );
+
+        match writes(&env).as_slice() {
+            [FakeWrite::UpdateMany(u), FakeWrite::DeleteMany(d), FakeWrite::Delete(one)] => {
+                assert_eq!(
+                    ejson::doc_from_wire(&u.update_json).unwrap(),
+                    doc! { "$set": { "x": 1_i32 } }
+                );
+                assert_eq!(
+                    ejson::doc_from_wire(&d.filter_json).unwrap(),
+                    doc! { "n": { "$gt": 1_i32 } }
+                );
+                assert_eq!(
+                    ejson::doc_from_wire(&one.filter_json).unwrap(),
+                    doc! { "_id": 1_i32 }
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    // An index is created with the keys local mode parses and its options,
+    // and dropped by name.
+    #[tokio::test]
+    async fn indexes_are_created_and_dropped_on_the_server() {
+        let env = Env::new().await;
+        env.fake
+            .with(|s| s.connections[0].op_classes.push("ddl".to_string()));
+        let (state, id) = connected(&env).await;
+
+        create_index_impl(
+            &state,
+            &id,
+            "orders",
+            "customers",
+            "email_1",
+            r#"{"email": 1}"#,
+            true,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+        delete_index_impl(&state, &id, "orders", "customers", "email_1")
+            .await
+            .unwrap();
+
+        match writes(&env).as_slice() {
+            [FakeWrite::CreateIndex(c), FakeWrite::DropIndex(d)] => {
+                assert_eq!(c.name, "email_1");
+                assert_eq!(
+                    ejson::doc_from_wire(&c.keys_json).unwrap(),
+                    doc! { "email": 1_i64 }
+                );
+                assert!(c.unique && !c.sparse);
+                assert_eq!(d.name, "email_1");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    // An index build takes as long as the collection is large, so creating
+    // an index waits for it past the deadline an ordinary call has.
+    #[tokio::test]
+    async fn an_index_build_longer_than_a_call_deadline_succeeds() {
+        let env = Env::new().await;
+        env.fake.with(|s| {
+            s.connections[0].op_classes.push("ddl".to_string());
+            s.index_build_delay = CALL_TIMEOUT + Duration::from_millis(300);
+        });
+        let (state, id) = connected(&env).await;
+
+        create_index_impl(
+            &state,
+            &id,
+            "orders",
+            "customers",
+            "email_1",
+            r#"{"email": 1}"#,
+            true,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(
+            writes(&env).as_slice(),
+            [FakeWrite::CreateIndex(_)]
+        ));
+    }
+
+    // What local mode refuses is refused before the server hears of it: a
+    // read-only connection, an update without operators, invalid JSON.
+    #[tokio::test]
+    async fn local_refusals_come_before_any_request() {
+        let env = Env::new().await;
+        let (state, id) = connected(&env).await;
+        assert!(update_many_impl(
+            &state,
+            &id,
+            "orders",
+            "customers",
+            "{}",
+            r#"{"x": 1}"#,
+            false
+        )
+        .await
+        .is_err());
+        assert!(
+            insert_document_impl(&state, &id, "orders", "customers", "{not json")
+                .await
+                .is_err()
+        );
+        crate::set_connection_meta_impl(
+            &state,
+            &id,
+            "server:a:c1",
+            "Orders",
+            false,
+            crate::connections::ConnectionMode::ReadOnly,
+        )
+        .unwrap();
+        assert!(
+            insert_document_impl(&state, &id, "orders", "customers", "{}")
+                .await
+                .is_err()
+        );
+        assert!(writes(&env).is_empty());
+    }
+
+    // A user who may only read is refused by the desktop, naming the role it
+    // lacks, before any request.
+    #[tokio::test]
+    async fn a_read_only_role_cannot_write() {
+        let env = Env::new().await;
+        env.fake
+            .with(|s| s.connections[0].op_classes = vec!["read".to_string()]);
+        let (state, id) = connected(&env).await;
+
+        let err = insert_document_impl(&state, &id, "orders", "customers", "{}")
+            .await
+            .unwrap_err();
+        assert!(err.contains("does not allow write operations"), "{err}");
+        let err = create_index_impl(
+            &state,
+            &id,
+            "orders",
+            "customers",
+            "n_1",
+            r#"{"n": 1}"#,
+            false,
+            false,
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("does not allow ddl operations"), "{err}");
+        assert!(writes(&env).is_empty());
+    }
+
+    // A TTL lives only in the index document, which the server takes from
+    // API version 5.
+    #[tokio::test]
+    async fn a_ttl_index_is_sent_as_an_index_document() {
+        let env = Env::new().await;
+        env.fake.with(|s| {
+            s.max_api_version = 5;
+            s.connections[0].op_classes.push("ddl".to_string());
+        });
+        let (state, id) = connected(&env).await;
+
+        create_index_impl(
+            &state, &id, "orders", "events", "createdAt_1", r#"{"createdAt": 1}"#, true, false,
+            Some(86400),
+        )
+        .await
+        .unwrap();
+
+        match writes(&env).as_slice() {
+            [FakeWrite::CreateIndex(c)] => {
+                let spec: mongodb::bson::Document = mongodb::bson::from_slice(&c.spec_bson).unwrap();
+                assert_eq!(
+                    spec,
+                    doc! {
+                        "key": { "createdAt": 1_i64 }, "name": "createdAt_1", "unique": true,
+                        "expireAfterSeconds": 86400_i32,
+                    }
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn index_options_need_api_version_5() {
+        let env = Env::new().await;
+        env.fake
+            .with(|s| s.connections[0].op_classes.push("ddl".to_string()));
+        let (state, id) = connected(&env).await;
+
+        let err = create_index_impl(
+            &state, &id, "orders", "events", "createdAt_1", r#"{"createdAt": 1}"#, false, false,
+            Some(60),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("need MQLens API version 5"), "{err}");
+        let err = create_index_spec_impl(
+            &state,
+            &id,
+            "orders",
+            "events",
+            r#"{"key":{"a":1},"name":"a_1","hidden":true}"#,
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("need MQLens API version 5"), "{err}");
+        assert!(writes(&env).is_empty());
+    }
+
+    #[tokio::test]
+    async fn every_option_goes_in_the_index_document() {
+        let env = Env::new().await;
+        env.fake.with(|s| {
+            s.max_api_version = 5;
+            s.connections[0].op_classes.push("ddl".to_string());
+        });
+        let (state, id) = connected(&env).await;
+
+        create_index_spec_impl(
+            &state,
+            &id,
+            "orders",
+            "events",
+            r#"{"key":{"bio":"text"},"name":"bio_text","weights":{"bio":5},"collation":{"locale":"de"}}"#,
+            None,
+        )
+        .await
+        .unwrap();
+
+        match writes(&env).as_slice() {
+            [FakeWrite::CreateIndex(c)] => {
+                let spec: mongodb::bson::Document = mongodb::bson::from_slice(&c.spec_bson).unwrap();
+                assert_eq!(spec.get_document("weights").unwrap(), &doc! { "bio": 5 });
+                assert_eq!(spec.get_document("collation").unwrap(), &doc! { "locale": "de" });
+                assert_eq!(c.name, "bio_text");
+                assert_eq!(ejson::doc_from_wire(&c.keys_json).unwrap(), doc! { "bio": "text" });
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    // A server before API 5 reads the plain fields, so a plain index goes as it always did.
+    #[tokio::test]
+    async fn a_plain_index_needs_no_index_document() {
+        let env = Env::new().await;
+        env.fake
+            .with(|s| s.connections[0].op_classes.push("ddl".to_string()));
+        let (state, id) = connected(&env).await;
+
+        create_index_spec_impl(
+            &state,
+            &id,
+            "orders",
+            "events",
+            r#"{"key":{"loc":"2dsphere"},"name":"loc","unique":true,"sparse":true}"#,
+            None,
+        )
+        .await
+        .unwrap();
+
+        match writes(&env).as_slice() {
+            [FakeWrite::CreateIndex(c)] => {
+                assert!(c.spec_bson.is_empty());
+                assert!(c.unique && c.sparse);
+                assert_eq!(c.name, "loc");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    // No RPC yet: refused here, not sent.
+    #[tokio::test]
+    async fn an_index_option_is_refused_on_the_server() {
+        let env = Env::new().await;
+        env.fake.with(|s| {
+            s.max_api_version = 9;
+            s.connections[0].op_classes.push("ddl".to_string());
+        });
+        let (state, id) = connected(&env).await;
+
+        let err = crate::db::metadata::set_index_option_impl(
+            &state,
+            &id,
+            "orders",
+            "events",
+            "a_1",
+            crate::db::metadata::IndexOption::Hidden,
+            true,
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("not available on MQLens Server"), "{err}");
+        assert!(writes(&env).is_empty());
+    }
+
+    // The request has no field for it, so it is never silently left out.
+    #[tokio::test]
+    async fn a_commit_quorum_is_refused_on_the_server() {
+        let env = Env::new().await;
+        env.fake
+            .with(|s| s.connections[0].op_classes.push("ddl".to_string()));
+        let (state, id) = connected(&env).await;
+
+        let err = create_index_spec_impl(
+            &state,
+            &id,
+            "orders",
+            "events",
+            r#"{"key":{"a":1},"name":"a_1"}"#,
+            Some("majority"),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, crate::db::metadata::NO_REMOTE_COMMIT_QUORUM);
+        assert!(writes(&env).is_empty());
+    }
+
+    // The server runs the collMod from API version 9.
+    #[tokio::test]
+    async fn an_expiry_change_is_sent_to_the_server() {
+        let env = Env::new().await;
+        env.fake.with(|s| {
+            s.max_api_version = 9;
+            s.connections[0].op_classes.push("ddl".to_string());
+        });
+        let (state, id) = connected(&env).await;
+
+        crate::db::metadata::set_index_expiry_impl(&state, &id, "orders", "events", "createdAt_1", 86400)
+            .await
+            .unwrap();
+
+        match writes(&env).as_slice() {
+            [FakeWrite::SetIndexExpiry(r)] => {
+                assert_eq!(
+                    (r.database.as_str(), r.collection.as_str(), r.index_name.as_str()),
+                    ("orders", "events", "createdAt_1")
+                );
+                assert_eq!(r.expire_after_seconds, 86400);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn an_expiry_change_needs_api_version_9() {
+        let env = Env::new().await;
+        env.fake.with(|s| {
+            s.max_api_version = 8;
+            s.connections[0].op_classes.push("ddl".to_string());
+        });
+        let (state, id) = connected(&env).await;
+
+        let err = crate::db::metadata::set_index_expiry_impl(&state, &id, "orders", "events", "createdAt_1", 60)
+            .await
+            .unwrap_err();
+        assert!(err.contains("needs MQLens API version 9"), "{err}");
+        assert!(writes(&env).is_empty());
+    }
+}

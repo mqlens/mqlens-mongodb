@@ -76,7 +76,12 @@ export function McpWriteConfirm() {
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex flex-col gap-2">
+        {/* `min-w-0`: the dialog is a grid, and a grid item is at least as wide
+            as its content by default. One unbroken string in the operation —
+            an inline SVG avatar — then widened the column far past the dialog
+            and pushed Refuse and Allow off screen (#458). Held to the dialog's
+            width, the preview scrolls instead. */}
+        <div className="flex min-w-0 flex-col gap-2">
           <div className="font-mono text-[11px] font-semibold text-foreground" data-testid="mcp-write-confirm-tool">
             {request.tool}
           </div>

@@ -43,6 +43,8 @@ export default defineConfig({
     baseURL: `http://localhost:${PORT}`,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
+    // The app follows the OS theme until one is picked; tests start from a dark OS.
+    colorScheme: 'dark',
   },
   projects: [
     { name: 'chromium', use: { ...devices['Desktop Chrome'], viewport } },

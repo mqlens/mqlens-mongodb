@@ -51,7 +51,6 @@ use crate::durable;
 use crate::vault;
 use sha2::{Digest, Sha256};
 use std::fs;
-use fs4::fs_std::FileExt;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -406,14 +405,14 @@ impl AuditLog {
             .truncate(false)
             .open(&self.lock_path)
             .map_err(|e| format!("open {}: {e}", self.lock_path.display()))?;
-        match file.try_lock_exclusive() {
-            Ok(true) => Ok(HeldLock(file)),
-            Ok(false) => Err(format!(
+        match file.try_lock() {
+            Ok(()) => Ok(HeldLock(file)),
+            Err(fs::TryLockError::WouldBlock) => Err(format!(
                 "another MQLens instance is already recording to the activity log ({}) — \
                  only one instance can record at a time",
                 self.path.display()
             )),
-            Err(e) => Err(format!("lock {}: {e}", self.lock_path.display())),
+            Err(fs::TryLockError::Error(e)) => Err(format!("lock {}: {e}", self.lock_path.display())),
         }
     }
 
@@ -844,7 +843,7 @@ impl Drop for HeldLock {
     fn drop(&mut self) {
         // Nothing useful to do on failure: closing the handle straight after
         // still releases the lock once any inherited copies are gone.
-        let _ = FileExt::unlock(&self.0);
+        let _ = self.0.unlock();
     }
 }
 

@@ -1,0 +1,6 @@
+# Taken from MQLens Server by scripts/refresh-server-protos.sh. Fixed LF line
+# endings keep a refresh on Windows from showing every line as changed, and the
+# generated client is collapsed in GitHub diffs.
+src-tauri/proto/** text eol=lf
+src-tauri/src/server/pb/mqlens/** text eol=lf linguist-generated=true
+src-tauri/src/server/testdata/** text eol=lf

@@ -1,3 +1,5 @@
+import { maskLiterals } from './jsLiterals';
+
 export type Surface = 'filter' | 'projection' | 'sort' | 'aggStage' | 'shell';
 export type CompletionKind = 'field' | 'operator' | 'stage' | 'method' | 'enum' | 'ejson';
 
@@ -159,10 +161,78 @@ function byPrefix<T extends { label: string }>(items: T[], token: string): T[] {
   return items.filter((i) => i.label.toLowerCase().startsWith(t));
 }
 
-// True when the caret sits just after an opening double-quote (user is already
-// typing a quoted key), so we must NOT add quotes again.
-function inQuote(text: string): boolean {
-  return /"[\w$.]*$/.test(text);
+// The quote the caret sits just after (the user is already typing a quoted
+// key), so we must NOT add quotes again, and close with that one. A single
+// quote counts only where a key or value starts, not as an apostrophe.
+export function openQuote(text: string): '"' | "'" | null {
+  if (/"[\w$.]*$/.test(text)) return '"';
+  if (/(?:^|[^\w$])'[\w$.]*$/.test(text)) return "'";
+  return null;
+}
+export function inQuote(text: string): boolean {
+  return openQuote(text) !== null;
+}
+const quoteOf = (ctx: CompletionCtx) => openQuote(ctx.textBeforeCursor) ?? '"';
+
+// A collection access, or a string or comment to step over (so `db.x.` inside
+// one is not read as code). An unclosed string or comment runs to the end.
+const COLLECTION_OR_SKIP =
+  /\bdb\.getCollection\(\s*["']([^"'\n]+)["']\s*\)|\bdb\.([A-Za-z_$][\w$]*)\s*\.|"(?:[^"\\\n]|\\.)*"?|'(?:[^'\\\n]|\\.)*'?|\x60(?:[^\x60\\]|\\.)*\x60?|\/\/[^\n]*|\/\*[\s\S]*?(?:\*\/|$)/g;
+
+/** The collection of the last `db.<coll>.` or `db.getCollection("<coll>")` in shell text. */
+export function shellCollectionAt(text: string): string | undefined {
+  let found: string | undefined;
+  for (const m of regexEmptied(text).matchAll(COLLECTION_OR_SKIP)) found = m[1] ?? m[2] ?? found;
+  return found;
+}
+
+// The text with its regex literals emptied (acorn tells them from division)
+// and its strings kept, which getCollection("name") needs.
+function regexEmptied(text: string): string {
+  const masked = maskLiterals(text);
+  const out = text.split('');
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] !== '/' || masked[i] !== '"') continue;
+    const end = masked.indexOf('"', i + 1);
+    if (end < 0) break;
+    for (let k = i; k <= end; k++) out[k] = masked[k];
+    i = end;
+  }
+  return out.join('');
+}
+
+const STRING_OR_COMMENT =
+  /"(?:[^"\\\n]|\\.)*"?|'(?:[^'\\\n]|\\.)*'?|\x60(?:[^\x60\\]|\\.)*\x60?|\/\/[^\n]*|\/\*[\s\S]*?(?:\*\/|$)/g;
+
+// Shell text with its strings, regex and comments emptied, so their brackets
+// do not count. acorn first, for regex literals; the pattern then also covers
+// a string still being typed, past which acorn stops.
+// Same length as the text, so positions in one are positions in the other.
+const shellCode = (text: string) =>
+  maskLiterals(text).replace(STRING_OR_COMMENT, (m) => m.replace(/[^\n]/g, ' '));
+
+/** The brackets still open at the end of shell text, innermost last, with the commas read in each. */
+function openBrackets(text: string) {
+  const code = shellCode(text);
+  const open: Array<{ at: number; commas: number }> = [];
+  for (let i = 0; i < code.length; i++) {
+    const c = code[i];
+    if ('([{'.includes(c)) open.push({ at: i, commas: 0 });
+    else if (')]}'.includes(c)) open.pop();
+    else if (c === ',' && open.length) open[open.length - 1].commas++;
+  }
+  return { code, open };
+}
+
+/** The `.method(` call the end of shell text is inside, and which argument (from 0). */
+export function shellCallAt(text: string): { method: string; arg: number } | null {
+  const { code, open } = openBrackets(text);
+  for (let k = open.length - 1; k >= 0; k--) {
+    if (code[open[k].at] !== '(') continue;
+    const method = code.slice(0, open[k].at).match(/\.\s*([\w$]+)\s*$/)?.[1];
+    return method ? { method, arg: open[k].commas } : null;
+  }
+  return null;
 }
 
 // Whether to emit mongosh-style output (bare keys + shell constructors): the
@@ -193,7 +263,7 @@ function keyInsert(ctx: CompletionCtx, s: string): string {
 function snippetKey(ctx: CompletionCtx, key: string): string {
   const esc = key.startsWith('$') ? `\\${key}` : key;
   if (isShellStyle(ctx) && !inQuote(ctx.textBeforeCursor)) return esc;
-  return inQuote(ctx.textBeforeCursor) ? `${esc}"` : `"${esc}"`;
+  return inQuote(ctx.textBeforeCursor) ? `${esc}${quoteOf(ctx)}` : `"${esc}"`;
 }
 
 // Operator completions that auto-insert the operator's value shape.
@@ -223,13 +293,20 @@ function fieldItems(ctx: CompletionCtx): CompletionItem[] {
   });
 }
 
+// Whether the key being typed already has its value after the cursor (`ti|: "gold"`):
+// then only the key is replaced, not scaffolded again.
+const hasValueAfter = (ctx: CompletionCtx) => /^[\w$.]*["']?\s*:/.test(ctx.textAfterCursor ?? '');
+const keyOnlyItem = (ctx: CompletionCtx, name: string): CompletionItem =>
+  ({ label: name, kind: 'field', insertText: keyInsert(ctx, name), detail: ctx.schema?.get(name)?.type });
+
 // Field completions for projection/sort key positions: the value is a fixed
 // choice (include/exclude or direction), offered as a snippet choice dropdown.
 function choiceFieldItems(ctx: CompletionCtx, choices: string): CompletionItem[] {
   return ctx.fields.map((name) => {
+    if (hasValueAfter(ctx)) return keyOnlyItem(ctx, name);
     const fs = ctx.schema?.get(name);
     const bare = isShellStyle(ctx) && isBareIdentifier(name) && !inQuote(ctx.textBeforeCursor);
-    const key = bare ? name : inQuote(ctx.textBeforeCursor) ? `${name}"` : `"${name}"`;
+    const key = bare ? name : inQuote(ctx.textBeforeCursor) ? `${name}${quoteOf(ctx)}` : `"${name}"`;
     return { label: name, kind: 'field' as const, insertText: `${key}: \${1|${choices}|}`, detail: fs?.type, isSnippet: true };
   });
 }
@@ -271,14 +348,12 @@ function typedFieldItems(ctx: CompletionCtx): CompletionItem[] {
     const fs = ctx.schema?.get(name);
     const shell = isShellStyle(ctx);
     const scaffold = fs?.type ? TYPE_VALUE_SCAFFOLDS[fs.type] : undefined;
-    if (!scaffold) {
-      return { label: name, kind: 'field' as const, insertText: keyInsert(ctx, name), detail: fs?.type };
-    }
+    if (!scaffold || hasValueAfter(ctx)) return keyOnlyItem(ctx, name);
     // Shell style leaves a bare-identifier key unquoted (but still quotes a
     // dotted path); JSON opens a quote unless the user already typed one, and
     // always closes it before the colon.
     const bare = shell && isBareIdentifier(name) && !inQuote(ctx.textBeforeCursor);
-    const key = bare ? name : inQuote(ctx.textBeforeCursor) ? `${name}"` : `"${name}"`;
+    const key = bare ? name : inQuote(ctx.textBeforeCursor) ? `${name}${quoteOf(ctx)}` : `"${name}"`;
     return { label: name, kind: 'field' as const, insertText: `${key}: ${shell ? scaffold.shell : scaffold.json}`, detail: fs?.type, isSnippet: true };
   });
 }
@@ -292,8 +367,9 @@ function quoteForType(value: string, type?: string): string {
 // When the user already typed `"`, Monaco may auto-insert a closing `"` ahead of
 // the cursor — only add our own closer when one is not already there.
 function closeQuotedValue(ctx: CompletionCtx, value: string): string {
-  if (ctx.textAfterCursor?.trimStart().startsWith('"')) return value;
-  return `${value}"`;
+  const q = quoteOf(ctx);
+  if (ctx.textAfterCursor?.trimStart().startsWith(q)) return value;
+  return `${value}${q}`;
 }
 
 function valueInsert(ctx: CompletionCtx, value: string, type?: string): string {
@@ -480,7 +556,8 @@ export function getCompletions(ctx: CompletionCtx): CompletionItem[] {
     }
     return byPrefix(choiceFieldItems(ctx, '1,-1'), token);
   }
-  if (surface === 'shell') {
+  // Inside a quoted key (`{ "address.ci`) the dots belong to a field path.
+  if (surface === 'shell' && !inQuote(textBeforeCursor)) {
     // db.<partial> (collection slot — exactly one dot after db) → collection names + db methods
     if (/\bdb\.\w*$/.test(textBeforeCursor)) {
       const colls = (ctx.collections ?? []).map((c) => ({ label: c, kind: 'field' as const, insertText: c, detail: 'collection' }));
@@ -491,11 +568,40 @@ export function getCompletions(ctx: CompletionCtx): CompletionItem[] {
     if (/[)\]\w]\s*\.\w*$/.test(textBeforeCursor)) {
       return byPrefix(CURSOR_METHODS.map((m) => ({ label: m, kind: 'method' as const, insertText: m })), token);
     }
-    // top level (not after a dot, not inside an open ( or { ) → mongosh globals
-    const openParen = textBeforeCursor.lastIndexOf('(') > textBeforeCursor.lastIndexOf(')');
-    const openBrace = textBeforeCursor.lastIndexOf('{') > textBeforeCursor.lastIndexOf('}');
-    if (!openParen && !openBrace) {
+    // top level, or a code block (a callback's or an if's body, not an
+    // object) → mongosh globals
+    const { code, open } = openBrackets(textBeforeCursor);
+    const inner = open[open.length - 1];
+    const before = inner ? code.slice(0, inner.at).trimEnd() : '';
+    if (!inner || (code[inner.at] === '{' && (before === '' || /(?:=>|[);{}]|\b(?:else|do|try|finally))$/.test(before)))) {
       return byPrefix(SHELL_GLOBALS.map((g) => ({ label: g, kind: 'method' as const, insertText: g })), token);
+    }
+  }
+  if (surface === 'shell') {
+    // An aggregation stage's body ({ $project: { …), read the way that stage reads it.
+    const { open } = openBrackets(textBeforeCursor);
+    const inner = open[open.length - 1];
+    const stage = inner && textBeforeCursor[inner.at] === '{'
+      ? textBeforeCursor.slice(0, inner.at).match(/["']?(\$[A-Za-z]+)["']?\s*:\s*$/)?.[1]
+      : undefined;
+    if (stage && AGG_STAGES.includes(stage)) {
+      return getCompletions({
+        ...ctx, surface: 'aggStage', stageOperator: stage, shellSyntax: true, textBeforeCursor: textBeforeCursor.slice(inner.at),
+      });
+    }
+    // A string straight inside a call's parentheses (distinct("ti) names a
+    // field: the name, closing the string unless its quote already follows.
+    if (inner && textBeforeCursor[inner.at] === '(' && inQuote(textBeforeCursor)) {
+      return byPrefix(fieldStringItems(ctx), token);
+    }
+    // sort() and a projection (find's second argument) take their own documents,
+    // quoted keys too
+    const call = shellCallAt(textBeforeCursor);
+    // An index key document (createIndex's keys, hint) takes directions, as sort() does.
+    const indexKeys = call?.arg === 0 && /^(?:createIndex|hint|dropIndex)$/.test(call.method);
+    if (call?.method === 'sort' || indexKeys) return getCompletions({ ...ctx, surface: 'sort', shellSyntax: true });
+    if (call?.method === 'projection' || (call?.arg === 1 && /^find(?:One)?$/.test(call.method))) {
+      return getCompletions({ ...ctx, surface: 'projection', shellSyntax: true });
     }
     // otherwise (inside find({...}), aggregate([...])) → behave like a filter (fall through)
   }

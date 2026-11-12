@@ -11,6 +11,12 @@ vi.mock('../theme/ThemePicker', () => ({
 // Sidebar now uses the in-app dialog system, so it must render inside a provider.
 const render = (ui: ReactElement) => rtlRender(<DialogProvider>{ui}</DialogProvider>);
 
+const openManageMenu = async () => {
+  const trigger = await screen.findByRole('menuitem', { name: 'Manage' });
+  fireEvent.keyDown(trigger, { key: 'ArrowRight' });
+  return trigger;
+};
+
 // Mock Tauri invoke function
 const mockInvoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({
@@ -235,11 +241,13 @@ describe('Sidebar Component', () => {
     const handleDisconnect = vi.fn();
 
     const handleSelectIndex = vi.fn();
+    const handleDeleteIndex = vi.fn();
 
     render(
       <Sidebar
         onSelectCollection={handleSelectCollection}
         onSelectIndex={handleSelectIndex}
+        onDeleteIndex={handleDeleteIndex}
         activeCollection={null}
         activeConnections={activeConnections}
         onOpenConnectionManager={() => {}}
@@ -294,6 +302,15 @@ describe('Sidebar Component', () => {
     const indexNode = screen.getByText('email_1');
     fireEvent.click(indexNode);
     expect(handleSelectIndex).toHaveBeenCalledWith('conn-1', 'sales_db', 'customers', 'email_1');
+
+    // Irreversible index deletion is nested, while the safe copy action stays
+    // directly available from the first menu level.
+    fireEvent.contextMenu(indexNode);
+    expect(screen.getByText('Copy Index Name')).toBeInTheDocument();
+    expect(screen.queryByText('Delete Index')).toBeNull();
+    await openManageMenu();
+    fireEvent.click(await screen.findByText('Delete Index'));
+    expect(handleDeleteIndex).toHaveBeenCalledWith('conn-1', 'sales_db', 'customers', 'email_1');
 
     // Test disconnect click
     const disconnectBtns = screen.getAllByRole('button', { name: /disconnect/i });
@@ -524,6 +541,44 @@ describe('Sidebar Component', () => {
     fireEvent.mouseEnter(collRow);
     expect(await screen.findByTestId('coll-stats-card')).toBeInTheDocument();
     expect(mockInvoke).toHaveBeenCalledWith('coll_stats', { id: 'conn-1', db: 'sales_db', collection: 'customers' });
+  });
+
+  it('opens the Indexes view from the indexes folder label, and still expands it (#512)', async () => {
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections' && args.db === 'sales_db') {
+        return Promise.resolve([{ name: 'customers', type: 'collection' }]);
+      }
+      if (cmd === 'list_indexes') return Promise.resolve([{ name: 'email_1', keys: '{"email":1}', unique: false, sparse: false }]);
+      return Promise.resolve([]);
+    });
+    const onOpenIndexes = vi.fn();
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        onOpenIndexes={onOpenIndexes}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Mock DB', uri: 'mongodb://mock' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+      />
+    );
+
+    fireEvent.click(await screen.findByText('sales_db'));
+    fireEvent.click(await screen.findByText('Collections'));
+    fireEvent.click(await screen.findByText('customers'));
+    fireEvent.click(await screen.findByText('indexes'));
+
+    expect(onOpenIndexes).toHaveBeenCalledWith('conn-1', 'sales_db', 'customers');
+    expect(await screen.findByText('email_1')).toBeInTheDocument();
+
+    // Clicking the label again opens the view again; it does not collapse the folder.
+    fireEvent.click(screen.getByText('indexes'));
+    expect(onOpenIndexes).toHaveBeenCalledTimes(2);
+    expect(screen.getByText('email_1')).toBeInTheDocument();
   });
 
   it('shows an index stats popover when hovering an index row (#178)', async () => {
@@ -958,12 +1013,13 @@ describe('Sidebar Component', () => {
 
     // Right-click collection to drop it
     fireEvent.contextMenu(newCollNode);
-    const dropCollOption = screen.getByText('Drop Collection');
-    expect(dropCollOption).toBeInTheDocument();
+    expect(screen.queryByText('Drop Collection')).toBeNull();
+    await openManageMenu();
+    const dropCollOption = await screen.findByText('Drop Collection');
     fireEvent.click(dropCollOption);
 
-    // Confirm the drop via the in-app dialog; collection node is removed
-    fireEvent.click(await screen.findByTestId('dialog-confirm'));
+    // The final drop stays disabled until the exact collection name is typed.
+    await submitPrompt('created_collection');
     await waitFor(() => {
       expect(screen.queryByText('created_collection')).not.toBeInTheDocument();
     });
@@ -1188,6 +1244,10 @@ describe('Sidebar Component', () => {
     fireEvent.contextMenu(viewNode);
     expect(screen.queryByText('Validation Rules')).not.toBeInTheDocument();
     expect(screen.getByText('Analyze Schema')).toBeInTheDocument();
+    expect(screen.queryByText('Drop View')).toBeNull();
+    await openManageMenu();
+    expect(await screen.findByText('Drop View')).toBeInTheDocument();
+    fireEvent.keyDown(document.body, { key: 'Escape' });
     fireEvent.keyDown(document.body, { key: 'Escape' });
 
     // Regular collection still offers it.
@@ -1364,8 +1424,10 @@ describe('Sidebar Component', () => {
     });
 
     fireEvent.contextMenu(ordersNode);
-    fireEvent.click(screen.getByText('Drop Collection'));
-    await clickConfirm();
+    expect(screen.queryByText('Drop Collection')).toBeNull();
+    await openManageMenu();
+    fireEvent.click(await screen.findByText('Drop Collection'));
+    await submitPrompt('orders');
     await waitFor(() => {
       const d = calls.find((x) => x.cmd === 'drop_collection');
       expect(d).toBeTruthy();
@@ -1390,8 +1452,10 @@ describe('Sidebar Component', () => {
     });
 
     fireEvent.contextMenu(dbNode);
-    fireEvent.click(screen.getByText('Drop Database'));
-    await clickConfirm();
+    expect(screen.queryByText('Drop Database')).toBeNull();
+    await openManageMenu();
+    fireEvent.click(await screen.findByText('Drop Database'));
+    await submitPrompt('shop');
     await waitFor(() => {
       const d = calls.find((x) => x.cmd === 'drop_database');
       expect(d).toBeTruthy();
@@ -1467,7 +1531,9 @@ describe('Sidebar Component', () => {
     // Drop Collection: wrong typed name -> no invoke; exact name -> invoke
     // with confirmed:true.
     fireEvent.contextMenu(ordersNode);
-    fireEvent.click(screen.getByText('Drop Collection'));
+    expect(screen.queryByText('Drop Collection')).toBeNull();
+    await openManageMenu();
+    fireEvent.click(await screen.findByText('Drop Collection'));
     await typeAndSubmit('not_orders');
     expect(await screen.findByTestId('dialog-error')).toHaveTextContent('Name does not match');
     expect(calls.find((x) => x.cmd === 'drop_collection')).toBeFalsy();
@@ -1502,7 +1568,9 @@ describe('Sidebar Component', () => {
     // Drop Database: wrong typed name -> no invoke; exact name -> invoke
     // with confirmed:true.
     fireEvent.contextMenu(dbNode);
-    fireEvent.click(screen.getByText('Drop Database'));
+    expect(screen.queryByText('Drop Database')).toBeNull();
+    await openManageMenu();
+    fireEvent.click(await screen.findByText('Drop Database'));
     await typeAndSubmit('wrong_db');
     expect(await screen.findByTestId('dialog-error')).toHaveTextContent('Name does not match');
     expect(calls.find((x) => x.cmd === 'drop_database')).toBeFalsy();
@@ -2183,5 +2251,287 @@ describe('opening additional collection tabs (#206)', () => {
     expect(onSelect).not.toHaveBeenCalledWith(
       'c1', 'app', 'orders', undefined, { newTab: true },
     );
+  });
+});
+
+describe('Sidebar: commands a server connection cannot run', () => {
+  it('disables the menu entries for blocked commands, and only those', async () => {
+    mockInvoke.mockImplementation((cmd, args) => {
+      if (cmd === 'list_databases' && args.id === 'conn-1') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections') return Promise.resolve([{ name: 'customers', type: 'collection' }]);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+    const blocked = new Set(['start_dump_task', 'drop_database']);
+    const handleOpenDump = vi.fn();
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Remote Orders', uri: '' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+        onOpenDump={handleOpenDump}
+        onOpenGenerate={() => {}}
+        isCommandBlocked={(id, command) => id === 'conn-1' && blocked.has(command)}
+      />
+    );
+
+    const dbNode = await screen.findByText('sales_db');
+    fireEvent.contextMenu(dbNode);
+    const dump = screen.getByTestId('ctx-dump-db-conn-1-sales_db');
+    expect(dump).toHaveAttribute('data-disabled');
+    expect(dump).toHaveAttribute('title', 'Not available on MQLens Server yet');
+    await openManageMenu();
+    expect(await screen.findByRole('menuitem', { name: /Drop Database/i })).toHaveAttribute('data-disabled');
+    expect(screen.getByTestId('ctx-generate-db-conn-1-sales_db')).not.toHaveAttribute('data-disabled');
+    fireEvent.click(dump);
+    expect(handleOpenDump).not.toHaveBeenCalled();
+  });
+});
+
+describe('Sidebar: an action the role rules out', () => {
+  it('says the role is why, not the server', async () => {
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections') return Promise.resolve([]);
+      return Promise.resolve([]);
+    });
+    const blocked = new Set(['start_dump_task', 'drop_database']);
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Remote Orders', uri: '' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+        onOpenDump={() => {}}
+        isCommandBlocked={(id, command) => id === 'conn-1' && blocked.has(command)}
+        isBlockedByRole={(id, command) => id === 'conn-1' && command === 'drop_database'}
+      />
+    );
+
+    fireEvent.contextMenu(await screen.findByText('sales_db'));
+    expect(screen.getByTestId('ctx-dump-db-conn-1-sales_db')).toHaveAttribute(
+      'title',
+      'Not available on MQLens Server yet'
+    );
+    await openManageMenu();
+    expect(await screen.findByRole('menuitem', { name: /Drop Database/i })).toHaveAttribute(
+      'title',
+      'Your role on this MQLens Server connection does not allow this'
+    );
+  });
+});
+
+describe('Sidebar: a copy destination the role cannot write to', () => {
+  // A viewer can copy from a server connection but not into it, so its paste
+  // targets are closed, saying the role is why.
+  it('closes paste on a connection whose role cannot write', async () => {
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections') return Promise.resolve([]);
+      return Promise.resolve([]);
+    });
+    const handlePaste = vi.fn();
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Remote Orders', uri: '' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+        canPaste
+        onPasteInto={handlePaste}
+        isCommandBlocked={(id, command) => id === 'conn-1' && command === 'insert_document'}
+        isBlockedByRole={(id, command) => id === 'conn-1' && command === 'insert_document'}
+      />
+    );
+
+    fireEvent.contextMenu(await screen.findByText('sales_db'));
+    const paste = await screen.findByRole('menuitem', { name: /Paste here/i });
+    expect(paste).toHaveAttribute('data-disabled');
+    expect(paste).toHaveAttribute('title', 'Your role on this MQLens Server connection does not allow this');
+    fireEvent.click(paste);
+    expect(handlePaste).not.toHaveBeenCalled();
+  });
+});
+
+describe('Sidebar: server connection badge', () => {
+  it('marks a connection made through an MQLens Server, naming the account', async () => {
+    mockInvoke.mockImplementation((cmd) =>
+      cmd === 'list_databases' ? Promise.resolve([]) : Promise.reject(new Error(`Unhandled mock: ${cmd}`)),
+    );
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[
+          { id: 'conn-1', name: 'Remote Orders', uri: '' },
+          { id: 'conn-2', name: 'Local', uri: 'mongodb://localhost' },
+        ]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+        serverAccountFor={(id) => (id === 'conn-1' ? 'Work' : undefined)}
+      />
+    );
+
+    const badges = await screen.findAllByTestId('connection-server-badge');
+    expect(badges).toHaveLength(1);
+    expect(badges[0]).toHaveAttribute('title', 'Through the MQLens Server account Work');
+  });
+});
+
+describe('Sidebar: inline tree buttons for blocked commands', () => {
+  it('disables the inline new-collection and GridFS bucket controls', async () => {
+    mockInvoke.mockImplementation((cmd, args) => {
+      if (cmd === 'list_databases' && args.id === 'conn-1') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections') return Promise.resolve([{ name: 'customers', type: 'collection' }]);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+    const blocked = new Set(['create_collection', 'list_gridfs_files']);
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Remote Orders', uri: '' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+        isCommandBlocked={(id, command) => id === 'conn-1' && blocked.has(command)}
+      />
+    );
+
+    fireEvent.click(await screen.findByText('sales_db'));
+    const newCollection = await screen.findByTestId('collections-new-conn-1-sales_db');
+    expect(newCollection).toBeDisabled();
+    expect(newCollection).toHaveAttribute('title', 'Not available on MQLens Server yet');
+    expect(screen.getByTestId('gridfs-new-bucket-conn-1-sales_db')).toBeDisabled();
+    fireEvent.click(screen.getByText('GridFS Buckets'));
+    expect(screen.queryByTestId('gridfs-open-bucket-conn-1-sales_db')).not.toBeInTheDocument();
+  });
+});
+
+describe('Sidebar: validation rules and GridFS buckets on a server connection', () => {
+  it('disables Validation Rules and opening a bucket when their commands are blocked', async () => {
+    mockInvoke.mockImplementation((cmd, args) => {
+      if (cmd === 'list_databases' && args.id === 'conn-1') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections') {
+        return Promise.resolve([
+          { name: 'customers', type: 'collection' },
+          { name: 'fs.files', type: 'collection' },
+          { name: 'fs.chunks', type: 'collection' },
+        ]);
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+    const blocked = new Set(['set_validator', 'list_gridfs_files']);
+    const onOpenGridfs = vi.fn();
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Remote Orders', uri: '' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+        onEditValidation={() => {}}
+        onOpenGridfs={onOpenGridfs}
+        isCommandBlocked={(id, command) => id === 'conn-1' && blocked.has(command)}
+      />
+    );
+
+    fireEvent.click(await screen.findByText('sales_db'));
+    fireEvent.click(await screen.findByText('Collections'));
+    fireEvent.contextMenu(await screen.findByText('customers'));
+    expect(screen.getByRole('menuitem', { name: /Validation Rules/i })).toHaveAttribute('data-disabled');
+
+    fireEvent.click(screen.getByText('GridFS Buckets'));
+    fireEvent.click(await screen.findByText('fs'));
+    expect(onOpenGridfs).not.toHaveBeenCalled();
+  });
+});
+
+describe('Sidebar: views whose main command is blocked', () => {
+  it('disables schema analysis, user management and monitoring', async () => {
+    mockInvoke.mockImplementation((cmd, args) => {
+      if (cmd === 'list_databases' && args.id === 'conn-1') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections') return Promise.resolve([{ name: 'customers', type: 'collection' }]);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+    const blocked = new Set(['analyze_schema', 'list_users', 'server_status', 'repl_set_status', 'get_profiling_status']);
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Remote Orders', uri: '' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+        onAnalyzeSchema={() => {}}
+        onOpenUsers={() => {}}
+        onOpenMonitoring={() => {}}
+        isCommandBlocked={(id, command) => id === 'conn-1' && blocked.has(command)}
+      />
+    );
+
+    const serverNode = await screen.findByText('Remote Orders');
+    fireEvent.contextMenu(serverNode.closest('div')!);
+    expect(screen.getByRole('menuitem', { name: /Monitor/i })).toHaveAttribute('data-disabled');
+    expect(screen.getByRole('menuitem', { name: /Manage Users/i })).toHaveAttribute('data-disabled');
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+
+    const dbNode = await screen.findByText('sales_db');
+    fireEvent.contextMenu(dbNode);
+    expect(screen.getByRole('menuitem', { name: /Manage Users/i })).toHaveAttribute('data-disabled');
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+
+    fireEvent.click(dbNode);
+    fireEvent.click(await screen.findByText('Collections'));
+    fireEvent.contextMenu(await screen.findByText('customers'));
+    expect(screen.getByRole('menuitem', { name: /Analyze Schema/i })).toHaveAttribute('data-disabled');
+  });
+});
+
+describe('Sidebar: monitoring with some of its reads blocked', () => {
+  it('keeps Monitor available while any monitoring read is', async () => {
+    mockInvoke.mockImplementation((cmd, args) => {
+      if (cmd === 'list_databases' && args.id === 'conn-1') return Promise.resolve([]);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Remote Orders', uri: '' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+        onOpenMonitoring={() => {}}
+        isCommandBlocked={(id, command) => id === 'conn-1' && command === 'server_status'}
+      />
+    );
+
+    const serverNode = await screen.findByText('Remote Orders');
+    fireEvent.contextMenu(serverNode.closest('div')!);
+    expect(screen.getByRole('menuitem', { name: /Monitor/i })).not.toHaveAttribute('data-disabled');
   });
 });

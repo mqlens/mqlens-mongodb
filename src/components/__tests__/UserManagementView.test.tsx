@@ -286,3 +286,24 @@ describe('UserManagementView (user & role management)', () => {
     expect(await screen.findByText(/connection lost/)).toBeInTheDocument();
   });
 });
+
+describe('UserManagementView: user changes a server connection cannot make', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockInvoke.mockImplementation(defaultInvoke);
+  });
+
+  it('disables create, edit and drop when they are blocked', async () => {
+    renderWithProviders(
+      <UserManagementView connectionId="c1" blockedCommands={['create_user', 'update_user', 'drop_user']} />,
+    );
+    const row = await screen.findByTestId('user-row-sales_db.app_user');
+    expect(screen.getByTestId('create-user-btn')).toBeDisabled();
+
+    fireEvent.contextMenu(row);
+    fireEvent.click(await screen.findByText('Drop User'));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(mockConfirm).not.toHaveBeenCalled();
+    expect(mockInvoke).not.toHaveBeenCalledWith('drop_user', expect.anything());
+  });
+});

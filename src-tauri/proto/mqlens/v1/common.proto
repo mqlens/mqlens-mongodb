@@ -1,0 +1,11 @@
+syntax = "proto3";
+package mqlens.v1;
+option go_package = "github.com/mqlens/mqlens-server/gen/mqlens/v1;mqlensv1";
+
+// Typed error detail attached to connect errors (mirrors desktop UX).
+message MqlErrorDetail {
+  string code = 1;        // e.g. "unauthorized", "not_found", "mongo_error"
+  string message = 2;
+  int32 mongo_code = 3;   // 0 if not a mongo error
+  bool retryable = 4;
+}

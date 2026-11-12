@@ -1,0 +1,17 @@
+---
+import WorkflowLanding from '../components/WorkflowLanding.astro';
+---
+<WorkflowLanding title="MongoDB AI query assistant with editable MQL" description="Draft MongoDB queries in natural language with the optional MQLens AI assistant. Configure your provider, review generated MQL, and choose when to run it."
+  eyebrow="Optional help, inside your workspace" h1="Describe your query." grad="Review the MQL."
+  lede="The MQLens query assistant turns a natural-language request into an editable MongoDB query or aggregation. Choose a supported provider or local agent CLI, inspect the draft, and decide what to run. Browsing and querying MongoDB do not require AI."
+  screenshot={{ src: '/screenshots/mqlens-ai-assistant.png', alt: 'MQLens query assistant showing a sample prompt and an editable query draft' }}
+  stepsTitle="From a question to an inspected query" steps={[
+    { title: 'Configure a provider', body: 'Open AI settings and configure a supported provider or local agent CLI. External services may require an API key and charge for usage.' },
+    { title: 'Describe the result', body: 'Open the assistant beside your collection and describe the records or aggregation you need. Include useful field names and constraints.' },
+    { title: 'Review before running', body: 'Check field names, filters, limits, and write operations. AI output can be wrong; inspect the draft and use a suitable connection mode.' },
+  ]}
+  featuresTitle="An assistant, with context" features={[
+    { h3: 'Editable output', p: 'Read the generated MQL and modify it in the query workspace. Keep the final query visible alongside your data.' },
+    { h3: 'Your provider choice', p: 'Use the supported API provider or local agent configured in settings. A local CLI may still contact a remote model; check that tool’s configuration.' },
+    { h3: 'Understand data sharing', p: 'The provider receives the prompt and context required by the assistant. Keeping API keys in the backend does not mean all AI processing happens locally. See the <a href="/docs/#security">security notes</a> before using sensitive data.' },
+  ]} />

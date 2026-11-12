@@ -268,7 +268,8 @@
       "next": "Weiter",
       "prev": "Zurück",
       "schema": "Schema",
-      "updateMany": "Mehrere aktualisieren"
+      "updateMany": "Mehrere aktualisieren",
+      "updateOrDelete": "Aktualisieren oder Löschen"
     },
     "dialogs": {
       "bulkAllWarning_one": "\n\n⚠ Dies betrifft das einzige Dokument in der Collection.",
@@ -289,6 +290,7 @@
         "body_one": "Diese Aktualisierung auf {{count}} Dokument anwenden, das folgendem Filter entspricht?\n{{filter}}",
         "body_other": "Diese Aktualisierung auf {{count}} Dokumente anwenden, die folgendem Filter entsprechen?\n{{filter}}",
         "confirmLabel": "Aktualisieren",
+        "hint": "Shell-Syntax funktioniert hier: Schlüssel ohne Anführungszeichen, ISODate(), ObjectId(). Strg+Enter wendet die Aktualisierung an.",
         "promptMessage": "Dokument aktualisieren (Operatoren, z. B. {\"$set\": {...}}):",
         "title": "Mehrere aktualisieren",
         "validation": {
@@ -306,10 +308,10 @@
     },
     "explain": {
       "labels": {
-        "collectionFallback": "Collection",
         "collectionNode": "Collection\n{{namespace}}",
         "documentsFromCollection": "Dokumente aus Collection",
-        "indexNode": "Index: {{indexName}}"
+        "indexNode": "Index: {{indexName}}",
+        "planUnavailable": "Plan nicht verfügbar"
       },
       "stage": {
         "collectionScan": "Collection-Scan",
@@ -322,6 +324,12 @@
         "result": "Ergebnis",
         "skip": "Überspringen",
         "sort": "Sortierung"
+      },
+      "stats": {
+        "docsExamined": "{{n}} Dokumente geprüft",
+        "keysExamined": "{{n}} Schlüssel geprüft",
+        "ms": "{{n}} ms",
+        "returned": "{{n}} zurückgegeben"
       }
     },
     "find": {
@@ -332,7 +340,13 @@
       "placeholder": "In Ergebnissen suchen…",
       "previous": "Vorheriger Treffer (Shift+Enter)"
     },
+    "inlineEdit": {
+      "hint": "Enter speichert, Esc bricht ab. Shell-Syntax: \"Text\", 42, ISODate(\"…\")",
+      "invalidValue": "Kein gültiger Wert. Text in Anführungszeichen setzen, zum Beispiel \"pro\"."
+    },
     "labels": {
+      "plainJson": "Einfaches JSON",
+      "plainJsonWarning": "Nur zur Anzeige/zum Kopieren — BSON-Typinformationen können verloren gehen.",
       "actions": "Aktionen",
       "docsCountEstimated_one": "~{{count}} Dokument",
       "docsCountEstimated_other": "~{{count}} Dokumente",
@@ -340,6 +354,8 @@
       "docsCountExact_other": "{{count}} Dokumente",
       "elements_one": "[ {{count}} Element ]",
       "elements_other": "[ {{count}} Elemente ]",
+      "embeddedFields": "Eingebettete Felder",
+      "embeddedFieldsHint": "Felder eingebetteter Dokumente als eigene Spalten anzeigen, benannt nach Punktpfad",
       "fields_one": "{ {{count}} Feld }",
       "fields_other": "{ {{count}} Felder }",
       "generatingQueryPlan": "Abfrageplan wird erstellt...",
@@ -352,7 +368,9 @@
       "showingRange": "zeige {{from}}–{{to}}",
       "streamingDocuments": "Dokumente werden asynchron gestreamt...",
       "type": "Typ",
-      "value": "Wert"
+      "value": "Wert",
+      "utc": "UTC",
+      "local": "Lokal"
     },
     "tabs": {
       "explainPlan": "Explain-Plan",
@@ -368,13 +386,12 @@
       "copyExplainPlan": "Explain-Plan kopieren",
       "copyQueryCode": "Abfragecode kopieren",
       "deleteDocument": "Dokument löschen",
-      "deleteMany": "Alle Dokumente löschen, die dem aktuellen Filter entsprechen",
       "editDocument": "Dokument bearbeiten",
       "expand": "Ausklappen",
       "insert": "Ein neues Dokument einfügen",
       "readOnly": "Verbindung ist schreibgeschützt",
       "resizeColumn": "Spalte {{label}} anpassen",
-      "updateMany": "Alle Dokumente aktualisieren, die dem aktuellen Filter entsprechen"
+      "dateTimezone": "Zeitzone für Datumsanzeige umschalten"
     },
     "viewModes": {
       "chart": "Diagramm",
@@ -389,18 +406,30 @@
     "empty": {
       "title": "Collection ist leer — nichts zu analysieren."
     },
+    "export": {
+      "failed": "Schema konnte nicht exportiert werden: {{error}}",
+      "json": "JSON",
+      "markdown": "Markdown"
+    },
     "labels": {
       "analyzing": "Schema wird analysiert…",
       "coverage": "Abdeckung",
       "field": "Feld",
       "fieldsCount_one": "{{count}} Feld",
       "fieldsCount_other": "{{count}} Felder",
-      "planned": "Geplant",
+      "noValues": "Keine wiederholten Werte in der Stichprobe.",
       "sampledSummary": "{{sampled}} Dokumente untersucht · {{fields}} Felder",
       "schemaPrefix": "Schema:",
-      "types": "Typen",
-      "validationComingSoonPrefix": "Der Viewer für Collection-Validierungsschemas folgt in Kürze (#93). Dieser Tab zeigt",
-      "validationComingSoonSuffix": "und Validierungsregeln für {{databaseName}}.{{collectionName}}."
+      "showValues": "Klicken, um die häufigsten Werte anzuzeigen",
+      "types": "Typen"
+    },
+    "sample": {
+      "docs_one": "{{count}} Dokument",
+      "docs_other": "{{count}} Dokumente",
+      "first": "Erste N",
+      "mode": "Stichprobenart",
+      "random": "Zufällig",
+      "size": "Stichprobengröße"
     },
     "tabs": {
       "fieldAnalysis": "Feldanalyse",

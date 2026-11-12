@@ -258,7 +258,8 @@
       "runDump": "Dump ausführen"
     },
     "status": {
-      "detecting": "{{tools}} werden gesucht…"
+      "detecting": "{{tools}} werden gesucht…",
+      "onServer": "mongodump läuft auf MQLens Server ({{host}}); der Dump wird an dein Ziel übertragen."
     },
     "errors": {
       "toolMissing": "mongodump wurde nicht gefunden. Installiere die MongoDB Database Tools und lege den Pfad in den Einstellungen fest.",
@@ -317,7 +318,8 @@
       "cancel": "Abbrechen"
     },
     "tools": {
-      "missing": "mongorestore wurde nicht gefunden. Konfiguriere das Verzeichnis für die MongoDB Database Tools in den Einstellungen."
+      "missing": "mongorestore wurde nicht gefunden. Konfiguriere das Verzeichnis für die MongoDB Database Tools in den Einstellungen.",
+      "onServer": "mongorestore läuft auf MQLens Server ({{host}}); der Dump wird zuerst dorthin hochgeladen."
     },
     "source": {
       "title": "Quelle",

@@ -215,7 +215,13 @@ async fn delete_document_inner(
         return Ok(1);
     }
 
-    let client = require_real_client(state, id)?;
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            use crate::server::ops::write;
+            return write::delete_one(state, &conn, database, collection, &filter_doc).await;
+        }
+    };
     let coll = client
         .database(database)
         .collection::<mongodb::bson::Document>(collection);
@@ -266,7 +272,13 @@ async fn delete_many_inner(
     if connection_is_mock(state, id)? {
         return Ok(0); // mock connections don't persist deletes
     }
-    let client = require_real_client(state, id)?;
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            use crate::server::ops::write;
+            return write::delete_many(state, &conn, database, collection, &filter_doc).await;
+        }
+    };
     let res = client
         .database(database)
         .collection::<mongodb::bson::Document>(collection)
@@ -326,7 +338,21 @@ async fn update_many_inner(
     if connection_is_mock(state, id)? {
         return Ok(0); // mock connections don't persist updates
     }
-    let client = require_real_client(state, id)?;
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            use crate::server::ops::write;
+            return write::update_many(
+                state,
+                &conn,
+                database,
+                collection,
+                &filter_doc,
+                &update_doc,
+            )
+            .await;
+        }
+    };
     let res = client
         .database(database)
         .collection::<mongodb::bson::Document>(collection)
@@ -379,7 +405,13 @@ async fn insert_document_inner(
         return Ok("mock-inserted-id".to_string());
     }
 
-    let client = require_real_client(state, id)?;
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            use crate::server::ops::write;
+            return write::insert(state, &conn, database, collection, &doc).await;
+        }
+    };
     let coll = client
         .database(database)
         .collection::<mongodb::bson::Document>(collection);
@@ -1153,6 +1185,50 @@ struct AppliedWrite {
     payload: String,
 }
 
+/// Refused when the stored document has a sub-document whose keys look like
+/// an Extended JSON type wrapper: JSON shows it just as it shows a value of
+/// that type, so a save through JSON would store the type in its place.
+const WRAPPER_SHAPED_EDIT: &str = "This document has a sub-document whose field names look like an Extended JSON type ($numberLong, $date, $oid and the like). Saving it as JSON would store that type in their place, so it cannot be edited here. Use the shell to change it.";
+
+/// The keys the Extended JSON parser reads as a type rather than a field. Any
+/// other `$` key reads back as itself.
+const TYPE_WRAPPER_KEYS: &[&str] = &[
+    "$oid",
+    "$symbol",
+    "$numberInt",
+    "$numberLong",
+    "$numberDouble",
+    "$numberDecimal",
+    "$binary",
+    "$uuid",
+    "$type",
+    "$code",
+    "$scope",
+    "$timestamp",
+    "$regularExpression",
+    "$regex",
+    "$options",
+    "$dbPointer",
+    "$date",
+    "$minKey",
+    "$maxKey",
+    "$undefined",
+];
+
+/// Whether any key of the document, at any depth, is a type-wrapper key.
+/// Values of real BSON types are not sub-documents, so they never count.
+pub(crate) fn has_type_wrapper_key(doc: &Document) -> bool {
+    fn value(v: &mongodb::bson::Bson) -> bool {
+        match v {
+            mongodb::bson::Bson::Document(d) => has_type_wrapper_key(d),
+            mongodb::bson::Bson::Array(items) => items.iter().any(value),
+            _ => false,
+        }
+    }
+    doc.iter()
+        .any(|(k, v)| TYPE_WRAPPER_KEYS.contains(&k.as_str()) || value(v))
+}
+
 /// Which Mongo write to issue for an edited document.
 enum WritePlan {
     Update(Document),
@@ -1228,8 +1304,7 @@ async fn update_document_inner(
     let attempted = Some(match &plan {
         WritePlan::Update(update) => AppliedWrite {
             op: "updateOne",
-            payload: serde_json::to_string(&mongodb::bson::Bson::Document(update.clone()))
-                .unwrap_or_else(|_| "{}".into()),
+            payload: crate::db::ui_string(update).unwrap_or_else(|_| "{}".into()),
         },
         WritePlan::Replace => AppliedWrite {
             op: "replaceOne",
@@ -1253,8 +1328,38 @@ async fn update_document_inner(
         }
     }
 
-    let client = match require_real_client(state, id) {
-        Ok(c) => c,
+    let client = match crate::server::remote::route(state, id) {
+        Ok(crate::server::remote::Route::Local(c)) => c,
+        Ok(crate::server::remote::Route::Remote(conn)) => {
+            use crate::server::ops::{query, write};
+            let stored = query::Find {
+                database,
+                collection,
+                filter: &filter_doc,
+                sort: None,
+                projection: None,
+                limit: 1,
+                skip: 0,
+            };
+            match query::find_documents(state, &conn, stored).await {
+                Ok(docs) if docs.iter().any(has_type_wrapper_key) => {
+                    rejected!(WRAPPER_SHAPED_EDIT.to_string())
+                }
+                Ok(_) => {}
+                Err(e) => rejected!(e),
+            }
+            let result = match plan {
+                WritePlan::Update(update) => {
+                    write::update_one(state, &conn, database, collection, &filter_doc, &update)
+                        .await
+                }
+                WritePlan::Replace => {
+                    write::replace_one(state, &conn, database, collection, &filter_doc, &edited_doc)
+                        .await
+                }
+            };
+            return WriteOutcome { attempted, result };
+        }
         Err(e) => {
             return WriteOutcome {
                 attempted,
@@ -1262,6 +1367,19 @@ async fn update_document_inner(
             }
         }
     };
+    let stored = client
+        .database(database)
+        .collection::<mongodb::bson::RawDocumentBuf>(collection)
+        .find_one(filter_doc.clone())
+        .await;
+    match stored.map(|found| found.map(crate::db::stored).transpose()) {
+        Ok(Ok(Some(doc))) if has_type_wrapper_key(&doc) => {
+            rejected!(WRAPPER_SHAPED_EDIT.to_string())
+        }
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) => rejected!(e),
+        Err(e) => rejected!(format!("Failed to read document: {}", e)),
+    }
     let coll = client
         .database(database)
         .collection::<Document>(collection);
@@ -1408,6 +1526,28 @@ pub(crate) async fn insert_many_batched(
             .map_err(|e| format!("Failed to {}: {}", op_label, e))?;
     }
     Ok(())
+}
+
+/// Where an import or a generation writes: a driver client, exactly as
+/// before, or a connection through MQLens Server.
+pub(crate) enum WriteTarget {
+    Local(mongodb::Client),
+    Remote(crate::server::ops::copy::RemoteSide),
+}
+
+/// The write target of connection `id` for `command`. A local connection
+/// gets exactly the client, and the error, it always has.
+pub(crate) async fn write_target(
+    state: &crate::AppState,
+    id: &str,
+    command: &str,
+) -> Result<WriteTarget, String> {
+    match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => Ok(WriteTarget::Local(client)),
+        crate::server::remote::Route::Remote(conn) => Ok(WriteTarget::Remote(
+            crate::server::ops::copy::RemoteSide::new(state, conn, command, Some(false)).await?,
+        )),
+    }
 }
 
 /// Write already-converted BSON documents to a live collection under the

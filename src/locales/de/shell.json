@@ -229,13 +229,14 @@
     "noConnection": "Keine aktive Verbindung. Verbinde dich mit einem MongoDB-Cluster, um Collections zu durchsuchen und Abfragen auszuführen."
   },
   "keyboardShortcuts": {
-    "description": "Globale Tastenkürzel für Navigation, Abfragen, die Seitenleiste, Zoom und die Befehlspalette.",
+    "description": "Globale Tastenkürzel für Navigation, Tabs und Fenster, Abfragen, die Seitenleiste, Zoom und die Befehlspalette.",
     "empty": "Keine Tastenkürzel entsprechen deiner Suche.",
     "groups": {
       "command-palette": "Befehlspalette",
       "navigation": "Navigation",
       "query-editor": "Abfrage-Editor",
       "sidebar": "Seitenleiste",
+      "tabs": "Tabs & Fenster",
       "zoom": "Zoom"
     },
     "items": {
@@ -244,9 +245,18 @@
       "palette-navigate": "Durch die Palettenergebnisse navigieren",
       "palette-open": "Befehlspalette öffnen oder schließen",
       "palette-run": "Die ausgewählte Palettenaktion ausführen",
-      "run-query": "Die aktuelle Abfrage ausführen",
+      "run-query": "Die aktuelle Abfrage oder Shell-Anweisung ausführen",
+      "shell-run-all": "Das ganze Shell-Skript ausführen",
       "sidebar-search": "Baumsuche der Seitenleiste fokussieren",
       "submit-dialog": "Einen mehrzeiligen Dialog absenden (URI-Import, Eingabedialoge)",
+      "tab-close": "Den aktiven Tab schließen",
+      "tab-last": "Zum letzten Tab wechseln",
+      "tab-new": "Neuer Tab (zur aktiven Collection, sonst Schnellstart)",
+      "tab-next": "Nächsten Tab anzeigen",
+      "tab-prev": "Vorherigen Tab anzeigen",
+      "tab-reopen": "Den zuletzt geschlossenen Tab wieder öffnen",
+      "tab-select": "Zu Tab 1–8 wechseln",
+      "open-settings": "Einstellungen öffnen",
       "zoom-in": "Oberfläche vergrößern",
       "zoom-in-out": "Oberfläche vergrößern oder verkleinern",
       "zoom-out": "Oberfläche verkleinern",
@@ -293,6 +303,7 @@
       "requiresMongosh": "MongoShell benötigt mongosh",
       "requiresMongoshBody": "Für Abfragen und Skripte hier ist eine aktive mongosh-Sitzung erforderlich.",
       "retry": "Erneut versuchen",
+      "serverFailed": "Die Shell konnte auf MQLens Server nicht gestartet werden",
       "startingSession": "mongosh-Sitzung wird gestartet…",
       "useThisBinary": "Diese Binärdatei verwenden"
     },
@@ -325,14 +336,23 @@
       "sessionUnavailable": "mongosh-Sitzung nicht verfügbar: {{detail}}",
       "switchedToDb": "zur Datenbank {{db}} gewechselt"
     },
+    "script": {
+      "allFiles": "Alle Dateien",
+      "filter": "Shell-Skripte",
+      "openFailed": "Das Skript konnte nicht geöffnet werden: {{message}}",
+      "saveFailed": "Das Skript konnte nicht gespeichert werden: {{message}}"
+    },
     "toolbar": {
       "aiToggleLabel": "KI",
       "aiToggleTitle": "KI-Assistent",
-      "stop": "Stopp",
-      "stopTitle": "Laufenden Befehl stoppen, indem die mongosh-Sitzung neu gestartet wird",
+      "openScript": "Skript öffnen…",
       "restartSession": "Neu starten",
       "restartSessionTitle": "Diese mongosh-Sitzung beenden und eine neue starten",
-      "run": "Ausführen"
+      "run": "Ausführen",
+      "runTitle": "Alles ausführen ({{all}}). {{statement}} führt die Auswahl oder die Anweisung am Cursor aus.",
+      "saveScript": "Skript speichern…",
+      "stop": "Stopp",
+      "stopTitle": "Laufenden Befehl stoppen, indem die mongosh-Sitzung neu gestartet wird"
     }
   },
   "quickStart": {
@@ -382,7 +402,8 @@
     "bodyWithNamespace": "{{namespace}} wurde aus deiner letzten Sitzung wiederhergestellt. Verbinde dich erneut mit {{profile}}, um es zu laden.",
     "disconnected": "Getrennt",
     "profileMissing": "Verbindungsprofil existiert nicht mehr",
-    "reconnectButton": "Erneut mit {{profile}} verbinden"
+    "reconnectButton": "Erneut mit {{profile}} verbinden",
+    "signIn": "Anmelden…"
   },
   "statusBar": {
     "activity": "Aktivität",
@@ -486,6 +507,10 @@
       "dismiss": "Verwerfen",
       "offline": "Du bist offline. Verbinde dich mit dem Internet und versuche es erneut.",
       "uptodate": "Du bist auf der neuesten Version."
+    },
+    "whatsNew": {
+      "link": "Neuerungen ansehen",
+      "message": "Auf MQLens {{version}} aktualisiert."
     }
   },
   "vaultGate": {
@@ -494,12 +519,18 @@
       "setup": "Erstellen & entsperren",
       "unlock": "Entsperren"
     },
+    "biometricOffer": {
+      "description": "Nutze die biometrische Entsperrung dieses Geräts (Touch ID, Face ID oder Windows Hello), statt dein Master-Passwort einzugeben. Du kannst sie unter Einstellungen → Sicherheit wieder ausschalten.",
+      "enable": "Biometrische Entsperrung einschalten",
+      "skip": "Nicht jetzt",
+      "title": "Beim nächsten Mal ohne Passwort entsperren?"
+    },
     "biometry": {
       "faceId": "Face ID verwenden",
       "generic": "Biometrie verwenden",
       "touchId": "Touch ID verwenden"
     },
-    "confirmReset": "Zurücksetzen löscht ALLE gespeicherten Verbindungen und API-Schlüssel. Fortfahren?",
+    "confirmReset": "Beim Zurücksetzen werden ALLE gespeicherten Verbindungen, API-Schlüssel und verschlüsselten MQLens-Server-Sitzungstoken gelöscht. Da der Tresor gesperrt ist, können aktive Serversitzungen nicht widerrufen werden und möglicherweise aktiv bleiben. Fortfahren?",
     "descriptions": {
       "setup": "Deine gespeicherten Verbindungen und API-Schlüssel werden mit diesem Passwort verschlüsselt. Es gibt keine Wiederherstellung, wenn du es vergisst.",
       "unlock": "Gib dein Master-Passwort ein, um deine gespeicherten Zugangsdaten zu entschlüsseln."
@@ -645,5 +676,6 @@
     "retentionNote": "Alte Ereignisse werden automatisch durch die Aufbewahrungseinstellung entfernt. Ein intaktes Protokoll kann nicht gelöscht werden.",
     "statusError": "Fehlgeschlagen",
     "statusOk": "Erfolgreich"
-  }
+  },
+  "shellNotOnServer": "Die Shell ist auf MQLens Server noch nicht verfügbar."
 }

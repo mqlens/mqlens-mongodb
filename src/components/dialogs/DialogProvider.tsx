@@ -20,8 +20,13 @@ export interface PromptOptions {
   cancelLabel?: string;
   /** Return an error string to block submit, or null to allow it. */
   validate?: (value: string) => string | null;
+  /** Keep the confirm button disabled until the raw input is acceptable. */
+  confirmEnabled?: (value: string) => boolean;
+  destructive?: boolean;
   /** Render a multi-line textarea instead of a single-line input. */
   multiline?: boolean;
+  /** Mask the input, for a password. */
+  password?: boolean;
 }
 
 export interface ChooseOptions {

@@ -68,7 +68,8 @@
       "next": "Next",
       "prev": "Prev",
       "schema": "Schema",
-      "updateMany": "Update Many"
+      "updateMany": "Update Many",
+      "updateOrDelete": "Update or Delete"
     },
     "dialogs": {
       "bulkAllWarning_one": "\n\n⚠ This affects the only document in the collection.",
@@ -89,6 +90,7 @@
         "body_one": "Apply this update to {{count}} document(s) matching:\n{{filter}}",
         "body_other": "Apply this update to {{count}} document(s) matching:\n{{filter}}",
         "confirmLabel": "Update",
+        "hint": "Shell syntax works here: unquoted keys, ISODate(), ObjectId(). Ctrl+Enter applies the update.",
         "promptMessage": "Update document (operators, e.g. {\"$set\": {...}}):",
         "title": "Update many",
         "validation": {
@@ -106,10 +108,10 @@
     },
     "explain": {
       "labels": {
-        "collectionFallback": "Collection",
         "collectionNode": "Collection\n{{namespace}}",
         "documentsFromCollection": "Documents from collection",
-        "indexNode": "Index: {{indexName}}"
+        "indexNode": "Index: {{indexName}}",
+        "planUnavailable": "Plan unavailable"
       },
       "stage": {
         "collectionScan": "Collection scan",
@@ -122,6 +124,12 @@
         "result": "Result",
         "skip": "Skip",
         "sort": "Sort"
+      },
+      "stats": {
+        "docsExamined": "{{n}} docs examined",
+        "keysExamined": "{{n}} keys examined",
+        "ms": "{{n}} ms",
+        "returned": "{{n}} returned"
       }
     },
     "find": {
@@ -132,6 +140,10 @@
       "placeholder": "Find in results…",
       "previous": "Previous match (Shift+Enter)"
     },
+    "inlineEdit": {
+      "hint": "Enter to save, Esc to cancel. Shell syntax: \"text\", 42, ISODate(\"…\")",
+      "invalidValue": "Not a valid value. Quote text, for example \"pro\"."
+    },
     "labels": {
       "actions": "Actions",
       "docsCountEstimated_one": "~{{count}} doc",
@@ -140,18 +152,24 @@
       "docsCountExact_other": "{{count}} docs",
       "elements_one": "[ {{count}} element ]",
       "elements_other": "[ {{count}} elements ]",
+      "embeddedFields": "Embedded fields",
+      "embeddedFieldsHint": "Show the fields of embedded documents as their own columns, named by dot path",
       "fields_one": "{ {{count}} field }",
       "fields_other": "{ {{count}} fields }",
       "generatingQueryPlan": "Generating query plan...",
       "key": "Key",
+      "local": "Local",
       "page": "Page {{page}}",
       "pageOf": "Page {{page}} / {{totalPages}}",
       "perPageOption": "{{size}} / page",
+      "plainJson": "Plain JSON",
+      "plainJsonWarning": "Display/copy only — BSON type information may be lost.",
       "queryPlanGenerated": "Query Plan Generated",
       "showingEmpty": "showing {{from}}",
       "showingRange": "showing {{from}}–{{to}}",
       "streamingDocuments": "Streaming documents asynchronously...",
       "type": "Type",
+      "utc": "UTC",
       "value": "Value"
     },
     "tabs": {
@@ -167,14 +185,13 @@
       "copyDocument": "Copy document",
       "copyExplainPlan": "Copy Explain Plan",
       "copyQueryCode": "Copy query code",
+      "dateTimezone": "Toggle Date display timezone",
       "deleteDocument": "Delete document",
-      "deleteMany": "Delete all documents matching the current filter",
       "editDocument": "Edit document",
       "expand": "Expand",
       "insert": "Insert a new document",
       "readOnly": "Connection is read-only",
-      "resizeColumn": "Resize {{label}} column",
-      "updateMany": "Update all documents matching the current filter"
+      "resizeColumn": "Resize {{label}} column"
     },
     "viewModes": {
       "chart": "Chart",
@@ -392,18 +409,30 @@
     "empty": {
       "title": "Collection is empty — nothing to analyze."
     },
+    "export": {
+      "failed": "Could not export the schema: {{error}}",
+      "json": "JSON",
+      "markdown": "Markdown"
+    },
     "labels": {
       "analyzing": "Analyzing schema…",
       "coverage": "coverage",
       "field": "field",
       "fieldsCount_one": "{{count}} field",
       "fieldsCount_other": "{{count}} fields",
-      "planned": "Planned",
+      "noValues": "No repeated values in the sample.",
       "sampledSummary": "sampled {{sampled}} docs · {{fields}} fields",
       "schemaPrefix": "Schema:",
-      "types": "types",
-      "validationComingSoonPrefix": "Collection validation schema viewer coming soon (#93). This tab will show",
-      "validationComingSoonSuffix": "and validator rules for {{databaseName}}.{{collectionName}}."
+      "showValues": "Click to show the most common values",
+      "types": "types"
+    },
+    "sample": {
+      "docs_one": "{{count}} doc",
+      "docs_other": "{{count}} docs",
+      "first": "First N",
+      "mode": "Sample mode",
+      "random": "Random",
+      "size": "Sample size"
     },
     "tabs": {
       "fieldAnalysis": "Field Analysis",

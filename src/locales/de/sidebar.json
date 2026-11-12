@@ -8,6 +8,8 @@
     "readOnlyAriaLabel": "Schreibgeschützte Verbindung",
     "readOnlyBadge": "schreibgeschützt",
     "refreshAriaLabel": "Datenbanken aktualisieren",
+    "serverBadge": "Server",
+    "serverBadgeTitle": "Über das MQLens-Server-Konto {{account}}",
     "viaMcpAriaLabel": "Verbunden über MCP",
     "viaMcpBadge": "über MCP"
   },
@@ -25,6 +27,8 @@
     "createIndex": "Index erstellen",
     "createView": "View erstellen",
     "deleteIndex": "Index löschen",
+    "deleteSelected": "Auswahl löschen ({{n}})",
+    "destructiveActions": "Verwalten",
     "disconnect": "Trennen",
     "dropCollection": "Collection löschen",
     "dropDatabase": "Datenbank löschen",
@@ -38,8 +42,11 @@
     "newBucket": "Neuer Bucket",
     "newCollection": "Neue Collection",
     "newConnection": "Neue Verbindung",
+    "notForRole": "Deine Rolle auf dieser MQLens-Server-Verbindung erlaubt das nicht",
+    "notOnServer": "Auf MQLens Server noch nicht verfügbar",
     "open": "Öffnen",
     "openCollection": "Collection öffnen",
+    "openIndexesView": "Indexübersicht öffnen",
     "openInNewTab": "In neuem Tab öffnen",
     "openShell": "mongosh-Shell öffnen",
     "pasteHere": "Hier einfügen",
@@ -59,14 +66,28 @@
     "watchDeployment": "Deployment-Änderungen beobachten…"
   },
   "dialogs": {
+    "bulkDrop": {
+      "collectionsIn": "Collections der Datenbank {{db}} ({{n}})",
+      "confirm_one": "{{count}} Objekt löschen",
+      "confirm_other": "{{count}} Objekte löschen",
+      "covered": "Werden mit ihrer Datenbank gelöscht, nicht einzeln: {{names}}",
+      "databases": "Datenbanken ({{n}})",
+      "dropped": "Gelöscht",
+      "excluded": "System-Namespaces werden nie gesammelt gelöscht und übersprungen: {{names}}",
+      "failed": "Fehlgeschlagen",
+      "running": "Wird gelöscht…",
+      "summaryFailed": "{{failed}} von {{n}} fehlgeschlagen. Die übrigen wurden gelöscht.",
+      "summaryOk_one": "Gelöscht.",
+      "summaryOk_other": "Alle {{count}} gelöscht.",
+      "title_one": "{{count}} Objekt löschen",
+      "title_other": "{{count}} Objekte löschen",
+      "typeCount": "Zur Bestätigung {{n}} eingeben.",
+      "warning": "Dadurch werden die Daten auf {{connection}} dauerhaft gelöscht. Dies kann nicht rückgängig gemacht werden."
+    },
     "dropCollection": {
-      "confirmLabel": "Löschen",
-      "message": "Möchtest du die Collection \"{{name}}\" wirklich löschen?",
       "title": "Collection löschen"
     },
     "dropDatabase": {
-      "confirmLabel": "Löschen",
-      "message": "Möchtest du die Datenbank \"{{name}}\" wirklich löschen? Dies kann nicht rückgängig gemacht werden.",
       "title": "Datenbank löschen"
     },
     "enterNewCollectionName": "Neuen Collection-Namen eingeben:",
@@ -136,6 +157,46 @@
     "requestFeature": "Feature vorschlagen",
     "starOnGithub": "Auf GitHub mit Stern markieren"
   },
+  "indexesView": {
+    "actions": {
+      "edit": "Index bearbeiten"
+    },
+    "builds": {
+      "progress": "{{names}} wird aufgebaut: {{percent}} % ({{seconds}} s)",
+      "running": "{{names}} wird aufgebaut ({{seconds}} s)"
+    },
+    "columns": {
+      "keys": "Schlüssel",
+      "name": "Name",
+      "properties": "Eigenschaften",
+      "size": "Größe",
+      "type": "Typ",
+      "usage": "Nutzung"
+    },
+    "empty": "Diese Collection hat keine Indizes.",
+    "loading": "Indizes werden geladen…",
+    "properties": {
+      "default": "STANDARD",
+      "hidden": "VERBORGEN",
+      "partial": "PARTIELL",
+      "sparse": "LÜCKENHAFT",
+      "ttl": "TTL {{duration}} ({{seconds}} Sek.)",
+      "unique": "EINDEUTIG"
+    },
+    "statsUnavailable": "Nutzung und Größe der Indizes sind nicht verfügbar: {{detail}}",
+    "title": "Indizes",
+    "type": {
+      "compound": "Zusammengesetzt",
+      "hashed": "Gehasht",
+      "regular": "Einfach",
+      "text": "Volltext",
+      "wildcard": "Platzhalter"
+    },
+    "usage": {
+      "ops": "{{ops}} Zugriffe",
+      "since": "seit {{date}}"
+    }
+  },
   "search": {
     "ariaLabel": "Seitenleiste durchsuchen",
     "clearAriaLabel": "Suche löschen",
@@ -156,7 +217,9 @@
     "createCollectionFailed": "Collection konnte nicht erstellt werden: {{error}}",
     "createDatabaseFailed": "Datenbank konnte nicht erstellt werden: {{error}}",
     "dropCollectionFailed": "Collection konnte nicht gelöscht werden: {{error}}",
+    "dropCollectionSuccess": "Collection \"{{name}}\" wurde erfolgreich gelöscht.",
     "dropDatabaseFailed": "Datenbank konnte nicht gelöscht werden: {{error}}",
+    "dropDatabaseSuccess": "Datenbank \"{{name}}\" wurde erfolgreich gelöscht.",
     "loadCollectionsFailed": "Sammlungen in {{db}} konnten nicht aufgelistet werden: {{error}}",
     "namespaceBusyWithSave": "Hier wird gerade ein Dokument gespeichert. Warte, bis das fertig ist, bevor du umbenennst.",
     "noSavedConnection": "Keine gespeicherte Verbindung \"{{name}}\". Füge sie im Verbindungsmanager hinzu und versuche es erneut.",

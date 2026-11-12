@@ -290,6 +290,17 @@ describe('RestoreView drop confirmation', () => {
     expect(screen.queryByTestId('restore-drop-confirm')).not.toBeInTheDocument();
     expect(props.onRunRestore).toHaveBeenCalledTimes(1);
   });
+
+  it('cancels the inline drop confirmation without starting restore', async () => {
+    const props = renderRestoreView();
+    await browseFolder(props);
+    fireEvent.click(screen.getByTestId('restore-opt-drop'));
+    fireEvent.click(screen.getByTestId('restore-run-btn'));
+    expect(screen.getByTestId('restore-drop-confirm')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('restore-drop-cancel-btn'));
+    expect(screen.queryByTestId('restore-drop-confirm')).not.toBeInTheDocument();
+    expect(props.onRunRestore).not.toHaveBeenCalled();
+  });
 });
 
 describe('RestoreView command preview', () => {
@@ -307,6 +318,16 @@ describe('RestoreView command preview', () => {
       expect(screen.getByTestId('restore-preview-cmd')).toHaveTextContent('mongorestore --drop /tmp/dump')
     );
   });
+
+  it('holds the preview line open while the command is still on its way', async () => {
+    // A preview that arrives late must not push the drop confirmation's
+    // buttons down under the pointer.
+    const onPreviewCommand = vi.fn(() => new Promise<string>(() => {}));
+    renderRestoreView({ onPreviewCommand });
+    fireEvent.click(screen.getByTestId('restore-pick-source-btn'));
+    await waitFor(() => expect(screen.getByTestId('restore-source-path')).toBeInTheDocument());
+    expect(screen.getByTestId('restore-preview-cmd')).toHaveClass('whitespace-pre');
+  });
 });
 
 describe('RestoreView footer', () => {
@@ -316,5 +337,19 @@ describe('RestoreView footer', () => {
     expect(screen.queryByText(/<button>/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Tasks' }));
     expect(onOpenTasks).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('RestoreView on an MQLens Server connection', () => {
+  it('runs on the server without a local mongorestore', async () => {
+    const props = renderRestoreView({
+      tools: { mongodump: null, mongorestore: null },
+      serverHost: 'mqlens.example.com',
+    });
+
+    expect(screen.queryByTestId('restore-tools-missing')).not.toBeInTheDocument();
+    expect(screen.getByText(/mqlens\.example\.com/)).toBeInTheDocument();
+    await browseFolder(props);
+    await waitFor(() => expect(screen.getByTestId('restore-run-btn')).toBeEnabled());
   });
 });

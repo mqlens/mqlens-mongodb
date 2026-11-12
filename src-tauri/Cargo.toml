@@ -32,12 +32,12 @@ tauri-plugin-process = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 csv = "1"
-mongodb = { version = "3.0.0", features = ["aws-auth", "gssapi-auth"] }
+mongodb = { version = "3.0.0", features = ["aws-auth", "gssapi-auth", "cert-key-password"] }
 tokio = { version = "1", features = ["full"] }
 futures = "0.3"
 uuid = { version = "1", features = ["v4", "serde"] }
-russh = "0.63.1"
-sysinfo = "0.38.4"
+russh = "0.65.0"
+sysinfo = "0.39.6"
 # TLS roots: `rustls-tls` is Mozilla's bundled set (webpki-roots), and
 # `rustls-tls-native-roots` adds the OS certificate store, so an identity
 # provider behind an internal CA, or reached through a TLS-inspecting proxy,
@@ -58,13 +58,13 @@ rand = "0.10"
 # built on rand 0.10 (3.x was rand 0.8, 4.x rand 0.9), so the two move together.
 fake = "5"
 base64 = "0.23"
-rust_xlsxwriter = "0.99.0"
+rust_xlsxwriter = "0.102.0"
 tempfile = "3.27.0"
 sha2 = "0.11.0"
-zip = "8.6.0"
+zip = "9.0.5"
 tar = "0.4.46"
 flate2 = "1.1.9"
-rmcp = { version = "=2.2.0", features = ["server", "transport-streamable-http-server"] }
+rmcp = { version = "=3.8.0", features = ["server", "transport-streamable-http-server"] }
 # Serves rmcp's `StreamableHttpService` (a plain `tower_service::Service`) on our
 # already-bound `TcpListener`. Minimal, no-default-features build: "http1" (we only
 # need HTTP/1.1 for a loopback MCP endpoint, no h2) + "tokio" (required to enable
@@ -74,18 +74,32 @@ rmcp = { version = "=2.2.0", features = ["server", "transport-streamable-http-se
 # proven-compatible pairing rather than a guess.
 axum = { version = "=0.8.9", default-features = false, features = ["http1", "tokio"] }
 # Bundled SQLite for local audit log (#272) — no system libsqlite required.
-rusqlite = { version = "0.40", features = ["bundled"] }
-# Cross-process advisory lock on the audit log so two MQLens instances cannot
-# interleave appends and break its hash chain.
-fs4 = "0.13"
+rusqlite = { version = "0.41", features = ["bundled"] }
+# MQLens Server client (server mode). The generated code in src/server/pb is
+# produced by the buf plugins pinned in buf.gen.yaml, which target this tonic and
+# prost line; bump them together. TLS uses ring explicitly: the lock file already
+# carries both ring and aws-lc-rs, and rustls refuses to pick between them.
+tonic = { version = "0.14", default-features = false, features = ["codegen", "channel", "tls-ring", "tls-native-roots", "tls-webpki-roots"] }
+tonic-prost = "0.14"
+prost = "0.14"
+# Named to recognise a stream reset under a tonic status. Already locked (via
+# hyper, which tonic's channel talks HTTP/2 through), so this adds no crates.
+h2 = "0.4"
+# Wipes MQLens Server access tokens from memory when a session lets go of them.
+zeroize = "1"
 
 [dev-dependencies]
+# Parses the app menu accelerators in tests; Tauri drops one that fails to
+# parse without an error. Already locked via tauri, so this adds no crate.
+muda = { version = "0.20", default-features = false }
 tiny_http = "0.12.0"
 # Matches capability window patterns in tests the way Tauri's ACL does.
 glob = "0.3"
 # RS256 signing for the mock OIDC provider in tests only (#430). Never a
 # runtime dependency: production never mints tokens, it only receives them.
-jsonwebtoken = "9"
+# 10.x makes the crypto backend a feature. aws_lc_rs is already built (via
+# rustls and russh); rust_crypto would add a second RSA/ECDSA stack.
+jsonwebtoken = { version = "11.1", features = ["aws_lc_rs"] }
 # Derives the JWKS `n`/`e` fields from the mock IdP's test-only RSA key
 # (#430). Pinned to the exact version already locked transitively (via
 # mongodb's aws-auth) so this addition cannot change resolution elsewhere.
@@ -97,4 +111,11 @@ rsa = "=0.10.0-rc.18"
 # 0.16, both carrying unpatched RUSTSEC advisories (2024-0336, 2025-0009).
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 tokio-rustls = { version = "0.26", default-features = false }
+# The in-process fake MQLens Server used by the server-mode tests.
+tonic = { version = "0.14", default-features = false, features = ["server", "router"] }
+tokio-stream = { version = "0.1", features = ["net"] }
+# Lets the fake reset a stream, as a proxy does when a node is killed. Both are
+# already locked transitively (via tonic), so this adds no crates.
+http-body = "1"
+tower = { version = "0.5", default-features = false, features = ["util"] }
 

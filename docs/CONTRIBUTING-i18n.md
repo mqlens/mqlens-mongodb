@@ -70,3 +70,12 @@ i18next selects the right one via `Intl.PluralRules`.
     npm run i18n:check     # catalogs match the code
     npm test               # includes catalog parity across locales
     npm run build
+
+## README translations
+
+The project README is available in English (`README.md`), German
+(`README.de.md`), and Simplified Chinese (`README.zh-CN.md`) at the repository
+root. When changing product descriptions, installation steps, privacy details,
+or availability, update all three versions together. Keep the six project
+badges, language switcher, and relative media links consistent. Linked website
+pages and technical guides may remain in English; each README explains this.

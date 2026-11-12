@@ -8,6 +8,8 @@
     "readOnlyAriaLabel": "只读连接",
     "readOnlyBadge": "只读",
     "refreshAriaLabel": "刷新数据库",
+    "serverBadge": "服务器",
+    "serverBadgeTitle": "通过 MQLens Server 账户 {{account}}",
     "viaMcpAriaLabel": "通过 MCP 连接",
     "viaMcpBadge": "通过 MCP"
   },
@@ -25,6 +27,8 @@
     "createIndex": "创建索引",
     "createView": "创建 View",
     "deleteIndex": "删除索引",
+    "deleteSelected": "删除所选项（{{n}}）",
+    "destructiveActions": "管理",
     "disconnect": "断开连接",
     "dropCollection": "删除 Collection",
     "dropDatabase": "删除数据库",
@@ -38,8 +42,11 @@
     "newBucket": "新建 Bucket",
     "newCollection": "新建 Collection",
     "newConnection": "新建连接",
+    "notForRole": "您在此 MQLens Server 连接上的角色不允许此操作",
+    "notOnServer": "MQLens Server 暂不支持",
     "open": "打开",
     "openCollection": "打开 Collection",
+    "openIndexesView": "打开索引总览",
     "openInNewTab": "在新标签页中打开",
     "openShell": "打开 mongosh 终端",
     "pasteHere": "粘贴到这里",
@@ -59,14 +66,25 @@
     "watchDeployment": "监听整个部署的变更…"
   },
   "dialogs": {
+    "bulkDrop": {
+      "collectionsIn": "{{db}} 中的集合（{{n}}）",
+      "confirm_other": "删除 {{count}} 个对象",
+      "covered": "随其数据库一并删除，不单独删除：{{names}}",
+      "databases": "数据库（{{n}}）",
+      "dropped": "已删除",
+      "excluded": "系统命名空间不会被批量删除，将被跳过：{{names}}",
+      "failed": "失败",
+      "running": "正在删除…",
+      "summaryFailed": "{{n}} 个中有 {{failed}} 个失败，其余已删除。",
+      "summaryOk_other": "已全部删除（{{count}} 个）。",
+      "title_other": "删除 {{count}} 个对象",
+      "typeCount": "输入 {{n}} 以确认。",
+      "warning": "这将永久删除 {{connection}} 上的数据，且无法撤销。"
+    },
     "dropCollection": {
-      "confirmLabel": "删除",
-      "message": "确定要删除 Collection“{{name}}”吗？",
       "title": "删除 Collection"
     },
     "dropDatabase": {
-      "confirmLabel": "删除",
-      "message": "确定要删除数据库“{{name}}”吗？此操作无法撤销。",
       "title": "删除数据库"
     },
     "enterNewCollectionName": "请输入新的 Collection 名称：",
@@ -136,6 +154,46 @@
     "requestFeature": "提交功能建议",
     "starOnGithub": "在 GitHub 上点星"
   },
+  "indexesView": {
+    "actions": {
+      "edit": "编辑索引"
+    },
+    "builds": {
+      "progress": "正在构建 {{names}}：{{percent}}%（{{seconds}} 秒）",
+      "running": "正在构建 {{names}}（{{seconds}} 秒）"
+    },
+    "columns": {
+      "keys": "键",
+      "name": "名称",
+      "properties": "属性",
+      "size": "大小",
+      "type": "类型",
+      "usage": "使用情况"
+    },
+    "empty": "此集合没有索引。",
+    "loading": "正在加载索引…",
+    "properties": {
+      "default": "默认",
+      "hidden": "隐藏",
+      "partial": "部分",
+      "sparse": "稀疏",
+      "ttl": "TTL {{duration}}（{{seconds}} 秒）",
+      "unique": "唯一"
+    },
+    "statsUnavailable": "无法获取索引使用情况和大小：{{detail}}",
+    "title": "索引",
+    "type": {
+      "compound": "复合",
+      "hashed": "哈希",
+      "regular": "普通",
+      "text": "文本",
+      "wildcard": "通配符"
+    },
+    "usage": {
+      "ops": "{{ops}} 次操作",
+      "since": "自 {{date}} 起"
+    }
+  },
   "search": {
     "ariaLabel": "搜索侧边栏",
     "clearAriaLabel": "清除搜索",
@@ -156,7 +214,9 @@
     "createCollectionFailed": "创建 Collection 失败：{{error}}",
     "createDatabaseFailed": "创建数据库失败：{{error}}",
     "dropCollectionFailed": "删除 Collection 失败：{{error}}",
+    "dropCollectionSuccess": "Collection“{{name}}”已成功删除。",
     "dropDatabaseFailed": "删除数据库失败：{{error}}",
+    "dropDatabaseSuccess": "数据库“{{name}}”已成功删除。",
     "loadCollectionsFailed": "无法列出 {{db}} 中的集合：{{error}}",
     "namespaceBusyWithSave": "此处正在保存文档，请等待完成后再重命名。",
     "noSavedConnection": "没有名为“{{name}}”的已保存连接。请先在连接管理器中添加，然后重试。",

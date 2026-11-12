@@ -84,7 +84,12 @@ export const test = base.extend<{ collectCoverage: void; app: App }>({
     { auto: true },
   ],
 
-  app: async ({ page }, use) => {
+  app: async ({ page, baseURL }, use) => {
+    // Nothing leaves the machine. A request to any other origin fails, so an
+    // editor that quietly fetched Monaco from a CDN would fail the test instead
+    // of passing on CI's network.
+    const appOrigin = new URL(baseURL!).origin;
+    await page.route((url) => url.origin !== appOrigin, (route) => route.abort());
     const app = new App(page);
     await use(app);
     if (!app.isOpen) return;

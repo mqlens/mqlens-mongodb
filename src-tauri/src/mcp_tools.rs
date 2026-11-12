@@ -20,7 +20,7 @@
 //! `explain_mql_query_impl`, `explain_aggregate_query_impl`) already
 //! produces *relaxed* MongoDB Extended JSON — the `mongodb::bson::Document`
 //! -> `serde_json::Value` conversion in `db/query.rs`/`db/aggregate.rs`
-//! (`serde_json::to_value(&doc)`) goes through `bson` 2.x's `Serialize`
+//! (`crate::db::ui_json`) goes through `bson` 2.x's `Serialize`
 //! impl, which emits `$oid`/`$date`/`$numberLong`/etc. wrappers rather than
 //! bson-crate-internal representations. This module never re-encodes that —
 //! `find`/`aggregate` re-parse each already-relaxed-EJSON document string
@@ -311,6 +311,8 @@ pub struct IndexWithStats {
     pub unique: bool,
     pub sparse: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub expire_after_seconds: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub size_bytes: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ops: Option<i64>,
@@ -338,6 +340,7 @@ pub async fn list_indexes_tool_impl(
                 keys: idx.keys,
                 unique: idx.unique,
                 sparse: idx.sparse,
+                expire_after_seconds: idx.expire_after_seconds,
                 size_bytes: stat.map(|s| s.size_bytes),
                 ops: stat.map(|s| s.ops),
             }
@@ -812,7 +815,7 @@ pub async fn create_index_tool_impl(state: &AppState, profiles_path: &Path, args
         _ => default_index_name(&args.keys)?,
     };
     let keys_json = serde_json::to_string(&args.keys).map_err(|e| format!("serialize keys: {e}"))?;
-    crate::create_index_impl(state, &args.connection_id, &args.database, &args.collection, &name, &keys_json, args.unique.unwrap_or(false), args.sparse.unwrap_or(false))
+    crate::create_index_impl(state, &args.connection_id, &args.database, &args.collection, &name, &keys_json, args.unique.unwrap_or(false), args.sparse.unwrap_or(false), None)
         .await?;
     Ok(CreateIndexResult { name })
 }
@@ -1229,6 +1232,25 @@ mod tests {
         let out = list_indexes_tool_impl(&state, &path, &id, "sales_db", "customers").await.unwrap();
         assert!(!out.is_empty());
         assert!(out.iter().all(|i| i.size_bytes.is_none() && i.ops.is_none()), "mock indexes must report no stats");
+    }
+
+    // An agent sees a TTL as the app does; other indexes list as before.
+    #[tokio::test]
+    async fn list_indexes_reports_a_ttl() {
+        let state = AppState::new();
+        unlock(&state);
+        let path = tmp_profiles_path("list-indexes-ttl.enc");
+        write_profiles(&path, &[profile("p1", "In", true)]);
+        let id = connect_impl(&state, &path, "p1").await.unwrap();
+        crate::create_index_impl(&state, &id, "sales_db", "customers", "seen_1", r#"{"seen":1}"#, false, false, Some(600))
+            .await
+            .unwrap();
+
+        let out = list_indexes_tool_impl(&state, &path, &id, "sales_db", "customers").await.unwrap();
+        let json = serde_json::to_value(&out).unwrap();
+        let by_name = |n: &str| json.as_array().unwrap().iter().find(|i| i["name"] == n).unwrap().clone();
+        assert_eq!(by_name("seen_1")["expireAfterSeconds"], 600);
+        assert!(by_name("email_1").get("expireAfterSeconds").is_none());
     }
 
     // ---- find / aggregate / explain / schema_analysis --------------------

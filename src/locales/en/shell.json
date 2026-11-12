@@ -279,24 +279,34 @@
     "noConnection": "No active connection. Connect to a MongoDB cluster to browse collections and run queries."
   },
   "keyboardShortcuts": {
-    "description": "Global shortcuts for navigation, queries, the sidebar, zoom, and the command palette.",
+    "description": "Global shortcuts for navigation, tabs and windows, queries, the sidebar, zoom, and the command palette.",
     "empty": "No shortcuts match your search.",
     "groups": {
       "command-palette": "Command palette",
       "navigation": "Navigation",
       "query-editor": "Query editor",
       "sidebar": "Sidebar",
+      "tabs": "Tabs & windows",
       "zoom": "Zoom"
     },
     "items": {
       "close-dialog": "Close the topmost dialog or modal",
+      "open-settings": "Open settings",
       "palette-close": "Close command palette",
       "palette-navigate": "Navigate palette results",
       "palette-open": "Open or close command palette",
       "palette-run": "Run the selected palette action",
-      "run-query": "Run the current query",
+      "run-query": "Run the current query or shell statement",
+      "shell-run-all": "Run the whole shell script",
       "sidebar-search": "Focus sidebar tree search",
       "submit-dialog": "Submit a multi-line dialog (import URI, prompts)",
+      "tab-close": "Close the active tab",
+      "tab-last": "Go to the last tab",
+      "tab-new": "New tab (on the active collection, otherwise Quick Start)",
+      "tab-next": "Show the next tab",
+      "tab-prev": "Show the previous tab",
+      "tab-reopen": "Reopen the last closed tab",
+      "tab-select": "Go to tab 1–8",
       "zoom-in": "Zoom interface in",
       "zoom-in-out": "Zoom interface in or out",
       "zoom-out": "Zoom interface out",
@@ -349,6 +359,7 @@
       "requiresMongosh": "MongoShell requires mongosh",
       "requiresMongoshBody": "A live mongosh session is required to run queries and scripts here.",
       "retry": "Retry",
+      "serverFailed": "The shell could not start on MQLens Server",
       "startingSession": "Starting mongosh session…",
       "useThisBinary": "Use this binary"
     },
@@ -381,12 +392,21 @@
       "sessionUnavailable": "mongosh session unavailable: {{detail}}",
       "switchedToDb": "switched to db {{db}}"
     },
+    "script": {
+      "allFiles": "All files",
+      "filter": "Shell scripts",
+      "openFailed": "Could not open the script: {{message}}",
+      "saveFailed": "Could not save the script: {{message}}"
+    },
     "toolbar": {
       "aiToggleLabel": "AI",
       "aiToggleTitle": "AI assistant",
+      "openScript": "Open script…",
       "restartSession": "Restart",
       "restartSessionTitle": "Stop this mongosh session and start a new one",
       "run": "Run",
+      "runTitle": "Run everything ({{all}}). {{statement}} runs the selection or the statement at the cursor.",
+      "saveScript": "Save script…",
       "stop": "Stop",
       "stopTitle": "Stop the running command by restarting the mongosh session"
     }
@@ -438,8 +458,10 @@
     "bodyWithNamespace": "{{namespace}} was restored from your last session. Reconnect to {{profile}} to load it.",
     "disconnected": "Disconnected",
     "profileMissing": "Connection profile no longer exists",
-    "reconnectButton": "Reconnect {{profile}}"
+    "reconnectButton": "Reconnect {{profile}}",
+    "signIn": "Sign in…"
   },
+  "shellNotOnServer": "The shell is not available on MQLens Server yet.",
   "statusBar": {
     "activity": "Activity",
     "appVersion": "MQLens {{version}}",
@@ -542,6 +564,10 @@
       "dismiss": "Dismiss",
       "offline": "You’re offline. Connect to the internet and try again.",
       "uptodate": "You’re on the latest version."
+    },
+    "whatsNew": {
+      "link": "See what’s new",
+      "message": "Updated to MQLens {{version}}."
     }
   },
   "vaultGate": {
@@ -550,12 +576,18 @@
       "setup": "Create & unlock",
       "unlock": "Unlock"
     },
+    "biometricOffer": {
+      "description": "Use this device’s biometric unlock (Touch ID, Face ID or Windows Hello) instead of typing your master password. You can turn it off in Settings → Security.",
+      "enable": "Turn on biometric unlock",
+      "skip": "Not now",
+      "title": "Unlock without the password next time?"
+    },
     "biometry": {
       "faceId": "Use Face ID",
       "generic": "Use biometrics",
       "touchId": "Use Touch ID"
     },
-    "confirmReset": "Reset deletes ALL saved connections and API keys. Continue?",
+    "confirmReset": "Reset deletes ALL saved connections, API keys, and encrypted MQLens Server session tokens. Because the vault is locked, active server sessions cannot be revoked and may remain active. Continue?",
     "descriptions": {
       "setup": "Your saved connections and API keys are encrypted with this password. There is no recovery if you forget it.",
       "unlock": "Enter your master password to decrypt your saved credentials."

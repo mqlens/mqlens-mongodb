@@ -4,8 +4,8 @@ use serde_json;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
-use tokio::process::{Child, ChildStdin, Command as TokioCommand};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::process::{Child, Command as TokioCommand};
 use tokio::sync::{mpsc, Mutex as AsyncMutex};
 use uuid::Uuid;
 
@@ -18,6 +18,7 @@ mod command_coverage;
 pub mod change_streams;
 pub mod chats;
 pub mod connections;
+pub mod discover;
 mod db;
 pub mod durable;
 pub mod mcp;
@@ -26,12 +27,15 @@ pub(crate) mod mock_db;
 pub mod monitoring;
 pub mod path_env;
 pub mod queries;
+pub(crate) mod server;
 pub mod ssh_tunnel;
 mod namespace_guard;
 mod state;
 pub mod toolsetup;
 pub mod updater;
 mod vault;
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+mod app_menu;
 mod window;
 mod windows;
 mod workspace;
@@ -39,6 +43,7 @@ mod write_guard;
 pub mod biometric;
 pub mod oidc;
 pub mod oidc_login;
+pub mod oidc_cache;
 pub use db::aggregate::{execute_aggregate_impl, explain_aggregate_query_impl};
 pub use db::ddl::{
     create_collection_impl, create_view_impl, drop_collection_impl, drop_database_impl,
@@ -191,15 +196,65 @@ struct MongoshLine {
 
 pub struct MongoshSession {
     pub connection_id: String,
-    stdin: AsyncMutex<ChildStdin>,
+    stdin: AsyncMutex<Box<dyn AsyncWrite + Send + Unpin>>,
     output: AsyncMutex<mpsc::UnboundedReceiver<MongoshLine>>,
-    child: AsyncMutex<Child>,
+    child: AsyncMutex<MongoshProcess>,
     command_lock: AsyncMutex<()>,
     /// The markers of the command before this one. A line ending in one of
     /// them is that command's echo arriving late — after its caller gave up
     /// on it — and not this command's output. Matched exactly: a script that
     /// prints something merely resembling a marker is printing output.
     stale_markers: AsyncMutex<Vec<String>>,
+}
+
+/// What a session's mongosh runs as: a child of this app, or a shell on the
+/// MQLens Server the connection goes through.
+enum MongoshProcess {
+    Local(Child),
+    Remote(server::ops::shell::RemoteShell),
+}
+
+impl MongoshSession {
+    /// A session over a shell's pipes, its output read as lines.
+    fn new<O, E>(
+        connection_id: &str,
+        stdin: Box<dyn AsyncWrite + Send + Unpin>,
+        stdout: O,
+        stderr: E,
+        process: MongoshProcess,
+    ) -> Self
+    where
+        O: AsyncRead + Unpin + Send + 'static,
+        E: AsyncRead + Unpin + Send + 'static,
+    {
+        let (sender, receiver) = mpsc::unbounded_channel();
+        spawn_mongosh_reader(stdout, MongoshStream::Stdout, sender.clone());
+        spawn_mongosh_reader(stderr, MongoshStream::Stderr, sender);
+        MongoshSession {
+            connection_id: connection_id.to_string(),
+            stdin: AsyncMutex::new(stdin),
+            output: AsyncMutex::new(receiver),
+            child: AsyncMutex::new(process),
+            command_lock: AsyncMutex::new(()),
+            stale_markers: AsyncMutex::new(Vec::new()),
+        }
+    }
+
+    /// Why the shell ended, when it said: a server shell's stream error.
+    async fn failure(&self) -> Option<String> {
+        match &*self.child.lock().await {
+            MongoshProcess::Remote(shell) => shell.failure(),
+            MongoshProcess::Local(_) => None,
+        }
+    }
+
+    /// `error`, for a shell that has gone, with the reason it gave if any.
+    async fn closed(&self, error: String) -> String {
+        match self.failure().await {
+            Some(reason) => format!("mongosh session closed: {reason}"),
+            None => error,
+        }
+    }
 }
 
 #[derive(Serialize, Clone)]
@@ -311,7 +366,7 @@ pub struct CollectionInfo {
     pub collection_type: String,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Default)]
 pub struct IndexInfo {
     pub name: String,
     // The real key pattern serialized as a JSON string, preserving field order and
@@ -319,9 +374,21 @@ pub struct IndexInfo {
     pub keys: String,
     pub unique: bool,
     pub sparse: bool,
+    // Left out when absent, so a plain index's payload stays as it was.
+    #[serde(rename = "expireAfterSeconds", skip_serializing_if = "Option::is_none")]
+    pub expire_after_seconds: Option<i64>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub hidden: bool,
+    // The filter as a JSON string, written as `keys` is.
+    #[serde(rename = "partialFilterExpression", skip_serializing_if = "Option::is_none")]
+    pub partial_filter_expression: Option<String>,
+    // The whole index document as relaxed Extended JSON, every option in it:
+    // what a rebuild recreates. A server before API version 5 sends none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub spec: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 pub struct MongoshCommandOutput {
     pub stdout: Vec<String>,
     pub stderr: Vec<String>,
@@ -417,7 +484,18 @@ pub(crate) fn absorb_mongosh_chunk(pending: &mut Vec<u8>, chunk: &[u8]) -> Vec<S
         }
     }
     pending.extend_from_slice(chunk);
-    take_mongosh_lines(pending)
+    let lines = take_mongosh_lines(pending);
+    // A line still unterminated is bounded as it grows: output that never
+    // writes a newline must not grow memory, nor make every chunk rescan it
+    // (PR #522 review). The head is what `push_mongosh_line` would keep; the
+    // tail is kept too, because the REPL echoes a command's completion marker
+    // at the END of whatever line it lands on, and markers match by suffix.
+    let head = crate::limits::MAX_MONGOSH_LINE_CHARS * 4;
+    let tail = 1024;
+    if pending.len() > head + tail {
+        pending.drain(head..pending.len() - tail);
+    }
+    lines
 }
 
 fn spawn_mongosh_reader<R>(
@@ -548,6 +626,14 @@ async fn run_mongosh_command_on_session(
     command: &str,
 ) -> Result<MongoshCommandOutput, String> {
     let _command_guard = session.command_lock.lock().await;
+    run_mongosh_command_locked(session, command).await
+}
+
+/// A command on a session whose `command_lock` the caller holds.
+async fn run_mongosh_command_locked(
+    session: &MongoshSession,
+    command: &str,
+) -> Result<MongoshCommandOutput, String> {
     let marker = format!("{MONGOSH_MARKER_PREFIX}{}__", Uuid::new_v4().simple());
     let recovered = format!("{MONGOSH_MARKER_PREFIX}{}__", Uuid::new_v4().simple());
 
@@ -589,14 +675,12 @@ async fn run_mongosh_command_on_session(
     script.push_str(&format!("'{marker}'\n.break\n'{recovered}'\n"));
     {
         let mut stdin = session.stdin.lock().await;
-        stdin
-            .write_all(script.as_bytes())
-            .await
-            .map_err(|e| format!("Failed to write to mongosh: {}", e))?;
-        stdin
-            .flush()
-            .await
-            .map_err(|e| format!("Failed to flush mongosh stdin: {}", e))?;
+        if let Err(e) = stdin.write_all(script.as_bytes()).await {
+            return Err(session.closed(format!("Failed to write to mongosh: {}", e)).await);
+        }
+        if let Err(e) = stdin.flush().await {
+            return Err(session.closed(format!("Failed to flush mongosh stdin: {}", e)).await);
+        }
     }
 
     // No deadline. A script takes as long as it takes — an index build, an
@@ -612,7 +696,7 @@ async fn run_mongosh_command_on_session(
     loop {
         let line = match output.recv().await {
             Some(line) => line,
-            None => return Err("mongosh session closed".to_string()),
+            None => return Err(session.closed("mongosh session closed".to_string()).await),
         };
         // Suffix, for the same reason `marker_line_kind` uses one: a prompt
         // delivered in the same read sits in front of it.
@@ -807,6 +891,7 @@ pub(crate) async fn connect_db_with_login(
             report.record(&phase);
         }
     }));
+    session.set_cache(login.cache.clone());
     // Registered before the SSH tunnel and `ClientOptions::parse` (which can
     // do SRV and TXT lookups), decided from the string alone: the UI can
     // cancel the moment it has invoked, and a cancel sent during either must
@@ -945,6 +1030,16 @@ pub async fn disconnect_db_impl(state: &AppState, id: &str) -> Result<(), String
         let mut meta = state.connection_meta.lock_safe()?;
         meta.remove(id);
     }
+    // A connection made through an MQLens Server has no driver client to
+    // drop; what makes it routable goes instead, and its tails with it: a
+    // server watch, once open, streams on its own.
+    // Forgotten first: a tail starting meanwhile then finds the connection
+    // gone, or is installed in time for the sweep.
+    let remote = state.server.remote(id)?.is_some();
+    state.server.forget_remote(id)?;
+    if remote {
+        change_streams::stop_streams_on(state, id)?;
+    }
     // A human disconnecting (Sidebar's onDisconnect -> this command) an
     // agent-opened connection must also drop it from the MCP server's own
     // `session_connections` bookkeeping (final whole-branch review fix
@@ -993,8 +1088,17 @@ pub fn connection_list_impl(state: &AppState) -> Result<Vec<ConnectionEntry>, St
     let meta = state.connection_meta.lock_safe()?;
     let mut list: Vec<ConnectionEntry> = meta
         .iter()
-        .map(|(id, m)| ConnectionEntry { id: id.clone(), profile_id: m.profile_id.clone(), name: m.name.clone(), via_mcp: m.via_mcp, mode: m.mode })
-        .collect();
+        .map(|(id, m)| {
+            Ok(ConnectionEntry {
+                id: id.clone(),
+                profile_id: m.profile_id.clone(),
+                name: m.name.clone(),
+                via_mcp: m.via_mcp,
+                mode: m.mode,
+                server: state.server.remote(id)?.map(|conn| conn.info()),
+            })
+        })
+        .collect::<Result<_, String>>()?;
     list.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(list)
 }
@@ -1010,7 +1114,13 @@ pub fn mongosh_uri_args(state: &AppState, connection_id: &str, uri: &str) -> Res
     if state.conn_oidc_id_token.lock_safe()?.contains(connection_id) {
         args.push("--oidcIdTokenAsAccessToken".to_string());
     }
-    args.push(connections::normalize_mongodb_uri_options(uri));
+    // The URI the connection actually connected with: it holds a password
+    // asked for at connect and never saved, and an SSH tunnel's local address.
+    // Mock connections have none, so they keep the one passed in. Like a saved
+    // password, it is on mongosh's command line, where `ps` shows it; the
+    // tools avoid that with a 0600 `--config` file (`db::mongotools`).
+    let uri = db::mongotools::resolve_conn_uri(state, connection_id).unwrap_or_else(|_| uri.to_string());
+    args.push(connections::normalize_mongodb_uri_options(&uri));
     Ok(args)
 }
 
@@ -1038,6 +1148,19 @@ pub async fn start_mongosh_session_impl(
     if write_guard::connection_mode(state, connection_id)? == connections::ConnectionMode::ReadOnly
     {
         return Err(write_guard::READ_ONLY_MSG.to_string());
+    }
+
+    // Through an MQLens Server, mongosh runs there; no URI or local binary.
+    if let Some(conn) = state.server.remote(connection_id)? {
+        let shell = server::ops::shell::open(state, &conn).await?;
+        let session = MongoshSession::new(
+            connection_id,
+            Box::new(shell.stdin),
+            shell.stdout,
+            shell.stderr,
+            MongoshProcess::Remote(shell.process),
+        );
+        return register_and_prime_session(state, session, database, window_id).await;
     }
 
     let is_mock = {
@@ -1077,20 +1200,26 @@ pub async fn start_mongosh_session_impl(
         .stderr
         .take()
         .ok_or_else(|| "Failed to open mongosh stderr".to_string())?;
-    let (sender, receiver) = mpsc::unbounded_channel();
+    let session = MongoshSession::new(
+        connection_id,
+        Box::new(stdin),
+        stdout,
+        stderr,
+        MongoshProcess::Local(child),
+    );
+    register_and_prime_session(state, session, database, window_id).await
+}
 
-    spawn_mongosh_reader(stdout, MongoshStream::Stdout, sender.clone());
-    spawn_mongosh_reader(stderr, MongoshStream::Stderr, sender);
-
+/// Makes a started shell this app's: registered where stopping and the close
+/// sweeps find it, then switched to the tab's database.
+async fn register_and_prime_session(
+    state: &AppState,
+    session: MongoshSession,
+    database: &str,
+    window_id: &str,
+) -> Result<MongoshSessionInfo, String> {
     let session_id = Uuid::new_v4().to_string();
-    let session = Arc::new(MongoshSession {
-        connection_id: connection_id.to_string(),
-        stdin: AsyncMutex::new(stdin),
-        output: AsyncMutex::new(receiver),
-        child: AsyncMutex::new(child),
-        command_lock: AsyncMutex::new(()),
-        stale_markers: AsyncMutex::new(Vec::new()),
-    });
+    let session = Arc::new(session);
 
     {
         let mut sessions = state.mongosh_sessions.lock_safe()?;
@@ -1111,6 +1240,12 @@ pub async fn start_mongosh_session_impl(
         let _ = run_mongosh_command_on_session(&session, &format!("use {}", database.trim())).await;
     }
 
+    // A server shell can fail as it starts; that is no session to hand back.
+    if let Some(reason) = session.failure().await {
+        let _ = stop_mongosh_session_impl(state, &session_id).await;
+        return Err(reason);
+    }
+
     // Rechecked, because the two awaits above can take seconds (the `use` alone
     // has a 20s ceiling) and the window can close during them. Until this
     // function returns, the id exists nowhere the close sweep can see it, and
@@ -1127,6 +1262,156 @@ pub async fn start_mongosh_session_impl(
     })
 }
 
+/// The one REPL line that runs a staged script file in the session, `path`
+/// being a JavaScript expression for the file.
+///
+/// `load()` is what `mongosh --file` runs a file with, so the script behaves as
+/// it does one-shot: parsed whole, so a syntax error anywhere runs none of it,
+/// and stopped at the first statement that throws. Around it:
+/// - `quit()` and `exit()` end the script, as they do one-shot, and not the
+///   session it shares with the tab. Thrown as an `Error`, since mongosh wraps
+///   any other value and the catch could not tell it was ours.
+/// - `db` is put back where it was. A script's `use` changes nothing after a
+///   one-shot run, and must not move a live session out from under its tab.
+/// - An unclosed brace reaches the REPL as its `Recoverable` wrapper, which it
+///   prints as a parser stack dump; the SyntaxError inside is the report.
+/// - The file is removed here, as a server shell's is out of this side's reach.
+/// - `if (…) {}` keeps `load()`'s `true` from being echoed as output, and the
+///   closing `undefined` does the same for what putting `db` back evaluates to.
+pub(crate) fn mongosh_load_line(path: &str) -> String {
+    format!(
+        "{{ const before = db.getName(), exits = [quit, exit], ended = new Error('quit'); \
+         quit = exit = () => {{ throw ended }}; try {{ if (load({path})) {{}} }} \
+         catch (e) {{ if (e !== ended) throw e?.constructor?.name === 'Recoverable' ? e.err : e }} \
+         finally {{ [quit, exit] = exits; \
+         if (db.getName() !== before) db = db.getSiblingDB(before); \
+         require('fs').rmSync({path}, {{ force: true }}) }} undefined }}"
+    )
+}
+
+/// `text` as a JavaScript string literal on one REPL line. JSON leaves U+2028
+/// and U+2029 bare, and mongosh's readline ends a line at them.
+pub(crate) fn js_string(text: &str) -> String {
+    serde_json::Value::from(text)
+        .to_string()
+        .replace('\u{2028}', "\\u2028")
+        .replace('\u{2029}', "\\u2029")
+}
+
+/// How much of a script goes to a server shell on one REPL line. readline
+/// rescans the line it is building for every character it reads, so a line
+/// costs the square of its length: a 1 MiB one never finished, where this size
+/// stages 1 MiB in a third of a second. Evaluating each line is the cost of
+/// going much shorter: 4 KiB took three times as long.
+const MONGOSH_STAGE_CHUNK: usize = 16 * 1024;
+
+/// How many of those lines go in one command. The REPL answers each, and past a
+/// command's output cap the report of a write that failed would be dropped, so
+/// this leaves room for a prompt on every answer and an error after them.
+const MONGOSH_STAGE_BATCH: usize = crate::limits::MAX_MONGOSH_LINES / 4;
+
+/// A script staged in the temp dir for mongosh to read, removed when this is
+/// dropped: however the run ends, including a future dropped part-way through,
+/// which would skip a removal written after its `await`. Best effort: a
+/// leaked temp file must never fail an otherwise good run.
+struct StagedScript(std::path::PathBuf);
+
+impl StagedScript {
+    async fn write(script: &str) -> Result<Self, String> {
+        let path =
+            std::env::temp_dir().join(format!("mqlens-shell-{}.js", Uuid::new_v4().simple()));
+        tokio::fs::write(&path, script.as_bytes())
+            .await
+            .map_err(|e| format!("Failed to stage the script: {}", e))?;
+        Ok(Self(path))
+    }
+}
+
+impl Drop for StagedScript {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+/// A multi-line script on a session, run as one unit (#518).
+///
+/// Fed to the REPL a line at a time, a script is not one: a line opening with
+/// `.` (a chained `.limit(1)`) is taken for a REPL keyword, statements after a
+/// failing one still run, and a syntax error part-way through leaves the lines
+/// after it to run on their own. The one-shot `--file` run avoids all that but
+/// is a new process, which on MONGODB-OIDC means a new browser sign-in every
+/// time. So the script is staged as a file, as the one-shot run does, and
+/// `load()`ed by the session that is already signed in.
+async fn run_mongosh_script_on_session(
+    session: &MongoshSession,
+    script: &str,
+) -> Result<MongoshCommandOutput, String> {
+    // One command to whatever waits on this lock, however many it takes to run.
+    let _command_guard = session.command_lock.lock().await;
+    let remote = matches!(*session.child.lock().await, MongoshProcess::Remote(_));
+    if remote {
+        return run_mongosh_script_on_server(session, script).await;
+    }
+    let staged = StagedScript::write(script).await?;
+    let path = js_string(&staged.0.to_string_lossy());
+    run_mongosh_load_line(session, &path).await
+}
+
+/// A staged script's run. The line that loads it ends in `undefined`, for which
+/// the REPL prints a blank line that is no part of what the script printed.
+async fn run_mongosh_load_line(
+    session: &MongoshSession,
+    path: &str,
+) -> Result<MongoshCommandOutput, String> {
+    let mut output = run_mongosh_command_locked(session, &mongosh_load_line(path)).await?;
+    if output.stdout.last().is_some_and(String::is_empty) {
+        output.stdout.pop();
+    }
+    Ok(output)
+}
+
+/// A server's mongosh cannot read this machine's temp dir, so the script is staged in
+/// the server's, through the shell itself. Staging is a command of its own: what
+/// it prints is the REPL's and not the script's, and a file that stopped short
+/// must not run as far as it got.
+async fn run_mongosh_script_on_server(
+    session: &MongoshSession,
+    script: &str,
+) -> Result<MongoshCommandOutput, String> {
+    let path = format!(
+        "require('path').join(require('os').tmpdir(), 'mqlens-shell-{}.js')",
+        Uuid::new_v4().simple()
+    );
+    let chars: Vec<char> = script.chars().collect();
+    let stage: Vec<String> = chars
+        .chunks(MONGOSH_STAGE_CHUNK)
+        .map(|chunk| {
+            let chunk: String = chunk.iter().collect();
+            format!(
+                "require('fs').appendFileSync({path}, {}, {{ mode: 0o600 }})",
+                js_string(&chunk)
+            )
+        })
+        .collect();
+    for batch in stage.chunks(MONGOSH_STAGE_BATCH) {
+        let staged = run_mongosh_command_locked(session, &batch.join("\n")).await?;
+        let failure = staged
+            .stdout
+            .iter()
+            .chain(&staged.stderr)
+            .find(|line| line.contains("Uncaught"));
+        if let Some(failure) = failure {
+            let remove = format!("require('fs').rmSync({path}, {{ force: true }})");
+            run_mongosh_command_locked(session, &remove).await?;
+            return Ok(MongoshCommandOutput {
+                stdout: Vec::new(),
+                stderr: vec![failure.replace('\r', "")],
+            });
+        }
+    }
+    run_mongosh_load_line(session, &path).await
+}
+
 pub async fn run_mongosh_command_impl(
     state: &AppState,
     session_id: &str,
@@ -1135,7 +1420,11 @@ pub async fn run_mongosh_command_impl(
     let started = std::time::Instant::now();
     let session = get_mongosh_session(state, session_id)?;
     let connection_id = session.connection_id.clone();
-    let result = run_mongosh_command_on_session(&session, command).await;
+    let result = if command.contains('\n') {
+        run_mongosh_script_on_session(&session, command).await
+    } else {
+        run_mongosh_command_on_session(&session, command).await
+    };
     crate::audit::maybe_record_result(
         state,
         Some(&connection_id),
@@ -1168,6 +1457,12 @@ pub async fn run_mongosh_command_impl(
 /// that matters in practice, the current database, is passed in and applied
 /// with a leading `use`, exactly as the REPL session does on startup, so `db`
 /// still points where the tab expects. A script may `use` elsewhere itself.
+///
+/// A server connection has neither a URI nor a local mongosh to do that with.
+/// Its script runs in the tab's shell, `session_id`, as one unit all the same.
+/// A second shell per run would leave Stop nothing to end, and count against
+/// the shells a server allows; only the tab's has `await_mongosh_idle`, the tab
+/// sweeps and its signed-in session behind it.
 pub async fn run_mongosh_script_impl(
     state: &AppState,
     connection_id: &str,
@@ -1175,11 +1470,41 @@ pub async fn run_mongosh_script_impl(
     database: &str,
     mongosh_path: &str,
     script: &str,
+    session_id: Option<&str>,
 ) -> Result<MongoshCommandOutput, String> {
     if write_guard::connection_mode(state, connection_id)? == connections::ConnectionMode::ReadOnly
     {
         return Err(write_guard::READ_ONLY_MSG.to_string());
     }
+    let audit = |started, result: &Result<MongoshCommandOutput, String>| {
+        crate::audit::maybe_record_result(
+            state,
+            Some(connection_id),
+            None,
+            None,
+            "run_mongosh_script",
+            crate::audit::OpClass::Shell,
+            Some("shell"),
+            started,
+            "mongosh",
+            Some(script),
+            result,
+        );
+    };
+
+    if let Some(conn) = state.server.remote(connection_id)? {
+        server::routes::require("run_mongosh_script", &conn)?;
+        let session = get_mongosh_session(state, session_id.unwrap_or_default())?;
+        // The guards above were for this connection, not the one it may be on.
+        if session.connection_id != connection_id {
+            return Err("mongosh session not found".to_string());
+        }
+        let started = std::time::Instant::now();
+        let result = run_mongosh_script_on_session(&session, script).await;
+        audit(started, &result);
+        return result;
+    }
+
     let is_mock = {
         let mocks = state.mocks.lock_safe()?;
         *mocks
@@ -1199,22 +1524,21 @@ pub async fn run_mongosh_script_impl(
 
     // The script goes in a temp file, not an `--eval` argument: it can be large,
     // and a file sidesteps every argument-length and shell-quoting limit.
-    let path =
-        std::env::temp_dir().join(format!("mqlens-shell-{}.js", Uuid::new_v4().simple()));
-    tokio::fs::write(&path, script.as_bytes())
-        .await
-        .map_err(|e| format!("Failed to stage the script: {}", e))?;
+    let staged = StagedScript::write(script).await?;
 
     let started = std::time::Instant::now();
     let mut command = TokioCommand::new(&executable);
     command.args(uri_args);
+    // mongosh colours a SyntaxError's code frame even into a pipe (seen with
+    // 2.9.2 on Windows), and the console would show the raw escapes.
+    command.env("NO_COLOR", "1");
     // `use <db>` only when the name is a plain one — a control character could
     // not appear in a real database name and must never reach the argument.
     let db = database.trim();
     if !db.is_empty() && !db.chars().any(|c| c.is_control()) {
         command.arg("--eval").arg(format!("use {}", db));
     }
-    command.arg("--file").arg(&path);
+    command.arg("--file").arg(&staged.0);
 
     // Streamed and capped rather than buffered whole. `Command::output()` holds
     // every byte of stdout and stderr in memory until the process exits and then
@@ -1255,23 +1579,9 @@ pub async fn run_mongosh_script_impl(
         }
         Err(e) => Err(format!("Failed to run mongosh: {}", e)),
     };
+    drop(staged);
 
-    // Best effort: a leaked temp file must never fail an otherwise good run.
-    let _ = tokio::fs::remove_file(&path).await;
-
-    crate::audit::maybe_record_result(
-        state,
-        Some(connection_id),
-        None,
-        None,
-        "run_mongosh_script",
-        crate::audit::OpClass::Shell,
-        Some("shell"),
-        started,
-        "mongosh",
-        Some(script),
-        &result,
-    );
+    audit(started, &result);
     result
 }
 
@@ -1511,15 +1821,24 @@ pub async fn stop_mongosh_session_impl(state: &AppState, session_id: &str) -> Re
     };
 
     if let Some(session) = session {
-        let mut child = session.child.lock().await;
-        let _ = child.kill().await;
-        let _ = child.wait().await;
+        match &mut *session.child.lock().await {
+            MongoshProcess::Local(child) => {
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+            }
+            MongoshProcess::Remote(shell) => shell.stop(),
+        }
     }
 
     Ok(())
 }
 
 pub(crate) fn require_real_client(state: &AppState, id: &str) -> Result<Client, String> {
+    // A connection made through an MQLens Server has no driver client: its
+    // commands run on the server through an adapter, or not at all.
+    if state.server.remote(id)?.is_some() {
+        return Err(server::remote::NOT_SERVED.to_string());
+    }
     let connections = state.connections.lock_safe()?;
     connections
         .get(id)
@@ -1541,21 +1860,41 @@ pub(crate) fn connection_is_mock(state: &AppState, id: &str) -> Result<bool, Str
 /// from the UI, though the driver's five-minute deadline still bounds it.
 #[tauri::command]
 async fn connect_db(
+    app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     uri: String,
     ssh: Option<ssh_tunnel::SshConfig>,
     oidc: Option<connections::OidcProfileConfig>,
     login_id: Option<String>,
+    profile_id: Option<String>,
 ) -> Result<String, String> {
-    connect_db_with_oidc_impl(
-        &state,
-        &uri,
-        ssh.as_ref(),
-        oidc.as_ref(),
-        login_id,
-        oidc_login::system_browser_opener(),
-    )
-    .await
+    let cache = if oidc.as_ref().is_some_and(|c| c.remember_login) && oidc_login::uri_requests_oidc(&uri) {
+        match profile_id.as_deref() {
+            Some(id) => {
+                let path = connections::get_profiles_enc_path(&app_handle);
+                let meta = connections::get_vault_meta_path(&app_handle);
+                let key = state.vault_key.clone();
+                let cache_uri = uri.clone();
+                let config = oidc.clone();
+                let cache_ssh = ssh.clone();
+                let id = id.to_string();
+                server::session::blocking(move || oidc_cache::TokenCache::open(path, meta, key, &id, &cache_uri, config.as_ref(), cache_ssh.as_ref())).await?
+            }
+            None => None,
+        }
+    } else { None };
+    let mut login = oidc_login::HumanLogin::interactive(oidc.as_ref(), login_id, oidc_login::system_browser_opener());
+    login.cache = cache;
+    connect_db_with_login(&state, &uri, ssh.as_ref(), login).await
+}
+
+/// Forget the saved refresh token. In-memory connections stay signed in;
+/// the generation change prevents their callbacks from saving it again.
+#[tauri::command]
+async fn forget_oidc_login(app_handle: tauri::AppHandle, state: tauri::State<'_, AppState>, profile_id: String) -> Result<(), String> {
+    let meta = connections::get_vault_meta_path(&app_handle);
+    let (_lock, key) = lock_vault_and_get_key_async(&state, &meta).await?;
+    oidc_cache::forget(&connections::get_profiles_enc_path(&app_handle), &key, &profile_id)
 }
 
 /// Cancel a browser login whose connect or test is still in flight (#430).
@@ -2178,6 +2517,7 @@ async fn run_mongosh_script(
     database: String,
     mongosh_path: String,
     script: String,
+    session_id: Option<String>,
 ) -> Result<MongoshCommandOutput, String> {
     use tauri::Manager;
     // Exactly as `start_mongosh_session` does. An app-managed mongosh is not
@@ -2186,7 +2526,16 @@ async fn run_mongosh_script(
     // failed with "Failed to run mongosh" (#359 review).
     let app_data_dir = app_handle.path().app_data_dir().ok();
     let resolved_path = toolsetup::resolve_mongosh_executable(&mongosh_path, app_data_dir.as_deref());
-    run_mongosh_script_impl(&state, &connection_id, &uri, &database, &resolved_path, &script).await
+    run_mongosh_script_impl(
+        &state,
+        &connection_id,
+        &uri,
+        &database,
+        &resolved_path,
+        &script,
+        session_id.as_deref(),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -2410,7 +2759,11 @@ async fn repl_set_status(
 }
 
 #[tauri::command]
-async fn kill_op(state: tauri::State<'_, AppState>, id: String, opid: i64) -> Result<(), String> {
+async fn kill_op(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    opid: monitoring::OpId,
+) -> Result<(), String> {
     monitoring::kill_op_impl(&state, &id, opid).await
 }
 
@@ -2864,8 +3217,9 @@ async fn analyze_schema(
     database: String,
     collection: String,
     sample_size: i64,
+    first: Option<bool>,
 ) -> Result<String, String> {
-    analyze_schema_impl(&state, &id, &database, &collection, sample_size).await
+    db::schema::analyze_schema_sampled(&state, &id, &database, &collection, sample_size, first.unwrap_or(false)).await
 }
 
 /// No `state` param: preview only exercises the pure template engine
@@ -2897,20 +3251,58 @@ async fn create_index(
     id: String,
     database: String,
     collection: String,
-    index_name: String,
-    keys: String,
-    unique: bool,
-    sparse: bool,
+    spec: String,
+    commit_quorum: Option<String>,
 ) -> Result<(), String> {
-    create_index_impl(
+    db::metadata::create_index_spec_impl(
+        &state,
+        &id,
+        &database,
+        &collection,
+        &spec,
+        commit_quorum.as_deref(),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn set_index_expiry(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    database: String,
+    collection: String,
+    index_name: String,
+    expire_after_seconds: i64,
+) -> Result<(), String> {
+    db::metadata::set_index_expiry_impl(
         &state,
         &id,
         &database,
         &collection,
         &index_name,
-        &keys,
-        unique,
-        sparse,
+        expire_after_seconds,
+    )
+    .await
+}
+
+#[tauri::command]
+async fn set_index_option(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    database: String,
+    collection: String,
+    index_name: String,
+    option: db::metadata::IndexOption,
+    value: bool,
+) -> Result<(), String> {
+    db::metadata::set_index_option_impl(
+        &state,
+        &id,
+        &database,
+        &collection,
+        &index_name,
+        option,
+        value,
     )
     .await
 }
@@ -3270,7 +3662,8 @@ async fn save_connection_profile_inner(
     state: &AppState,
     profile: &mut connections::ConnectionProfile,
 ) -> Result<(), String> {
-    let key = state.require_key()?;
+    let meta_path = connections::get_vault_meta_path(app_handle);
+    let (_vault_lock, key) = lock_vault_and_get_key_async(state, &meta_path).await?;
     let path = connections::get_profiles_enc_path(app_handle);
     let mut profiles = connections::load_profiles_encrypted(&path, &key)?;
     profile.uri = connections::normalize_mongodb_uri_options(&profile.uri);
@@ -3297,11 +3690,219 @@ async fn delete_connection_profile(
     state: tauri::State<'_, AppState>,
     id: String,
 ) -> Result<(), String> {
-    let key = state.require_key()?;
+    let meta_path = connections::get_vault_meta_path(&app_handle);
+    let (_vault_lock, key) = lock_vault_and_get_key_async(&state, &meta_path).await?;
     let path = connections::get_profiles_enc_path(&app_handle);
     let mut profiles = connections::load_profiles_encrypted(&path, &key)?;
     profiles.retain(|p| p.id != id);
     connections::save_profiles_encrypted(&path, &key, &profiles)
+}
+
+#[tauri::command]
+async fn server_account_list(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<server::accounts::ServerAccountView>, String> {
+    let path = connections::get_server_accounts_path(&app_handle);
+    server::commands::account_list_impl(&state, &path)
+}
+
+#[tauri::command]
+async fn server_account_save(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    account: server::accounts::ServerAccountInput,
+) -> Result<server::accounts::ServerAccountView, String> {
+    let started = Instant::now();
+    let summary = format!("save MQLens Server account {}", account.name.trim());
+    let path = connections::get_server_accounts_path(&app_handle);
+    let result = server::commands::account_save_impl(&state, &path, account).await;
+    audit::maybe_record_result(
+        &state,
+        None,
+        None,
+        None,
+        "server_account_save",
+        audit::OpClass::Write,
+        Some("ui"),
+        started,
+        &summary,
+        None,
+        &result,
+    );
+    result
+}
+
+#[tauri::command]
+async fn server_account_delete(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> Result<server::commands::AccountDeleteResult, String> {
+    let started = Instant::now();
+    let path = connections::get_server_accounts_path(&app_handle);
+    let result = server::commands::account_delete_impl(&state, &path, &id).await;
+    audit::maybe_record_result(
+        &state,
+        None,
+        None,
+        None,
+        "server_account_delete",
+        audit::OpClass::Write,
+        Some("ui"),
+        started,
+        &format!("delete MQLens Server account {id}"),
+        None,
+        &result,
+    );
+    result
+}
+
+#[tauri::command]
+async fn server_sign_in(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    account_id: String,
+    password: String,
+) -> Result<server::accounts::ServerAccountView, String> {
+    let started = Instant::now();
+    let path = connections::get_server_accounts_path(&app_handle);
+    let result = server::commands::sign_in_impl(&state, &path, &account_id, password).await;
+    audit::maybe_record_result(
+        &state,
+        None,
+        None,
+        None,
+        "server_sign_in",
+        audit::OpClass::Write,
+        Some("ui"),
+        started,
+        &format!("sign in to MQLens Server account {account_id}"),
+        None,
+        &result,
+    );
+    result
+}
+
+#[tauri::command]
+async fn server_oidc_providers(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    account_id: String,
+) -> Result<Vec<server::commands::OidcProviderView>, String> {
+    let path = connections::get_server_accounts_path(&app_handle);
+    server::commands::oidc_providers_impl(&state, &path, &account_id).await
+}
+
+#[tauri::command]
+async fn server_oidc_sign_in(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    account_id: String,
+    provider_id: String,
+    login_id: Option<String>,
+) -> Result<server::accounts::ServerAccountView, String> {
+    let started = Instant::now();
+    let path = connections::get_server_accounts_path(&app_handle);
+    let result = server::commands::oidc_sign_in_impl(
+        &state,
+        &path,
+        &account_id,
+        &provider_id,
+        login_id,
+        &oidc_login::system_browser_opener(),
+        server::commands::OIDC_SIGN_IN_TIMEOUT,
+    )
+    .await;
+    audit::maybe_record_result(
+        &state,
+        None,
+        None,
+        None,
+        "server_oidc_sign_in",
+        audit::OpClass::Write,
+        Some("ui"),
+        started,
+        &format!("sign in to MQLens Server account {account_id} through an identity provider"),
+        None,
+        &result,
+    );
+    result
+}
+
+#[tauri::command]
+async fn server_connection_mode_set(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    account_id: String,
+    remote_id: String,
+    mode: connections::ConnectionMode,
+) -> Result<server::accounts::ServerAccountView, String> {
+    let started = Instant::now();
+    let path = connections::get_server_accounts_path(&app_handle);
+    let result =
+        server::commands::connection_mode_set_impl(&state, &path, &account_id, &remote_id, mode)
+            .await;
+    audit::maybe_record_result(
+        &state,
+        None,
+        None,
+        None,
+        "server_connection_mode_set",
+        audit::OpClass::Write,
+        Some("ui"),
+        started,
+        &format!("set the mode of MQLens Server connection {remote_id} to {mode:?}"),
+        None,
+        &result,
+    );
+    result
+}
+
+#[tauri::command]
+async fn server_sign_out(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    account_id: String,
+) -> Result<server::commands::SignOutResult, String> {
+    let started = Instant::now();
+    let path = connections::get_server_accounts_path(&app_handle);
+    let result = server::commands::sign_out_impl(&state, &path, &account_id).await;
+    audit::maybe_record_result(
+        &state,
+        None,
+        None,
+        None,
+        "server_sign_out",
+        audit::OpClass::Write,
+        Some("ui"),
+        started,
+        &format!("sign out of MQLens Server account {account_id}"),
+        None,
+        &result,
+    );
+    result
+}
+
+#[tauri::command]
+async fn server_list_connections(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    account_id: String,
+) -> Result<Vec<server::commands::RemoteConnectionView>, String> {
+    let path = connections::get_server_accounts_path(&app_handle);
+    server::commands::list_connections_impl(&state, &path, &account_id).await
+}
+
+#[tauri::command]
+async fn server_connect(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    account_id: String,
+    remote_id: String,
+) -> Result<server::commands::ServerConnectResult, String> {
+    let path = connections::get_server_accounts_path(&app_handle);
+    server::commands::server_connect_impl(&state, &path, &account_id, &remote_id).await
 }
 
 #[tauri::command]
@@ -3353,7 +3954,8 @@ async fn patch_app_settings(
     state: tauri::State<'_, AppState>,
     patch: serde_json::Value,
 ) -> Result<connections::AppSettings, String> {
-    let key = state.require_key()?;
+    let meta_path = connections::get_vault_meta_path(&app_handle);
+    let (_vault_lock, key) = lock_vault_and_get_key_async(&state, &meta_path).await?;
     let path = connections::get_settings_enc_path(&app_handle);
     let _guard = state.settings_write.lock().map_err(|e| e.to_string())?;
     // The in-process mutex above orders this window's writers; this orders them
@@ -3383,7 +3985,8 @@ async fn save_app_settings(
     state: tauri::State<'_, AppState>,
     settings: connections::AppSettings,
 ) -> Result<(), String> {
-    let key = state.require_key()?;
+    let meta_path = connections::get_vault_meta_path(&app_handle);
+    let (_vault_lock, key) = lock_vault_and_get_key_async(&state, &meta_path).await?;
     // Same locks as `patch_app_settings`, so a whole-object save cannot
     // interleave with a field patch — in this process or another one.
     let _guard = state.settings_write.lock().map_err(|e| e.to_string())?;
@@ -3409,6 +4012,73 @@ async fn save_app_settings(
     Ok(())
 }
 
+/// Take the process-shared vault lock and capture a key that still matches
+/// vault.json. Callers hold the returned file through their complete write.
+pub(crate) fn lock_vault_and_get_key(
+    state: &AppState,
+    meta_path: &std::path::Path,
+) -> Result<(std::fs::File, [u8; 32]), String> {
+    let lock = connections::lock_vault_for_write(meta_path)?;
+    let key = state.require_key()?;
+    let meta = connections::read_vault_meta(meta_path)?
+        .ok_or_else(|| "vault is not initialized".to_string())?;
+    if !connections::key_matches_meta(&meta, &key) {
+        return Err(
+            "The vault changed while this operation was waiting. Unlock it and try again."
+                .to_string(),
+        );
+    }
+    Ok((lock, key))
+}
+
+pub(crate) async fn lock_vault_and_get_key_async(
+    state: &AppState,
+    meta_path: &std::path::Path,
+) -> Result<(std::fs::File, [u8; 32]), String> {
+    let path = meta_path.to_path_buf();
+    // Only the blocking file-lock acquisition moves to the worker.
+    let lock = server::session::blocking(move || connections::lock_vault_for_write(&path)).await?;
+    // Re-read after acquiring the cross-process lock. A reset or rotation that
+    // won the race invalidates the copied key and must prevent the write.
+    let key = state.require_key()?;
+    let meta = connections::read_vault_meta(meta_path)?
+        .ok_or_else(|| "vault is not initialized".to_string())?;
+    if !connections::key_matches_meta(&meta, &key) {
+        return Err(
+            "The vault changed while this operation was waiting. Unlock it and try again."
+                .to_string(),
+        );
+    }
+    Ok((lock, key))
+}
+
+async fn lock_vault_operation_async(meta_path: &std::path::Path) -> Result<std::fs::File, String> {
+    let path = meta_path.to_path_buf();
+    server::session::blocking(move || connections::lock_vault_for_write(&path)).await
+}
+
+/// Install a key returned by biometric verification only if the same vault is
+/// still present after the user completes the prompt. The guards prevent a
+/// reset in this process or another process from crossing the installation.
+pub(crate) async fn install_unlocked_key<'a>(
+    state: &'a AppState,
+    meta_path: &std::path::Path,
+    key: [u8; 32],
+) -> Result<(tokio::sync::MutexGuard<'a, ()>, std::fs::File), String> {
+    let no_reset = state.vault_reset_lock.lock().await;
+    let vault_lock = lock_vault_operation_async(meta_path).await?;
+    let meta = connections::read_vault_meta(meta_path)?
+        .ok_or_else(|| "vault is not initialized".to_string())?;
+    if !connections::key_matches_meta(&meta, &key) {
+        return Err(
+            "The vault changed while biometric unlock was in progress. Unlock it again."
+                .to_string(),
+        );
+    }
+    *state.vault_key.lock_safe()? = Some(key);
+    Ok((no_reset, vault_lock))
+}
+
 #[tauri::command]
 async fn vault_status(
     app_handle: tauri::AppHandle,
@@ -3432,6 +4102,8 @@ async fn vault_initialize(
     password: String,
 ) -> Result<(), String> {
     let meta_path = connections::get_vault_meta_path(&app_handle);
+    let _no_reset = state.vault_reset_lock.lock().await;
+    let _vault_lock = lock_vault_operation_async(&meta_path).await?;
     if connections::read_vault_meta(&meta_path)?.is_some() {
         return Err("vault already initialized".to_string());
     }
@@ -3464,25 +4136,53 @@ async fn vault_unlock(
     password: String,
 ) -> Result<connections::VaultStatus, String> {
     let meta_path = connections::get_vault_meta_path(&app_handle);
-    let meta = connections::read_vault_meta(&meta_path)?
-        .ok_or_else(|| "vault is not initialized".to_string())?;
-    let key = connections::unlock_key(&meta, &password)?;
-    *state.vault_key.lock_safe()? = Some(key);
+    // The in-process reset guard stays live through audit/MCP restoration. The
+    // file lock protects metadata/key installation and audit opening, then must
+    // be released before MCP restoration, which may persist settings through
+    // the same non-reentrant lock.
+    let (key, _no_reset, _vault_lock) = unlock_vault_key(&state, &meta_path, &password).await?;
     let _ = audit::open_on_unlock(&app_handle, &state, key);
+    drop(_vault_lock);
     // The MCP server needs the key, so this is the first moment it can come
     // back up. Best-effort by design — see `restore_on_unlock` (#350).
     mcp::restore_on_unlock(&state, app_handle).await;
     Ok(connections::VaultStatus::Unlocked)
 }
 
+/// The key step of `vault_unlock`: derives the key from `password` and
+/// makes it the live vault key. Waits for a reset under way, which then leaves
+/// no vault to unlock; the returned guard keeps a new one from starting.
+async fn unlock_vault_key<'a>(
+    state: &'a AppState,
+    meta_path: &std::path::Path,
+    password: &str,
+) -> Result<([u8; 32], tokio::sync::MutexGuard<'a, ()>, std::fs::File), String> {
+    let no_reset = state.vault_reset_lock.lock().await;
+    let vault_lock = lock_vault_operation_async(meta_path).await?;
+    let meta = connections::read_vault_meta(meta_path)?
+        .ok_or_else(|| "vault is not initialized".to_string())?;
+    let key = connections::unlock_key(&meta, password)?;
+    *state.vault_key.lock_safe()? = Some(key);
+    Ok((key, no_reset, vault_lock))
+}
+
 #[tauri::command]
-async fn vault_lock(state: tauri::State<'_, AppState>) -> Result<(), String> {
+async fn vault_lock(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let meta_path = connections::get_vault_meta_path(&app_handle);
+    let _vault_lock = lock_vault_operation_async(&meta_path).await?;
     let _ = audit::close_on_lock(&state);
     *state.vault_key.lock_safe()? = None;
     // A locked vault must never leave the embedded MCP server listening —
     // it reads through `require_key`-gated seams, same precondition as
     // enabling it in the first place.
     mcp::stop_if_running(&state).await?;
+    // Same for server mode: its sessions store their tokens under the key. The
+    // stored tokens stay, so unlocking resumes them without signing in again.
+    state.server.clear().await;
+    change_streams::stop_server_streams(&state)?;
     Ok(())
 }
 
@@ -3490,26 +4190,113 @@ async fn vault_lock(state: tauri::State<'_, AppState>) -> Result<(), String> {
 async fn vault_reset(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
-) -> Result<(), String> {
-    // Before any core vault file is removed: if the audit log cannot be deleted,
-    // a replacement vault would start with a log its new key cannot authenticate,
-    // so auditing would be sealed from the first unlock. Abort instead.
-    audit::reset_store(&app_handle, &state)?;
-    for p in [
-        connections::get_vault_meta_path(&app_handle),
-        connections::get_profiles_enc_path(&app_handle),
-        connections::get_settings_enc_path(&app_handle),
-    ] {
-        if p.exists() {
-            std::fs::remove_file(&p).map_err(|e| format!("remove {}: {e}", p.display()))?;
-        }
-    }
-    *state.vault_key.lock_safe()? = None;
-    // Same precondition as `vault_lock`: no key means no MCP server.
-    mcp::stop_if_running(&state).await?;
+    allow_unrevoked_server_sessions: bool,
+) -> Result<Option<String>, String> {
+    let warning = reset_vault_files_with_policy(
+        &state,
+        &connections::get_server_accounts_path(&app_handle),
+        [
+            connections::get_profiles_enc_path(&app_handle),
+            connections::get_settings_enc_path(&app_handle),
+        ],
+        allow_unrevoked_server_sessions,
+        || audit::reset_store(&app_handle, &state),
+    )
+    .await?;
     // A reset invalidates the old key; forget any biometric copy too.
     let _ = biometric::remove_stored_key(&app_handle);
-    Ok(())
+    Ok(warning)
+}
+
+/// The file part of `vault_reset`: runs `reset_audit`, drops the key, removes
+/// `files` (the vault files other than vault.json), then the MQLens Server
+/// accounts file and vault.json, all under the accounts lock, and only then
+/// ends the stored server sessions when the key is available. An explicit
+/// forgotten-password reset may discard unreadable sessions after warning the
+/// user. An unlock in this process waits for all of it.
+async fn reset_vault_files(
+    state: &AppState,
+    server_accounts_path: &std::path::Path,
+    files: [std::path::PathBuf; 2],
+    reset_audit: impl FnOnce() -> Result<(), String>,
+) -> Result<Option<String>, String> {
+    reset_vault_files_with_policy(state, server_accounts_path, files, false, reset_audit).await
+}
+
+async fn reset_vault_files_with_policy(
+    state: &AppState,
+    server_accounts_path: &std::path::Path,
+    files: [std::path::PathBuf; 2],
+    allow_unrevoked_server_sessions: bool,
+    reset_audit: impl FnOnce() -> Result<(), String>,
+) -> Result<Option<String>, String> {
+    let _no_unlock = state.vault_reset_lock.lock().await;
+    let meta_path = server::accounts::vault_meta_path(server_accounts_path);
+    // Keep the cross-process lock through file deletion and remote revocation.
+    // Initialization and every file writer take this same lock.
+    let _vault_lock = lock_vault_operation_async(&meta_path).await?;
+    // Check the copied process key before touching the audit log. Another
+    // process may have rotated the vault while this process retained its old
+    // key; a reset must not erase the new vault's audit data before rejecting
+    // that stale reset request.
+    if let Some(key) = *state.vault_key.lock_safe()? {
+        if let Ok(Some(meta)) = connections::read_vault_meta(&meta_path) {
+            if !connections::key_matches_meta(&meta, &key) {
+                return Err(
+                    "The vault password changed while the vault was being reset. Nothing was removed; reset again."
+                        .to_string(),
+                );
+            }
+        }
+    }
+    // A locked vault's encrypted account file may be the only place holding
+    // refresh tokens for live MQLens Server sessions. We cannot safely delete
+    // it until the user unlocks and lets reset revoke those sessions. Check
+    // before clearing audit data or dropping any process state.
+    if state.require_key().is_err()
+        && server_accounts_path.exists()
+        && !allow_unrevoked_server_sessions
+    {
+        return Err("Unlock the vault before resetting its MQLens Server accounts.".to_string());
+    }
+    // Before any core vault file is removed: if the audit log cannot be
+    // deleted, a replacement vault would start with a log its new key cannot
+    // authenticate, so auditing would be sealed from the first unlock. Abort
+    // instead, with nothing changed.
+    reset_audit()?;
+    // The key goes first, before anything below waits: on the accounts lock,
+    // which a refresh can hold across a server call, or on servers. No window
+    // can write under it from here on. If the reset stops short of vault.json,
+    // unlocking again works.
+    let (key, locked) = match state.vault_key.lock_safe() {
+        Ok(mut key) => (key.take(), Ok(())),
+        Err(e) => (None, Err(e)),
+    };
+    // Same precondition as `vault_lock`: no key means no MCP server.
+    let stopped = mcp::stop_if_running(state).await;
+    // Every file goes under the accounts file's cross-process lock, once the
+    // key is confirmed as the vault's: a password change in any MQLens process
+    // holds that lock through its rotation, and an account write cannot
+    // recreate the accounts file under the discarded key. vault.json goes
+    // last, so a reset that fails part way leaves a vault that still opens.
+    let sign_outs = server::commands::reset_accounts_with_policy(
+        state,
+        server_accounts_path,
+        key,
+        files.into(),
+        allow_unrevoked_server_sessions,
+    )
+    .await;
+    // Their tokens are already deleted: these sessions are ended now or never,
+    // whether or not the rest of the reset went through.
+    let finished = match sign_outs {
+        Ok(sign_outs) => sign_outs.finish().await,
+        Err(e) => Err(e),
+    };
+    let warning = finished?;
+    locked?;
+    stopped?;
+    Ok(warning)
 }
 
 #[tauri::command]
@@ -3519,10 +4306,12 @@ async fn vault_change_password(
     old_password: String,
     new_password: String,
 ) -> Result<(), String> {
+    let _no_reset = state.vault_reset_lock.lock().await;
+    let meta_path = connections::get_vault_meta_path(&app_handle);
+    let _vault_lock = lock_vault_operation_async(&meta_path).await?;
     if new_password.is_empty() {
         return Err("new master password must not be empty".to_string());
     }
-    let meta_path = connections::get_vault_meta_path(&app_handle);
     let meta = connections::read_vault_meta(&meta_path)?
         .ok_or_else(|| "vault is not initialized".to_string())?;
     let old_key = connections::unlock_key(&meta, &old_password)?;
@@ -3534,6 +4323,14 @@ async fn vault_change_password(
     let profiles_path = connections::get_profiles_enc_path(&app_handle);
     let settings_path = connections::get_settings_enc_path(&app_handle);
     let audit_log_path = connections::get_audit_log_path(&app_handle);
+    let server_accounts_path = connections::get_server_accounts_path(&app_handle);
+
+    // Held from before the accounts file is re-encrypted until the new key is
+    // live: a server session storing a refreshed token in between would write
+    // it under the old key, over the rotated file. Taken before the audit lock,
+    // whose failure paths must reopen the audit session. Waited for off the
+    // async workers: a session can hold it across a network call.
+    let server_accounts_lock = server::accounts::lock_async(&server_accounts_path).await?;
 
     // Close the audit session so the log is not being appended to while it is
     // re-encrypted, but keep its cross-process lock: releasing it would let a
@@ -3556,6 +4353,8 @@ async fn vault_change_password(
             connections::prepare_reencrypt_file(&old_key, &new_key, &profiles_path)?;
         let new_settings =
             connections::prepare_reencrypt_file(&old_key, &new_key, &settings_path)?;
+        let new_server_accounts =
+            connections::prepare_reencrypt_file(&old_key, &new_key, &server_accounts_path)?;
         // Returns the log *and* its state sidecar; both are keyed and must land
         // together or the new-key log would be checked against an old-key count.
         let new_audit_files =
@@ -3567,6 +4366,7 @@ async fn vault_change_password(
         let mut files = vec![
             (profiles_path.clone(), new_profiles),
             (settings_path.clone(), new_settings),
+            (server_accounts_path.clone(), new_server_accounts),
         ];
         files.extend(new_audit_files.into_iter().map(|(p, b)| (p, Some(b))));
         connections::commit_vault_rotation(files, &meta_path, &new_meta)
@@ -3592,6 +4392,7 @@ async fn vault_change_password(
     rotated?;
 
     *state.vault_key.lock_safe()? = Some(new_key);
+    drop(server_accounts_lock);
     // Approach A: a password change derives a new key; keep biometrics working transparently.
     biometric::restore_key_if_enrolled(&app_handle, &new_key);
     Ok(())
@@ -3737,7 +4538,7 @@ async fn mcp_regenerate_token(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<mcp::McpStatusUi, String> {
-    mcp::regenerate_token_impl(&state, Some(&app_handle))
+    mcp::regenerate_token_impl(&state, Some(&app_handle)).await
 }
 
 /// Append a frontend crash report to a log file the user can find and attach.
@@ -3806,7 +4607,13 @@ pub fn run() {
     // terminal does. Must run here on the main thread before worker threads start.
     path_env::ensure_user_path();
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .menu(app_menu::build)
+        .on_menu_event(|app, event| app_menu::handle_event(app, event.id().as_ref()));
+
+    builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -3849,6 +4656,7 @@ pub fn run() {
             log_frontend_error,
             connect_db,
             cancel_oidc_login,
+            forget_oidc_login,
             reopen_oidc_login,
             detect_mongo_tools,
             detect_mongosh_binary,
@@ -3891,6 +4699,8 @@ pub fn run() {
             coll_stats,
             index_stats,
             create_index,
+            set_index_expiry,
+            set_index_option,
             delete_index,
             delete_document,
             delete_many,
@@ -3948,7 +4758,19 @@ pub fn run() {
             load_connection_profiles,
             save_connection_profile,
             delete_connection_profile,
+            server_account_list,
+            server_account_save,
+            server_account_delete,
+            server_sign_in,
+            server_oidc_providers,
+            server_oidc_sign_in,
+            server_sign_out,
+            server_connection_mode_set,
+            server_list_connections,
+            server_connect,
             connections::test_connection_uri,
+            discover::discover_replica_set,
+            discover::resolve_srv_seed_list,
             load_app_settings,
             save_app_settings,
             patch_app_settings,

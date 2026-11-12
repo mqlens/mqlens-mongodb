@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test';
 import { test, expect, type App } from '../fixtures';
 import { SAMPLE_SERVER, type ProfileSeed } from '../harness/seed';
-import { callFrom, dismissHoverCards, expandCollections } from '../helpers';
+import { callFrom, confirmTypedName, dismissHoverCards, expandCollections } from '../helpers';
 
 const STAGING_URI = 'mongodb://staging.example:27017';
 
@@ -24,6 +24,9 @@ async function connectStaging(app: App, page: Page, profile: Partial<ProfileSeed
 
 async function menu(page: Page, row: ReturnType<Page['getByRole']>, item: string): Promise<void> {
   await row.click({ button: 'right' });
+  if (item.startsWith('Drop ') || item === 'Delete Index') {
+    await page.getByRole('menuitem', { name: 'Manage', exact: true }).press('ArrowRight');
+  }
   await page.getByRole('menuitem', { name: item, exact: true }).click();
 }
 
@@ -62,8 +65,9 @@ test.describe('Sidebar actions', () => {
     await expect(archive2024).toBeVisible();
 
     await menu(page, archive2024, 'Drop Collection');
-    const dropped = await callFrom(app, 'drop_collection', () => page.getByTestId('dialog-confirm').click());
+    const dropped = await callFrom(app, 'drop_collection', () => confirmTypedName(page, 'archive_2024'));
     expect(dropped).toMatchObject({ database: 'sales_db', collection: 'archive_2024' });
+    await expect(page.getByTestId('dialog-toast').filter({ hasText: 'Collection "archive_2024" dropped successfully.' })).toBeVisible();
     await expect(archive2024).toHaveCount(0);
   });
 
@@ -79,8 +83,9 @@ test.describe('Sidebar actions', () => {
 
     await dismissHoverCards(page);
     await menu(page, databaseRow(page, 'analytics'), 'Drop Database');
-    const dropped = await callFrom(app, 'drop_database', () => page.getByTestId('dialog-confirm').click());
+    const dropped = await callFrom(app, 'drop_database', () => confirmTypedName(page, 'analytics'));
     expect(dropped).toMatchObject({ database: 'analytics' });
+    await expect(page.getByTestId('dialog-toast').filter({ hasText: 'Database "analytics" dropped successfully.' })).toBeVisible();
     await expect(databaseRow(page, 'analytics')).toHaveCount(0);
   });
 
@@ -89,10 +94,27 @@ test.describe('Sidebar actions', () => {
     await expandCollections(page, 'sales_db');
 
     await menu(page, sidebar(page).getByText('products', { exact: true }), 'Drop Collection');
-    await answerPrompt(page, 'nope');
+    await page.getByTestId('dialog-input').fill('nope');
+    await expect(page.getByTestId('dialog-confirm')).toBeDisabled();
     await expect(page.getByTestId('dialog-error')).toHaveText('Name does not match');
     const dropped = await callFrom(app, 'drop_collection', () => answerPrompt(page, 'products'));
     expect(dropped).toMatchObject({ collection: 'products', confirmed: true });
+  });
+
+  test('Escape cancels destructive prompts without writing', async ({ app, page }) => {
+    await connectStaging(app, page);
+    await expandCollections(page, 'sales_db');
+
+    await menu(page, sidebar(page).getByText('products', { exact: true }), 'Drop Collection');
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('dialog-input')).toHaveCount(0);
+    expect(await app.calls('drop_collection')).toHaveLength(0);
+
+    await dismissHoverCards(page);
+    await menu(page, databaseRow(page, 'user_analytics'), 'Drop Database');
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('dialog-input')).toHaveCount(0);
+    expect(await app.calls('drop_database')).toHaveLength(0);
   });
 
   test('a read-only connection refuses to drop', async ({ app, page }) => {

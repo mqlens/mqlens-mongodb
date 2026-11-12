@@ -18,6 +18,8 @@ export interface ReconnectBannerProps {
   /** Last reconnect failure for this tab's profile (missing profile, vault
    *  locked, connect_db failure) — surfaced verbatim from the invoke error. */
   error?: string | null;
+  /** Offered after a failed reconnect that a sign-in can fix (a server profile). */
+  onSignIn?: () => void;
 }
 
 export const ReconnectBanner: React.FC<ReconnectBannerProps> = ({
@@ -26,6 +28,7 @@ export const ReconnectBanner: React.FC<ReconnectBannerProps> = ({
   onReconnect,
   busy,
   error,
+  onSignIn,
 }) => {
   const { t } = useTranslation('shell');
   return (
@@ -56,6 +59,11 @@ export const ReconnectBanner: React.FC<ReconnectBannerProps> = ({
         <p className="max-w-xs text-ui-2xs text-destructive" data-testid="reconnect-error">
           {error}
         </p>
+      )}
+      {error && onSignIn && (
+        <Button onClick={onSignIn} variant="outline" size="sm">
+          {t('reconnectBanner.signIn')}
+        </Button>
       )}
     </div>
   );

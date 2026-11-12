@@ -1,0 +1,140 @@
+syntax = "proto3";
+package mqlens.v1;
+option go_package = "github.com/mqlens/mqlens-server/gen/mqlens/v1;mqlensv1";
+
+// MonitoringService covers live server health, running operations, replica
+// set topology and the database profiler. Field names mirror the desktop's
+// monitoring types.
+service MonitoringService {
+  rpc ServerStatus(ServerStatusRequest) returns (ServerStatusResponse);
+  rpc CurrentOps(CurrentOpsRequest) returns (CurrentOpsResponse);
+  rpc ReplSetStatus(ReplSetStatusRequest) returns (ReplSetStatusResponse);
+  rpc KillOp(KillOpRequest) returns (MonitoringAck);
+  rpc GetProfilingStatus(GetProfilingStatusRequest) returns (ProfilingStatus);
+  rpc SetProfilingLevel(SetProfilingLevelRequest) returns (ProfilingStatus);
+  rpc ReadProfile(ReadProfileRequest) returns (ReadProfileResponse);
+}
+
+message MonitoringAck {}
+
+message ServerStatusRequest {
+  string connection_id = 1;
+}
+message ServerConnections {
+  int64 current = 1;
+  int64 available = 2;
+  int64 total_created = 3;
+}
+message OpCounters {
+  int64 insert = 1;
+  int64 query = 2;
+  int64 update = 3;
+  int64 delete = 4;
+  int64 getmore = 5;
+  int64 command = 6;
+}
+message ServerMemory {
+  int64 resident_mb = 1;
+  int64 virtual_mb = 2;
+}
+message ServerNetwork {
+  int64 bytes_in = 1;
+  int64 bytes_out = 2;
+  int64 num_requests = 3;
+}
+message CacheStats {
+  int64 bytes_in_cache = 1;
+  int64 max_bytes = 2;
+  int64 dirty_bytes = 3;
+}
+message ServerStatusResponse {
+  string host = 1;
+  string version = 2;
+  double uptime_seconds = 3;
+  ServerConnections connections = 4;
+  OpCounters opcounters = 5;
+  ServerMemory memory = 6;
+  ServerNetwork network = 7;
+  CacheStats cache = 8;           // unset when the server reports no WiredTiger cache (e.g. mongos)
+  optional string repl_set = 9;   // unset when the node is not a replica set member
+}
+
+message CurrentOpsRequest {
+  string connection_id = 1;
+}
+message CurrentOp {
+  // A string because mongos reports "shard:opid"; pass it back unchanged to KillOp.
+  string opid = 1;
+  string op = 2;
+  string ns = 3;
+  int64 secs_running = 4;
+  string client = 5;
+  string desc = 6;
+  string command = 7; // relaxed Extended JSON, truncated to 2000 characters
+}
+// Active operations, longest-running first, capped at 200. Idle entries are omitted.
+message CurrentOpsResponse {
+  repeated CurrentOp ops = 1;
+  bool truncated = 2; // more active operations existed than were returned
+}
+
+message ReplSetStatusRequest {
+  string connection_id = 1;
+}
+message ReplSetMember {
+  string name = 1;
+  string state_str = 2;
+  int64 health = 3;
+  bool self = 4;
+  int64 uptime_secs = 5;
+  int64 optime_date_ms = 6;
+  optional int64 ping_ms = 7;
+  string sync_source = 8;
+  optional double lag_secs = 9; // unset for the primary, unhealthy members, or with no primary
+}
+message ReplSetStatusResponse {
+  bool is_replica_set = 1;
+  string cluster_type = 2; // "standalone" | "replicaSet" | "sharded"
+  string set = 3;
+  string my_state_str = 4;
+  string mongo_version = 5;
+  repeated ReplSetMember members = 6;
+}
+
+message KillOpRequest {
+  string connection_id = 1;
+  string opid = 2; // as returned in CurrentOp.opid
+}
+
+message GetProfilingStatusRequest {
+  string connection_id = 1;
+  string database = 2;
+}
+message SetProfilingLevelRequest {
+  string connection_id = 1;
+  string database = 2;
+  int32 level = 3;   // 0 off, 1 slow operations, 2 all operations
+  int32 slow_ms = 4;
+}
+message ProfilingStatus {
+  int64 level = 1;
+  int64 slow_ms = 2;
+}
+
+message ReadProfileRequest {
+  string connection_id = 1;
+  string database = 2;
+  int64 limit = 3; // 0 means 50; clamped to 500
+}
+message ProfileEntry {
+  string op = 1;
+  string ns = 2;
+  int64 millis = 3;
+  int64 ts_ms = 4;
+  string plan_summary = 5;
+  string command = 6; // relaxed Extended JSON, truncated to 2000 characters
+}
+// Newest first.
+message ReadProfileResponse {
+  repeated ProfileEntry entries = 1;
+}

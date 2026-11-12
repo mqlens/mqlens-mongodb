@@ -1,3 +1,4 @@
+import type { RemoteConnectionInfo } from '../lib/serverMode';
 // Thin invoke wrappers for the backend workspace store (see
 // src-tauri/src/workspace.rs) — mirrors the queryStore.ts idiom: async
 // wrappers for reads, fire-and-forget for writes the caller doesn't need to
@@ -7,6 +8,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
+import { TAB_COMMAND_EVENT } from '../lib/tabShortcuts';
 import type { WorkspaceAction } from './model';
 import { toProfileSpaceId, type PersistableConnection, type PersistedTab, type PersistedWorkspace } from './persistence';
 
@@ -129,6 +131,13 @@ export function subscribeWorkspaceChanged(
   return listen<WorkspaceChangedPayload>('workspace-changed', (event) => listener(event.payload));
 }
 
+/** The native app menu's tab commands (macOS), addressed to this window only. */
+export function subscribeTabCommand(listener: (payload: unknown) => void): Promise<UnlistenFn> {
+  return listen(TAB_COMMAND_EVENT, (event) => listener(event.payload), {
+    target: { kind: 'WebviewWindow', label: windowLabel() },
+  });
+}
+
 /**
  * Subscribe to the backend's `ai-providers-changed` broadcast, fired after every
  * settings write. Same shape/contract as `subscribeWorkspaceChanged`.
@@ -196,6 +205,8 @@ export interface ConnectionEntry {
   viaMcp: boolean;
   /** Read-only / confirm-destructive production safeguard (#188), registered at connect time from the profile's `connection_mode`. */
   mode?: 'normal' | 'read_only' | 'confirm_destructive';
+  /** Set for a connection made through an MQLens Server; absent for a local one. */
+  server?: RemoteConnectionInfo;
 }
 export interface ConnectionsChangedPayload {
   connections: ConnectionEntry[];

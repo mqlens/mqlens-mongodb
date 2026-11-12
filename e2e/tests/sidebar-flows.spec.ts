@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from '../fixtures';
 import { SAMPLE_SERVER } from '../harness/seed';
-import { callFrom, connectStaging, dismissHoverCards, expandCollections, loadSample, STAGING_URI } from '../helpers';
+import { callFrom, confirmTypedName, connectStaging, dismissHoverCards, expandCollections, loadSample, STAGING_URI } from '../helpers';
 
 const sidebar = (page: Page) => page.getByRole('complementary').first();
 const databaseRow = (page: Page, name: string) => sidebar(page).getByRole('button', { name: `Database ${name}` });
@@ -14,6 +14,9 @@ async function answer(page: Page, value: string): Promise<void> {
 
 async function menu(page: Page, row: ReturnType<Page['getByRole']>, item: string): Promise<void> {
   await row.click({ button: 'right' });
+  if (item.startsWith('Drop ') || item === 'Delete Index') {
+    await page.getByRole('menuitem', { name: 'Manage', exact: true }).press('ArrowRight');
+  }
   await page.getByRole('menuitem', { name: item, exact: true }).click();
 }
 
@@ -33,7 +36,7 @@ test.describe('Sidebar on the sample connection', () => {
     await dismissHoverCards(page);
     await expect(sidebar(page).getByText('items', { exact: true })).toBeVisible();
     await menu(page, sidebar(page).getByText('items', { exact: true }), 'Drop Collection');
-    await page.getByTestId('dialog-confirm').click();
+    await confirmTypedName(page, 'items');
     await expect(sidebar(page).getByText('items', { exact: true })).toHaveCount(0);
 
     await dismissHoverCards(page);
@@ -43,7 +46,7 @@ test.describe('Sidebar on the sample connection', () => {
     await expect(databaseRow(page, 'scratch2')).toBeVisible();
     await dismissHoverCards(page);
     await menu(page, databaseRow(page, 'scratch2'), 'Drop Database');
-    await page.getByTestId('dialog-confirm').click();
+    await confirmTypedName(page, 'scratch2');
     await expect(databaseRow(page, 'scratch2')).toHaveCount(0);
 
     for (const command of ['create_collection', 'rename_collection', 'drop_collection', 'rename_database', 'drop_database']) {
@@ -97,7 +100,7 @@ test.describe('Sidebar on a saved connection', () => {
     await expandCollections(page, 'sales_db');
     await app.failNext('drop_collection', 'collection is locked');
     await menu(page, sidebar(page).getByText('products', { exact: true }), 'Drop Collection');
-    await page.getByTestId('dialog-confirm').click();
+    await confirmTypedName(page, 'products');
     await expect(toast(page, 'collection is locked')).toBeVisible();
     await dismissHoverCards(page);
 
@@ -108,7 +111,7 @@ test.describe('Sidebar on a saved connection', () => {
     await expect(toast(page, 'rename not permitted')).toBeVisible();
   });
 
-  test('Ctrl+F searches, double-click opens another tab, Ctrl+click selects several', async ({ app, page, browserName }) => {
+  test('Ctrl+F searches, double-click opens another tab, Ctrl+click selects several', async ({ app, page }) => {
     await connectStaging(app, page);
     await expandCollections(page, 'sales_db');
     await dismissHoverCards(page);
@@ -126,12 +129,11 @@ test.describe('Sidebar on a saved connection', () => {
     await expect(page.getByTestId('workspace-tab-strip').getByText(/sales_db:customers$/)).toHaveCount(2);
 
     await dismissHoverCards(page);
-    // WebKit takes Ctrl+click as a right-click; the multi-select modifier there is Meta.
-    const select: Array<'Control' | 'Meta'> = browserName === 'webkit' ? ['Meta'] : ['Control'];
-    await sidebar(page).getByText('products', { exact: true }).click({ modifiers: select });
+    // Multi-select is Cmd+click on macOS and Ctrl+click elsewhere (#543).
+    await sidebar(page).getByText('products', { exact: true }).click({ modifiers: ['ControlOrMeta'] });
     // The row's stats card opens under a resting pointer and would cover the next row.
     await dismissHoverCards(page);
-    await sidebar(page).getByText('transactions', { exact: true }).click({ modifiers: select });
+    await sidebar(page).getByText('transactions', { exact: true }).click({ modifiers: ['ControlOrMeta'] });
     await dismissHoverCards(page);
     await menu(page, sidebar(page).getByText('transactions', { exact: true }), 'Copy to…');
     await expect(page.getByText(/Copy 2 collections/)).toBeVisible();
@@ -154,7 +156,7 @@ test.describe('Sidebar on a saved connection', () => {
       app,
       page,
       { monitoring: { replSet } },
-      { uri: 'mongodb://reporter@staging.example:27017/?readPreference=secondaryPreferred' },
+      { uri: 'mongodb://reporter:report-pw@staging.example:27017/?readPreference=secondaryPreferred' },
     );
 
     await sidebar(page).getByRole('button', { name: 'Connection Staging' }).hover();

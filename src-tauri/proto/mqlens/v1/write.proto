@@ -1,0 +1,84 @@
+syntax = "proto3";
+package mqlens.v1;
+option go_package = "github.com/mqlens/mqlens-server/gen/mqlens/v1;mqlensv1";
+
+service WriteService {
+  rpc InsertDocument(InsertDocumentRequest) returns (InsertDocumentResponse);
+  rpc UpdateDocument(UpdateDocumentRequest) returns (WriteResult);
+  rpc ReplaceDocument(ReplaceDocumentRequest) returns (WriteResult);
+  rpc DeleteDocument(DeleteDocumentRequest) returns (WriteResult);
+  rpc UpdateMany(UpdateManyRequest) returns (WriteResult);
+  rpc DeleteMany(DeleteManyRequest) returns (WriteResult);
+  // Stores each document's BSON exactly as given, unordered: a document the
+  // deployment refuses does not stop the rest. API version 5.
+  rpc InsertMany(InsertManyRequest) returns (InsertManyResponse);
+}
+
+message WriteResult {
+  int64 matched_count = 1;
+  int64 modified_count = 2;
+  int64 deleted_count = 3;
+  string upserted_id_json = 4;
+}
+
+message InsertDocumentRequest {
+  string connection_id = 1;
+  string database = 2;
+  string collection = 3;
+  string document_json = 4;
+}
+message InsertDocumentResponse {
+  string inserted_id_json = 1;
+}
+
+message UpdateDocumentRequest {
+  string connection_id = 1;
+  string database = 2;
+  string collection = 3;
+  string filter_json = 4;
+  string update_json = 5;
+}
+message ReplaceDocumentRequest {
+  string connection_id = 1;
+  string database = 2;
+  string collection = 3;
+  string filter_json = 4;
+  string replacement_json = 5;
+}
+message DeleteDocumentRequest {
+  string connection_id = 1;
+  string database = 2;
+  string collection = 3;
+  string filter_json = 4;
+}
+message UpdateManyRequest {
+  string connection_id = 1;
+  string database = 2;
+  string collection = 3;
+  string filter_json = 4;
+  string update_json = 5;
+}
+message DeleteManyRequest {
+  string connection_id = 1;
+  string database = 2;
+  string collection = 3;
+  string filter_json = 4;
+}
+
+message InsertManyRequest {
+  string connection_id = 1;
+  string database = 2;
+  string collection = 3;
+  repeated bytes documents_bson = 4;
+}
+message InsertManyResponse {
+  int64 inserted_count = 1;
+  // The documents not stored, by their index in the request. A duplicate key
+  // is code 11000.
+  repeated InsertRefusal refused = 2;
+}
+message InsertRefusal {
+  int32 index = 1;
+  int32 code = 2;
+  string message = 3;
+}

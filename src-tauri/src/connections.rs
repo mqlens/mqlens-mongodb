@@ -35,6 +35,9 @@ pub struct OidcProfileConfig {
     /// the same additive pattern as `allowed_hosts`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub use_id_token: bool,
+    /// Opt in to saving refresh tokens in the encrypted vault (#439).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub remember_login: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -101,8 +104,9 @@ fn default_preset_id() -> String {
     "mqlens-dark".to_string()
 }
 
+/// Follow the OS light/dark setting until the user picks a mode.
 fn default_theme_mode() -> String {
-    "dark".to_string()
+    "system".to_string()
 }
 
 fn default_font_sans() -> String {
@@ -670,6 +674,10 @@ pub fn get_profiles_enc_path(app_handle: &tauri::AppHandle) -> PathBuf {
 pub fn get_settings_enc_path(app_handle: &tauri::AppHandle) -> PathBuf {
     config_dir_file(app_handle, "settings.json.enc")
 }
+/// MQLens Server accounts and their stored sessions (`server::accounts`).
+pub fn get_server_accounts_path(app_handle: &tauri::AppHandle) -> PathBuf {
+    config_dir_file(app_handle, crate::server::accounts::ACCOUNTS_FILE_NAME)
+}
 
 /// Append-only encrypted audit log (`audit.log.enc`).
 pub fn get_audit_log_path(app_handle: &tauri::AppHandle) -> PathBuf {
@@ -721,27 +729,37 @@ pub fn save_profiles_encrypted(
     key: &[u8; 32],
     profiles: &[ConnectionProfile],
 ) -> Result<(), String> {
-    let json = serde_json::to_vec(profiles)
-        .map_err(|e| format!("serialize connections: {e}"))?;
+    let mut data = load_encrypted_profiles(path, key)?;
+    // Profile edits, opt-out, deletion and duplication cannot carry tokens over.
+    data.oidc.retain(|id, _| profiles.iter().any(|p| p.id == *id
+        && p.oidc.as_ref().is_some_and(|c| c.remember_login)
+        && data.profiles.iter().any(|old| old.id == *id && old.uri == p.uri && old.oidc == p.oidc && old.ssh == p.ssh)));
+    data.profiles = profiles.to_vec();
+    save_encrypted_profiles(path, key, &data)
+}
+
+pub(crate) fn save_encrypted_profiles(path: &Path, key: &[u8; 32], data: &crate::oidc_cache::EncryptedProfiles) -> Result<(), String> {
+    let json = if data.oidc.is_empty() { serde_json::to_vec(&data.profiles) } else { serde_json::to_vec(data) }
+        .map_err(|_| "serialize encrypted connections".to_string())?;
     let blob = crate::vault::encrypt(key, &json)?;
-    // Same reasoning as the settings writer, and the stake is higher: this file
-    // holds every saved connection, so a truncated write loses all of them.
     crate::durable::write_atomic(path, &blob)
 }
 
-pub fn load_profiles_encrypted(
-    path: &Path,
-    key: &[u8; 32],
-) -> Result<Vec<ConnectionProfile>, String> {
-    if !path.exists() {
-        return Ok(Vec::new());
-    }
+pub(crate) fn load_encrypted_profiles(path: &Path, key: &[u8; 32]) -> Result<crate::oidc_cache::EncryptedProfiles, String> {
+    if !path.exists() { return Ok(Default::default()); }
     let blob = fs::read(path).map_err(|e| format!("read {}: {e}", path.display()))?;
-    if blob.is_empty() {
-        return Ok(Vec::new());
-    }
+    if blob.is_empty() { return Ok(Default::default()); }
     let json = crate::vault::decrypt(key, &blob)?;
-    serde_json::from_slice(&json).map_err(|e| format!("parse connections: {e}"))
+    // Existing vaults hold a bare profile array; only the encrypted envelope changes.
+    if json.iter().find(|b| !b.is_ascii_whitespace()) == Some(&b'[') {
+        let profiles = serde_json::from_slice(&json).map_err(|_| "invalid encrypted connections data".to_string())?;
+        return Ok(crate::oidc_cache::EncryptedProfiles { profiles, ..Default::default() });
+    }
+    serde_json::from_slice(&json).map_err(|_| "invalid encrypted connections data".to_string())
+}
+
+pub fn load_profiles_encrypted(path: &Path, key: &[u8; 32]) -> Result<Vec<ConnectionProfile>, String> {
+    Ok(load_encrypted_profiles(path, key)?.profiles)
 }
 
 pub fn save_settings_encrypted(
@@ -845,7 +863,6 @@ pub fn write_prepared_file(path: &Path, blob: Option<Vec<u8>>) -> Result<(), Str
 /// released when the returned handle drops, so callers hold it in a `let _guard`
 /// for the whole sequence.
 pub fn lock_settings_for_write(settings_path: &Path) -> Result<fs::File, String> {
-    use fs4::fs_std::FileExt;
     let mut name = settings_path.file_name().unwrap_or_default().to_os_string();
     name.push(".lock");
     let lock_path = settings_path.with_file_name(name);
@@ -859,7 +876,26 @@ pub fn lock_settings_for_write(settings_path: &Path) -> Result<fs::File, String>
         .truncate(false)
         .open(&lock_path)
         .map_err(|e| format!("open {}: {e}", lock_path.display()))?;
-    FileExt::lock_exclusive(&file).map_err(|e| format!("lock {}: {e}", lock_path.display()))?;
+    file.lock().map_err(|e| format!("lock {}: {e}", lock_path.display()))?;
+    Ok(file)
+}
+
+/// Cross-process lock for vault lifecycle changes and every vault-backed
+/// writer. Unlike the per-file locks, this serializes reset/initialization
+/// with all files that share vault.json as their key authority.
+pub fn lock_vault_for_write(meta_path: &Path) -> Result<fs::File, String> {
+    let lock_path = meta_path.with_file_name("vault-operation.lock");
+    if let Some(parent) = lock_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
+    }
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock_path)
+        .map_err(|e| format!("open {}: {e}", lock_path.display()))?;
+    file.lock().map_err(|e| format!("lock {}: {e}", lock_path.display()))?;
     Ok(file)
 }
 
@@ -1342,7 +1378,8 @@ mod appearance_default_tests {
     fn fresh_settings_carry_the_default_appearance() {
         let appearance = AppSettings::default().appearance;
         assert_eq!(appearance.preset_id, "mqlens-dark");
-        assert_eq!(appearance.mode, "dark");
+        // Follows the OS until the user picks a mode.
+        assert_eq!(appearance.mode, "system");
         assert_eq!(appearance.font_sans, "Inter");
         assert_eq!(appearance.font_mono, "JetBrains Mono");
         assert_eq!(appearance.font_size, 13);
@@ -1581,16 +1618,17 @@ mod tests {
     fn an_oidc_config_saved_before_the_id_token_option_reads_as_off() {
         let config: OidcProfileConfig = serde_json::from_str(r#"{"allowed_hosts":["mongo.corp.example.com"]}"#).unwrap();
         assert!(!config.use_id_token);
+        assert!(!config.remember_login);
     }
 
     /// Like `allowed_hosts`, the key is written only when it says something,
     /// so a profile that never turned the option on gains no key.
     #[test]
     fn use_id_token_is_written_only_when_on() {
-        let off = OidcProfileConfig { allowed_hosts: vec!["mongo.corp.example.com".into()], use_id_token: false };
+        let off = OidcProfileConfig { allowed_hosts: vec!["mongo.corp.example.com".into()], use_id_token: false, ..Default::default() };
         assert_eq!(serde_json::to_value(&off).unwrap(), serde_json::json!({"allowed_hosts": ["mongo.corp.example.com"]}));
 
-        let on = OidcProfileConfig { allowed_hosts: vec![], use_id_token: true };
+        let on = OidcProfileConfig { allowed_hosts: vec![], use_id_token: true, ..Default::default() };
         assert_eq!(serde_json::to_value(&on).unwrap(), serde_json::json!({"use_id_token": true}));
         let round_tripped: OidcProfileConfig = serde_json::from_value(serde_json::to_value(&on).unwrap()).unwrap();
         assert_eq!(round_tripped, on);
@@ -1637,6 +1675,18 @@ mod tests {
         let log: PhaseLog = Default::default();
         let recorder = log.clone();
         (log, move |u: PhaseUpdate| recorder.lock().unwrap().push((u.phase, u.status)))
+    }
+
+    /// An encrypted client key needs its passphrase. The driver only accepts
+    /// the option with its `cert-key-password` feature; without it every
+    /// connection that set one failed to parse.
+    #[tokio::test]
+    async fn a_client_key_passphrase_parses_for_connect() {
+        let uri = normalize_mongodb_uri_options(
+            "mongodb://db:27017/?tls=true&tlsCertificateKeyFile=client.pem&sslPEMKeyPassword=kp",
+        );
+        let parsed = mongodb::options::ClientOptions::parse(&uri).await;
+        assert!(parsed.is_ok(), "passphrase rejected: {:?}", parsed.err());
     }
 
     /// D6: the row must not appear for mechanisms whose authentication we

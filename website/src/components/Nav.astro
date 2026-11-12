@@ -3,6 +3,7 @@ import { SITE, NAV } from '../consts';
 ---
 
 <header class="nav">
+  <noscript><style>.nav-toggle{display:none!important}.links{display:flex!important;position:static!important}.nav-inner{height:auto!important;flex-wrap:wrap;padding-block:14px}</style></noscript>
   <div class="container nav-inner">
     <a href="/" class="brand">
       <img src="/favicon.svg" alt="" width="28" height="28" />
@@ -103,6 +104,13 @@ import { SITE, NAV } from '../consts';
   const btn = document.querySelector<HTMLButtonElement>('.nav-toggle');
   const links = document.getElementById('nav-links');
   if (btn && links) {
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && links.classList.contains('open')) {
+        links.classList.remove('open');
+        btn.setAttribute('aria-expanded', 'false');
+        btn.focus();
+      }
+    });
     btn.addEventListener('click', () => {
       const open = links.classList.toggle('open');
       btn.setAttribute('aria-expanded', String(open));

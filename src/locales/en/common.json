@@ -8,6 +8,8 @@
     "retry": "Retry",
     "title": "This tab ran into a problem"
   },
+  "notForRole": "Your role on this MQLens Server connection does not allow this.",
+  "notOnServer": "Not available on MQLens Server yet.",
   "ok": "OK",
   "passwordInput": {
     "hide": "Hide",
@@ -24,6 +26,7 @@
     "generate": "Generate: {{name}}",
     "gridfs": "GridFS: {{collection}}",
     "import": "Import: {{collection}}",
+    "indexes": "Indexes: {{collection}}",
     "monitor": "Monitor: {{name}}",
     "quickStart": "Quick Start",
     "restore": "Restore: {{name}}",
@@ -59,6 +62,7 @@
     "deletedDocuments_other": "Deleted {{count}} document(s)",
     "deletedTitle": "Deleted",
     "deleteFailed": "Delete failed: {{detail}}",
+    "deleteIndexSuccess": "Index \"{{name}}\" dropped successfully.",
     "documentDeletedFrom": "Document deleted from {{collection}}",
     "documentEditNotSynced": "Could not save this tab’s document draft. The tab was not moved.",
     "documentInsertedInto": "Document inserted into {{collection}}",
@@ -83,6 +87,10 @@
     "filterCleared": "Cleared filter parameters",
     "generateFailedToStart": "Generate failed to start: {{detail}}",
     "importFailedToStart": "Import failed to start: {{detail}}",
+    "indexNotPutBack": "The change failed and the index could not be put back: {{detail}}. Its definition was {{spec}}",
+    "indexOptionsNeedServerApi5": "These index options need MQLens API version 5, and this MQLens Server speaks {{version}}. Update MQLens Server.",
+    "indexPutBack": "The change failed, so the index was put back as it was: {{detail}}",
+    "indexStaysNonUnique": "The index stays non-unique: {{detail}}",
     "insertedTitle": "Inserted",
     "modifiedDocuments_one": "Modified {{count}} document(s)",
     "modifiedDocuments_other": "Modified {{count}} document(s)",
@@ -96,6 +104,7 @@
     "savedQueryDeleted": "Saved query deleted",
     "savedTitle": "Saved",
     "sortCleared": "Cleared sort parameters",
+    "tabMoving": "This tab is being moved to another window.",
     "updatedTitle": "Updated",
     "updateFailed": "Update failed: {{detail}}",
     "uploadFailed": "Upload failed: {{detail}}",
@@ -105,8 +114,10 @@
     "userUpdated": "Updated user {{name}}"
   },
   "typedNameConfirm": {
+    "confirmLabel": "Drop",
     "messageCollection": "Type the collection name to confirm.",
     "messageDatabase": "Type the database name to confirm.",
+    "messageIndex": "Type the index name to confirm.",
     "validationError": "Name does not match"
   }
 }

@@ -18,6 +18,10 @@ export default defineConfig({
     // `{ timeout: 5000 }` override in Sidebar.test.tsx.
     testTimeout: 15000,
     setupFiles: './src/test/setup.ts',
+    // Node 25+ has its own global `localStorage`, undefined unless
+    // --localstorage-file is given. Vitest keeps globals Node already defines,
+    // so it would hide jsdom's storage from every test.
+    execArgv: ['--no-experimental-webstorage'],
     // e2e/ holds the Playwright suite (#396). Its *.spec.ts files match Vitest's
     // default pattern but can only run under Playwright.
     exclude: [...configDefaults.exclude, 'e2e/**'],

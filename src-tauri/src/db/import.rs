@@ -205,9 +205,9 @@ impl ImportReader {
                 if *eof {
                     return Ok(None);
                 }
-                // Peek one byte to detect clean EOF before from_reader errors.
-                let mut peek = [0u8; 1];
-                match reader.read(&mut peek) {
+                // Peek one byte of the length prefix to detect clean EOF.
+                let mut len = [0u8; 4];
+                match reader.read(&mut len[..1]) {
                     Ok(0) => {
                         *eof = true;
                         return Ok(None);
@@ -215,8 +215,26 @@ impl ImportReader {
                     Ok(_) => {}
                     Err(e) => return Err(format!("Failed to read import file: {}", e)),
                 }
-                let chained = std::io::Cursor::new(peek).chain(reader.by_ref());
-                match Document::from_reader(chained) {
+                // Read the document's bytes and convert them with `stored`:
+                // `Document::from_reader` takes a sub-document shaped like a
+                // type wrapper for the type it imitates.
+                let raw = (|| -> Result<Document, String> {
+                    reader.read_exact(&mut len[1..]).map_err(|e| e.to_string())?;
+                    let length = i32::from_le_bytes(len);
+                    if length < 5 {
+                        return Err("document size too small".to_string());
+                    }
+                    let mut bytes = len.to_vec();
+                    reader
+                        .by_ref()
+                        .take(length as u64 - 4)
+                        .read_to_end(&mut bytes)
+                        .map_err(|e| e.to_string())?;
+                    let raw = mongodb::bson::RawDocumentBuf::from_bytes(bytes)
+                        .map_err(|e| e.to_string())?;
+                    crate::db::stored(raw)
+                })();
+                match raw {
                     Ok(doc) => Ok(Some(doc)),
                     Err(e) => {
                         // A parse error leaves the reader's position undefined for a
@@ -283,7 +301,7 @@ pub async fn preview_import_impl(
 async fn run_import(
     tasks: Arc<Mutex<HashMap<String, TaskInfo>>>,
     task_id: String,
-    client: Option<mongodb::Client>,
+    client: Option<crate::db::documents::WriteTarget>,
     database: String,
     collection: String,
     source: ImportSourceArg,
@@ -346,11 +364,25 @@ async fn run_import(
                     totals.inserted += n;
                 }
             }
-            Some(client) => {
-                let coll = client
-                    .database(&database)
-                    .collection::<Document>(&collection);
-                let res = crate::db::documents::write_imported_docs(&coll, batch, &mode).await?;
+            Some(target) => {
+                let res = match target {
+                    crate::db::documents::WriteTarget::Local(client) => {
+                        let coll = client
+                            .database(&database)
+                            .collection::<Document>(&collection);
+                        crate::db::documents::write_imported_docs(&coll, batch, &mode).await?
+                    }
+                    crate::db::documents::WriteTarget::Remote(remote) => {
+                        crate::server::ops::import::write_imported_docs(
+                            remote,
+                            &database,
+                            &collection,
+                            batch,
+                            &mode,
+                        )
+                        .await?
+                    }
+                };
                 totals.inserted += res.inserted;
                 totals.updated += res.updated;
                 totals.skipped += res.skipped;
@@ -432,7 +464,7 @@ async fn start_import_task_inner(
     let client = if is_mock {
         None
     } else {
-        Some(crate::require_real_client(state, id)?)
+        Some(crate::db::documents::write_target(state, id, "start_import_task").await?)
     };
 
     let source_label = source
@@ -678,6 +710,29 @@ mod tests {
         assert_eq!(r.next_doc().unwrap().unwrap().get_i32("_id").ok(), Some(2));
         assert!(r.next_doc().unwrap().is_none());
         let _ = std::fs::remove_file(&path);
+    }
+
+    // A sub-document whose keys look like an Extended JSON type wrapper is
+    // read as stored, not as the type it imitates.
+    #[test]
+    fn reader_bson_keeps_wrapper_shaped_documents_as_stored() {
+        use mongodb::bson::doc;
+        let stored = doc! { "_id": 1, "v": { "$numberLong": "7", "other": 1 } };
+        let path = std::env::temp_dir().join(format!(
+            "mqlens-import-reader-bson-wrapper-{}.bson",
+            Uuid::new_v4().simple()
+        ));
+        std::fs::write(&path, mongodb::bson::to_vec(&stored).unwrap()).unwrap();
+
+        let mut r = ImportReader::open(
+            &ImportSourceArg { path: Some(path.to_string_lossy().to_string()), text: None },
+            "bson",
+            &CsvImportOptions::default(),
+        )
+        .unwrap();
+        let read = r.next_doc();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(read.unwrap(), Some(stored));
     }
 
     #[test]

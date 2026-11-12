@@ -12,6 +12,10 @@ if (typeof (globalThis as { Buffer?: unknown }).Buffer === "undefined") {
   (globalThis as { Buffer?: unknown }).Buffer = Buffer;
 }
 
+// Before any editor can mount: hands @monaco-editor/react the bundled Monaco,
+// so it never fetches one from a CDN.
+import "./lib/monacoSetup";
+
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";

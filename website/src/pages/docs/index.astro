@@ -42,14 +42,14 @@ const toc = [
         <h2 id="install">Install</h2>
         <p>Download the build for your platform from the <a href="/#download">download section</a> or the <a href={SITE.releasesLatest} target="_blank" rel="noopener">latest release</a>:</p>
         <ul>
-          <li><strong>macOS</strong> — open the <code>.dmg</code> and drag {SITE.name} to Applications. Builds are Apple-notarized, so Gatekeeper will let it run.</li>
+          <li><strong>macOS</strong> — open the <code>.dmg</code> and drag {SITE.name} to Applications. Check the release notes for signing and notarization details.</li>
         </ul>
 
         <h3>Windows</h3>
         <p>
           Download the <code>.exe</code> or <code>.msi</code> installer from the
           <a href={SITE.releasesLatest} target="_blank" rel="noopener">latest release page</a>.
-          Requires Windows 10 or later (x64). Installers are Azure Trusted Signing–signed.
+          Requires Windows 10 or later (x64).
         </p>
         <p><strong>Setup (.exe, recommended)</strong></p>
         <ol>
@@ -62,8 +62,8 @@ const toc = [
         <pre><code>msiexec /i MQLens_*.msi</code></pre>
         <p>
           <strong>Troubleshooting:</strong> if SmartScreen shows "Windows protected your PC",
-          choose <strong>More info</strong> → <strong>Run anyway</strong>. The installer is signed;
-          SmartScreen may still warn on first download until reputation builds.
+          check that the installer came from the official release page and
+          <a href="#verifying">verify your download</a> before continuing.
         </p>
 
         <h3>Linux</h3>
@@ -103,9 +103,9 @@ sudo dpkg -i MQLens_*.deb</code></pre>
         </ol>
         <figure class="doc-shot">
           <a href="/screenshots/mqlens-documents.png" target="_blank" rel="noopener">
-            <img src="/screenshots/mqlens-documents.png" alt="MQLens connected to the mqlens_demo MongoDB database and browsing filtered orders" loading="lazy" decoding="async" />
+            <img src="/screenshots/mqlens-documents.webp" alt="MQLens document table showing sample customer records" loading="lazy" decoding="async" />
           </a>
-          <figcaption>A connected workspace with the seeded <code>mqlens_demo</code> database, filtered documents, and the database tree visible.</figcaption>
+          <figcaption>Browse sample customer records in the document workspace.</figcaption>
         </figure>
 
         <h2 id="workspace">Multi-window workspace</h2>
@@ -155,11 +155,11 @@ sudo dpkg -i MQLens_*.deb</code></pre>
 
         <h2 id="settings">Settings</h2>
         <ul>
-          <li><strong>Language</strong> — Settings → Language switches the interface between English and German; untranslated text falls back to English. Adding a language is a JSON file and one list entry (see <code>docs/CONTRIBUTING-i18n.md</code>).</li>
+          <li><strong>Language</strong> — Settings → Language switches the interface between English, German, and Simplified Chinese; untranslated text falls back to English.</li>
         </ul>
 
         <h2 id="verifying">Verifying downloads</h2>
-        <p>Every release asset ships with a detached GPG signature (<code>.asc</code>), and macOS bundles are additionally Apple-notarized. To verify a download:</p>
+        <p>To verify a release download, get its matching detached GPG signature (<code>.asc</code>) from the release page and run the commands below with your downloaded filenames. Check the release notes for platform-specific signing details.</p>
         <pre><code># Import the MQLens release public key (once):
 gpg --import KEYS    # from the repo, or:
 curl -L https://mqlens.com/KEYS | gpg --import
@@ -208,7 +208,7 @@ npm run tauri build    # produce a platform installer / bundle</code></pre>
   .toc nav a { color: var(--text-dim); font-size: 0.92rem; }
   .toc nav a:hover { color: var(--accent-bright); text-decoration: none; }
 
-  .prose { max-width: 720px; }
+  .prose { max-width: 720px; min-width: 0; overflow-wrap: anywhere; }
   .prose h1 { font-size: clamp(2rem, 4vw, 2.6rem); margin: 10px 0 0; }
   .prose .intro { font-size: 1.1rem; color: var(--text-dim); margin: 18px 0 8px; }
   .prose h2 { font-size: 1.4rem; margin: 44px 0 14px; padding-top: 8px; scroll-margin-top: 80px; }
@@ -246,7 +246,7 @@ npm run tauri build    # produce a platform installer / bundle</code></pre>
   .help { color: var(--text-dim); }
 
   @media (max-width: 820px) {
-    .docs-grid { grid-template-columns: 1fr; gap: 24px; }
+    .docs-grid { grid-template-columns: minmax(0, 1fr); gap: 24px; }
     .toc { position: static; }
     .toc nav { flex-flow: row wrap; border-left: none; padding-left: 0; gap: 14px; }
   }

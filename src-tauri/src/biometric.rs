@@ -120,8 +120,13 @@ pub async fn biometric_unlock(
 
     match decode_and_verify_key(&meta, &resp.data) {
         Ok(key) => {
-            *state.vault_key.lock_safe()? = Some(key);
+            let meta_path = crate::connections::get_vault_meta_path(&app);
+            // The prompt can overlap a reset. Revalidate the same vault after
+            // the prompt and install under the shared reset/unlock locks.
+            let (_no_reset, _vault_lock) =
+                crate::install_unlocked_key(&state, &meta_path, key).await?;
             let _ = crate::audit::open_on_unlock(&app, &state, key);
+            drop(_vault_lock);
             // Same restore as the password path: unlocking by fingerprint must
             // not leave the MCP server down when the user left it on (#350).
             crate::mcp::restore_on_unlock(&state, app).await;

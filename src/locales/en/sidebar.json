@@ -8,6 +8,8 @@
     "readOnlyAriaLabel": "Read-only connection",
     "readOnlyBadge": "read-only",
     "refreshAriaLabel": "Refresh databases",
+    "serverBadge": "Server",
+    "serverBadgeTitle": "Through the MQLens Server account {{account}}",
     "viaMcpAriaLabel": "Connected via MCP",
     "viaMcpBadge": "via MCP"
   },
@@ -25,6 +27,8 @@
     "createIndex": "Create Index",
     "createView": "Create View",
     "deleteIndex": "Delete Index",
+    "deleteSelected": "Delete selected ({{n}})",
+    "destructiveActions": "Manage",
     "disconnect": "Disconnect",
     "dropCollection": "Drop Collection",
     "dropDatabase": "Drop Database",
@@ -38,8 +42,11 @@
     "newBucket": "New Bucket",
     "newCollection": "New Collection",
     "newConnection": "New Connection",
+    "notForRole": "Your role on this MQLens Server connection does not allow this",
+    "notOnServer": "Not available on MQLens Server yet",
     "open": "Open",
     "openCollection": "Open Collection",
+    "openIndexesView": "Open Indexes View",
     "openInNewTab": "Open in New Tab",
     "openShell": "Open mongosh Shell",
     "pasteHere": "Paste here",
@@ -59,14 +66,28 @@
     "watchDeployment": "Watch deployment changes…"
   },
   "dialogs": {
+    "bulkDrop": {
+      "collectionsIn": "Collections in {{db}} ({{n}})",
+      "confirm_one": "Drop {{count}} object",
+      "confirm_other": "Drop {{count}} objects",
+      "covered": "Dropped with their database, not separately: {{names}}",
+      "databases": "Databases ({{n}})",
+      "dropped": "Dropped",
+      "excluded": "System namespaces are never bulk-deleted and will be skipped: {{names}}",
+      "failed": "Failed",
+      "running": "Dropping…",
+      "summaryFailed": "{{failed}} of {{n}} failed. The others were dropped.",
+      "summaryOk_one": "Dropped.",
+      "summaryOk_other": "All {{count}} dropped.",
+      "title_one": "Drop {{count}} object",
+      "title_other": "Drop {{count}} objects",
+      "typeCount": "Type {{n}} to confirm.",
+      "warning": "This permanently deletes the data on {{connection}}. It cannot be undone."
+    },
     "dropCollection": {
-      "confirmLabel": "Drop",
-      "message": "Are you sure you want to drop collection \"{{name}}\"?",
       "title": "Drop collection"
     },
     "dropDatabase": {
-      "confirmLabel": "Drop",
-      "message": "Are you sure you want to drop database \"{{name}}\"? This cannot be undone.",
       "title": "Drop database"
     },
     "enterNewCollectionName": "Enter new collection name:",
@@ -136,6 +157,46 @@
     "requestFeature": "Request a feature",
     "starOnGithub": "Star on GitHub"
   },
+  "indexesView": {
+    "actions": {
+      "edit": "Edit Index"
+    },
+    "builds": {
+      "progress": "Building {{names}}: {{percent}}% ({{seconds}} s)",
+      "running": "Building {{names}} ({{seconds}} s)"
+    },
+    "columns": {
+      "keys": "Keys",
+      "name": "Name",
+      "properties": "Properties",
+      "size": "Size",
+      "type": "Type",
+      "usage": "Usage"
+    },
+    "empty": "This collection has no indexes.",
+    "loading": "Loading indexes…",
+    "properties": {
+      "default": "DEFAULT",
+      "hidden": "HIDDEN",
+      "partial": "PARTIAL",
+      "sparse": "SPARSE",
+      "ttl": "TTL {{duration}} ({{seconds}} s)",
+      "unique": "UNIQUE"
+    },
+    "statsUnavailable": "Index usage and size are unavailable: {{detail}}",
+    "title": "Indexes",
+    "type": {
+      "compound": "Compound",
+      "hashed": "Hashed",
+      "regular": "Regular",
+      "text": "Text",
+      "wildcard": "Wildcard"
+    },
+    "usage": {
+      "ops": "{{ops}} ops",
+      "since": "since {{date}}"
+    }
+  },
   "search": {
     "ariaLabel": "Search sidebar",
     "clearAriaLabel": "Clear search",
@@ -156,7 +217,9 @@
     "createCollectionFailed": "Failed to create collection: {{error}}",
     "createDatabaseFailed": "Failed to create database: {{error}}",
     "dropCollectionFailed": "Failed to drop collection: {{error}}",
+    "dropCollectionSuccess": "Collection \"{{name}}\" dropped successfully.",
     "dropDatabaseFailed": "Failed to drop database: {{error}}",
+    "dropDatabaseSuccess": "Database \"{{name}}\" dropped successfully.",
     "loadCollectionsFailed": "Could not list collections in {{db}}: {{error}}",
     "namespaceBusyWithSave": "A document is being saved here. Wait for it to finish before renaming.",
     "noSavedConnection": "No saved connection \"{{name}}\". Add it in Connection Manager, then try again.",

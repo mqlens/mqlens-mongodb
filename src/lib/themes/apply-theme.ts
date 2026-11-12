@@ -41,7 +41,7 @@ export function resolveThemeMode(
   config: ThemeConfig
 ): "dark" | "light" {
   if (config.mode === "system") {
-    return window.matchMedia("(prefers-color-scheme: light)").matches
+    return window.matchMedia?.("(prefers-color-scheme: light)").matches
       ? "light"
       : "dark";
   }
@@ -51,17 +51,29 @@ export function resolveThemeMode(
   return preset?.mode ?? "dark";
 }
 
+/**
+ * The preset actually shown. In "system" mode a preset with a light/dark twin
+ * (mqlens-dark / mqlens-light, github-…, solarized-…) swaps to the twin that
+ * matches the OS, so the colours follow the mode and not just the class.
+ */
+function effectivePresetId(config: ThemeConfig): string {
+  if (config.mode !== "system") return config.presetId;
+  const mode = resolveThemeMode(config);
+  const twin = config.presetId.replace(/-(dark|light)$/, `-${mode}`);
+  return getPresetById(twin) ? twin : config.presetId;
+}
+
 export function getEffectiveTokens(
   config: ThemeConfig
 ): Record<TokenName, string> {
-  const preset = getPresetById(config.presetId);
+  const preset = getPresetById(effectivePresetId(config));
   const base = preset?.tokens ?? getPresetById("mqlens-dark")!.tokens;
   return { ...base, ...config.overrides };
 }
 
 export function applyTheme(config: ThemeConfig): "dark" | "light" {
-  const key = themeConfigKey(config);
   const resolvedMode = resolveThemeMode(config);
+  const key = `${themeConfigKey(config)}|${resolvedMode}`;
   if (key === lastAppliedKey) {
     return resolvedMode;
   }
@@ -72,7 +84,7 @@ export function applyTheme(config: ThemeConfig): "dark" | "light" {
 
   root.classList.remove("dark", "light");
   root.classList.add(resolvedMode);
-  root.setAttribute("data-theme", config.presetId);
+  root.setAttribute("data-theme", effectivePresetId(config));
   root.setAttribute("data-spacing", config.spacingDensity);
 
   for (const name of TOKEN_NAMES) {

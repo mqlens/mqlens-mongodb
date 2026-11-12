@@ -226,13 +226,14 @@
     "noConnection": "没有活动连接。连接到 MongoDB 集群即可浏览 Collection 并运行查询。"
   },
   "keyboardShortcuts": {
-    "description": "用于导航、查询、侧边栏、缩放和命令面板的全局快捷键。",
+    "description": "用于导航、标签页与窗口、查询、侧边栏、缩放和命令面板的全局快捷键。",
     "empty": "没有符合搜索条件的快捷键。",
     "groups": {
       "command-palette": "命令面板",
       "navigation": "导航",
       "query-editor": "查询编辑器",
       "sidebar": "侧边栏",
+      "tabs": "标签页与窗口",
       "zoom": "缩放"
     },
     "items": {
@@ -241,9 +242,18 @@
       "palette-navigate": "在命令面板结果中移动",
       "palette-open": "打开或关闭命令面板",
       "palette-run": "执行选中的命令面板操作",
-      "run-query": "运行当前查询",
+      "run-query": "运行当前查询或 Shell 语句",
+      "shell-run-all": "运行整个 Shell 脚本",
       "sidebar-search": "聚焦侧边栏搜索框",
       "submit-dialog": "提交多行对话框（导入 URI、输入框）",
+      "tab-close": "关闭当前标签页",
+      "tab-last": "跳转到最后一个标签页",
+      "tab-new": "新建标签页（打开当前集合，否则打开快速开始）",
+      "tab-next": "显示下一个标签页",
+      "tab-prev": "显示上一个标签页",
+      "tab-reopen": "重新打开最近关闭的标签页",
+      "tab-select": "跳转到第 1–8 个标签页",
+      "open-settings": "打开设置",
       "zoom-in": "放大界面",
       "zoom-in-out": "放大或缩小界面",
       "zoom-out": "缩小界面",
@@ -290,6 +300,7 @@
       "requiresMongosh": "MongoShell 需要 mongosh",
       "requiresMongoshBody": "在此运行查询和脚本需要一个活动的 mongosh 会话。",
       "retry": "重试",
+      "serverFailed": "无法在 MQLens Server 上启动 Shell",
       "startingSession": "正在启动 mongosh 会话…",
       "useThisBinary": "使用此可执行文件"
     },
@@ -321,14 +332,23 @@
       "sessionUnavailable": "mongosh 会话不可用：{{detail}}",
       "switchedToDb": "已切换到数据库 {{db}}"
     },
+    "script": {
+      "allFiles": "所有文件",
+      "filter": "Shell 脚本",
+      "openFailed": "无法打开脚本：{{message}}",
+      "saveFailed": "无法保存脚本：{{message}}"
+    },
     "toolbar": {
       "aiToggleLabel": "AI",
       "aiToggleTitle": "AI 助手",
-      "stop": "停止",
-      "stopTitle": "通过重启 mongosh 会话来停止正在运行的命令",
+      "openScript": "打开脚本…",
       "restartSession": "重启",
       "restartSessionTitle": "停止当前 mongosh 会话并启动新会话",
-      "run": "运行"
+      "run": "运行",
+      "runTitle": "全部运行（{{all}}）。{{statement}} 运行选中内容或光标处的语句。",
+      "saveScript": "保存脚本…",
+      "stop": "停止",
+      "stopTitle": "通过重启 mongosh 会话来停止正在运行的命令"
     }
   },
   "quickStart": {
@@ -378,7 +398,8 @@
     "bodyWithNamespace": "{{namespace}} 恢复自上次会话。重新连接到 {{profile}} 即可加载。",
     "disconnected": "已断开",
     "profileMissing": "该连接配置已不存在",
-    "reconnectButton": "重新连接 {{profile}}"
+    "reconnectButton": "重新连接 {{profile}}",
+    "signIn": "登录…"
   },
   "statusBar": {
     "activity": "活动",
@@ -476,6 +497,10 @@
       "dismiss": "关闭",
       "offline": "你当前处于离线状态。请连接网络后重试。",
       "uptodate": "你已在使用最新版本。"
+    },
+    "whatsNew": {
+      "link": "查看新功能",
+      "message": "已更新到 MQLens {{version}}。"
     }
   },
   "vaultGate": {
@@ -484,12 +509,18 @@
       "setup": "创建并解锁",
       "unlock": "解锁"
     },
+    "biometricOffer": {
+      "description": "使用此设备的生物识别解锁（Touch ID、Face ID 或 Windows Hello），无需输入主密码。你可以在“设置 → 安全”中关闭它。",
+      "enable": "开启生物识别解锁",
+      "skip": "暂不",
+      "title": "下次无需密码即可解锁？"
+    },
     "biometry": {
       "faceId": "使用 Face ID",
       "generic": "使用生物识别",
       "touchId": "使用 Touch ID"
     },
-    "confirmReset": "重置会删除所有已保存的连接和 API 密钥。是否继续？",
+    "confirmReset": "重置将删除所有已保存的连接、API 密钥和加密的 MQLens Server 会话令牌。由于保险库已锁定，无法撤销活动的服务器会话，它们可能仍然有效。是否继续？",
     "descriptions": {
       "setup": "你保存的连接和 API 密钥会用此密码加密。一旦忘记，将无法恢复。",
       "unlock": "请输入主密码以解密已保存的凭据。"
@@ -629,5 +660,6 @@
     "retentionNote": "旧事件会按保留期设置自动移除。完好的日志无法被清除。",
     "statusError": "失败",
     "statusOk": "成功"
-  }
+  },
+  "shellNotOnServer": "MQLens Server 暂不支持 Shell。"
 }

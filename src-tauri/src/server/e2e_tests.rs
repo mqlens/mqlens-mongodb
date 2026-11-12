@@ -1,0 +1,1034 @@
+//! End-to-end checks of server mode against a real MQLens Server: every op
+//! class runs once through the server and once locally against the same
+//! MongoDB, and the two must answer alike.
+//!
+//! Opt-in, like `integration_tests`: they no-op unless `MQLENS_TEST_SERVER_URL`
+//! is set. Once it is, the variables below must be set too, or the run fails
+//! naming the missing one.
+//!
+//! - `MQLENS_TEST_SERVER_URL`, `MQLENS_TEST_SERVER_TENANT`,
+//!   `MQLENS_TEST_SERVER_EMAIL`, `MQLENS_TEST_SERVER_PASSWORD`: an owner
+//!   account on the server (its `MQLENS_BOOTSTRAP_*` account will do).
+//! - `MQLENS_TEST_MONGO_URI`: the MongoDB this app connects to locally.
+//! - `MQLENS_TEST_SERVER_MONGO_URI`: the same MongoDB as the server reaches
+//!   it, when that differs (a server in a container); defaults to the above.
+//! - `MQLENS_TEST_SERVER_SHELL=1`: also run the shell check, which needs
+//!   mongosh on the server's host.
+//! - `MQLENS_TEST_SERVER_CHANGE_STREAMS=1`: also run the change stream check,
+//!   which needs the MongoDB to be a replica set.
+//! - `MQLENS_TEST_SERVER_TOOLS=1`: also run the dump and restore check, which
+//!   needs mongodump and mongorestore on the server's host.
+//!
+//! Each test makes its own server connection and database, and removes both.
+//!
+//! `MQLENS_TEST_SERVER_OIDC_PROVIDER` opts in to the browser sign-in, on its
+//! own: the name of a provider on the tenant whose IdP approves without
+//! asking, and `MQLENS_TEST_SERVER_OIDC_EMAIL`, who it signs in. That needs
+//! only `MQLENS_TEST_SERVER_URL` and `MQLENS_TEST_SERVER_TENANT` besides.
+
+#[cfg(test)]
+mod e2e {
+    use crate::change_streams::{
+        poll_change_stream_impl, start_change_stream_impl, stop_change_stream_impl, StreamPoll,
+        StreamStatus,
+    };
+    use crate::oidc::BrowserOpener;
+    use crate::server::accounts::{self, AuthMethod, ServerAccountInput};
+    use crate::server::channel::client;
+    use crate::server::commands::{
+        list_connections_impl, oidc_providers_impl, oidc_sign_in_impl, server_connect_impl,
+        sign_in_impl, sign_out_impl, token_store,
+    };
+    use crate::server::fake::{write_vault_meta, KEY};
+    use crate::server::pb::mqlens::v1::admin_service_client::AdminServiceClient;
+    use crate::server::pb::mqlens::v1::{
+        CreateConnectionRequest, DeleteConnectionRequest, GrantConnectionRequest,
+    };
+    use crate::server::session::AccountSession;
+    use crate::{
+        analyze_schema_impl, connect_db_impl, count_documents_impl, create_collection_impl,
+        delete_gridfs_file_impl, delete_many_impl, download_gridfs_file_impl, drop_collection_impl,
+        execute_aggregate_impl, execute_mql_query_impl, insert_document_impl,
+        list_collections_impl, list_databases_impl, list_gridfs_files_impl, list_indexes_impl,
+        run_mongosh_command_impl, run_mongosh_script_impl, start_collection_export_impl,
+        start_mongosh_session_impl, stop_mongosh_session_impl, update_document_impl,
+        upload_gridfs_file_impl, AppState,
+    };
+    use futures::FutureExt;
+    use mongodb::bson::{doc, Document};
+    use std::future::Future;
+    use std::panic::AssertUnwindSafe;
+    use std::pin::Pin;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    fn var(name: &str) -> Option<String> {
+        std::env::var(name).ok().filter(|v| !v.trim().is_empty())
+    }
+
+    /// A variable the run needs once `MQLENS_TEST_SERVER_URL` has opted in: a
+    /// missing one fails the run instead of skipping it unseen.
+    fn required(name: &str) -> String {
+        var(name).unwrap_or_else(|| panic!("MQLENS_TEST_SERVER_URL is set, so {name} must be too"))
+    }
+
+    /// A browser nobody is at: it follows the IdP's redirects, which end at the
+    /// sign-in's own redirect when the IdP approves without asking.
+    fn unattended_browser() -> BrowserOpener {
+        Arc::new(|url: &str| {
+            let url = url.to_string();
+            tokio::spawn(async move {
+                reqwest::get(url).await.expect("the identity provider answers");
+            });
+            Ok(())
+        })
+    }
+
+    // A real server and a real IdP: the code exchange, the session it gives,
+    // that session refreshing after a restart, and its end.
+    #[tokio::test]
+    async fn an_identity_provider_signs_in_through_the_browser() {
+        let Some(provider) = var("MQLENS_TEST_SERVER_OIDC_PROVIDER") else {
+            return;
+        };
+        let email = required("MQLENS_TEST_SERVER_OIDC_EMAIL");
+        let state = AppState::new();
+        *state.vault_key.lock().unwrap() = Some(KEY);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(accounts::ACCOUNTS_FILE_NAME);
+        write_vault_meta(&path, &KEY);
+        let (account, _) = accounts::save_account(
+            &path,
+            &KEY,
+            ServerAccountInput {
+                id: None,
+                name: "E2E OIDC".to_string(),
+                url: required("MQLENS_TEST_SERVER_URL"),
+                tenant: required("MQLENS_TEST_SERVER_TENANT"),
+                email: String::new(),
+                auth: AuthMethod::Oidc,
+                allow_insecure_http: false,
+                extra_ca_pem: None,
+            },
+        )
+        .unwrap();
+        let id = account.id.as_str();
+
+        let providers = oidc_providers_impl(&state, &path, id).await.unwrap();
+        let provider = providers
+            .iter()
+            .find(|p| p.name == provider)
+            .unwrap_or_else(|| panic!("{provider} is not among {providers:?}"));
+        let view = oidc_sign_in_impl(
+            &state,
+            &path,
+            id,
+            &provider.id,
+            None,
+            &unattended_browser(),
+            Duration::from_secs(30),
+        )
+        .await
+        .expect("sign in through the identity provider");
+        assert!(view.signed_in);
+        assert_eq!(view.email, email);
+        let first = accounts::find(&path, &KEY, id).unwrap().refresh_token;
+        assert!(first.is_some());
+        list_connections_impl(&state, &path, id).await.unwrap();
+
+        // As after a restart: nothing but the stored token to go on.
+        state.server.clear().await;
+        list_connections_impl(&state, &path, id).await.unwrap();
+        let stored = accounts::find(&path, &KEY, id).unwrap();
+        assert_ne!(stored.refresh_token, first, "the refresh token did not rotate");
+        assert_eq!(stored.email, email);
+
+        let signed_out = sign_out_impl(&state, &path, id).await.unwrap();
+        assert!(signed_out.ended_on_server);
+    }
+
+    /// One test's world: a local connection and a server connection to the
+    /// same MongoDB, and a database of its own on it.
+    struct World {
+        state: AppState,
+        local: String,
+        remote: String,
+        db: String,
+        session: Arc<AccountSession>,
+        remote_id: String,
+        _dir: tempfile::TempDir,
+    }
+
+    impl World {
+        async fn new() -> Option<World> {
+            let url = var("MQLENS_TEST_SERVER_URL")?;
+            let mongo = required("MQLENS_TEST_MONGO_URI");
+            let server_mongo = var("MQLENS_TEST_SERVER_MONGO_URI").unwrap_or_else(|| mongo.clone());
+            let state = AppState::new();
+            *state.vault_key.lock().unwrap() = Some(KEY);
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join(accounts::ACCOUNTS_FILE_NAME);
+            write_vault_meta(&path, &KEY);
+            let (account, _) = accounts::save_account(
+                &path,
+                &KEY,
+                ServerAccountInput {
+                    id: None,
+                    name: "E2E".to_string(),
+                    url,
+                    tenant: required("MQLENS_TEST_SERVER_TENANT"),
+                    email: required("MQLENS_TEST_SERVER_EMAIL"),
+                    auth: Default::default(),
+                    allow_insecure_http: false,
+                    extra_ca_pem: None,
+                },
+            )
+            .unwrap();
+            sign_in_impl(
+                &state,
+                &path,
+                &account.id,
+                required("MQLENS_TEST_SERVER_PASSWORD"),
+            )
+            .await
+            .expect("sign in to MQLENS_TEST_SERVER_URL");
+            let account = accounts::find(&path, &KEY, &account.id).unwrap();
+            let session = state
+                .server
+                .session(&account, token_store(&state, &path))
+                .await
+                .unwrap();
+
+            // A connection of the test's own, granted to owners, as an admin
+            // would set one up for a team.
+            let remote_id = session
+                .call(
+                    CreateConnectionRequest {
+                        name: format!("e2e-{}", uuid::Uuid::new_v4().simple()),
+                        deployment_kind: "standalone".to_string(),
+                        tags: Vec::new(),
+                        uri: server_mongo,
+                    },
+                    |channel, request| async move {
+                        client!(AdminServiceClient, channel)
+                            .create_connection(request)
+                            .await
+                    },
+                )
+                .await;
+            let remote_id = match remote_id {
+                Ok(created) => created.id,
+                Err(e) => {
+                    let _ = sign_out(&session).await;
+                    panic!("create the server connection: {e}");
+                }
+            };
+            // From here on the connection exists, so a failure removes it again.
+            let rest = async {
+                session
+                    .call(
+                        GrantConnectionRequest {
+                            connection_id: remote_id.clone(),
+                            principal_type: "role".to_string(),
+                            principal_id: "owner".to_string(),
+                        },
+                        |channel, request| async move {
+                            client!(AdminServiceClient, channel)
+                                .grant_connection(request)
+                                .await
+                        },
+                    )
+                    .await
+                    .map_err(|e| format!("grant the server connection: {e}"))?;
+                let remote = server_connect_impl(&state, &path, &account.id, &remote_id)
+                    .await
+                    .map_err(|e| format!("connect through the server: {e}"))?
+                    .id;
+                let local = connect_db_impl(&state, &mongo, None)
+                    .await
+                    .map_err(|e| format!("connect to MQLENS_TEST_MONGO_URI: {e}"))?;
+                Ok::<_, String>((remote, local))
+            }
+            .await;
+            let (remote, local) = match rest {
+                Ok(connected) => connected,
+                Err(e) => {
+                    let _ = delete_connection(&session, &remote_id).await;
+                    let _ = sign_out(&session).await;
+                    panic!("{e}");
+                }
+            };
+            Some(World {
+                state,
+                local,
+                remote,
+                db: format!("mqlens_e2e_{}", uuid::Uuid::new_v4().simple()),
+                session,
+                remote_id,
+                _dir: dir,
+            })
+        }
+
+        fn client(&self) -> mongodb::Client {
+            self.state
+                .connections
+                .lock()
+                .unwrap()
+                .get(&self.local)
+                .cloned()
+                .unwrap()
+        }
+
+        async fn seed(&self, collection: &str, docs: Vec<Document>) {
+            self.client()
+                .database(&self.db)
+                .collection::<Document>(collection)
+                .insert_many(docs)
+                .await
+                .unwrap();
+        }
+
+        /// Runs `f` on the local connection, then on the server one.
+        async fn both<T, F, Fut>(&self, f: F) -> (T, T)
+        where
+            F: Fn(String) -> Fut,
+            Fut: std::future::Future<Output = T>,
+        {
+            (f(self.local.clone()).await, f(self.remote.clone()).await)
+        }
+
+        /// Runs a test's body, then removes its database and server connection
+        /// whether the body passed or not. The body's own failure is reported
+        /// first; failing to clean up fails the test too.
+        async fn run<F>(self, body: F)
+        where
+            F: for<'a> FnOnce(&'a World) -> Pin<Box<dyn Future<Output = ()> + 'a>>,
+        {
+            let outcome = AssertUnwindSafe(body(&self)).catch_unwind().await;
+            let cleaned = self.finish().await;
+            if let Err(panic) = outcome {
+                std::panic::resume_unwind(panic);
+            }
+            cleaned.unwrap_or_else(|e| {
+                panic!("clean up the test's database and server connection: {e}")
+            });
+        }
+
+        async fn finish(self) -> Result<(), String> {
+            let dropped = self
+                .client()
+                .database(&self.db)
+                .drop()
+                .await
+                .map_err(|e| format!("drop {}: {e}", self.db));
+            let deleted = delete_connection(&self.session, &self.remote_id).await;
+            let signed_out = sign_out(&self.session).await;
+            dropped.and(deleted).and(signed_out)
+        }
+    }
+
+    async fn delete_connection(session: &AccountSession, id: &str) -> Result<(), String> {
+        session
+            .call(
+                DeleteConnectionRequest { id: id.to_string() },
+                |channel, request| async move {
+                    client!(AdminServiceClient, channel)
+                        .delete_connection(request)
+                        .await
+                },
+            )
+            .await
+            .map(|_| ())
+            .map_err(|e| format!("delete server connection {id}: {e}"))
+    }
+
+    /// Ends the test's owner session on the server, not just here.
+    async fn sign_out(session: &AccountSession) -> Result<(), String> {
+        match session.sign_out().await {
+            Ok(true) => Ok(()),
+            Ok(false) => Err("the server did not confirm the sign-out".to_string()),
+            Err(e) => Err(format!("sign out: {e}")),
+        }
+    }
+
+    fn people() -> Vec<Document> {
+        vec![
+            doc! { "_id": 1, "name": "Ada", "tier": "gold", "score": 9.5, "tags": ["a", "b"] },
+            doc! { "_id": 2, "name": "Bo", "tier": "silver", "nested": { "x": 1_i64 } },
+            doc! { "_id": 3, "name": "Cy", "tier": "gold", "at": mongodb::bson::DateTime::from_millis(1_700_000_000_000) },
+        ]
+    }
+
+    async fn finished(state: &AppState, task_id: &str) -> crate::TaskInfo {
+        for _ in 0..1200 {
+            let task = state.tasks.lock().unwrap().get(task_id).cloned().unwrap();
+            if task.status != "running" {
+                return task;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        panic!("task {task_id} did not finish");
+    }
+
+    // Reads: listing, find, count, aggregate, indexes and schema read alike.
+    #[tokio::test]
+    async fn reads_match_local_mode() {
+        let Some(w) = World::new().await else { return };
+        w.run(|w| {
+            Box::pin(async move {
+                w.seed("people", people()).await;
+                let db = w.db.as_str();
+                let st = &w.state;
+
+                let (_, remote_dbs) = w
+                    .both(|id| async move { list_databases_impl(st, &id).await })
+                    .await;
+                assert!(remote_dbs.unwrap().iter().any(|d| d == db));
+                let (local, remote) = w
+                    .both(|id| async move { list_collections_impl(st, &id, &db).await })
+                    .await;
+                let names = |r: Result<Vec<crate::CollectionInfo>, String>| {
+                    r.unwrap().into_iter().map(|c| c.name).collect::<Vec<_>>()
+                };
+                assert_eq!(names(local), names(remote));
+                let (local, remote) = w
+                    .both(|id| async move {
+                        execute_mql_query_impl(
+                            st,
+                            &id,
+                            &db,
+                            "people",
+                            r#"{"tier":"gold"}"#,
+                            r#"{"_id":1}"#,
+                            "",
+                            100,
+                            0,
+                        )
+                        .await
+                    })
+                    .await;
+                assert_eq!(local.unwrap(), remote.unwrap());
+                let (local, remote) = w
+                    .both(|id| async move {
+                        count_documents_impl(st, &id, &db, "people", r#"{"tier":"gold"}"#).await
+                    })
+                    .await;
+                assert_eq!(local.unwrap(), remote.unwrap());
+                let pipeline = r#"[{"$group":{"_id":"$tier","n":{"$sum":1}}},{"$sort":{"_id":1}}]"#;
+                let (local, remote) = w
+                    .both(|id| async move {
+                        execute_aggregate_impl(st, &id, &db, "people", pipeline, false).await
+                    })
+                    .await;
+                assert_eq!(local.unwrap(), remote.unwrap());
+                let (local, remote) = w
+                    .both(|id| async move { list_indexes_impl(st, &id, &db, "people").await })
+                    .await;
+                assert_eq!(
+                    serde_json::to_value(local.unwrap()).unwrap(),
+                    serde_json::to_value(remote.unwrap()).unwrap()
+                );
+                let (local, remote) = w
+                    .both(
+                        |id| async move { analyze_schema_impl(st, &id, &db, "people", 100).await },
+                    )
+                    .await;
+                assert_eq!(local.unwrap(), remote.unwrap());
+            })
+        })
+        .await;
+    }
+
+    // A stored sub-document whose keys look like a type wrapper reads back as
+    // stored, sibling fields and all, in both modes.
+    #[tokio::test]
+    async fn a_wrapper_shaped_document_reads_back_as_stored() {
+        let Some(w) = World::new().await else { return };
+        w.run(|w| {
+            Box::pin(async move {
+                w.seed(
+                    "odd",
+                    vec![doc! { "_id": 1, "money": { "$numberLong": "7", "other": 1 } }],
+                )
+                .await;
+
+                let (st, db) = (&w.state, w.db.as_str());
+                let (local, remote) = w
+                    .both(|id| async move {
+                        execute_mql_query_impl(st, &id, db, "odd", "{}", "", "", 10, 0).await
+                    })
+                    .await;
+
+                let stored = [r#"{"_id":1,"money":{"$numberLong":"7","other":1}}"#];
+                assert_eq!(local.unwrap(), stored, "local mode");
+                assert_eq!(remote.unwrap(), stored, "server mode");
+            })
+        })
+        .await;
+    }
+
+    // Writes through the server land where local mode reads them.
+    #[tokio::test]
+    async fn writes_through_the_server_are_what_local_mode_reads() {
+        let Some(w) = World::new().await else { return };
+        w.run(|w| {
+            Box::pin(async move {
+                w.seed("people", people()).await;
+                let (st, db) = (&w.state, w.db.as_str());
+
+                insert_document_impl(
+                    st,
+                    &w.remote,
+                    db,
+                    "people",
+                    r#"{"_id":4,"name":"Di","tier":"bronze"}"#,
+                )
+                .await
+                .unwrap();
+                let modified = update_document_impl(
+                    st,
+                    &w.remote,
+                    db,
+                    "people",
+                    r#"{"_id":4}"#,
+                    r#"{"_id":4,"name":"Di","tier":"bronze"}"#,
+                    r#"{"_id":4,"name":"Di","tier":"gold"}"#,
+                    Some("{}"),
+                )
+                .await
+                .unwrap();
+                assert_eq!(modified, 1);
+                let read = |id: String| async move {
+                    execute_mql_query_impl(st, &id, db, "people", "{}", r#"{"_id":1}"#, "", 100, 0)
+                        .await
+                };
+                let (local, remote) = w.both(read).await;
+                let local = local.unwrap();
+                assert_eq!(local, remote.unwrap());
+                assert!(local.iter().any(|d| d.contains("Di") && d.contains("gold")));
+
+                delete_many_impl(st, &w.remote, db, "people", r#"{"tier":"gold"}"#, true)
+                    .await
+                    .unwrap();
+                let (local, remote) = w
+                    .both(
+                        |id| async move { count_documents_impl(st, &id, db, "people", "{}").await },
+                    )
+                    .await;
+                assert_eq!((local.unwrap(), remote.unwrap()), (1, 1));
+            })
+        })
+        .await;
+    }
+
+    // DDL through the server shows in local mode's listing, and goes again.
+    #[tokio::test]
+    async fn ddl_through_the_server_is_what_local_mode_lists() {
+        let Some(w) = World::new().await else { return };
+        w.run(|w| {
+            Box::pin(async move {
+                let (st, db) = (&w.state, w.db.as_str());
+
+                create_collection_impl(st, &w.remote, db, "made_remotely")
+                    .await
+                    .unwrap();
+                let listed = list_collections_impl(st, &w.local, db).await.unwrap();
+                assert!(listed.iter().any(|c| c.name == "made_remotely"));
+                drop_collection_impl(st, &w.remote, db, "made_remotely", true)
+                    .await
+                    .unwrap();
+                let listed = list_collections_impl(st, &w.local, db).await.unwrap();
+                assert!(!listed.iter().any(|c| c.name == "made_remotely"));
+            })
+        })
+        .await;
+    }
+
+    // A file stored through the server lists as local mode lists it and comes
+    // back byte for byte.
+    #[tokio::test]
+    async fn gridfs_through_the_server_matches_local_mode() {
+        let Some(w) = World::new().await else { return };
+        w.run(|w| {
+            Box::pin(async move {
+                let (st, db) = (&w.state, w.db.as_str());
+                let dir = tempfile::tempdir().unwrap();
+                let source = dir.path().join("report.txt");
+                let bytes: Vec<u8> = (0..300_000u32).map(|i| (i % 251) as u8).collect();
+                std::fs::write(&source, &bytes).unwrap();
+
+                upload_gridfs_file_impl(
+                    st,
+                    &w.remote,
+                    db,
+                    "fs",
+                    source.to_str().unwrap(),
+                    None,
+                    Some(r#"{"owner":"e2e"}"#),
+                    None,
+                    None,
+                )
+                .await
+                .unwrap();
+                let (local, remote) = w
+                    .both(|id| async move { list_gridfs_files_impl(st, &id, db, "fs").await })
+                    .await;
+                let local = local.unwrap();
+                assert_eq!(local, remote.unwrap());
+                let files: serde_json::Value = serde_json::from_str(&local).unwrap();
+                let file_id = files[0]["id"].as_str().unwrap().to_string();
+
+                let target = dir.path().join("back.txt");
+                download_gridfs_file_impl(
+                    st,
+                    &w.remote,
+                    db,
+                    "fs",
+                    &file_id,
+                    target.to_str().unwrap(),
+                    None,
+                    None,
+                )
+                .await
+                .unwrap();
+                assert_eq!(std::fs::read(&target).unwrap(), bytes);
+                delete_gridfs_file_impl(st, &w.remote, db, "fs", &file_id)
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    list_gridfs_files_impl(st, &w.local, db, "fs")
+                        .await
+                        .unwrap(),
+                    "[]"
+                );
+            })
+        })
+        .await;
+    }
+
+    // An export through the server writes the very file local mode writes.
+    #[tokio::test]
+    async fn exports_through_the_server_are_byte_identical() {
+        let Some(w) = World::new().await else { return };
+        w.run(|w| {
+            Box::pin(async move {
+                w.seed("people", people()).await;
+                let (st, db) = (&w.state, w.db.as_str());
+                let dir = tempfile::tempdir().unwrap();
+
+                for format in ["json", "ndjson", "csv", "bson"] {
+                    let mut written = Vec::new();
+                    for (side, id) in [("local", &w.local), ("remote", &w.remote)] {
+                        let path = dir.path().join(format!("{side}.{format}"));
+                        let task = start_collection_export_impl(
+                            st,
+                            id,
+                            db,
+                            "people",
+                            format,
+                            path.to_str().unwrap(),
+                            None,
+                        )
+                        .await
+                        .unwrap();
+                        let task = finished(st, &task.id).await;
+                        assert_eq!(
+                            task.status, "completed",
+                            "{side} {format}: {:?}",
+                            task.error
+                        );
+                        written.push(std::fs::read(&path).unwrap());
+                    }
+                    assert_eq!(written[0], written[1], "{format}");
+                }
+            })
+        })
+        .await;
+    }
+
+    // Admin-class reads, which need no mongosh: deployment users list as local
+    // mode lists them, and current operations come back.
+    #[tokio::test]
+    async fn admin_operations_match_local_mode() {
+        let Some(w) = World::new().await else { return };
+        w.run(|w| {
+            Box::pin(async move {
+                let (st, db) = (&w.state, w.db.as_str());
+                let mongo_db = w.client().database(db);
+                mongo_db
+                    .run_command(
+                        doc! { "createUser": "e2e_user", "pwd": "e2e-test-only", "roles": [] },
+                    )
+                    .await
+                    .unwrap();
+
+                let (local, remote) = w
+                    .both(|id| async move { crate::list_users_impl(st, &id, Some(db)).await })
+                    .await;
+                let local = local.unwrap();
+                assert_eq!(local, remote.unwrap());
+                assert!(local.iter().any(|u| u.user == "e2e_user"), "{local:?}");
+                crate::monitoring::current_ops_impl(st, &w.remote)
+                    .await
+                    .unwrap();
+
+                let _ = mongo_db
+                    .run_command(doc! { "dropAllUsersFromDatabase": 1 })
+                    .await;
+            })
+        })
+        .await;
+    }
+
+    // The shell runs on the server's mongosh, in the tab's database.
+    #[tokio::test]
+    async fn the_shell_runs_on_the_server() {
+        if var("MQLENS_TEST_SERVER_SHELL").as_deref() != Some("1") {
+            return;
+        }
+        let Some(w) = World::new().await else { return };
+        w.run(|w| {
+            Box::pin(async move {
+                let st = &w.state;
+
+                let info = start_mongosh_session_impl(st, &w.remote, "", &w.db, "", "")
+                    .await
+                    .map_err(|e| e.to_string())
+                    .unwrap_or_else(|e| panic!("start the server shell: {e}"));
+                let out = run_mongosh_command_impl(st, &info.session_id, "db.getName()")
+                    .await
+                    .map_err(|e| e.to_string())
+                    .unwrap_or_else(|e| panic!("run on the server shell: {e}"));
+                assert!(
+                    out.stdout
+                        .iter()
+                        .any(|line| line.trim_end().ends_with(&w.db)),
+                    "{:?}",
+                    out.stdout
+                );
+                stop_mongosh_session_impl(st, &info.session_id)
+                    .await
+                    .unwrap();
+            })
+        })
+        .await;
+    }
+
+    // A script runs in the tab's shell on the server's mongosh as it would
+    // one-shot: read whole, and stopped at its first throw. The shell outlives
+    // whatever the script does, and nothing is left in the temp dir there.
+    #[tokio::test]
+    async fn a_script_runs_on_the_server_as_one_unit() {
+        if var("MQLENS_TEST_SERVER_SHELL").as_deref() != Some("1") {
+            return;
+        }
+        let Some(w) = World::new().await else { return };
+        w.run(|w| {
+            Box::pin(async move {
+                let st = &w.state;
+                let session = start_mongosh_session_impl(st, &w.remote, "", &w.db, "", "")
+                    .await
+                    .map_err(|e| e.to_string())
+                    .unwrap_or_else(|e| panic!("start the server shell: {e}"));
+                let session = session.session_id;
+                let run = |script: String| {
+                    let session = session.clone();
+                    async move {
+                        run_mongosh_script_impl(st, &w.remote, "", &w.db, "", &script, Some(&session))
+                            .await
+                            .map_err(|e| e.to_string())
+                            .unwrap_or_else(|e| panic!("{script:?}: {e}"))
+                    }
+                };
+                let count = || async {
+                    w.client()
+                        .database(&w.db)
+                        .collection::<Document>("scripted")
+                        .count_documents(doc! {})
+                        .await
+                        .unwrap()
+                };
+                let on_the_database = || async {
+                    let out = run_mongosh_command_impl(st, &session, "db.getName()")
+                        .await
+                        .map_err(|e| e.to_string())
+                        .unwrap_or_else(|e| panic!("the shell no longer answers: {e}"));
+                    assert!(out.stdout.iter().any(|l| l.ends_with(&w.db)), "{:?}", out.stdout);
+                };
+                // Counted from here: a run ended by Stop leaves its file.
+                let staged_files = || async {
+                    let staged = "require('fs').readdirSync(require('os').tmpdir()).filter(f => f.startsWith('mqlens-shell-')).length";
+                    run_mongosh_command_impl(st, &session, staged)
+                        .await
+                        .map_err(|e| e.to_string())
+                        .unwrap()
+                        .stdout
+                };
+                let files_before = staged_files().await;
+
+                // Lines opening with "." are REPL keywords when fed one at a time.
+                let out = run("db.scripted.insertMany([{ a: 1 }, { a: 2 }])\nconst top = db.scripted.find()\n  .sort({ a: -1 })\n  .limit(1)\n  .toArray()\nprint('top', top[0].a)".to_string()).await;
+                assert_eq!(out.stdout, ["top 2"]);
+                assert!(out.stderr.is_empty(), "{:?}", out.stderr);
+                assert_eq!(count().await, 2);
+
+                // Text a REPL line could not carry, staged and read back whole.
+                let out = run("print('a\u{2028}b\u{2029}c'.length)\nprint('\\\"é\\\\')".to_string()).await;
+                assert_eq!(out.stdout.first().map(String::as_str), Some("5"), "{out:?}");
+                assert_eq!(out.stdout.last().map(String::as_str), Some("\"é\\"), "{out:?}");
+
+                // Past 1 MiB, which a single REPL line never gets through, and
+                // past what one staging command carries.
+                let size = (crate::MONGOSH_STAGE_BATCH + 1) * crate::MONGOSH_STAGE_CHUNK;
+                let long = format!("const long = '{}'\nprint('long', long.length)", "x".repeat(size));
+                let out = run(long).await;
+                assert_eq!(out.stdout, [format!("long {size}")]);
+
+                // A syntax error anywhere runs none of it.
+                let out = run("db.scripted.insertOne({ a: 3 })\nconst bad = ;\ndb.scripted.insertOne({ a: 4 })".to_string()).await;
+                assert!(out.stdout.join("\n").contains("SyntaxError"), "{out:?}");
+                assert_eq!(count().await, 2, "a script that failed to parse wrote");
+                on_the_database().await;
+
+                // A throw ends it there.
+                let out = run("print('before')\nthrow new Error('mqlens-intentional')\ndb.scripted.insertOne({ a: 5 })".to_string()).await;
+                assert_eq!(out.stdout.first().map(String::as_str), Some("before"), "{out:?}");
+                assert!(out.stdout.join("\n").contains("mqlens-intentional"), "{out:?}");
+                assert_eq!(count().await, 2, "the statement after the throw ran");
+                on_the_database().await;
+
+                // quit() ends the script, and only the script.
+                let out = run("print('ending')\nquit()\ndb.scripted.insertOne({ a: 6 })".to_string()).await;
+                assert_eq!(out.stdout, ["ending"]);
+                assert!(out.stderr.is_empty(), "{out:?}");
+                assert_eq!(count().await, 2, "the statement after quit() ran");
+                on_the_database().await;
+
+                // The tab stays on its database, with nothing echoed for it.
+                let out = run("db = db.getSiblingDB('admin')\nprint('on', db.getName())".to_string()).await;
+                assert_eq!(out.stdout, ["on admin"]);
+                on_the_database().await;
+
+                assert_eq!(staged_files().await, files_before, "a script left its file behind");
+
+                // Stop ends the shell, and the script with it.
+                let (stopped, _) = tokio::join!(
+                    run_mongosh_script_impl(st, &w.remote, "", &w.db, "", "sleep(60000)\nprint(1)", Some(&session)),
+                    async {
+                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                        stop_mongosh_session_impl(st, &session).await.unwrap();
+                    }
+                );
+                assert!(stopped.is_err());
+            })
+        })
+        .await;
+    }
+
+    // A tail through the server sees what a local tail sees.
+    #[tokio::test]
+    async fn a_change_stream_matches_local_mode() {
+        if var("MQLENS_TEST_SERVER_CHANGE_STREAMS").as_deref() != Some("1") {
+            return;
+        }
+        let Some(w) = World::new().await else { return };
+        w.run(|w| {
+            Box::pin(async move {
+                let st = &w.state;
+                let poll = |tail: &'static str| poll_change_stream_impl(st, "main", tail, None);
+                async fn until(
+                    poll: impl Fn() -> Result<Option<StreamPoll>, String>,
+                    done: impl Fn(&StreamPoll) -> bool,
+                ) -> StreamPoll {
+                    for _ in 0..500 {
+                        if let Some(p) = poll().unwrap() {
+                            if done(&p) {
+                                return p;
+                            }
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                    }
+                    panic!("{:?}", poll());
+                }
+                for (tail, conn) in [("local-tail", &w.local), ("remote-tail", &w.remote)] {
+                    start_change_stream_impl(
+                        st,
+                        "main",
+                        tail.to_string(),
+                        conn.clone(),
+                        Some(w.db.clone()),
+                        Some("watched".to_string()),
+                        vec!["insert".to_string()],
+                    )
+                    .await
+                    .unwrap_or_else(|e| panic!("start {tail}: {e}"));
+                    until(|| poll(tail), |p| p.status == StreamStatus::Running).await;
+                }
+
+                w.seed(
+                    "watched",
+                    vec![doc! { "_id": 1, "v": { "$numberLong": "7", "other": 1 } }],
+                )
+                .await;
+                let local = until(|| poll("local-tail"), |p| !p.events.is_empty()).await;
+                let remote = until(|| poll("remote-tail"), |p| !p.events.is_empty()).await;
+                assert_eq!(remote.events, local.events);
+
+                stop_change_stream_impl(st, "local-tail").unwrap();
+                stop_change_stream_impl(st, "remote-tail").unwrap();
+            })
+        })
+        .await;
+    }
+
+    // A copy keeps every document as stored and every index option, from a
+    // local connection to the server and back again.
+    #[tokio::test]
+    async fn copies_cross_between_local_and_the_server() {
+        let Some(w) = World::new().await else { return };
+        w.run(|w| {
+            Box::pin(async move {
+                let st = &w.state;
+                let mut docs = people();
+                docs.push(doc! { "_id": 4, "v": { "$numberLong": "7", "other": 1 } });
+                w.seed("source", docs).await;
+                let local = w.client();
+                local
+                    .database(&w.db)
+                    .collection::<Document>("source")
+                    .create_index(
+                        mongodb::IndexModel::builder()
+                            .keys(doc! { "at": 1 })
+                            .options(
+                                mongodb::options::IndexOptions::builder()
+                                    .name("expiring".to_string())
+                                    .expire_after(std::time::Duration::from_secs(60))
+                                    .build(),
+                            )
+                            .build(),
+                    )
+                    .await
+                    .unwrap();
+
+                for (from, from_coll, to, to_coll) in [
+                    (&w.local, "source", &w.remote, "on_server"),
+                    (&w.remote, "on_server", &w.local, "back"),
+                ] {
+                    let task = crate::db::copy::start_collection_copy_impl(
+                        st,
+                        from,
+                        &w.db,
+                        from_coll,
+                        to,
+                        &w.db,
+                        to_coll,
+                        None,
+                        true,
+                        "merge".to_string(),
+                    )
+                    .await
+                    .unwrap_or_else(|e| panic!("copy {from_coll} -> {to_coll}: {e}"));
+                    let done = finished(st, &task.id).await;
+                    assert_eq!(
+                        done.status, "completed",
+                        "{from_coll} -> {to_coll}: {:?}",
+                        done.error
+                    );
+                }
+
+                let read = |coll: &'static str| {
+                    let local = local.clone();
+                    let db = w.db.clone();
+                    async move {
+                        use futures::TryStreamExt;
+                        local
+                            .database(&db)
+                            .collection::<mongodb::bson::RawDocumentBuf>(coll)
+                            .find(doc! {})
+                            .sort(doc! { "_id": 1 })
+                            .await
+                            .unwrap()
+                            .try_collect::<Vec<_>>()
+                            .await
+                            .unwrap()
+                    }
+                };
+                assert_eq!(read("back").await, read("source").await);
+                let indexes = local
+                    .database(&w.db)
+                    .collection::<Document>("back")
+                    .list_index_names()
+                    .await
+                    .unwrap();
+                assert!(indexes.contains(&"expiring".to_string()), "{indexes:?}");
+            })
+        })
+        .await;
+    }
+
+    // A dump through the server lands in a local folder, and a restore of that
+    // folder through the server brings the documents back under a new name.
+    #[tokio::test]
+    async fn dump_and_restore_run_on_the_server() {
+        if var("MQLENS_TEST_SERVER_TOOLS").as_deref() != Some("1") {
+            return;
+        }
+        let Some(w) = World::new().await else { return };
+        w.run(|w| {
+            Box::pin(async move {
+                use crate::db::mongotools::{
+                    start_dump_task_impl, start_restore_task_impl, DumpOptions, DumpScope,
+                    DumpTarget, NsSelection, RestoreOptions, RestoreSource,
+                };
+                use futures::TryStreamExt;
+                w.seed("people", people()).await;
+                let (st, db) = (&w.state, w.db.as_str());
+                let out = tempfile::tempdir().unwrap();
+                let folder = out.path().to_string_lossy().into_owned();
+
+                let dump = DumpOptions {
+                    scope: DumpScope::Db { db: db.to_string() },
+                    target: DumpTarget::Folder {
+                        out: folder.clone(),
+                    },
+                    gzip: true,
+                    ..Default::default()
+                };
+                let task = start_dump_task_impl(st, &w.remote, "", dump).await.unwrap();
+                let task = finished(st, &task.id).await;
+                assert_eq!(task.status, "completed", "dump: {:?}", task.error);
+                assert!(out.path().join(db).join("people.bson.gz").is_file());
+
+                let restore = RestoreOptions {
+                    source: RestoreSource::Folder { dir: folder },
+                    gzip: true,
+                    selections: vec![NsSelection {
+                        db: db.to_string(),
+                        coll: "people".to_string(),
+                        rename_to: Some("people_restored".to_string()),
+                    }],
+                    ..Default::default()
+                };
+                let task = start_restore_task_impl(st, &w.remote, "", restore)
+                    .await
+                    .unwrap();
+                let task = finished(st, &task.id).await;
+                assert_eq!(task.status, "completed", "restore: {:?}", task.error);
+
+                let mut restored: Vec<Document> = w
+                    .client()
+                    .database(db)
+                    .collection::<Document>("people_restored")
+                    .find(doc! {})
+                    .await
+                    .unwrap()
+                    .try_collect()
+                    .await
+                    .unwrap();
+                restored.sort_by_key(|d| d.get_i32("_id").unwrap_or_default());
+                assert_eq!(restored, people());
+            })
+        })
+        .await;
+    }
+}

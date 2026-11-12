@@ -2,7 +2,7 @@
 //! (#178). Same shape as monitoring.rs: pure curation functions (unit-tested)
 //! + async `*_impl` wrappers with mock branches for demo mode.
 
-use crate::{connection_is_mock, require_real_client, AppState};
+use crate::{connection_is_mock, AppState};
 use mongodb::bson::{doc, Bson, Document};
 use serde::Serialize;
 
@@ -68,7 +68,8 @@ pub fn curate_db_stats(raw: &Document) -> DbStatsUi {
         data_size: num(raw, "dataSize"),
         storage_size: num(raw, "storageSize"),
         indexes: num(raw, "indexes"),
-        total_index_size: num(raw, "totalIndexSize"),
+        // dbStats calls it `indexSize`; `totalIndexSize` is the collStats name.
+        total_index_size: num(raw, "indexSize"),
     }
 }
 
@@ -176,7 +177,12 @@ async fn db_stats_impl_inner(state: &AppState, id: &str, db: &str) -> Result<DbS
     if connection_is_mock(state, id)? {
         return Ok(mock_db_stats(db));
     }
-    let client = require_real_client(state, id)?;
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            return crate::server::ops::stats::db_stats(state, &conn, db).await;
+        }
+    };
     let raw = client
         .database(db)
         .run_command(doc! { "dbStats": 1 })
@@ -228,7 +234,12 @@ async fn coll_stats_impl_inner(state: &AppState, id: &str, db: &str, coll: &str)
     if connection_is_mock(state, id)? {
         return Ok(mock_coll_stats());
     }
-    let client = require_real_client(state, id)?;
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            return crate::server::ops::stats::coll_stats(state, &conn, db, coll).await;
+        }
+    };
     let storage = coll_storage_stats(&client, db, coll).await?;
     Ok(curate_coll_stats(&storage))
 }
@@ -256,7 +267,12 @@ async fn index_stats_impl_inner(state: &AppState, id: &str, db: &str, coll: &str
     if connection_is_mock(state, id)? {
         return Ok(mock_index_stats(db, coll));
     }
-    let client = require_real_client(state, id)?;
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            return crate::server::ops::stats::index_stats(state, &conn, db, coll).await;
+        }
+    };
     let storage = coll_storage_stats(&client, db, coll).await?;
     let index_sizes = storage.get_document("indexSizes").cloned().unwrap_or_default();
     use futures::stream::StreamExt;
@@ -282,10 +298,13 @@ mod tests {
 
     #[test]
     fn curates_db_stats_subset() {
+        // A real `dbStats` reply: index bytes are `indexSize` (only
+        // `collStats` calls it `totalIndexSize`).
         let raw = doc! {
             "db": "sales_db", "collections": 4i32, "views": 1i32, "objects": 12_345i64,
             "avgObjSize": 512.5, "dataSize": 6_324_712i64, "storageSize": 2_502_656i64,
-            "indexes": 9i32, "totalIndexSize": 1_105_920i64, "ok": 1.0,
+            "indexes": 9i32, "indexSize": 1_105_920i64, "totalSize": 3_608_576i64,
+            "scaleFactor": 1i32, "fsUsedSize": 0i64, "fsTotalSize": 0i64, "ok": 1.0,
         };
         let s = curate_db_stats(&raw);
         assert_eq!(s.collections, 4);

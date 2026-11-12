@@ -165,7 +165,7 @@ async fn a_connection_test_reports_the_real_login_as_its_authenticate_row() {
     let (opener, opened) = simulating_opener_with(http.clone());
     let state = AppState::new();
     let (log, emit) = phase_recorder();
-    let login = HumanLogin { config: None, login_id: Some("test-ok".into()), open: opener, http: Some(http) };
+    let login = HumanLogin { config: None, login_id: Some("test-ok".into()), open: opener, http: Some(http), cache: None };
 
     let result = run_connection_test_with_oidc(&state.oidc_sessions, &uri, None, login, &emit).await;
 
@@ -199,7 +199,7 @@ async fn cancelling_a_connection_test_reports_the_cancelled_login_not_a_ping_err
     let (opener, opened) = recording_opener();
     let state = AppState::new();
     let (log, emit) = phase_recorder();
-    let login = HumanLogin { config: None, login_id: Some("test-cancel".into()), open: opener, http: Some(http) };
+    let login = HumanLogin { config: None, login_id: Some("test-cancel".into()), open: opener, http: Some(http), cache: None };
 
     let (result, ()) = tokio::join!(
         run_connection_test_with_oidc(&state.oidc_sessions, &uri, None, login, &emit),
@@ -222,7 +222,7 @@ async fn connecting_runs_the_login_and_keeps_the_authenticated_client() {
     let http = idp_client(idp);
     let (opener, opened) = simulating_opener_with(http.clone());
     let state = AppState::new();
-    let login = HumanLogin { config: None, login_id: Some("connect-ok".into()), open: opener, http: Some(http) };
+    let login = HumanLogin { config: None, login_id: Some("connect-ok".into()), open: opener, http: Some(http), cache: None };
 
     let id = crate::connect_db_with_login(&state, &uri, None, login)
         .await
@@ -253,7 +253,7 @@ async fn a_connect_can_be_cancelled_by_its_login_id() {
     let http = idp_client(idp);
     let (opener, opened) = recording_opener();
     let state = AppState::new();
-    let login = HumanLogin { config: None, login_id: Some("connect-cancel".into()), open: opener, http: Some(http) };
+    let login = HumanLogin { config: None, login_id: Some("connect-cancel".into()), open: opener, http: Some(http), cache: None };
 
     let (result, ()) = tokio::join!(
         crate::connect_db_with_login(&state, &uri, None, login),
@@ -298,7 +298,7 @@ async fn a_slow_browser_login_outlasts_the_connection_tests_timeouts() {
     let http = idp_client(idp);
     let state = AppState::new();
     let (log, emit) = phase_recorder();
-    let login = HumanLogin { config: None, login_id: Some("test-slow".into()), open: slow_opener(http.clone()), http: Some(http) };
+    let login = HumanLogin { config: None, login_id: Some("test-slow".into()), open: slow_opener(http.clone()), http: Some(http), cache: None };
 
     let started = std::time::Instant::now();
     let result = run_connection_test_with_oidc(&state.oidc_sessions, &uri, None, login, &emit).await;
@@ -317,7 +317,7 @@ async fn a_slow_browser_login_outlasts_the_connect_timeouts() {
     let _shared = FAILPOINT_LOCK.read().await;
     let http = idp_client(idp);
     let state = AppState::new();
-    let login = HumanLogin { config: None, login_id: Some("connect-slow".into()), open: slow_opener(http.clone()), http: Some(http) };
+    let login = HumanLogin { config: None, login_id: Some("connect-slow".into()), open: slow_opener(http.clone()), http: Some(http), cache: None };
 
     let started = std::time::Instant::now();
     let result = crate::connect_db_with_login(&state, &uri, None, login).await;
@@ -367,7 +367,7 @@ async fn a_connection_test_whose_ping_fails_after_the_login_reports_login_ok_pin
     let (opener, _opened) = simulating_opener_with(http.clone());
     let state = AppState::new();
     let (log, emit) = phase_recorder();
-    let login = HumanLogin { config: None, login_id: Some("test-ping-fails".into()), open: opener, http: Some(http) };
+    let login = HumanLogin { config: None, login_id: Some("test-ping-fails".into()), open: opener, http: Some(http), cache: None };
 
     let result = run_connection_test_with_oidc(&state.oidc_sessions, &uri, None, login, &emit).await;
     disarm(&admin).await;
@@ -387,7 +387,7 @@ async fn a_connect_whose_ping_fails_after_the_login_reports_login_ok_ping_failed
     let http = idp_client(idp);
     let (opener, opened) = simulating_opener_with(http.clone());
     let state = AppState::new();
-    let login = HumanLogin { config: None, login_id: Some("connect-ping-fails".into()), open: opener, http: Some(http) };
+    let login = HumanLogin { config: None, login_id: Some("connect-ping-fails".into()), open: opener, http: Some(http), cache: None };
 
     let result = crate::connect_db_with_login(&state, &uri, None, login).await;
     disarm(&admin).await;
@@ -418,7 +418,7 @@ async fn a_host_outside_the_allowed_hosts_is_reported_as_host_not_allowed() {
     let (opener, opened) = recording_opener();
     let state = AppState::new();
     let (log, emit) = phase_recorder();
-    let login = HumanLogin { config: Some(&config), login_id: Some("test-host".into()), open: opener, http: Some(http) };
+    let login = HumanLogin { config: Some(&config), login_id: Some("test-host".into()), open: opener, http: Some(http), cache: None };
     let result = run_connection_test_with_oidc(&state.oidc_sessions, &uri, None, login, &emit).await;
 
     assert_eq!(result, Err(key.clone()));
@@ -429,7 +429,7 @@ async fn a_host_outside_the_allowed_hosts_is_reported_as_host_not_allowed() {
 
     let http = idp_client(idp);
     let (opener, opened) = recording_opener();
-    let login = HumanLogin { config: Some(&config), login_id: Some("connect-host".into()), open: opener, http: Some(http) };
+    let login = HumanLogin { config: Some(&config), login_id: Some("connect-host".into()), open: opener, http: Some(http), cache: None };
     let result = crate::connect_db_with_login(&state, &uri, None, login).await;
 
     assert_eq!(result, Err(key));
@@ -470,7 +470,7 @@ async fn a_token_mongodb_rejects_is_reported_as_token_rejected() {
     let (opener, opened) = simulating_opener_with(http.clone());
     let state = AppState::new();
     let (log, emit) = phase_recorder();
-    let login = HumanLogin { config: None, login_id: Some("test-rejected".into()), open: opener, http: Some(http) };
+    let login = HumanLogin { config: None, login_id: Some("test-rejected".into()), open: opener, http: Some(http), cache: None };
     let result = run_connection_test_with_oidc(&state.oidc_sessions, &uri, None, login, &emit).await;
 
     assert_eq!(result, Err(key.clone()), "{:?}", log.lock().unwrap());
@@ -483,7 +483,7 @@ async fn a_token_mongodb_rejects_is_reported_as_token_rejected() {
 
     let http = idp_client(idp);
     let (opener, opened) = simulating_opener_with(http.clone());
-    let login = HumanLogin { config: None, login_id: Some("connect-rejected".into()), open: opener, http: Some(http) };
+    let login = HumanLogin { config: None, login_id: Some("connect-rejected".into()), open: opener, http: Some(http), cache: None };
     let result = crate::connect_db_with_login(&state, &uri, None, login).await;
 
     assert_eq!(result, Err(key));
@@ -577,7 +577,7 @@ async fn an_at_jwt_access_token_mongodb_refuses_is_reported_with_the_id_token_hi
     let (opener, opened) = simulating_opener_with(http.clone());
     let state = AppState::new();
     let (log, emit) = phase_recorder();
-    let login = HumanLogin { config: None, login_id: Some("test-at-jwt".into()), open: opener, http: Some(http) };
+    let login = HumanLogin { config: None, login_id: Some("test-at-jwt".into()), open: opener, http: Some(http), cache: None };
     let result = run_connection_test_with_oidc(&state.oidc_sessions, &uri, None, login, &emit).await;
 
     assert_eq!(result, Err(key.clone()), "{:?}", log.lock().unwrap());
@@ -590,7 +590,7 @@ async fn an_at_jwt_access_token_mongodb_refuses_is_reported_with_the_id_token_hi
 
     let http = idp_client(idp);
     let (opener, opened) = simulating_opener_with(http.clone());
-    let login = HumanLogin { config: None, login_id: Some("connect-at-jwt".into()), open: opener, http: Some(http) };
+    let login = HumanLogin { config: None, login_id: Some("connect-at-jwt".into()), open: opener, http: Some(http), cache: None };
     let result = crate::connect_db_with_login(&state, &uri, None, login).await;
 
     assert_eq!(result, Err(key));
@@ -611,7 +611,7 @@ async fn with_the_id_token_option_an_idp_whose_access_tokens_mongodb_refuses_sti
     let (opener, opened) = simulating_opener_with(http.clone());
     let state = AppState::new();
     let (log, emit) = phase_recorder();
-    let login = HumanLogin { config: Some(&config), login_id: Some("test-id-token".into()), open: opener, http: Some(http) };
+    let login = HumanLogin { config: Some(&config), login_id: Some("test-id-token".into()), open: opener, http: Some(http), cache: None };
     let result = run_connection_test_with_oidc(&state.oidc_sessions, &uri, None, login, &emit).await;
 
     assert_eq!(result, Ok(()), "{:?}", log.lock().unwrap());
@@ -620,7 +620,7 @@ async fn with_the_id_token_option_an_idp_whose_access_tokens_mongodb_refuses_sti
 
     let http = idp_client(idp);
     let (opener, opened) = simulating_opener_with(http.clone());
-    let login = HumanLogin { config: Some(&config), login_id: Some("connect-id-token".into()), open: opener, http: Some(http) };
+    let login = HumanLogin { config: Some(&config), login_id: Some("connect-id-token".into()), open: opener, http: Some(http), cache: None };
     let id = crate::connect_db_with_login(&state, &uri, None, login)
         .await
         .unwrap_or_else(|e| panic!("connect must succeed with the ID token: {e}"));
@@ -656,7 +656,7 @@ async fn an_id_token_with_another_nonce_is_refused_and_never_authenticates() {
     let (opener, opened) = simulating_opener_with(http.clone());
     let state = AppState::new();
     let (log, emit) = phase_recorder();
-    let login = HumanLogin { config: Some(&config), login_id: Some("test-nonce".into()), open: opener, http: Some(http) };
+    let login = HumanLogin { config: Some(&config), login_id: Some("test-nonce".into()), open: opener, http: Some(http), cache: None };
     let result = run_connection_test_with_oidc(&state.oidc_sessions, &uri, None, login, &emit).await;
 
     assert_eq!(result, Err(key.clone()), "{:?}", log.lock().unwrap());
@@ -665,10 +665,36 @@ async fn an_id_token_with_another_nonce_is_refused_and_never_authenticates() {
 
     let http = idp_client(idp);
     let (opener, _) = simulating_opener_with(http.clone());
-    let login = HumanLogin { config: Some(&config), login_id: Some("connect-nonce".into()), open: opener, http: Some(http) };
+    let login = HumanLogin { config: Some(&config), login_id: Some("connect-nonce".into()), open: opener, http: Some(http), cache: None };
     let result = crate::connect_db_with_login(&state, &uri, None, login).await;
 
     assert_eq!(result, Err(key));
     assert!(state.connections.lock().unwrap().is_empty());
     assert_eq!(successful_oidc_authentications(&uri).await, before, "the server must have authenticated nobody");
+}
+
+
+/// A fresh app state and MongoDB client reuse the encrypted refresh token,
+/// not the first driver's in-memory credential cache.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_saved_oidc_login_survives_a_native_client_restart_without_opening_the_browser() {
+    let Some((uri, idp)) = fixture() else { return };
+    let _shared = FAILPOINT_LOCK.read().await;
+    let mut vault = crate::oidc_cache::tests::Fixture::new();
+    let config = crate::connections::OidcProfileConfig { remember_login: true, ..Default::default() };
+    vault.retarget(&uri, config.clone());
+    let http = idp_client(idp);
+    let (opener, opened) = simulating_opener_with(http.clone());
+    let first_state = AppState::new();
+    let login = HumanLogin { config: Some(&config), open: opener, http: Some(http), cache: Some(vault.cache()), ..HumanLogin::unattended() };
+    let id = crate::connect_db_with_login(&first_state, &uri, None, login).await.unwrap();
+    assert_eq!(opened.lock().unwrap().len(), 1);
+    crate::disconnect_db_impl(&first_state, &id).await.unwrap();
+    drop(first_state);
+
+    let restarted_state = AppState::new();
+    let login = HumanLogin { config: Some(&config), http: Some(idp_client(idp)), cache: Some(vault.cache()), ..HumanLogin::unattended() };
+    let id = crate::connect_db_with_login(&restarted_state, &uri, None, login).await.unwrap();
+    crate::disconnect_db_impl(&restarted_state, &id).await.unwrap();
+    assert_eq!(opened.lock().unwrap().len(), 1, "the restarted client must refresh without a browser");
 }

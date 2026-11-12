@@ -7,15 +7,15 @@ import WorkflowLanding from '../components/WorkflowLanding.astro';
   eyebrow="Private by design"
   h1="A MongoDB GUI that doesn't phone home."
   grad="Zero telemetry, no account."
-  lede="Most database GUIs ship usage analytics on by default, and some require an account just to connect. MQLens collects <strong>nothing</strong> — no telemetry, no crash beacons, no sign-up. Your hosts, queries, and credentials stay on your machine, and the source is Apache-2.0 so you can verify it."
+  lede="The MQLens desktop app does not collect usage telemetry or require an account. Connection credentials are encrypted locally. The app communicates with the MongoDB deployments you connect to, checks for updates, and can use optional AI providers when configured. Read the source and review each optional integration before using sensitive data."
   screenshot={{ src: '/screenshots/mqlens-quick-start.png', alt: 'MQLens quick start screen' }}
   featuresTitle="What 'private' actually means here"
   features={[
-    { h3: 'Zero telemetry', p: 'No usage analytics, no crash reporters, no beacons. Nothing is tracked or sent.' },
+    { h3: 'Zero telemetry', p: 'No usage analytics, no crash reporters, no beacons. The desktop app does not send usage telemetry.' },
     { h3: 'No account', p: 'Download and connect. No sign-up, no email, no license server.' },
     { h3: 'Credentials encrypted locally', p: 'Connection profiles are encrypted with AES-256-GCM (Argon2id key derivation) behind a master password, with biometric unlock.' },
     { h3: 'Open source', p: 'Apache-2.0 — read exactly what the app does and build it yourself.' },
     { h3: 'Signed builds', p: 'macOS-notarized, Windows-signed, and GPG-signed Linux artifacts you can verify before running.' },
-    { h3: 'Native, not Electron', p: 'A ~14 MB Tauri/Rust app — small attack surface, no bundled Chromium runtime.' },
+    { h3: 'Native, not Electron', p: 'A desktop app built with Tauri and Rust, using the system WebView.' },
   ]}
 />

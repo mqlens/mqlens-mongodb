@@ -813,13 +813,14 @@ function enumText(value: unknown): string | null | false {
  * each dotted field path with the BSON types seen at it, how many sampled
  * documents contain it (`presence`), and that as a fraction (`coverage`). A
  * field whose values are all strings, numbers or booleans, with no more than 25
- * distinct ones, also lists them as sorted text (`enumValues`).
+ * distinct ones, also lists them as sorted text (`enumValues`) with how often each
+ * one was seen (`enumCounts`).
  */
 export function inferSchema(docs: Doc[], sampleSize: number) {
   const sample = docs.slice(0, sampleSize > 0 ? sampleSize : docs.length);
   const stats = new Map<string, Map<string, number>>();
   const presence = new Map<string, number>();
-  const enumTexts = new Map<string, Set<string>>();
+  const enumTexts = new Map<string, Map<string, number>>();
   const notEnum = new Set<string>();
   const ruleOut = (path: string) => {
     notEnum.add(path);
@@ -837,8 +838,8 @@ export function inferSchema(docs: Doc[], sampleSize: number) {
         const text = enumText(value);
         if (text === false) ruleOut(path);
         else if (text !== null) {
-          const texts = enumTexts.get(path) ?? new Set<string>();
-          texts.add(text);
+          const texts = enumTexts.get(path) ?? new Map<string, number>();
+          texts.set(text, (texts.get(text) ?? 0) + 1);
           if (texts.size > MAX_ENUM_VALUES) ruleOut(path);
           else enumTexts.set(path, texts);
         }
@@ -860,7 +861,7 @@ export function inferSchema(docs: Doc[], sampleSize: number) {
           types: [...types.entries()].map(([type, count]) => ({ type, count })).sort((a, b) => b.count - a.count),
           presence: present,
           coverage: sample.length === 0 ? 0 : present / sample.length,
-          ...(texts && texts.size > 0 ? { enumValues: [...texts].sort() } : {}),
+          ...(texts && texts.size > 0 ? { enumValues: [...texts.keys()].sort(), enumCounts: Object.fromEntries(texts) } : {}),
         };
       }),
   };

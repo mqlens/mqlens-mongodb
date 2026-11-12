@@ -22,7 +22,7 @@ mod integration {
         get_collection_options_impl, set_validator_impl,
         AppState, CopyTargetRef,
     };
-    use mongodb::bson::{doc, Document};
+    use mongodb::bson::{doc, spec::BinarySubtype, Binary, Bson, Document};
 
     fn test_mongo_uri() -> Option<String> {
         std::env::var("MQLENS_TEST_MONGO_URI")
@@ -183,6 +183,67 @@ mod integration {
         cleanup(&state, &id, &db).await;
     }
 
+    // Find and aggregate both give the viewer binary as `$binary`, not as a
+    // list of byte values, so it can display it and an edit can save it.
+    #[tokio::test]
+    async fn it_binary_is_read_as_binary_and_survives_a_whole_document_save() {
+        let Some((state, id, db)) = connect().await else {
+            return;
+        };
+        let blob = Binary {
+            subtype: BinarySubtype::Generic,
+            bytes: vec![1, 2, 3],
+        };
+        seed(
+            &state,
+            &id,
+            &db,
+            "blobs",
+            vec![doc! { "_id": 1, "blob": blob.clone(), "a.b": 1 }],
+        )
+        .await;
+        let want = serde_json::json!({ "$binary": { "base64": "AQID", "subType": "00" } });
+
+        let found = execute_mql_query_impl(&state, &id, &db, "blobs", "{}", "{}", "{}", 1, 0)
+            .await
+            .expect("real find");
+        let shown: serde_json::Value = serde_json::from_str(&found[0]).unwrap();
+        assert_eq!(shown["blob"], want, "find");
+
+        let rows = execute_aggregate_impl(&state, &id, &db, "blobs", r#"[{"$match":{}}]"#, false)
+            .await
+            .expect("real aggregate");
+        let row: serde_json::Value = serde_json::from_str(&rows[0]).unwrap();
+        assert_eq!(row["blob"], want, "aggregate");
+
+        // A dotted field name cannot be updated in place, so this save replaces
+        // the whole document with what the viewer holds.
+        let mut edited = shown.clone();
+        edited["a.b"] = serde_json::json!(2);
+        update_document_impl(
+            &state,
+            &id,
+            &db,
+            "blobs",
+            r#"{"_id":1}"#,
+            &shown.to_string(),
+            &edited.to_string(),
+            Some("{}"),
+        )
+        .await
+        .expect("whole document save");
+        let saved = client_of(&state, &id)
+            .database(&db)
+            .collection::<Document>("blobs")
+            .find_one(doc! { "_id": 1 })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(saved.get("blob"), Some(&Bson::Binary(blob)));
+
+        cleanup(&state, &id, &db).await;
+    }
+
     #[tokio::test]
     async fn it_aggregate_execute_and_explain() {
         let Some((state, id, db)) = connect().await else {
@@ -280,6 +341,7 @@ mod integration {
             r#"{"city":1}"#,
             true,
             true,
+            None,
         )
         .await
         .expect("create index");
@@ -302,6 +364,247 @@ mod integration {
             .await
             .expect("list indexes after delete");
         assert!(!after.iter().any(|i| i.name == "city_unique"));
+
+        cleanup(&state, &id, &db).await;
+    }
+
+    /// A TTL index as MongoDB keeps it: created with its expiry, listed with
+    /// it, changed in place by collMod, and refused where MongoDB would.
+    #[tokio::test]
+    async fn it_ttl_index_round_trip_real() {
+        let Some((state, id, db)) = connect().await else {
+            return;
+        };
+        async fn expiry(state: &AppState, id: &str, db: &str, name: &str) -> Option<i64> {
+            list_indexes_impl(state, id, db, "events")
+                .await
+                .unwrap()
+                .into_iter()
+                .find(|i| i.name == name)
+                .unwrap()
+                .expire_after_seconds
+        }
+
+        create_index_impl(&state, &id, &db, "events", "createdAt_1", r#"{"createdAt":1}"#, false, false, Some(3600))
+            .await
+            .expect("create TTL index");
+        assert_eq!(expiry(&state, &id, &db, "createdAt_1").await, Some(3600));
+
+        crate::db::metadata::set_index_expiry_impl(&state, &id, &db, "events", "createdAt_1", 86400)
+            .await
+            .expect("collMod the expiry");
+        assert_eq!(expiry(&state, &id, &db, "createdAt_1").await, Some(86400));
+
+        // A plain index still lists without one.
+        create_index_impl(&state, &id, &db, "events", "kind_1", r#"{"kind":1}"#, false, false, None)
+            .await
+            .unwrap();
+        assert_eq!(expiry(&state, &id, &db, "kind_1").await, None);
+
+        assert!(create_index_impl(&state, &id, &db, "events", "c", r#"{"a":1,"b":1}"#, false, false, Some(60))
+            .await
+            .is_err());
+        assert!(crate::db::metadata::set_index_expiry_impl(&state, &id, &db, "events", "createdAt_1", -1)
+            .await
+            .is_err());
+        // MongoDB's own refusal comes back as an error: no index of that name.
+        let err = crate::db::metadata::set_index_expiry_impl(&state, &id, &db, "events", "missing_1", 60)
+            .await
+            .unwrap_err();
+        assert!(err.starts_with("Failed to change the index expiry"), "{err}");
+
+        cleanup(&state, &id, &db).await;
+    }
+
+    // Every kind of index MongoDB 7 and 8 has, created from its document,
+    // dropped and created again from its own listing: what a rebuild does.
+    #[tokio::test]
+    async fn it_index_types_round_trip_real() {
+        let Some((state, id, db)) = connect().await else {
+            return;
+        };
+        seed(
+            &state,
+            &id,
+            &db,
+            "docs",
+            vec![doc! {
+                "a": 1, "b": 2, "t": "hello world",
+                "loc": { "type": "Point", "coordinates": [1, 1] },
+                "xy": [1, 1], "tags": { "x": 1 },
+            }],
+        )
+        .await;
+
+        for spec in [
+            r#"{"key":{"b":1,"t":"text","z":"text"},"name":"text","weights":{"t":5},"default_language":"german","language_override":"lang"}"#,
+            r#"{"key":{"loc":"2dsphere"},"name":"sphere"}"#,
+            r#"{"key":{"xy":"2d"},"name":"flat","bits":20,"min":-10,"max":100}"#,
+            r#"{"key":{"a":"hashed"},"name":"hashed"}"#,
+            r#"{"key":{"b":1,"a":"hashed"},"name":"compound_hashed"}"#,
+            r#"{"key":{"$**":1},"name":"wildcard","wildcardProjection":{"tags":1}}"#,
+            r#"{"key":{"tags.$**":1},"name":"path_wildcard"}"#,
+            r#"{"key":{"b":1,"$**":1},"name":"compound_wildcard","wildcardProjection":{"b":0}}"#,
+            r#"{"key":{"t":1},"name":"collated","collation":{"locale":"de","strength":2}}"#,
+            r#"{"key":{"a":1},"name":"partial","partialFilterExpression":{"at":{"$gt":{"$date":"2026-01-01T00:00:00Z"}},"b":{"$in":[1,2]}}}"#,
+            r#"{"key":{"b":-1},"name":"engine","storageEngine":{"wiredTiger":{"configString":"block_compressor=zstd"}}}"#,
+            r#"{"key":{"at":1},"name":"hidden_ttl","hidden":true,"expireAfterSeconds":3600}"#,
+        ] {
+            crate::db::metadata::create_index_spec_impl(&state, &id, &db, "docs", spec, None)
+                .await
+                .unwrap_or_else(|e| panic!("{spec}: {e}"));
+        }
+
+        async fn specs(state: &AppState, id: &str, db: &str) -> Vec<(String, String)> {
+            let mut specs: Vec<_> = list_indexes_impl(state, id, db, "docs")
+                .await
+                .unwrap()
+                .into_iter()
+                .filter(|i| i.name != "_id_")
+                .map(|i| (i.name, i.spec.expect("a listing has the whole document")))
+                .collect();
+            specs.sort();
+            specs
+        }
+        let before = specs(&state, &id, &db).await;
+        assert_eq!(before.len(), 12);
+
+        for (name, spec) in &before {
+            delete_index_impl(&state, &id, &db, "docs", name).await.unwrap();
+            crate::db::metadata::create_index_spec_impl(&state, &id, &db, "docs", spec, None)
+                .await
+                .unwrap_or_else(|e| panic!("{spec}: {e}"));
+        }
+        assert_eq!(specs(&state, &id, &db).await, before);
+
+        cleanup(&state, &id, &db).await;
+    }
+
+    // On a collection with a default collation, an index with none is simple:
+    // a text index cannot be anything else, and must come back the same.
+    #[tokio::test]
+    async fn it_simple_collation_survives_a_rebuild_real() {
+        use crate::db::metadata::create_index_spec_impl;
+        let Some((state, id, db)) = connect().await else {
+            return;
+        };
+        client_of(&state, &id)
+            .database(&db)
+            .run_command(doc! { "create": "docs", "collation": { "locale": "en" } })
+            .await
+            .unwrap();
+        for spec in [
+            r#"{"key":{"t":"text"},"name":"text","collation":{"locale":"simple"}}"#,
+            r#"{"key":{"a":1},"name":"plain","collation":{"locale":"simple"}}"#,
+        ] {
+            create_index_spec_impl(&state, &id, &db, "docs", spec, None)
+                .await
+                .unwrap_or_else(|e| panic!("{spec}: {e}"));
+        }
+        for name in ["text", "plain"] {
+            let listed = |indexes: Vec<crate::IndexInfo>| {
+                indexes.into_iter().find(|i| i.name == name).unwrap().spec.unwrap()
+            };
+            let spec = listed(list_indexes_impl(&state, &id, &db, "docs").await.unwrap());
+            assert!(spec.contains(r#""locale":"simple""#), "{spec}");
+            delete_index_impl(&state, &id, &db, "docs", name).await.unwrap();
+            create_index_spec_impl(&state, &id, &db, "docs", &spec, None)
+                .await
+                .unwrap_or_else(|e| panic!("{spec}: {e}"));
+            assert_eq!(listed(list_indexes_impl(&state, &id, &db, "docs").await.unwrap()), spec);
+        }
+        cleanup(&state, &id, &db).await;
+    }
+
+    #[tokio::test]
+    async fn it_index_options_change_in_place_real() {
+        use crate::db::metadata::{create_index_spec_impl, set_index_option_impl, IndexOption};
+        let Some((state, id, db)) = connect().await else {
+            return;
+        };
+        seed(&state, &id, &db, "docs", vec![doc! { "_id": 1, "a": 1 }, doc! { "_id": 2, "a": 1 }]).await;
+        create_index_spec_impl(&state, &id, &db, "docs", r#"{"key":{"a":1},"name":"a_1"}"#, None)
+            .await
+            .unwrap();
+        let index = || async {
+            list_indexes_impl(&state, &id, &db, "docs")
+                .await
+                .unwrap()
+                .into_iter()
+                .find(|i| i.name == "a_1")
+                .unwrap()
+        };
+        let set = |option: IndexOption, value: bool| {
+            let (state, id, db) = (&state, &id, &db);
+            async move { set_index_option_impl(state, id, db, "docs", "a_1", option, value).await }
+        };
+
+        set(IndexOption::Hidden, true).await.unwrap();
+        assert!(index().await.hidden);
+        set(IndexOption::Hidden, false).await.unwrap();
+        assert!(!index().await.hidden);
+
+        // MongoDB's refusals come back as they are: not yet prepared, then
+        // documents in the way.
+        let err = set(IndexOption::Unique, true).await.unwrap_err();
+        assert!(err.contains("prepareUnique"), "{err}");
+        set(IndexOption::PrepareUnique, true).await.unwrap();
+        assert!(index().await.spec.unwrap().contains("prepareUnique"));
+        let err = set(IndexOption::Unique, true).await.unwrap_err();
+        assert!(err.contains("Cannot convert the index to unique"), "{err}");
+
+        delete_document_impl(&state, &id, &db, "docs", r#"{"_id":2}"#).await.unwrap();
+        set(IndexOption::Unique, true).await.unwrap();
+        assert!(index().await.unique);
+        let err = set(IndexOption::Unique, false).await.unwrap_err();
+        assert!(err.contains("non-unique"), "{err}");
+
+        // A standalone refuses a commit quorum; a replica set takes it.
+        let quorum = create_index_spec_impl(
+            &state,
+            &id,
+            &db,
+            "docs",
+            r#"{"key":{"q":1},"name":"q_1"}"#,
+            Some("majority"),
+        )
+        .await;
+        if let Err(err) = quorum {
+            assert!(err.contains("commitQuorum"), "{err}");
+        }
+
+        cleanup(&state, &id, &db).await;
+    }
+
+    #[tokio::test]
+    async fn it_index_refusals_leave_out_the_raw_response_real() {
+        use crate::db::metadata::{
+            create_index_spec_impl, set_index_expiry_impl, set_index_option_impl, IndexOption,
+        };
+        let Some((state, id, db)) = connect().await else {
+            return;
+        };
+        seed(&state, &id, &db, "docs", vec![doc! { "_id": 1, "a": 1 }, doc! { "_id": 2, "a": 1 }]).await;
+        let prepared = r#"{"key":{"a":1},"name":"a_1","prepareUnique":true}"#;
+        create_index_spec_impl(&state, &id, &db, "docs", prepared, None).await.unwrap();
+
+        // A refused conversion carries the id of every conflicting document in
+        // its response, which the driver would print as hex.
+        let duplicate = r#"{"key":{"a":1,"z":1},"name":"dup","unique":true}"#;
+        let refusals = [
+            (
+                set_index_option_impl(&state, &id, &db, "docs", "a_1", IndexOption::Unique, true).await,
+                "CannotConvertIndexToUnique",
+            ),
+            (create_index_spec_impl(&state, &id, &db, "docs", duplicate, None).await, "DuplicateKey"),
+            (set_index_expiry_impl(&state, &id, &db, "docs", "missing_1", 60).await, "IndexNotFound"),
+            (delete_index_impl(&state, &id, &db, "docs", "_id_").await, "cannot drop _id index"),
+        ];
+        for (result, expected) in refusals {
+            let err = result.unwrap_err();
+            assert!(err.contains(expected), "{err}");
+            assert!(!err.contains("server response"), "{err}");
+        }
 
         cleanup(&state, &id, &db).await;
     }
@@ -610,7 +913,7 @@ mod integration {
             vec![doc! { "a": 1 }, doc! { "a": 2 }],
         )
         .await;
-        create_index_impl(&state, &id, &db, "old_name", "a_1", r#"{"a":1}"#, false, false)
+        create_index_impl(&state, &id, &db, "old_name", "a_1", r#"{"a":1}"#, false, false, None)
             .await
             .expect("index for rename");
 
@@ -886,7 +1189,7 @@ mod integration {
         )
         .await;
         // A non-default index so copy_indexes has something to recreate.
-        create_index_impl(&state, &id, &db, "orders", "amount_1", r#"{"amount":1}"#, false, false)
+        create_index_impl(&state, &id, &db, "orders", "amount_1", r#"{"amount":1}"#, false, false, None)
             .await
             .expect("source index");
 
@@ -971,7 +1274,7 @@ mod integration {
             vec![doc! { "_id": 1, "qty": 2 }, doc! { "_id": 2, "qty": 8 }],
         )
         .await;
-        create_index_impl(&state, &id, &db, "items", "qty_1", r#"{"qty":1}"#, false, false)
+        create_index_impl(&state, &id, &db, "items", "qty_1", r#"{"qty":1}"#, false, false, None)
             .await
             .expect("source index");
         create_view_impl(&state, &id, &db, "big_items", "items", r#"[{"$match":{"qty":{"$gte":5}}}]"#)
@@ -1126,6 +1429,468 @@ mod integration {
             opts2.validator
         );
 
+        cleanup(&state, &id, &db).await;
+    }
+
+    /// Stored sub-documents whose keys look like Extended JSON type wrappers:
+    /// one with a sibling key, one on its own.
+    fn wrapper_shaped() -> Vec<Document> {
+        vec![
+            doc! { "_id": 1, "money": { "$numberLong": "7", "other": 1 } },
+            doc! { "_id": 2, "when": { "$date": "not a date" } },
+        ]
+    }
+
+    const WRAPPER_SHAPED_JSON: [&str; 2] = [
+        r#"{"_id":1,"money":{"$numberLong":"7","other":1}}"#,
+        r#"{"_id":2,"when":{"$date":"not a date"}}"#,
+    ];
+
+    // Find and aggregate show such documents as stored, not as the types
+    // their keys imitate.
+    #[tokio::test]
+    async fn it_reads_wrapper_shaped_documents_as_stored() {
+        let Some((state, id, db)) = connect().await else {
+            return;
+        };
+        seed(&state, &id, &db, "odd", wrapper_shaped()).await;
+
+        let found =
+            execute_mql_query_impl(&state, &id, &db, "odd", "{}", r#"{"_id":1}"#, "", 10, 0)
+                .await
+                .unwrap();
+        assert_eq!(found, WRAPPER_SHAPED_JSON);
+        let aggregated =
+            execute_aggregate_impl(&state, &id, &db, "odd", r#"[{"$sort":{"_id":1}}]"#, false)
+                .await
+                .unwrap();
+        assert_eq!(aggregated, WRAPPER_SHAPED_JSON);
+
+        cleanup(&state, &id, &db).await;
+    }
+
+    // An export writes such documents as stored, and schema analysis sees
+    // the sub-documents they are.
+    #[tokio::test]
+    async fn it_exports_and_analyzes_wrapper_shaped_documents_as_stored() {
+        let Some((state, id, db)) = connect().await else {
+            return;
+        };
+        seed(&state, &id, &db, "odd", wrapper_shaped()).await;
+
+        let path = std::env::temp_dir().join(format!(
+            "mqlens-it-odd-{}.json",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let task = start_collection_export_impl(
+            &state,
+            &id,
+            &db,
+            "odd",
+            "json",
+            path.to_str().unwrap(),
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(wait_for_task(&state, &task.id).await.status, "completed");
+        let expected = crate::db::export::format_docs_to_string(
+            &wrapper_shaped(),
+            "json",
+            &crate::db::export::options::ExportOptions::default(),
+        )
+        .unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), expected);
+        let _ = std::fs::remove_file(&path);
+
+        let json = analyze_schema_impl(&state, &id, &db, "odd", 100)
+            .await
+            .unwrap();
+        let report: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let money = report["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["path"] == "money")
+            .unwrap();
+        assert_eq!(money["types"][0]["type"], "object");
+
+        cleanup(&state, &id, &db).await;
+    }
+
+    // A copy writes such documents to the target exactly as they are in the
+    // source, instead of the types their keys imitate.
+    #[tokio::test]
+    async fn it_copies_wrapper_shaped_documents_as_stored() {
+        let Some((state, id, db)) = connect().await else {
+            return;
+        };
+        seed(&state, &id, &db, "odd", wrapper_shaped()).await;
+
+        let task = start_collection_copy_impl(
+            &state,
+            &id,
+            &db,
+            "odd",
+            &id,
+            &db,
+            "odd_copy",
+            None,
+            false,
+            "merge".into(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(wait_for_task(&state, &task.id).await.status, "completed");
+
+        use futures::stream::TryStreamExt;
+        let copied: Vec<mongodb::bson::RawDocumentBuf> = client_of(&state, &id)
+            .database(&db)
+            .collection::<mongodb::bson::RawDocumentBuf>("odd_copy")
+            .find(doc! {})
+            .sort(doc! { "_id": 1 })
+            .await
+            .unwrap()
+            .try_collect()
+            .await
+            .unwrap();
+        let copied: Vec<Document> = copied
+            .iter()
+            .map(|raw| Document::try_from(raw.as_ref()).unwrap())
+            .collect();
+        assert_eq!(copied, wrapper_shaped());
+
+        cleanup(&state, &id, &db).await;
+    }
+
+    /// Import `wrapper_shaped()` from a BSON file into `coll` and read back
+    /// what was stored, raw.
+    async fn import_wrapper_shaped_bson(
+        state: &AppState,
+        id: &str,
+        db: &str,
+        coll: &str,
+        mode: &str,
+    ) -> Vec<Document> {
+        let path = std::env::temp_dir().join(format!(
+            "mqlens_it_import_{}.bson",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let mut bytes = Vec::new();
+        for d in wrapper_shaped() {
+            bytes.extend(mongodb::bson::to_vec(&d).unwrap());
+        }
+        std::fs::write(&path, bytes).unwrap();
+        let task = crate::db::import::start_import_task_impl(
+            state,
+            id,
+            db,
+            coll,
+            crate::db::import::ImportSourceArg {
+                path: Some(path.to_string_lossy().to_string()),
+                text: None,
+            },
+            "bson",
+            None,
+            mode,
+        )
+        .await
+        .unwrap();
+        let done = wait_for_task(state, &task.id).await;
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(done.status, "completed", "{:?}", done.error);
+
+        use futures::stream::TryStreamExt;
+        let stored: Vec<mongodb::bson::RawDocumentBuf> = client_of(state, id)
+            .database(db)
+            .collection::<mongodb::bson::RawDocumentBuf>(coll)
+            .find(doc! {})
+            .sort(doc! { "_id": 1 })
+            .await
+            .unwrap()
+            .try_collect()
+            .await
+            .unwrap();
+        stored
+            .iter()
+            .map(|raw| Document::try_from(raw.as_ref()).unwrap())
+            .collect()
+    }
+
+    // A BSON import writes such documents exactly as they are in the file.
+    #[tokio::test]
+    async fn it_imports_wrapper_shaped_bson_documents_as_stored() {
+        let Some((state, id, db)) = connect().await else {
+            return;
+        };
+        let stored = import_wrapper_shaped_bson(&state, &id, &db, "odd", "skip").await;
+        assert_eq!(stored, wrapper_shaped());
+        cleanup(&state, &id, &db).await;
+    }
+
+    // Update mode replaces existing documents with them exactly, too.
+    #[tokio::test]
+    async fn it_replaces_with_wrapper_shaped_bson_documents_as_stored() {
+        let Some((state, id, db)) = connect().await else {
+            return;
+        };
+        seed(&state, &id, &db, "odd", vec![doc! { "_id": 1 }, doc! { "_id": 2 }]).await;
+        let stored = import_wrapper_shaped_bson(&state, &id, &db, "odd", "update").await;
+        assert_eq!(stored, wrapper_shaped());
+        cleanup(&state, &id, &db).await;
+    }
+
+    // Editing such a document as JSON would write the type its keys imitate,
+    // so the edit is refused and the document stays as stored.
+    #[tokio::test]
+    async fn it_refuses_to_edit_a_wrapper_shaped_document_as_json() {
+        let Some((state, id, db)) = connect().await else {
+            return;
+        };
+        seed(
+            &state,
+            &id,
+            &db,
+            "odd",
+            vec![doc! { "_id": 1, "money": { "$numberLong": "7" }, "name": "Ada" }],
+        )
+        .await;
+
+        let err = update_document_impl(
+            &state,
+            &id,
+            &db,
+            "odd",
+            r#"{"_id":1}"#,
+            r#"{"_id":1,"money":{"$numberLong":"7"},"name":"Ada"}"#,
+            r#"{"_id":1,"money":{"$numberLong":"7"},"name":"Bo"}"#,
+            Some("{}"),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("Extended JSON"), "{err}");
+        let found = execute_mql_query_impl(&state, &id, &db, "odd", "{}", "", "", 10, 0)
+            .await
+            .unwrap();
+        assert_eq!(
+            found,
+            [r#"{"_id":1,"money":{"$numberLong":"7"},"name":"Ada"}"#]
+        );
+
+        cleanup(&state, &id, &db).await;
+    }
+
+    // A `$`-prefixed key that no Extended JSON type uses reads back as itself,
+    // so it does not stand in the way of editing the document.
+    #[tokio::test]
+    async fn it_edits_a_document_with_a_dollar_key_that_is_no_type_wrapper() {
+        let Some((state, id, db)) = connect().await else {
+            return;
+        };
+        let stored = doc! { "_id": 1, "meta": { "$weird": 1 }, "name": "Ada" };
+        seed(&state, &id, &db, "odd", vec![stored]).await;
+
+        let modified = update_document_impl(
+            &state,
+            &id,
+            &db,
+            "odd",
+            r#"{"_id":1}"#,
+            r#"{"_id":1,"meta":{"$weird":1},"name":"Ada"}"#,
+            r#"{"_id":1,"meta":{"$weird":1},"name":"Bo"}"#,
+            Some("{}"),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(modified, 1);
+        cleanup(&state, &id, &db).await;
+    }
+
+    // ---- The embedded shell against a real mongosh (#518, PR #522 review) ----
+    //
+    // A multi-line script on a local session is staged as a file and run by a
+    // single REPL line that load()s it. These pin what that means in a real
+    // mongosh: each call below is one Run of the editor, on one live session.
+    // They also need MQLENS_TEST_MONGOSH, the mongosh binary to run; CI installs
+    // the pinned one.
+
+    use crate::{run_mongosh_command_impl, start_mongosh_session_impl, stop_mongosh_session_impl};
+
+    const FIXTURE: &str = "mqlens_522_fixture";
+
+    /// A live mongosh session on a fresh database, or None to skip.
+    async fn shell() -> Option<(AppState, String, String, String)> {
+        let Some(mongosh) = std::env::var("MQLENS_TEST_MONGOSH").ok().filter(|s| !s.trim().is_empty())
+        else {
+            eprintln!("skipping: MQLENS_TEST_MONGOSH is not set");
+            return None;
+        };
+        let (state, id, db) = connect().await?;
+        let uri = test_mongo_uri()?;
+        let session = start_mongosh_session_impl(&state, &id, &uri, &db, &mongosh, "")
+            .await
+            .expect("start mongosh")
+            .session_id;
+        Some((state, id, db, session))
+    }
+
+    /// One Run: everything the shell printed, stdout then stderr.
+    async fn run(state: &AppState, session: &str, script: &str) -> String {
+        let out = run_mongosh_command_impl(state, session, script)
+            .await
+            .unwrap_or_else(|e| panic!("run {script:?}: {e}"));
+        [out.stdout, out.stderr].concat().join("\n")
+    }
+
+    /// The _ids now in the fixture collection.
+    async fn fixture_ids(state: &AppState, id: &str, db: &str) -> Vec<String> {
+        use futures::TryStreamExt as _;
+        let docs: Vec<Document> = client_of(state, id)
+            .database(db)
+            .collection::<Document>(FIXTURE)
+            .find(doc! {})
+            .await
+            .unwrap()
+            .try_collect()
+            .await
+            .unwrap();
+        docs.iter().map(|d| d.get("_id").map(|v| v.to_string()).unwrap_or_default()).collect()
+    }
+
+    /// The session still answers, on the tab's database.
+    async fn assert_usable(state: &AppState, session: &str, db: &str) {
+        let out = run(state, session, "db.getName()").await;
+        assert!(out.contains(db), "the session no longer answers on {db}: {out}");
+    }
+
+    #[tokio::test]
+    async fn it_shell_runs_comments_chains_and_repeat_runs_as_one_script() {
+        let Some((state, id, db, session)) = shell().await else { return };
+        seed(&state, &id, &db, FIXTURE, vec![doc! { "_id": "a", "active": true }]).await;
+
+        // Comments and blank lines are ordinary JavaScript.
+        let out = run(&state, &session, "// A leading comment\n\nconst filter = {\n  active: true, // inline comment\n  /* Optional filter:\n  region: \"US\",\n  */\n};\nprintjson(db.mqlens_522_fixture.find(filter).limit(1).toArray());\n// End comment").await;
+        assert!(out.contains("_id: 'a'"), "{out}");
+        run(&state, &session, "// one\n// two").await;
+        assert_usable(&state, &session, &db).await;
+
+        // A chain continued on lines that start with "." (a REPL keyword when
+        // fed a line at a time), run twice, re-declaring its const.
+        let chain = "const docs = db.mqlens_522_fixture.find({\n  active: true\n})\n.limit(2)\n.toArray();\nprintjson(docs);";
+        for _ in 0..2 {
+            let out = run(&state, &session, chain).await;
+            assert!(out.contains("_id: 'a'") && !out.contains("REPL keyword") && !out.contains("Error"), "{out}");
+        }
+
+        // Back-to-back runs each get their own output.
+        for (tick, other) in [("first", "second"), ("second", "first")] {
+            let out = run(&state, &session, &format!("print(db.getName());\nprint(\"{tick}\");")).await;
+            assert!(out.contains(&db) && out.contains(tick) && !out.contains(other), "{out}");
+        }
+
+        // What a script printed, and nothing of the REPL's around it.
+        let out = run(&state, &session, "print(\"one\");\nprint(\"two\");").await;
+        assert_eq!(out, "one\ntwo");
+        cleanup(&state, &id, &db).await;
+    }
+
+    #[tokio::test]
+    async fn it_shell_runs_none_of_a_script_that_does_not_parse() {
+        let Some((state, id, db, session)) = shell().await else { return };
+
+        // A '#' line is not a comment, and a syntax error anywhere means no
+        // statement runs: not the ones before it, not the ones after.
+        for script in [
+            "db.mqlens_522_fixture.insertOne({ _id: \"hash-before\" });\n# this is not a JavaScript comment\ndb.mqlens_522_fixture.insertOne({ _id: \"hash-after\" });",
+            "db.mqlens_522_fixture.insertOne({ _id: \"syntax-before\" });\nconst bad = ;\ndb.mqlens_522_fixture.insertOne({ _id: \"syntax-after\" });",
+            "db.mqlens_522_fixture.insertOne({ _id: \"brace-before\" });\ndb.mqlens_522_fixture.find({",
+        ] {
+            let out = run(&state, &session, script).await;
+            assert!(out.contains("SyntaxError") && !out.contains("Recoverable"), "{out}");
+            assert_usable(&state, &session, &db).await;
+        }
+        assert!(fixture_ids(&state, &id, &db).await.is_empty(), "a script that failed to parse wrote");
+        cleanup(&state, &id, &db).await;
+    }
+
+    #[tokio::test]
+    async fn it_shell_stops_a_script_at_its_first_throw() {
+        let Some((state, id, db, session)) = shell().await else { return };
+
+        let out = run(&state, &session, "print(\"before\");\nthrow new Error(\"mqlens-522-intentional\");\ndb.mqlens_522_fixture.insertOne({ _id: \"after-throw\" });").await;
+
+        assert!(out.contains("before") && out.contains("mqlens-522-intentional"), "{out}");
+        assert!(fixture_ids(&state, &id, &db).await.is_empty(), "the statement after the throw ran");
+        assert_usable(&state, &session, &db).await;
+        cleanup(&state, &id, &db).await;
+    }
+
+    #[tokio::test]
+    async fn it_shell_keeps_the_tab_database_whatever_a_script_does_to_db() {
+        let Some((state, id, db, session)) = shell().await else { return };
+
+        for script in [
+            "use admin\nprint(db.getName());",
+            "db = db.getSiblingDB(\"admin\");\nthrow new Error(\"after the move\");",
+            // mongosh refuses these itself, and nothing of ours may fail after it.
+            "db = null;\nprint(\"script finished\");",
+            "db = { getName: () => \"x\" };\nprint(\"script finished\");",
+        ] {
+            let out = run(&state, &session, script).await;
+            assert!(!out.contains("is not a function") && !out.contains("of null"), "{script:?}: {out}");
+            assert_usable(&state, &session, &db).await;
+        }
+        cleanup(&state, &id, &db).await;
+    }
+
+    #[tokio::test]
+    async fn it_shell_quit_ends_the_script_and_keeps_the_session() {
+        let Some((state, id, db, session)) = shell().await else { return };
+
+        for quit in ["quit()", "quit(3)", "exit()", "(() => quit())()"] {
+            let out = run(&state, &session, &format!("print(\"ending\");\n{quit};\ndb.mqlens_522_fixture.insertOne({{ _id: \"after-quit\" }});")).await;
+            assert!(out.contains("ending") && !out.contains("Error"), "{quit}: {out}");
+            assert_usable(&state, &session, &db).await;
+        }
+        assert!(fixture_ids(&state, &id, &db).await.is_empty(), "the statement after quit() ran");
+
+        // And `quit` is the shell's own again afterwards.
+        let out = run(&state, &session, "typeof quit.help").await;
+        assert!(!out.contains("undefined"), "{out}");
+        cleanup(&state, &id, &db).await;
+    }
+
+    #[tokio::test]
+    async fn it_shell_stop_ends_a_running_script_and_removes_its_staged_file() {
+        let Some((state, id, db, session)) = shell().await else { return };
+        let state = std::sync::Arc::new(state);
+        // Marks this test's staged file apart from any other test's.
+        let token = uuid::Uuid::new_v4().simple().to_string();
+        let staged = || {
+            std::fs::read_dir(std::env::temp_dir())
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .filter(|e| e.file_name().to_string_lossy().starts_with("mqlens-shell-"))
+                .filter(|e| std::fs::read_to_string(e.path()).is_ok_and(|s| s.contains(&token)))
+                .count()
+        };
+        let script = format!("print(\"started {token}\");\nsleep(30000);\nprint(\"finished\");");
+
+        let running = {
+            let (state, session) = (state.clone(), session.clone());
+            tokio::spawn(async move { run_mongosh_command_impl(&state, &session, &script).await })
+        };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while staged() == 0 && std::time::Instant::now() < deadline {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        assert_eq!(staged(), 1, "the script was never staged");
+        stop_mongosh_session_impl(&state, &session).await.unwrap();
+
+        let stopped = tokio::time::timeout(std::time::Duration::from_secs(20), running).await;
+        assert!(stopped.expect("Stop did not end the run").unwrap().is_err());
+        assert_eq!(staged(), 0, "the stopped run left its staged script behind");
         cleanup(&state, &id, &db).await;
     }
 }

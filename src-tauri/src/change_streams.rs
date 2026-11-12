@@ -17,7 +17,7 @@
 use crate::state::LockExt;
 use crate::AppState;
 use mongodb::bson::{doc, Document};
-use mongodb::change_stream::event::{ChangeStreamEvent, ResumeToken};
+use mongodb::change_stream::event::ResumeToken;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -281,44 +281,70 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-fn to_json(doc: Option<Document>) -> Option<serde_json::Value> {
-    doc.and_then(|d| serde_json::to_value(d).ok())
+fn to_json(doc: Option<&Document>) -> Option<serde_json::Value> {
+    doc.and_then(|d| crate::db::ui_json(d).ok())
 }
 
-/// Flatten a driver event into the shape the viewer renders.
-pub fn flatten_event(event: ChangeStreamEvent<Document>, database: &str) -> ChangeEvent {
-    let (updated_fields, removed_fields) = match event.update_description {
-        Some(desc) => (
-            serde_json::to_value(desc.updated_fields).ok(),
-            Some(desc.removed_fields),
+/// One change event as the server sent it, flattened into the shape the
+/// viewer renders, with its resume token.
+///
+/// Read from the raw event rather than the driver's `ChangeStreamEvent`,
+/// whose serde decoding takes a sub-document such as `{"$numberLong": "7"}`
+/// for the type its keys imitate, or fails the whole event when the value does
+/// not parse (see `crate::db::stored`).
+pub fn flatten_raw(
+    raw: &mongodb::bson::RawDocumentBuf,
+    database: &str,
+) -> Result<(ResumeToken, ChangeEvent), String> {
+    let event = crate::db::stored(raw.clone())?;
+    let id = event
+        .get("_id")
+        .cloned()
+        .ok_or_else(|| "change event without a resume token".to_string())?;
+    let token: ResumeToken = mongodb::bson::from_bson(id).map_err(|e| e.to_string())?;
+    let (updated_fields, removed_fields) = match event.get_document("updateDescription") {
+        Ok(desc) => (
+            to_json(desc.get_document("updatedFields").ok()),
+            desc.get_array("removedFields").ok().map(|names| {
+                names
+                    .iter()
+                    .filter_map(|name| name.as_str().map(str::to_string))
+                    .collect()
+            }),
         ),
-        None => (None, None),
+        Err(_) => (None, None),
     };
     // The event's OWN wall time where the server sent one. `now_ms()` is when
     // this process happened to read it, which after a pause or a backlog
     // stamps every replayed change with the moment of resume.
     let at_ms = event
-        .wall_time
+        .get_datetime("wallTime")
         .map(|t| t.timestamp_millis().max(0) as u64)
-        .unwrap_or_else(now_ms);
-    let renamed_to = event.to.as_ref().map(|ns| match &ns.coll {
-        Some(coll) => format!("{}.{}", ns.db, coll),
-        None => ns.db.clone(),
+        .unwrap_or_else(|_| now_ms());
+    let namespace = |key: &str| {
+        event.get_document(key).ok().map(|ns| {
+            (
+                ns.get_str("db").unwrap_or_default().to_string(),
+                ns.get_str("coll").ok().map(str::to_string),
+            )
+        })
+    };
+    let renamed_to = namespace("to").map(|(db, coll)| match coll {
+        Some(coll) => format!("{db}.{coll}"),
+        None => db,
     });
-    let document_key = to_json(event.document_key);
-    let full_document = event.full_document.and_then(|d| serde_json::to_value(d).ok());
+    let ns = namespace("ns");
     let mut flat = ChangeEvent {
         // Assigned by `push_event`, which owns the sequence.
         seq: 0,
-        operation_type: format!("{:?}", event.operation_type).to_lowercase(),
-        database: event
-            .ns
+        operation_type: event.get_str("operationType").unwrap_or_default().to_lowercase(),
+        database: ns
             .as_ref()
-            .map(|n| n.db.clone())
+            .map(|(db, _)| db.clone())
             .unwrap_or_else(|| database.to_string()),
-        collection: event.ns.as_ref().and_then(|n| n.coll.clone()),
-        document_key,
-        full_document,
+        collection: ns.and_then(|(_, coll)| coll),
+        document_key: to_json(event.get_document("documentKey").ok()),
+        full_document: to_json(event.get_document("fullDocument").ok()),
         updated_fields,
         removed_fields,
         renamed_to,
@@ -326,7 +352,7 @@ pub fn flatten_event(event: ChangeStreamEvent<Document>, database: &str) -> Chan
         bytes: 0,
     };
     flat.bytes = measure_event(&flat);
-    flat
+    Ok((token, flat))
 }
 
 /// Roughly how much memory one event's bodies occupy, for the byte bound.
@@ -417,11 +443,11 @@ pub fn fail_stream(
 /// as settled and whoever is waiting on its resume point is woken.
 async fn run_stream(
     state_streams: Arc<LiveStream>,
-    client: mongodb::Client,
+    source: Source,
     my_generation: u64,
     predecessor: u64,
 ) {
-    read_cursor(&state_streams, client, my_generation, predecessor).await;
+    read_cursor(&state_streams, source, my_generation, predecessor).await;
     state_streams
         .settled
         .fetch_max(my_generation, Ordering::SeqCst);
@@ -456,14 +482,78 @@ pub async fn await_handover(state_streams: &LiveStream, predecessor: u64, grace:
     .await;
 }
 
+/// Where a reader's cursor comes from: the driver, or an MQLens Server.
+pub(crate) enum Source {
+    Local(mongodb::Client),
+    Remote(
+        Arc<crate::server::remote::RemoteConn>,
+        crate::server::session::Speaking,
+    ),
+}
+
+/// What a tail on `connection_id` reads from, or why it cannot read.
+async fn source_for(state: &AppState, connection_id: &str) -> Result<Source, String> {
+    match crate::server::remote::route(state, connection_id) {
+        Ok(crate::server::remote::Route::Remote(conn)) => {
+            crate::server::ops::watch::source(state, conn).await
+        }
+        Ok(crate::server::remote::Route::Local(client)) => Ok(Source::Local(client)),
+        Err(_) => Err(format!("connection {connection_id} is not open")),
+    }
+}
+
+/// Whether `source` can still be read. Finding a server connection's source
+/// awaits its session, and a disconnect, vault lock or reset can finish in
+/// the meantime; their sweeps would never see a stream installed after them.
+/// Asked under the stream map lock, which those sweeps take after letting go
+/// of the connection or the key.
+fn still_open(state: &AppState, source: &Source) -> bool {
+    match source {
+        Source::Local(_) => true,
+        Source::Remote(conn, _) => {
+            let unlocked = state
+                .vault_key
+                .lock()
+                .map(|key| key.is_some())
+                .unwrap_or(false);
+            let connected = matches!(
+                state.server.remote(&conn.desktop_id),
+                Ok(Some(current)) if Arc::ptr_eq(&current, conn)
+            );
+            unlocked && connected
+        }
+    }
+}
+
+/// An open cursor of either kind: raw events, and its own resume token.
+enum Cursor {
+    Local(mongodb::change_stream::ChangeStream<mongodb::bson::RawDocumentBuf>),
+    Remote(crate::server::ops::watch::RemoteCursor),
+}
+
+impl Cursor {
+    async fn next(&mut self) -> Option<Result<mongodb::bson::RawDocumentBuf, String>> {
+        use futures::StreamExt;
+        match self {
+            Cursor::Local(stream) => stream.next().await.map(|r| r.map_err(|e| e.to_string())),
+            Cursor::Remote(stream) => stream.next().await,
+        }
+    }
+
+    fn resume_token(&self) -> Option<ResumeToken> {
+        match self {
+            Cursor::Local(stream) => stream.resume_token(),
+            Cursor::Remote(stream) => stream.resume_token(),
+        }
+    }
+}
+
 async fn read_cursor(
     state_streams: &Arc<LiveStream>,
-    client: mongodb::Client,
+    source: Source,
     my_generation: u64,
     predecessor: u64,
 ) {
-    use futures::StreamExt;
-
     await_handover(state_streams, predecessor, HANDOVER_GRACE).await;
 
     let pipeline = build_pipeline(&state_streams.operation_types);
@@ -472,13 +562,6 @@ async fn read_cursor(
         .lock()
         .ok()
         .and_then(|p| p.token.clone());
-    // Every reader records through this, so the rule about stragglers lives in
-    // one place.
-    let remember = |token: Option<ResumeToken>| {
-        if let Ok(mut point) = state_streams.resume_token.lock() {
-            record_resume_token(&mut point, my_generation, token);
-        }
-    };
 
     // Three levels, one cursor shape: a collection, a database, or the whole
     // deployment. The driver exposes `watch()` at each of those, so the only
@@ -488,6 +571,27 @@ async fn read_cursor(
     // it is the type that carries `resume_token()` — the cursor's own position,
     // which is the only way to learn that it has advanced past batches holding
     // nothing this stream was watching for.
+    let client = match source {
+        Source::Local(client) => client,
+        Source::Remote(conn, session) => {
+            let opened = crate::server::ops::watch::open(
+                &conn,
+                &session,
+                state_streams.database.as_deref(),
+                state_streams.collection.as_deref(),
+                &state_streams.operation_types,
+                resume,
+            )
+            .await;
+            match opened {
+                Ok(cursor) => {
+                    follow_cursor(state_streams, Cursor::Remote(cursor), my_generation).await
+                }
+                Err(err) => fail_stream(state_streams, my_generation, &err, None),
+            }
+            return;
+        }
+    };
     let started = match (&state_streams.database, &state_streams.collection) {
         (Some(database), Some(collection)) => {
             let coll = client
@@ -518,15 +622,26 @@ async fn read_cursor(
         }
     };
 
-    let mut stream = match started {
-        Ok(stream) => stream,
-        Err(err) => {
-            // Opening a cursor is not instant, and a pause during it retires
-            // this task while its `watch()` is still in flight. Reporting that
-            // failure would put the panel in Error over a cursor nobody is
-            // reading — `publish_status` drops it for exactly that reason.
-            fail_stream(state_streams, my_generation, &err.to_string(), None);
-            return;
+    match started {
+        Ok(stream) => {
+            let stream = Cursor::Local(stream.with_type::<mongodb::bson::RawDocumentBuf>());
+            follow_cursor(state_streams, stream, my_generation).await
+        }
+        // Opening a cursor is not instant, and a pause during it retires this
+        // task while its `watch()` is still in flight. Reporting that failure
+        // would put the panel in Error over a cursor nobody is reading —
+        // `publish_status` drops it for exactly that reason.
+        Err(err) => fail_stream(state_streams, my_generation, &err.to_string(), None),
+    }
+}
+
+/// Read an open cursor until this reader is retired or the cursor ends.
+async fn follow_cursor(state_streams: &Arc<LiveStream>, mut stream: Cursor, my_generation: u64) {
+    // Every reader records through this, so the rule about stragglers lives in
+    // one place.
+    let remember = |token: Option<ResumeToken>| {
+        if let Ok(mut point) = state_streams.resume_token.lock() {
+            record_resume_token(&mut point, my_generation, token);
         }
     };
 
@@ -566,9 +681,15 @@ async fn read_cursor(
             next = stream.next() => next,
         };
         match next {
-            Some(Ok(event)) => {
-                let token = event.id.clone();
-                let flat = flatten_event(event, state_streams.database.as_deref().unwrap_or(""));
+            Some(Ok(raw)) => {
+                let database = state_streams.database.as_deref().unwrap_or("");
+                let (token, flat) = match flatten_raw(&raw, database) {
+                    Ok(event) => event,
+                    Err(err) => {
+                        fail_stream(state_streams, my_generation, &err, stream.resume_token());
+                        return;
+                    }
+                };
                 // Re-checked after the await, and checked while HOLDING the
                 // buffer lock that every retirement also takes. This task may
                 // have been retired while it was blocked, and its event
@@ -590,12 +711,7 @@ async fn read_cursor(
                 push_event(&mut buffer, flat, BUFFER_CAP);
             }
             Some(Err(err)) => {
-                fail_stream(
-                    state_streams,
-                    my_generation,
-                    &err.to_string(),
-                    stream.resume_token(),
-                );
+                fail_stream(state_streams, my_generation, &err, stream.resume_token());
                 return;
             }
             // The cursor ended on its own: an invalidate after the watched
@@ -683,21 +799,14 @@ pub fn retire_reader(stream: &LiveStream) -> u64 {
     claimed
 }
 
-fn spawn_reader(state: &AppState, stream: Arc<LiveStream>) -> Result<(), String> {
-    let client = state
-        .connections
-        .lock_safe()?
-        .get(&stream.connection_id)
-        .cloned()
-        .ok_or_else(|| format!("connection {} is not open", stream.connection_id))?;
+fn spawn_reader(stream: Arc<LiveStream>, source: Source) {
     let my_generation = retire_reader(&stream);
     // Whoever was reading before is the one whose final resume point this
     // reader has to wait for. Recorded here rather than derived from the
     // generation: retirement and spawning both bump it, so the arithmetic
     // would be a guess.
     let predecessor = stream.spawned.swap(my_generation, Ordering::SeqCst);
-    tauri::async_runtime::spawn(run_stream(stream, client, my_generation, predecessor));
-    Ok(())
+    tauri::async_runtime::spawn(run_stream(stream, source, my_generation, predecessor));
 }
 
 /// Begin watching. `collection` omitted watches the whole database.
@@ -711,6 +820,53 @@ pub async fn start_change_stream(
     collection: Option<String>,
     operation_types: Vec<String>,
 ) -> Result<(), String> {
+    start_change_stream_impl(
+        &state,
+        window.label(),
+        stream_id,
+        connection_id,
+        database,
+        collection,
+        operation_types,
+    )
+    .await
+}
+
+pub(crate) async fn start_change_stream_impl(
+    state: &AppState,
+    window: &str,
+    stream_id: String,
+    connection_id: String,
+    database: Option<String>,
+    collection: Option<String>,
+    operation_types: Vec<String>,
+) -> Result<(), String> {
+    let id = connection_id.clone();
+    start_change_stream_from(
+        state,
+        window,
+        stream_id,
+        connection_id,
+        database,
+        collection,
+        operation_types,
+        source_for(state, &id),
+    )
+    .await
+}
+
+/// Starts watching, reading from what `source` finds when it is needed.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn start_change_stream_from(
+    state: &AppState,
+    window: &str,
+    stream_id: String,
+    connection_id: String,
+    database: Option<String>,
+    collection: Option<String>,
+    operation_types: Vec<String>,
+    source: impl std::future::Future<Output = Result<Source, String>>,
+) -> Result<(), String> {
     let database = database.filter(|d| !d.trim().is_empty());
     let collection = collection.filter(|c| !c.trim().is_empty());
 
@@ -718,7 +874,7 @@ pub async fn start_change_stream(
     // renderer that would have stopped this, and a start still in flight when
     // the sweep ran would otherwise install a tail nobody can ever reach — the
     // same reason `start_mongosh_session` consults this set.
-    if crate::window_is_closed(&state, window.label())? {
+    if crate::window_is_closed(state, window)? {
         return Ok(());
     }
 
@@ -775,16 +931,19 @@ pub async fn start_change_stream(
         .as_ref()
         .and_then(|e| e.status.lock().ok().map(|s| s.clone()));
 
-    let _ = stop_change_stream_impl(&state, &stream_id);
-
     // A filter change on a paused tail stays paused. Rebuilding the cursor is
     // unavoidable — the `$match` is server-side — but it must not resume the
     // watch behind the user's back, and with the token inherited above nothing
     // buffered during the pause is lost when they do resume.
     let was_paused = inherited_status == Some(StreamStatus::Paused);
+    // Found before the old stream is stopped. A local connection answers at
+    // once; a server connection first needs its session.
+    let source = if was_paused { None } else { Some(source.await) };
+
+    let _ = stop_change_stream_impl(state, &stream_id);
 
     let stream = Arc::new(LiveStream {
-        window: Mutex::new(window.label().to_string()),
+        window: Mutex::new(window.to_string()),
         buffer: Mutex::new(StreamBuffer::default()),
         status: Mutex::new(if was_paused {
             StreamStatus::Paused
@@ -806,39 +965,41 @@ pub async fn start_change_stream(
     // close sweep. No reader while paused: it starts when the user resumes,
     // from the token carried over above.
     let mut spawn_failed = None;
-    let installed = install_stream_with(
-        &state,
-        &stream_id,
-        stream.clone(),
-        window.label(),
-        |stream| {
-            if was_paused {
-                return Ok(());
+    let installed = install_stream_with(state, &stream_id, stream.clone(), window, |stream| {
+        match source {
+            Some(Ok(source)) if still_open(state, &source) => spawn_reader(stream, source),
+            Some(Ok(_)) => {
+                spawn_failed = Some(format!("connection {} is not open", stream.connection_id))
             }
-            if let Err(err) = spawn_reader(&state, stream) {
-                // Reported below, once the map lock is out of the way.
-                spawn_failed = Some(err);
-            }
-            Ok(())
-        },
-    )?;
+            // Reported below, once the map lock is out of the way.
+            Some(Err(err)) => spawn_failed = Some(err),
+            None => {}
+        }
+        Ok(())
+    })?;
     if !installed {
         return Ok(());
     }
     if let Some(err) = spawn_failed {
-        // The panel polls for status, so a failure to start has to land THERE
-        // rather than only in a rejected promise the caller drops. A mock
-        // connection has no client at all, and would otherwise show "starting"
-        // for ever.
-        if let Ok(mut s) = stream.status.lock() {
-            *s = StreamStatus::Unsupported;
-        }
-        if let Ok(mut e) = stream.error.lock() {
-            *e = Some(err.clone());
-        }
-        return Err(err);
+        return Err(cannot_start(&stream, err));
     }
     Ok(())
+}
+
+/// Records why a stream could not start, and returns it.
+///
+/// The panel polls for status, so a failure to start has to land THERE rather
+/// than only in a rejected promise the caller drops. A mock connection has no
+/// client at all, and a server account can be gone; either would otherwise
+/// show "starting" for ever.
+fn cannot_start(stream: &LiveStream, err: String) -> String {
+    if let Ok(mut s) = stream.status.lock() {
+        *s = StreamStatus::Unsupported;
+    }
+    if let Ok(mut e) = stream.error.lock() {
+        *e = Some(err.clone());
+    }
+    err
 }
 
 #[tauri::command]
@@ -848,6 +1009,15 @@ pub async fn poll_change_stream(
     stream_id: String,
     after_seq: Option<u64>,
 ) -> Result<Option<StreamPoll>, String> {
+    poll_change_stream_impl(&state, window.label(), &stream_id, after_seq)
+}
+
+pub(crate) fn poll_change_stream_impl(
+    state: &AppState,
+    window: &str,
+    stream_id: &str,
+    after_seq: Option<u64>,
+) -> Result<Option<StreamPoll>, String> {
     // Absent rather than an error: nothing is watching under this id, which a
     // caller can act on. Closing a tab and immediately reopening the same
     // target can land the old stop after the new start, and a panel that could
@@ -855,7 +1025,7 @@ pub async fn poll_change_stream(
     // Whoever is polling is the window that is really watching this, and the
     // lookup and the claim happen together so the close sweep cannot land
     // between them.
-    let Some(stream) = find_and_claim(&state, &stream_id, window.label())? else {
+    let Some(stream) = find_and_claim(state, stream_id, window)? else {
         return Ok(None);
     };
     let (events, dropped, last_seq) = {
@@ -924,7 +1094,11 @@ pub async fn pause_change_stream(
     state: tauri::State<'_, AppState>,
     stream_id: String,
 ) -> Result<(), String> {
-    let stream = get_stream(&state, &stream_id)?;
+    pause_change_stream_impl(&state, &stream_id)
+}
+
+pub(crate) fn pause_change_stream_impl(state: &AppState, stream_id: &str) -> Result<(), String> {
+    let stream = get_stream(state, stream_id)?;
     // Retires the reader. It may be blocked in `next().await` and only notice
     // when the next event arrives — which is fine, because it checks the
     // generation before pushing anything.
@@ -942,14 +1116,58 @@ pub async fn resume_change_stream(
     state: tauri::State<'_, AppState>,
     stream_id: String,
 ) -> Result<(), String> {
-    let stream = get_stream(&state, &stream_id)?;
+    resume_change_stream_impl(&state, &stream_id).await
+}
+
+pub(crate) async fn resume_change_stream_impl(
+    state: &AppState,
+    stream_id: &str,
+) -> Result<(), String> {
+    let stream = get_stream(state, stream_id)?;
     if let Ok(mut s) = stream.status.lock() {
         *s = StreamStatus::Starting;
     }
     if let Ok(mut e) = stream.error.lock() {
         *e = None;
     }
-    spawn_reader(&state, stream)
+    let source = match source_for(state, &stream.connection_id).await {
+        Ok(source) => source,
+        Err(err) => return Err(cannot_start(&stream, err)),
+    };
+    spawn_if_installed(state, stream_id, stream, source)
+}
+
+/// Starts a reader for `stream` if it is still the one watching under
+/// `stream_id`, and still meant to run.
+///
+/// Finding a server connection's source awaits its session, and in the
+/// meantime the tab can close, the connection go or the vault lock, any of
+/// which removes the stream; or the user can pause it again. A reader started
+/// on a removed stream would hold a server cursor nothing can reach to stop.
+/// Checked under the map lock, as the close sweep and installs are.
+pub(crate) fn spawn_if_installed(
+    state: &AppState,
+    stream_id: &str,
+    stream: Arc<LiveStream>,
+    source: Source,
+) -> Result<(), String> {
+    let streams = state.change_streams.lock_safe()?;
+    let installed = streams
+        .get(stream_id)
+        .is_some_and(|current| Arc::ptr_eq(current, &stream));
+    let starting = stream
+        .status
+        .lock()
+        .map(|status| *status == StreamStatus::Starting)
+        .unwrap_or(false);
+    if installed && starting {
+        if !still_open(state, &source) {
+            let err = format!("connection {} is not open", stream.connection_id);
+            return Err(cannot_start(&stream, err));
+        }
+        spawn_reader(stream, source);
+    }
+    Ok(())
 }
 
 /// Look a stream up and note that this window is the one watching it.
@@ -1075,6 +1293,39 @@ pub fn stop_change_streams_for_window(
     Ok(stopped)
 }
 
+/// Stop every tail on an MQLens Server connection: the vault is locking, and a
+/// server watch, once open, would go on streaming without the key.
+pub fn stop_server_streams(state: &AppState) -> Result<(), String> {
+    stop_streams_where(state, |stream| {
+        matches!(state.server.remote(&stream.connection_id), Ok(Some(_)))
+    })
+}
+
+/// Stop the tails on one connection, which is going away.
+pub fn stop_streams_on(state: &AppState, connection_id: &str) -> Result<(), String> {
+    stop_streams_where(state, |stream| stream.connection_id == connection_id)
+}
+
+fn stop_streams_where(
+    state: &AppState,
+    doomed: impl Fn(&LiveStream) -> bool,
+) -> Result<(), String> {
+    let stopped: Vec<Arc<LiveStream>> = {
+        let mut streams = state.change_streams.lock_safe()?;
+        let ids: Vec<String> = streams
+            .iter()
+            .filter(|(_, stream)| doomed(stream))
+            .map(|(id, _)| id.clone())
+            .collect();
+        ids.iter().filter_map(|id| streams.remove(id)).collect()
+    };
+    // Outside the map lock, as in `stop_change_streams_for_window`.
+    for stream in &stopped {
+        retire_reader(stream);
+    }
+    Ok(())
+}
+
 pub fn stop_change_stream_impl(state: &AppState, stream_id: &str) -> Result<(), String> {
     let removed = state.change_streams.lock_safe()?.remove(stream_id);
     if let Some(stream) = removed {
@@ -1089,4 +1340,74 @@ pub async fn stop_change_stream(
     stream_id: String,
 ) -> Result<(), String> {
     stop_change_stream_impl(&state, &stream_id)
+}
+
+#[cfg(test)]
+mod raw_event_tests {
+    use super::flatten_raw;
+    use mongodb::bson::{doc, spec::BinarySubtype, Binary, DateTime, RawDocumentBuf};
+
+    fn raw(event: mongodb::bson::Document) -> RawDocumentBuf {
+        RawDocumentBuf::from_document(&event).unwrap()
+    }
+
+    // Binary in an event reads as it does in a query result, not as a list of
+    // byte values.
+    #[test]
+    fn an_event_shows_binary_as_extended_json() {
+        let event = raw(doc! {
+            "_id": { "_data": "8264" },
+            "operationType": "insert",
+            "ns": { "db": "shop", "coll": "orders" },
+            "documentKey": { "_id": 1 },
+            "fullDocument": {
+                "_id": 1,
+                "blob": Binary { subtype: BinarySubtype::Generic, bytes: vec![1, 2, 3] },
+            },
+            "wallTime": DateTime::from_millis(1_700_000_000_000),
+        });
+
+        let (_, flat) = flatten_raw(&event, "shop").unwrap();
+
+        assert_eq!(
+            flat.full_document.unwrap()["blob"],
+            serde_json::json!({ "$binary": { "base64": "AQID", "subType": "00" } })
+        );
+    }
+
+    // An event's bodies show the documents as stored: a sub-document whose
+    // keys look like a type wrapper stays a sub-document, sibling keys and all.
+    #[test]
+    fn an_event_shows_wrapper_shaped_documents_as_stored() {
+        let event = raw(doc! {
+            "_id": { "_data": "8264" },
+            "operationType": "update",
+            "ns": { "db": "shop", "coll": "orders" },
+            "documentKey": { "_id": 1 },
+            "updateDescription": {
+                "updatedFields": { "money": { "$numberLong": "7", "other": 1 } },
+                "removedFields": ["gone"],
+            },
+            "fullDocument": { "_id": 1, "when": { "$date": "not a date" } },
+            "wallTime": DateTime::from_millis(1_700_000_000_000),
+        });
+
+        let (_, flat) = flatten_raw(&event, "shop").unwrap();
+
+        assert_eq!(flat.operation_type, "update");
+        assert_eq!(
+            (flat.database.as_str(), flat.collection.as_deref()),
+            ("shop", Some("orders"))
+        );
+        assert_eq!(
+            flat.updated_fields,
+            Some(serde_json::json!({ "money": { "$numberLong": "7", "other": 1 } }))
+        );
+        assert_eq!(
+            flat.full_document,
+            Some(serde_json::json!({ "_id": 1, "when": { "$date": "not a date" } }))
+        );
+        assert_eq!(flat.removed_fields, Some(vec!["gone".to_string()]));
+        assert_eq!(flat.at_ms, 1_700_000_000_000);
+    }
 }

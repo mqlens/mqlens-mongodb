@@ -6,6 +6,7 @@ import {
   bsonCallText,
   bsonValueText,
   isBsonInstance,
+  isEjsonWrapper,
   jsonStringLiteral,
   plainBsonShape,
   tableValueText,
@@ -26,6 +27,13 @@ describe('bsonValueText — what the JSON and tree views display', () => {
     expect(bsonValueText(Decimal128.fromString('1.25'))).toBe('NumberDecimal("1.25")');
     expect(bsonValueText(new Int32(7))).toBe('NumberInt(7)');
     expect(bsonValueText(new Double(1.5))).toBe('Double(1.5)');
+  });
+
+  it('can display dates in local time without changing the UTC default', () => {
+    const date = new Date('2026-08-27T10:00:00.000Z');
+    expect(bsonValueText(date)).toBe('ISODate("2026-08-27T10:00:00.000Z")');
+    const local = bsonValueText(date, { dateTimezone: 'local' });
+    expect(local).toMatch(/^ISODate\("\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.000[+-]\d{2}:\d{2}"\)$/);
   });
 
   it('quotes and escapes strings the way the view renders them', () => {
@@ -60,7 +68,10 @@ describe('bsonCallOf', () => {
     expect(bsonCallOf(new ObjectId('507f1f77bcf86cd799439011'))).toEqual({
       ctor: 'ObjectId',
       args: [{ text: '"507f1f77bcf86cd799439011"', kind: 'string' }],
+      title: '2012-10-17T21:13:27.000Z',
     });
+    expect(bsonCallOf(new ObjectId('507f1f77bcf86cd799439011'), { dateTimezone: 'local' })?.title)
+      .toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.000[+-]\d{2}:\d{2}$/);
     expect(bsonCallOf(Long.fromString('42'))).toEqual({
       ctor: 'NumberLong',
       args: [{ text: '42', kind: 'number' }],
@@ -97,6 +108,7 @@ describe('plainBsonShape — the table view’s extended-JSON shapes', () => {
     expect(plainBsonShape({ $oid: '507f1f77bcf86cd799439011' })).toEqual({
       text: '507f1f77bcf86cd799439011',
       kind: 'string',
+      title: '2012-10-17T21:13:27.000Z',
     });
     expect(plainBsonShape({ $date: '2026-08-27T10:00:00.000Z' })).toEqual({
       text: '2026-08-27T10:00:00.000Z',
@@ -110,6 +122,46 @@ describe('plainBsonShape — the table view’s extended-JSON shapes', () => {
     expect(plainBsonShape({ $numberDecimal: '1.25' })).toEqual({ text: '1.25', kind: 'number' });
     expect(plainBsonShape({ $numberInt: '7' })).toEqual({ text: '7', kind: 'number' });
     expect(plainBsonShape({ $numberDouble: '1.5' })).toEqual({ text: '1.5', kind: 'number' });
+  });
+
+  it('shows binary as the JSON view does, with the subtype in decimal', () => {
+    const generic = { $binary: { base64: 'aGk=', subType: '00' } };
+    const userDefined = { $binary: { base64: 'eA==', subType: '80' } };
+
+    expect(plainBsonShape(generic)).toEqual({ text: 'BinData(0, "aGk=")', kind: 'string' });
+    expect(tableValueText(userDefined)).toBe('BinData(128, "eA==")');
+    expect(tableValueText(generic)).toBe(bsonValueText(new Binary(Buffer.from('hi'), 0)));
+  });
+
+  it('leaves an ordinary sub-document named $binary alone', () => {
+    expect(plainBsonShape({ $binary: 'not a wrapper' })).toBeNull();
+  });
+
+  it('keeps a stored sub-document that has fields beside $binary whole', () => {
+    const stored = { $binary: { base64: 'AQID', subType: '00' }, other: 1 };
+
+    expect(plainBsonShape(stored)).toBeNull();
+    expect(tableValueText(stored)).toBe(JSON.stringify(stored));
+  });
+
+  it('formats table dates locally and falls back safely for malformed dates', () => {
+    const localString = plainBsonShape(
+      { $date: '2026-08-27T10:00:00.000Z' },
+      { dateTimezone: 'local' },
+    );
+    expect(localString?.text).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.000[+-]\d{2}:\d{2}$/);
+
+    const localLong = plainBsonShape(
+      { $date: { $numberLong: '0' } },
+      { dateTimezone: 'local' },
+    );
+    expect(localLong?.text).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.000[+-]\d{2}:\d{2}$/);
+
+    expect(plainBsonShape({ $date: 'invalid' })).toEqual({ text: 'invalid', kind: 'string' });
+    expect(plainBsonShape({ $date: { $numberLong: 'abc' } })).toEqual({
+      text: 'abc',
+      kind: 'string',
+    });
   });
 
   it('is null for an ordinary object', () => {
@@ -131,6 +183,15 @@ describe('tableValueText — what the table view displays', () => {
     );
   });
 
+  it('uses the local date display for table text too', () => {
+    expect(
+      tableValueText(
+        { $date: '2026-08-27T10:00:00.000Z' },
+        { dateTimezone: 'local' },
+      ),
+    ).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.000[+-]\d{2}:\d{2}$/);
+  });
+
   it('still calls a constructor when the value is a real BSON instance', () => {
     // renderColoredCell delegates those to renderBsonValueNode, so the text does too.
     expect(tableValueText(new ObjectId('507f1f77bcf86cd799439011'))).toBe(
@@ -143,7 +204,6 @@ describe('tableValueText — what the table view displays', () => {
   });
 
   it('is empty for an absent value', () => {
-    expect(tableValueText(null)).toBe('');
     expect(tableValueText(undefined)).toBe('');
   });
 });
@@ -177,5 +237,29 @@ describe('bsonInstanceTypeLabel — the tree’s Type column', () => {
     for (const v of [null, undefined, 'text', 7, true, { a: 1 }, [1, 2]]) {
       expect(bsonInstanceTypeLabel(v)).toBeNull();
     }
+  });
+});
+
+describe('tableValueText: null and missing', () => {
+  it('reads null as null, so find matches the marker on screen, and missing as nothing', () => {
+    expect(tableValueText(null)).toBe('null');
+    expect(tableValueText(undefined)).toBe('');
+  });
+});
+
+describe('isEjsonWrapper', () => {
+  it('knows a typed value by its Extended JSON wrapper', () => {
+    expect(isEjsonWrapper({ $date: '2024-01-01T00:00:00Z' })).toBe(true);
+    expect(isEjsonWrapper({ $oid: '6af1b1a32e3d410c4868596b' })).toBe(true);
+    expect(isEjsonWrapper({ $numberLong: '7' })).toBe(true);
+    // Legacy two-key forms.
+    expect(isEjsonWrapper({ $regex: 'a', $options: 'i' })).toBe(true);
+  });
+
+  it('does not take an ordinary document with a $-prefixed field for one', () => {
+    expect(isEjsonWrapper({ $schema: 'v1' })).toBe(false);
+    expect(isEjsonWrapper({ $schema: 'v1', city: 'Berlin' })).toBe(false);
+    expect(isEjsonWrapper({ $date: '2024-01-01T00:00:00Z', city: 'Berlin' })).toBe(false);
+    expect(isEjsonWrapper({})).toBe(false);
   });
 });

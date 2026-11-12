@@ -1,0 +1,23 @@
+# Generates the MQLens Server gRPC client from the vendored protos in proto/.
+# Run scripts/refresh-server-protos.sh rather than invoking this directly: it
+# also refreshes the proto copy and records the server commit in proto/SOURCE.
+#
+# Remote plugins, so no protoc is needed. Both are pinned: a plugin upgrade can
+# change the generated code and the tonic/prost versions it expects, so it
+# should be a deliberate change that is reviewed with the Cargo.toml bump.
+version: v2
+inputs:
+  - directory: proto
+plugins:
+  - remote: buf.build/community/neoeinstein-prost:v0.5.0
+    revision: 2
+    out: src/server/pb
+    opt:
+      # GridFS chunks and shell bytes are passed along without copying.
+      - bytes=.
+  - remote: buf.build/community/neoeinstein-tonic:v0.5.0
+    revision: 4
+    out: src/server/pb
+    opt:
+      # The server half is only used by the in-process fake server in tests.
+      - server_mod_attribute=.=#[cfg(test)]

@@ -23,16 +23,18 @@ test.describe('Bulk writes', () => {
   test('a guarded connection asks for the collection name before Delete Many and Update Many', async ({ app, page }) => {
     await openCustomers(app, page, { connection_mode: 'confirm_destructive' });
 
-    await view(page).getByTestId('delete-many-btn').click();
+    await view(page).getByTestId('bulk-write-menu-btn').click();
+    await page.getByTestId('delete-many-btn').click();
     await page.getByTestId('dialog-input').fill('customers');
     const deleted = await callFrom(app, 'delete_many', () => page.getByTestId('dialog-confirm').click());
     expect(deleted.confirmed).toBe(true);
     await expect(toast(page, 'Deleted')).toBeVisible();
 
-    await view(page).getByTestId('update-many-btn').click();
-    await page.getByTestId('dialog-input').fill('{ "$set": { "tier": "Gold" } }');
-    await page.getByTestId('dialog-confirm').click();
-    // A second prompt, for the name.
+    await view(page).getByTestId('bulk-write-menu-btn').click();
+    await page.getByTestId('update-many-btn').click();
+    await setEditorText(page, page.getByTestId('update-many-editor'), '{ $set: { tier: "Gold" } }');
+    await page.getByTestId('update-many-submit').click();
+    // Then a prompt for the name.
     await expect(page.getByTestId('dialog-input')).toHaveValue('');
     await page.getByTestId('dialog-input').fill('customers');
     const updated = await callFrom(app, 'update_many', () => page.getByTestId('dialog-confirm').click());
@@ -42,16 +44,16 @@ test.describe('Bulk writes', () => {
   test('cancelling the last confirmation writes nothing', async ({ app, page }) => {
     await openCustomers(app, page);
 
-    await view(page).getByTestId('delete-many-btn').click();
+    await view(page).getByTestId('bulk-write-menu-btn').click();
+    await page.getByTestId('delete-many-btn').click();
     await page.getByTestId('dialog-cancel').click();
     await expect(page.getByTestId('dialog-title')).toHaveCount(0);
 
-    await view(page).getByTestId('update-many-btn').click();
-    await page.getByTestId('dialog-input').fill('{ "$set": { "tier": "Gold" } }');
-    await page.getByTestId('dialog-confirm').click();
-    await expect(page.getByTestId('dialog-input')).toHaveCount(0);
-    await page.getByTestId('dialog-cancel').click();
-    await expect(page.getByTestId('dialog-title')).toHaveCount(0);
+    await view(page).getByTestId('bulk-write-menu-btn').click();
+    await page.getByTestId('update-many-btn').click();
+    await setEditorText(page, page.getByTestId('update-many-editor'), '{ $set: { tier: "Gold" } }');
+    await page.getByTestId('update-many-cancel').click();
+    await expect(page.getByTestId('update-many-modal')).toHaveCount(0);
 
     expect(await app.calls('delete_many')).toHaveLength(0);
     expect(await app.calls('update_many')).toHaveLength(0);
@@ -88,6 +90,28 @@ test.describe('Single documents', () => {
     expect(document).toMatchObject({ name: 'Alice Smith', email: 'alice@example.com' });
     expect(document._id).toBeUndefined();
     await expect(modal).toHaveCount(0);
+  });
+
+  test('saves the text typed just before Save, before the draft has synced', async ({ app, page }) => {
+    await openCustomers(app, page);
+    await view(page).getByRole('button', { name: 'JSON', exact: true }).click();
+    await jsonLine(page, 'Alice Smith').click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Duplicate document' }).click();
+    const modal = page.getByTestId('document-edit-modal');
+    await expect.poll(() => getEditorText(page, modal)).toContain('Alice Smith');
+
+    // Typing and Save in one task, well inside the editor's 250 ms pause.
+    const inserted = await callFrom(app, 'insert_document', () =>
+      page.evaluate(async () => {
+        type Editor = { getDomNode(): HTMLElement | null; setValue(v: string): void };
+        const monaco = (await window.__MQLENS_E2E_MONACO__!()) as { editor: { getEditors(): Editor[] } };
+        const modalNode = document.querySelector('[data-testid="document-edit-modal"]')!;
+        const editor = monaco.editor.getEditors().find((candidate) => modalNode.contains(candidate.getDomNode()))!;
+        editor.setValue('{ "name": "Ada Lovelace" }');
+        (modalNode.querySelector('[data-testid="document-save-btn"]') as HTMLButtonElement).click();
+      }),
+    );
+    expect(JSON.parse(String(inserted.document))).toEqual({ name: 'Ada Lovelace' });
   });
 
   test('will not save an edit to a document shown without its _id', async ({ app, page }) => {

@@ -180,6 +180,24 @@ test.describe('Aggregation builder', () => {
     await page.getByTestId('dialog-cancel').click();
     expect(await app.calls('execute_aggregate')).toHaveLength(before);
   });
+
+  test('keeps text that reaches a stage editor before it is listened to', async ({ app, page }) => {
+    // @monaco-editor/react creates the editor from one effect and only reports
+    // its changes from the next. Text written in between used to be replaced by
+    // the stage template on mount, so Run sent an empty $match.
+    await connectStaging(app, page);
+    await openCollection(page, 'sales_db', 'customers');
+    await expect(view(page).getByText('Bob Johnson').first()).toBeVisible();
+    await page.evaluate(async () => {
+      type Editor = { setValue(value: string): void };
+      const monaco = (await window.__MQLENS_E2E_MONACO__!()) as { editor: { onDidCreateEditor(listener: (editor: Editor) => void): void } };
+      monaco.editor.onDidCreateEditor((editor) => queueMicrotask(() => editor.setValue('{ tier: "Premium" }')));
+    });
+    await view(page).getByTestId('mode-aggregate-tab').click();
+    await runButton(page).click();
+    await expect(view(page).getByText('Alice Smith').first()).toBeVisible();
+    await expect(view(page).getByText('Bob Johnson')).toHaveCount(0);
+  });
 });
 
 test.describe('Results', () => {

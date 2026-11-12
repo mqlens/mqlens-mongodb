@@ -8,6 +8,8 @@
     "retry": "重试",
     "title": "此标签页遇到问题"
   },
+  "notForRole": "您在此 MQLens Server 连接上的角色不允许此操作。",
+  "notOnServer": "MQLens Server 暂不支持。",
   "ok": "确定",
   "passwordInput": {
     "hide": "隐藏",
@@ -24,6 +26,7 @@
     "generate": "生成数据：{{name}}",
     "gridfs": "GridFS：{{collection}}",
     "import": "导入：{{collection}}",
+    "indexes": "索引：{{collection}}",
     "monitor": "监控：{{name}}",
     "quickStart": "快速开始",
     "restore": "恢复：{{name}}",
@@ -54,6 +57,7 @@
     "defaultQueryCleared": "已清除默认查询",
     "defaultQuerySet": "已设为默认查询",
     "deleteFailed": "删除失败：{{detail}}",
+    "deleteIndexSuccess": "索引“{{name}}”已成功删除。",
     "deletedDocuments_other": "已删除 {{count}} 个文档",
     "deletedTitle": "已删除",
     "documentDeletedFrom": "已从 {{collection}} 中删除文档",
@@ -78,6 +82,10 @@
     "filterCleared": "已清除筛选条件",
     "generateFailedToStart": "生成数据启动失败：{{detail}}",
     "importFailedToStart": "导入启动失败：{{detail}}",
+    "indexNotPutBack": "更改失败，且无法恢复索引：{{detail}}。其定义为 {{spec}}",
+    "indexOptionsNeedServerApi5": "这些索引选项需要 MQLens API 版本 5，而此 MQLens Server 使用的是 {{version}}。请更新 MQLens Server。",
+    "indexPutBack": "更改失败，索引已恢复原样：{{detail}}",
+    "indexStaysNonUnique": "索引仍为非唯一：{{detail}}",
     "insertedTitle": "已插入",
     "modifiedDocuments_other": "已修改 {{count}} 个文档",
     "noQueryToExport": "没有可导出的查询 —— 请先编辑筛选条件。",
@@ -90,6 +98,7 @@
     "savedQueryDeleted": "已删除保存的查询",
     "savedTitle": "已保存",
     "sortCleared": "已清除排序设置",
+    "tabMoving": "此标签页正在移到另一个窗口。",
     "updateFailed": "更新失败：{{detail}}",
     "updatedTitle": "已更新",
     "uploadFailed": "上传失败：{{detail}}",
@@ -99,8 +108,10 @@
     "userUpdated": "已更新用户 {{name}}"
   },
   "typedNameConfirm": {
+    "confirmLabel": "删除",
     "messageCollection": "请输入 Collection 名称以确认。",
     "messageDatabase": "请输入数据库名称以确认。",
+    "messageIndex": "请输入索引名称以确认。",
     "validationError": "名称不匹配"
   }
 }

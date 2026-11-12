@@ -1,0 +1,16 @@
+WEBVTT
+
+00:00.000 --> 00:07.000
+Open a sample collection in MQLens and browse its documents.
+
+00:07.000 --> 00:14.000
+Switch to a tree view to inspect nested fields.
+
+00:14.000 --> 00:21.000
+Read documents as syntax-highlighted JSON.
+
+00:21.000 --> 00:28.000
+Build and run an aggregation that groups customers and seats by region.
+
+00:28.000 --> 00:37.540
+Inspect the explain plan. This walkthrough uses sample data and illustrative plan statistics.

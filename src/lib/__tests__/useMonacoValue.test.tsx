@@ -13,15 +13,18 @@ const monaco = { editor: { EditorOption: { readOnly: READ_ONLY } } } as unknown 
  */
 function createFakeEditor(initialValue: string, { readOnly = false } = {}) {
   let text = initialValue;
+  // A model starts at version 1; every edit moves it on, as Monaco's does.
+  let version = 1;
   const contentListeners: Array<() => void> = [];
   const disposeListeners: Array<() => void> = [];
   const replaceText = (next: string) => {
     text = next;
+    version += 1;
     for (const listener of [...contentListeners]) listener();
   };
   return {
     getValue: () => text,
-    getModel: () => ({ getFullModelRange: () => ({}) }),
+    getModel: () => ({ getFullModelRange: () => ({}), getVersionId: () => version }),
     getOption: (id: number) => (id === READ_ONLY ? readOnly : undefined),
     executeEdits: vi.fn((_source: string, edits: Array<{ text: string }>) => {
       if (readOnly) return false;
@@ -150,6 +153,18 @@ describe('useMonacoValue', () => {
     const editor = createFakeEditor('show collections');
     render(<Editor value="db.orders.find({})" onChange={() => {}} editor={editor} />);
     expect(editor.getValue()).toBe('db.orders.find({})');
+  });
+
+  it('reports text written into the editor before it mounted instead of overwriting it', () => {
+    // The library creates the editor from one effect and runs onMount and
+    // subscribes onChange from the next. Text that lands in between (a test
+    // driver's setValue, a fast paste) is in the model but was never reported.
+    const editor = createFakeEditor('{}');
+    editor.setValue('{ tier: "Premium" }');
+    const onChange = vi.fn();
+    render(<Editor value="{}" onChange={onChange} editor={editor} />);
+    expect(editor.getValue()).toBe('{ tier: "Premium" }');
+    expect(onChange).toHaveBeenCalledWith('{ tier: "Premium" }');
   });
 
   it('gives a read-only editor the text outright, since it refuses edits', () => {

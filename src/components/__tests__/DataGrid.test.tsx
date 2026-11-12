@@ -1,6 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import React from 'react';
 import { render, screen, fireEvent, within, cleanup } from '@testing-library/react';
+import { ObjectId } from 'bson';
 
 // Monaco renders the Query Code panel; mock it as a plain textarea (same shape
 // as the other component tests) so assertions can read the generated code.
@@ -45,6 +46,14 @@ const collectNames = (node: any): string[] => [
   ...(node.children || []).flatMap(collectNames),
 ];
 
+beforeEach(() => {
+  localStorage.removeItem('mqlens.dateDisplayTimezone');
+});
+
+afterEach(() => {
+  localStorage.removeItem('mqlens.dateDisplayTimezone');
+});
+
 describe('getExplainTree (M1)', () => {
   it('parses the find explain shape (queryPlanner.winningPlan)', () => {
     const findExplain = JSON.stringify({
@@ -80,6 +89,77 @@ describe('getExplainTree (M1)', () => {
     expect(names).toContain('$cursor');
     // ...and the cursor's real plan (index scan) is at the leaf.
     expect(names).toContain('Index scan');
+  });
+
+  // Shape taken from a live MongoDB 7.0 find explain (executionStats verbosity).
+  const findWithStats = JSON.stringify({
+    queryPlanner: {
+      namespace: 'shop.orders',
+      winningPlan: { stage: 'FETCH', inputStage: { stage: 'IXSCAN', indexName: 'tier_1' } },
+    },
+    executionStats: {
+      nReturned: 582,
+      executionTimeMillis: 3,
+      totalKeysExamined: 582,
+      totalDocsExamined: 582,
+      executionStages: {
+        stage: 'FETCH',
+        nReturned: 582,
+        executionTimeMillisEstimate: 2,
+        docsExamined: 582,
+        inputStage: { stage: 'IXSCAN', nReturned: 582, executionTimeMillisEstimate: 1, keysExamined: 582 },
+      },
+    },
+  });
+
+  it('puts executionStats totals on the result node', () => {
+    const tree = getExplainTree(findWithStats);
+    expect(tree.stats).toEqual({ nReturned: 582, docsExamined: 582, keysExamined: 582, ms: 3 });
+  });
+
+  it('attaches per-stage executionStats to the matching plan stages', () => {
+    const fetch = getExplainTree(findWithStats).children![0];
+    const ixscan = fetch.children![0];
+    expect(fetch.stats).toEqual({ nReturned: 582, docsExamined: 582, ms: 2 });
+    expect(ixscan.stats).toEqual({ nReturned: 582, keysExamined: 582, ms: 1 });
+  });
+
+  it('does not attach per-stage stats when executionStages does not mirror the plan', () => {
+    const sbe = JSON.stringify({
+      queryPlanner: { namespace: 'a.b', winningPlan: { stage: 'COLLSCAN' } },
+      executionStats: {
+        nReturned: 5, executionTimeMillis: 1, totalKeysExamined: 0, totalDocsExamined: 10,
+        executionStages: { stage: 'filter', nReturned: 5 },
+      },
+    });
+    const tree = getExplainTree(sbe);
+    expect(tree.stats).toEqual({ nReturned: 5, docsExamined: 10, keysExamined: 0, ms: 1 });
+    expect(tree.children![0].stats).toBeUndefined();
+  });
+
+  it('attaches nReturned and time to aggregate pipeline stages', () => {
+    const agg = JSON.stringify({
+      stages: [
+        {
+          $cursor: {
+            queryPlanner: { namespace: 'a.b', winningPlan: { stage: 'COLLSCAN' } },
+            executionStats: { nReturned: 100, executionTimeMillis: 4, totalKeysExamined: 0, totalDocsExamined: 100 },
+          },
+          nReturned: 100,
+          executionTimeMillisEstimate: 4,
+        },
+        { $group: { _id: '$t' }, nReturned: 3, executionTimeMillisEstimate: 5 },
+      ],
+    });
+    const group = getExplainTree(agg).children![0];
+    expect(group.name).toBe('$group');
+    expect(group.stats).toEqual({ nReturned: 3, ms: 5 });
+    expect(group.children![0].stats).toEqual({ nReturned: 100, ms: 4 });
+  });
+
+  it('does not invent a COLLSCAN when the plan is missing', () => {
+    expect(collectNames(getExplainTree('{"queryPlanner": {}}'))).not.toContain('Collection scan');
+    expect(collectNames(getExplainTree('not json'))).not.toContain('Collection scan');
   });
 });
 
@@ -210,6 +290,53 @@ describe('DataGrid Component', () => {
     expect(screen.getAllByText('NumberDecimal').length).toBeGreaterThan(0);
   });
 
+  it('shows ObjectId timestamps and persists the Date timezone display preference', () => {
+    render(<DataGrid documents={[{
+      _id: { $oid: '603d779f4f102e3a185c3220' },
+      created_at: { $date: '2025-05-18T14:32:00Z' },
+    }]} />);
+
+    expect(screen.getByText('ObjectId').parentElement).toHaveAttribute(
+      'title',
+      new ObjectId('603d779f4f102e3a185c3220').getTimestamp().toISOString(),
+    );
+    expect(screen.getByText('"2025-05-18T14:32:00.000Z"')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('date-timezone-toggle'));
+
+    expect(screen.getByTestId('date-timezone-toggle')).toHaveTextContent('Local');
+    expect(localStorage.getItem('mqlens.dateDisplayTimezone')).toBe('local');
+    expect(screen.queryByText('"2025-05-18T14:32:00.000Z"')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+    expect(screen.getByTestId('date-timezone-toggle')).toHaveTextContent('Local');
+    expect(screen.queryByText('2025-05-18T14:32:00.000Z')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /tree/i }));
+    expect(screen.getByTestId('date-timezone-toggle')).toHaveTextContent('Local');
+    expect(screen.queryByText('"2025-05-18T14:32:00.000Z"')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('date-timezone-toggle'));
+    expect(screen.getByTestId('date-timezone-toggle')).toHaveTextContent('UTC');
+    expect(screen.getByText('"2025-05-18T14:32:00.000Z"')).toBeInTheDocument();
+  });
+
+  it('keeps mounted grids synchronized when the timezone changes', () => {
+    const documents = [{ created_at: { $date: '2025-05-18T14:32:00Z' } }];
+    render(
+      <>
+        <DataGrid documents={documents} />
+        <DataGrid documents={documents} />
+      </>
+    );
+
+    const toggles = screen.getAllByTestId('date-timezone-toggle');
+    expect(toggles).toHaveLength(2);
+    fireEvent.click(toggles[0]);
+    expect(toggles[0]).toHaveTextContent('Local');
+    expect(toggles[1]).toHaveTextContent('Local');
+  });
+
   it('switches back to results tab automatically when documents list changes', () => {
     const { rerender } = render(<DataGrid documents={mockDocuments} explainResult='{"queryPlanner": {}}' />);
 
@@ -263,6 +390,20 @@ describe('DataGrid Component', () => {
     });
     render(<DataGrid documents={mockDocuments} explainResult={ixscanExplain} />);
     expect(screen.queryByTestId('create-suggested-index-btn')).not.toBeInTheDocument();
+  });
+
+  it('shows executionStats counts on the explain tree cards', () => {
+    const plan = JSON.stringify({
+      queryPlanner: { namespace: 'shop.orders', winningPlan: { stage: 'COLLSCAN' } },
+      executionStats: {
+        nReturned: 7, executionTimeMillis: 12, totalKeysExamined: 0, totalDocsExamined: 3000,
+        executionStages: { stage: 'COLLSCAN', nReturned: 7, executionTimeMillisEstimate: 11, docsExamined: 3000 },
+      },
+    });
+    render(<DataGrid documents={mockDocuments} explainResult={plan} activeTab="explain" />);
+    const stats = screen.getAllByTestId('explain-node-stats').map((el) => el.textContent);
+    expect(stats[0]).toBe('7 returned · 3,000 docs examined · 0 keys examined · 12 ms');
+    expect(stats[1]).toBe('7 returned · 3,000 docs examined · 11 ms');
   });
 
   it('shows a Query Code tab rendering the query spec in the selected language', () => {
@@ -392,6 +533,25 @@ describe('DataGrid Component', () => {
     // The control flips to a "Copied" confirmation state.
     expect(screen.getAllByLabelText('Copied').length).toBeGreaterThan(0);
   });
+
+  it('keeps the "Copied" confirmation when the grid re-renders', () => {
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText: vi.fn() }, configurable: true });
+    // JSON view, the default. The parent re-renders with fresh inline
+    // handlers, as App does on unrelated state changes.
+    const { rerender } = render(<DataGrid documents={mockDocuments} onEditDocument={() => {}} />);
+    fireEvent.click(screen.getAllByTestId('copy-doc-btn')[0]);
+    rerender(<DataGrid documents={mockDocuments} onEditDocument={() => {}} />);
+    expect(screen.getAllByTestId('copy-doc-btn')[0]).toHaveAttribute('aria-label', 'Copied');
+  });
+
+  it.each([/table/i, /tree/i])('keeps the "Copied" confirmation when the grid re-renders in %s view', (view) => {
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText: vi.fn() }, configurable: true });
+    const { rerender } = render(<DataGrid documents={mockDocuments} onEditDocument={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: view }));
+    fireEvent.click(screen.getAllByTestId('copy-doc-btn')[0]);
+    rerender(<DataGrid documents={mockDocuments} onEditDocument={() => {}} />);
+    expect(screen.getAllByTestId('copy-doc-btn')[0]).toHaveAttribute('aria-label', 'Copied');
+  });
 });
 
 describe('DataGrid — connectionMode (#188 Task 6: disable write UI on read_only)', () => {
@@ -404,9 +564,9 @@ describe('DataGrid — connectionMode (#188 Task 6: disable write UI on read_onl
     onDeleteDocument: () => {},
   };
 
-  it('read_only: disables the Insert / Update Many / Delete Many toolbar buttons with a tooltip', () => {
+  it('read_only: disables Insert and the bulk-write menu with a tooltip', () => {
     render(<DataGrid documents={mockDocuments} {...writeHandlers} connectionMode="read_only" />);
-    for (const testId of ['insert-doc-btn', 'update-many-btn', 'delete-many-btn']) {
+    for (const testId of ['insert-doc-btn', 'bulk-write-menu-btn']) {
       const btn = screen.getByTestId(testId);
       expect(btn).toBeDisabled();
       expect(btn).toHaveAttribute('title', 'Connection is read-only');
@@ -454,9 +614,12 @@ describe('DataGrid — connectionMode (#188 Task 6: disable write UI on read_onl
 
   it('confirm_destructive: leaves every write control ENABLED (regression guard — only read_only disables)', () => {
     render(<DataGrid documents={mockDocuments} {...writeHandlers} connectionMode="confirm_destructive" />);
-    for (const testId of ['insert-doc-btn', 'update-many-btn', 'delete-many-btn']) {
-      expect(screen.getByTestId(testId)).not.toBeDisabled();
-    }
+    expect(screen.getByTestId('insert-doc-btn')).not.toBeDisabled();
+    expect(screen.getByTestId('bulk-write-menu-btn')).not.toBeDisabled();
+    fireEvent.pointerDown(screen.getByTestId('bulk-write-menu-btn'), { button: 0, pointerType: 'mouse' });
+    expect(screen.getByTestId('update-many-btn')).not.toHaveAttribute('data-disabled');
+    expect(screen.getByTestId('delete-many-btn')).not.toHaveAttribute('data-disabled');
+    fireEvent.keyDown(document.body, { key: 'Escape' });
     fireEvent.click(screen.getByRole('button', { name: /table/i }));
     expect(screen.getAllByTestId('edit-doc-btn')[0]).not.toBeDisabled();
     expect(screen.getAllByTestId('delete-doc-btn')[0]).not.toBeDisabled();
@@ -468,13 +631,27 @@ describe('DataGrid — connectionMode (#188 Task 6: disable write UI on read_onl
 
   it('normal (and unset connectionMode): leaves every write control ENABLED', () => {
     const { rerender } = render(<DataGrid documents={mockDocuments} {...writeHandlers} connectionMode="normal" />);
-    for (const testId of ['insert-doc-btn', 'update-many-btn', 'delete-many-btn']) {
+    for (const testId of ['insert-doc-btn', 'bulk-write-menu-btn']) {
       expect(screen.getByTestId(testId)).not.toBeDisabled();
     }
     rerender(<DataGrid documents={mockDocuments} {...writeHandlers} />);
-    for (const testId of ['insert-doc-btn', 'update-many-btn', 'delete-many-btn']) {
+    for (const testId of ['insert-doc-btn', 'bulk-write-menu-btn']) {
       expect(screen.getByTestId(testId)).not.toBeDisabled();
     }
+  });
+
+  it('groups Update Many and Delete Many without changing their handlers', () => {
+    const onUpdateMany = vi.fn();
+    const onDeleteMany = vi.fn();
+    render(<DataGrid documents={mockDocuments} onUpdateMany={onUpdateMany} onDeleteMany={onDeleteMany} />);
+
+    fireEvent.pointerDown(screen.getByTestId('bulk-write-menu-btn'), { button: 0, pointerType: 'mouse' });
+    fireEvent.click(screen.getByTestId('update-many-btn'));
+    expect(onUpdateMany).toHaveBeenCalledOnce();
+
+    fireEvent.pointerDown(screen.getByTestId('bulk-write-menu-btn'), { button: 0, pointerType: 'mouse' });
+    fireEvent.click(screen.getByTestId('delete-many-btn'));
+    expect(onDeleteMany).toHaveBeenCalledOnce();
   });
 
   // The COLLSCAN "Create Index" suggestion button is a real write
@@ -2440,5 +2617,318 @@ describe('DataGrid — a hidden tab does not answer the clipboard (#240)', () =>
     const hidden = vi.fn();
     fireEvent.copy(json, { clipboardData: { setData: hidden, getData: () => '' } });
     expect(hidden).not.toHaveBeenCalled();
+  });
+});
+
+describe('DataGrid — blockedCommands (a server connection without writes)', () => {
+  const writeHandlers = {
+    onInsertDocument: () => {},
+    onUpdateMany: () => {},
+    onDeleteMany: () => {},
+    onEditDocument: () => {},
+    onDuplicateDocument: () => {},
+    onDeleteDocument: () => {},
+  };
+  const WRITES = ['insert_document', 'update_document', 'update_many', 'delete_document', 'delete_many'];
+
+  it('disables the write buttons when the writes are blocked', () => {
+    render(<DataGrid documents={mockDocuments} {...writeHandlers} blockedCommands={WRITES} />);
+    for (const testId of ['insert-doc-btn', 'bulk-write-menu-btn']) {
+      expect(screen.getByTestId(testId)).toBeDisabled();
+    }
+  });
+
+  it('leaves them alone when only other commands are blocked', () => {
+    render(<DataGrid documents={mockDocuments} {...writeHandlers} blockedCommands={['start_dump_task']} />);
+    for (const testId of ['insert-doc-btn', 'bulk-write-menu-btn']) {
+      expect(screen.getByTestId(testId)).toBeEnabled();
+    }
+  });
+});
+
+describe('DataGrid — blocked explain', () => {
+  it('disables the Explain Plan tab when explain is blocked', () => {
+    render(<DataGrid documents={mockDocuments} blockedCommands={['explain_mql_query']} />);
+    expect(screen.getByTestId('explain-plan-tab')).toBeDisabled();
+  });
+});
+
+
+describe('Plain JSON representation (#451)', () => {
+  it('displays and copies JSON-safe values while editing the original BSON document', () => {
+    const doc = { _id: { $oid: '603d779f4f102e3a185c3220' }, createdAt: { $date: '2026-06-15T15:48:03.793Z' }, n: { $numberLong: '9007199254740993' } };
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    const edit = vi.fn();
+    render(<DataGrid documents={[doc]} onEditDocument={edit} />);
+    expect(screen.getByText('ObjectId')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Plain JSON' }));
+    expect(screen.queryByText('ObjectId')).not.toBeInTheDocument();
+    expect(screen.getByText('"2026-06-15T15:48:03.793Z"')).toBeInTheDocument();
+    expect(screen.getByText('"9007199254740993"')).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: 'Plain JSON' }).closest('label')).toHaveAttribute('title', expect.stringContaining('BSON type information may be lost'));
+    expect(screen.getByRole('img', { name: /BSON type information may be lost/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('copy-doc-btn'));
+    const expected = { _id: '603d779f4f102e3a185c3220', createdAt: '2026-06-15T15:48:03.793Z', n: '9007199254740993' };
+    expect(JSON.parse(writeText.mock.calls[0][0])).toEqual(expected);
+    fireEvent.click(screen.getByTestId('edit-doc-btn'));
+    expect(edit).toHaveBeenCalledWith(doc);
+    fireEvent.contextMenu(screen.getByText('"9007199254740993"'));
+    fireEvent.click(screen.getByText('Copy document (JSON)'));
+    expect(JSON.parse(writeText.mock.calls[1][0])).toEqual(expected);
+    fireEvent.click(screen.getByRole('button', { name: 'Tree' }));
+    expect(screen.getAllByText('ObjectId').length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole('button', { name: 'JSON' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Plain JSON' }));
+    expect(screen.getByText('ObjectId')).toBeInTheDocument();
+  });
+});
+
+
+it('keeps malformed EJSON inspectable in Plain JSON and escapes field names', () => {
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+  const doc = { 'line\n"key': { $oid: 'invalid' } };
+  render(<DataGrid documents={[doc]} />);
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Plain JSON' }));
+  expect(screen.getByText('"line\\n\\"key"')).toBeInTheDocument();
+  expect(screen.getByText('"invalid"')).toBeInTheDocument();
+  error.mockRestore();
+});
+
+describe('DataGrid — table null, missing and embedded fields', () => {
+  const headerCells = () =>
+    Array.from(screen.getByTestId('table-header').children).map((c) => c.textContent);
+
+  it('marks a null value, and leaves a missing field blank', () => {
+    render(<DataGrid documents={[{ _id: 1, phone: null }, { _id: 2 }]} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+
+    // One null, one missing: only the null is drawn.
+    const nulls = screen.getAllByTestId('table-null');
+    expect(nulls).toHaveLength(1);
+    expect(nulls[0]).toHaveTextContent('null');
+  });
+
+  it('shows embedded fields as their own dot-path columns when asked', () => {
+    render(
+      <DataGrid
+        documents={[
+          { _id: 1, address: { city: 'New York', geo: { lat: 40.7 } }, tags: ['a'], since: { $date: '2024-01-01T00:00:00Z' } },
+          { _id: 2, address: { city: 'Seattle' } },
+        ]}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+    expect(headerCells()).toContain('address');
+
+    fireEvent.click(screen.getByRole('checkbox', { name: /embedded fields/i }));
+
+    const cols = headerCells();
+    expect(cols).toEqual(expect.arrayContaining(['_id', 'address.city', 'address.geo.lat', 'tags', 'since']));
+    expect(cols).not.toContain('address');
+    // A typed value like a date is one value, not an object to open up.
+    expect(cols.some((c) => c?.includes('$date'))).toBe(false);
+    expect(screen.getByText('New York')).toBeInTheDocument();
+    expect(screen.getByText('Seattle')).toBeInTheDocument();
+    expect(screen.getByText('40.7')).toBeInTheDocument();
+    // Seattle has no geo: blank, not null.
+    expect(screen.queryByTestId('table-null')).toBeNull();
+  });
+
+  it('leaves a missing embedded field blank even when its name is a JavaScript built-in (#551 review)', () => {
+    render(<DataGrid documents={[{ _id: 1, profile: { constructor: 'stored value' } }, { _id: 2, profile: { a: 1 } }]} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+    fireEvent.click(screen.getByRole('checkbox', { name: /embedded fields/i }));
+
+    expect(headerCells()).toContain('profile.constructor');
+    expect(screen.getByText('stored value')).toBeInTheDocument();
+    expect(screen.queryByText(/native code/)).toBeNull();
+  });
+
+  it('shows a stored top-level field even when the row looks like a typed value (#551 review)', () => {
+    // A projection without _id can return a row whose keys are all EJSON-like.
+    render(<DataGrid documents={[{ $options: 'custom' }]} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+    expect(screen.getByText('custom')).toBeInTheDocument();
+  });
+
+  it('does not read an embedded path through an array (#551 review)', () => {
+    render(<DataGrid documents={[{ _id: 1, a: { length: 4 } }, { _id: 2, a: ['x', 'y', 'z'] }]} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+    fireEvent.click(screen.getByRole('checkbox', { name: /embedded fields/i }));
+
+    expect(headerCells()).toContain('a.length');
+    expect(screen.getByText('4')).toBeInTheDocument();
+    // The array's own length is not a stored a.length.
+    expect(screen.queryByText('3')).toBeNull();
+  });
+
+  it('opens an ordinary document that has a $-prefixed field (#551 review)', () => {
+    render(<DataGrid documents={[{ _id: 1, meta: { $schema: 'v1', city: 'Berlin' } }]} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+    fireEvent.click(screen.getByRole('checkbox', { name: /embedded fields/i }));
+
+    expect(headerCells()).toEqual(expect.arrayContaining(['meta.$schema', 'meta.city']));
+    expect(screen.getByText('Berlin')).toBeInTheDocument();
+  });
+});
+
+describe('DataGrid — in-place cell edit', () => {
+  const docs = () => [
+    { _id: { $oid: '64b000000000000000000001' }, name: 'Alice', tier: 'free', address: { city: 'Berlin' } },
+  ];
+  const cell = (text: string) => screen.getByText(text);
+  const editor = () => screen.getByTestId('cell-editor') as HTMLInputElement;
+
+  it('opens a table cell in an editor that holds the value in shell syntax', () => {
+    render(<DataGrid documents={docs()} onEditField={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+
+    fireEvent.doubleClick(cell('free'));
+
+    expect(editor().value).toBe('"free"');
+  });
+
+  it('saves only the edited field on Enter', async () => {
+    const onEditField = vi.fn().mockResolvedValue(undefined);
+    const input = docs();
+    render(<DataGrid documents={input} onEditField={onEditField} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+
+    fireEvent.doubleClick(cell('free'));
+    fireEvent.change(editor(), { target: { value: '"pro"' } });
+    fireEvent.keyDown(editor(), { key: 'Enter' });
+
+    await vi.waitFor(() => expect(onEditField).toHaveBeenCalledTimes(1));
+    const [original, edited] = onEditField.mock.calls[0];
+    expect(original).toBe(input[0]);
+    expect(edited).toEqual({ ...input[0], tier: 'pro' });
+    // The loaded document is left as it was.
+    expect(input[0].tier).toBe('free');
+    await vi.waitFor(() => expect(screen.queryByTestId('cell-editor')).toBeNull());
+  });
+
+  it('takes typed shell values such as ISODate()', async () => {
+    const onEditField = vi.fn().mockResolvedValue(undefined);
+    render(<DataGrid documents={docs()} onEditField={onEditField} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+
+    fireEvent.doubleClick(cell('free'));
+    fireEvent.change(editor(), { target: { value: 'ISODate("2024-01-01T00:00:00Z")' } });
+    fireEvent.keyDown(editor(), { key: 'Enter' });
+
+    await vi.waitFor(() => expect(onEditField).toHaveBeenCalledTimes(1));
+    expect(onEditField.mock.calls[0][1].tier).toEqual({ $date: '2024-01-01T00:00:00Z' });
+  });
+
+  it('does not save on the Enter that confirms an IME composition (#554 review)', () => {
+    const onEditField = vi.fn().mockResolvedValue(undefined);
+    render(<DataGrid documents={docs()} onEditField={onEditField} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+
+    fireEvent.doubleClick(cell('free'));
+    fireEvent.change(editor(), { target: { value: '"专业"' } });
+    fireEvent.keyDown(editor(), { key: 'Enter', isComposing: true });
+
+    expect(onEditField).not.toHaveBeenCalled();
+    expect(editor().value).toBe('"专业"');
+  });
+
+  it('cancels on Escape without writing', () => {
+    const onEditField = vi.fn();
+    render(<DataGrid documents={docs()} onEditField={onEditField} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+
+    fireEvent.doubleClick(cell('free'));
+    fireEvent.change(editor(), { target: { value: '"pro"' } });
+    fireEvent.keyDown(editor(), { key: 'Escape' });
+
+    expect(screen.queryByTestId('cell-editor')).toBeNull();
+    expect(onEditField).not.toHaveBeenCalled();
+  });
+
+  it('keeps an invalid value in the editor and writes nothing', async () => {
+    const onEditField = vi.fn();
+    render(<DataGrid documents={docs()} onEditField={onEditField} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+
+    fireEvent.doubleClick(cell('free'));
+    fireEvent.change(editor(), { target: { value: 'pro' } });
+    fireEvent.keyDown(editor(), { key: 'Enter' });
+
+    await vi.waitFor(() => expect(editor()).toHaveAttribute('aria-invalid', 'true'));
+    expect(onEditField).not.toHaveBeenCalled();
+  });
+
+  it('keeps the editor open when the write fails', async () => {
+    const onEditField = vi.fn().mockRejectedValue(new Error('write refused'));
+    render(<DataGrid documents={docs()} onEditField={onEditField} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+
+    fireEvent.doubleClick(cell('free'));
+    fireEvent.change(editor(), { target: { value: '"pro"' } });
+    fireEvent.keyDown(editor(), { key: 'Enter' });
+
+    await vi.waitFor(() => expect(editor()).toHaveAttribute('title', 'write refused'));
+    expect(editor().value).toBe('"pro"');
+  });
+
+  it('edits a nested value in the tree by its full path', async () => {
+    const onEditField = vi.fn().mockResolvedValue(undefined);
+    // Nested field first: jsdom lays out only the first few virtualized rows.
+    render(<DataGrid documents={[{ address: { city: 'Berlin' }, _id: 1 }]} onEditField={onEditField} />);
+    fireEvent.click(screen.getByRole('button', { name: /tree/i }));
+
+    fireEvent.doubleClick(cell('"Berlin"'));
+    expect(editor().value).toBe('"Berlin"');
+    fireEvent.change(editor(), { target: { value: '"Paris"' } });
+    fireEvent.keyDown(editor(), { key: 'Enter' });
+
+    await vi.waitFor(() => expect(onEditField).toHaveBeenCalledTimes(1));
+    expect(onEditField.mock.calls[0][1]).toEqual({ address: { city: 'Paris' }, _id: 1 });
+  });
+
+  it('does not open another cell while a save is pending (#554 review)', async () => {
+    let finish!: () => void;
+    const onEditField = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
+    render(<DataGrid documents={docs()} onEditField={onEditField} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+
+    fireEvent.doubleClick(cell('free'));
+    fireEvent.change(editor(), { target: { value: '"pro"' } });
+    fireEvent.keyDown(editor(), { key: 'Enter' });
+    await vi.waitFor(() => expect(onEditField).toHaveBeenCalledTimes(1));
+
+    // A second cell would be closed, draft and all, when the first save lands.
+    fireEvent.doubleClick(cell('Alice'));
+    expect(screen.getAllByTestId('cell-editor')).toHaveLength(1);
+    expect(editor().value).toBe('"pro"');
+
+    finish();
+    await vi.waitFor(() => expect(screen.queryByTestId('cell-editor')).toBeNull());
+    fireEvent.doubleClick(cell('Alice'));
+    expect(editor().value).toBe('"Alice"');
+  });
+
+  it('does not edit a value inside an array, which the backend writes whole (#554 review)', () => {
+    render(<DataGrid documents={[{ tags: ['a', 'b'], _id: 1 }]} onEditField={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: /tree/i }));
+
+    fireEvent.doubleClick(cell('"a"'));
+    expect(screen.queryByTestId('cell-editor')).toBeNull();
+  });
+
+  it('does not edit _id, sub-documents, or a read-only grid', () => {
+    const { unmount } = render(<DataGrid documents={docs()} onEditField={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+    fireEvent.doubleClick(screen.getByText(/64b000000000000000000001/));
+    fireEvent.doubleClick(cell('{"city":"Berlin"}'));
+    expect(screen.queryByTestId('cell-editor')).toBeNull();
+    unmount();
+
+    render(<DataGrid documents={docs()} onEditField={vi.fn()} connectionMode="read_only" />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+    fireEvent.doubleClick(cell('free'));
+    expect(screen.queryByTestId('cell-editor')).toBeNull();
   });
 });

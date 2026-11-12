@@ -8,6 +8,8 @@
     "retry": "Erneut versuchen",
     "title": "Bei diesem Tab ist ein Problem aufgetreten"
   },
+  "notForRole": "Deine Rolle auf dieser MQLens-Server-Verbindung erlaubt das nicht.",
+  "notOnServer": "Auf MQLens Server noch nicht verfügbar.",
   "ok": "OK",
   "passwordInput": {
     "hide": "Ausblenden",
@@ -24,6 +26,7 @@
     "generate": "Generieren: {{name}}",
     "gridfs": "GridFS: {{collection}}",
     "import": "Import: {{collection}}",
+    "indexes": "Indizes: {{collection}}",
     "monitor": "Monitoring: {{name}}",
     "quickStart": "Schnellstart",
     "restore": "Wiederherstellung: {{name}}",
@@ -56,6 +59,7 @@
     "defaultQueryCleared": "Standardabfrage entfernt",
     "defaultQuerySet": "Standard-Abfrage festgelegt",
     "deleteFailed": "Löschen fehlgeschlagen: {{detail}}",
+    "deleteIndexSuccess": "Index \"{{name}}\" wurde erfolgreich gelöscht.",
     "deletedDocuments_one": "{{count}} Dokument gelöscht",
     "deletedDocuments_other": "{{count}} Dokumente gelöscht",
     "deletedTitle": "Gelöscht",
@@ -83,6 +87,10 @@
     "filterCleared": "Filterparameter geleert",
     "generateFailedToStart": "Generierung konnte nicht gestartet werden: {{detail}}",
     "importFailedToStart": "Import konnte nicht gestartet werden: {{detail}}",
+    "indexNotPutBack": "Die Änderung ist fehlgeschlagen und der Index konnte nicht wiederhergestellt werden: {{detail}}. Seine Definition war {{spec}}",
+    "indexOptionsNeedServerApi5": "Diese Indexoptionen brauchen die MQLens-API-Version 5, und dieser MQLens Server spricht {{version}}. Aktualisiere MQLens Server.",
+    "indexPutBack": "Die Änderung ist fehlgeschlagen, deshalb wurde der Index wiederhergestellt: {{detail}}",
+    "indexStaysNonUnique": "Der Index bleibt nicht eindeutig: {{detail}}",
     "insertedTitle": "Eingefügt",
     "modifiedDocuments_one": "{{count}} Dokument geändert",
     "modifiedDocuments_other": "{{count}} Dokumente geändert",
@@ -96,6 +104,7 @@
     "savedQueryDeleted": "Gespeicherte Abfrage gelöscht",
     "savedTitle": "Gespeichert",
     "sortCleared": "Sortierparameter geleert",
+    "tabMoving": "Dieser Tab wird gerade in ein anderes Fenster verschoben.",
     "updateFailed": "Aktualisierung fehlgeschlagen: {{detail}}",
     "updatedTitle": "Aktualisiert",
     "uploadFailed": "Hochladen fehlgeschlagen: {{detail}}",
@@ -105,8 +114,10 @@
     "userUpdated": "Benutzer {{name}} aktualisiert"
   },
   "typedNameConfirm": {
+    "confirmLabel": "Löschen",
     "messageCollection": "Gib den Namen der Collection ein, um zu bestätigen.",
     "messageDatabase": "Gib den Namen der Datenbank ein, um zu bestätigen.",
+    "messageIndex": "Gib den Namen des Index ein, um zu bestätigen.",
     "validationError": "Name stimmt nicht überein"
   }
 }

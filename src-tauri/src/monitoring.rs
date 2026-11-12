@@ -6,7 +6,7 @@
 //! unit-tested; the async `*_impl` wrappers just run the command and curate.
 
 use crate::write_guard::{guard_writable, WriteOp};
-use crate::{connection_is_mock, require_real_client, AppState};
+use crate::{connection_is_mock, AppState};
 use mongodb::bson::{doc, Bson, Document};
 use serde::Serialize;
 
@@ -143,13 +143,56 @@ pub fn curate_server_status(raw: &Document) -> ServerStatus {
 #[derive(Serialize, Default, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct CurrentOp {
-    pub opid: i64,
+    pub opid: OpId,
     pub op: String,
     pub ns: String,
     pub secs_running: i64,
     pub client: String,
     pub desc: String,
     pub command: String,
+    /// A long-running operation's own count, such as an index build's documents.
+    /// MQLens Server does not report it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress: Option<OpProgress>,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct OpProgress {
+    pub done: i64,
+    pub total: i64,
+}
+
+/// An operation's id: a number on a single server or replica set, and a
+/// "shard:number" string through mongos. Sent back as it came to kill it.
+#[derive(Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
+#[serde(untagged)]
+pub enum OpId {
+    Num(i64),
+    Str(String),
+}
+
+impl Default for OpId {
+    fn default() -> Self {
+        OpId::Num(0)
+    }
+}
+
+impl std::fmt::Display for OpId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OpId::Num(n) => write!(f, "{n}"),
+            OpId::Str(s) => f.write_str(s),
+        }
+    }
+}
+
+impl From<OpId> for Bson {
+    fn from(id: OpId) -> Self {
+        match id {
+            OpId::Num(n) => Bson::Int64(n),
+            OpId::Str(s) => Bson::String(s),
+        }
+    }
 }
 
 /// Keep the current-op payload bounded so a busy/large cluster can't flood the
@@ -180,13 +223,20 @@ pub fn curate_current_op(d: &Document) -> CurrentOp {
         MAX_CMD_CHARS,
     );
     CurrentOp {
-        opid: num(d, "opid"),
+        opid: match d.get("opid") {
+            Some(Bson::String(s)) => OpId::Str(s.clone()),
+            _ => OpId::Num(num(d, "opid")),
+        },
         op: d.get_str("op").unwrap_or_default().to_string(),
         ns: d.get_str("ns").unwrap_or_default().to_string(),
         secs_running: num(d, "secs_running"),
         client: d.get_str("client").unwrap_or_default().to_string(),
         desc: d.get_str("desc").unwrap_or_default().to_string(),
         command,
+        progress: d.get_document("progress").ok().map(|p| OpProgress {
+            done: num(p, "done"),
+            total: num(p, "total"),
+        }),
     }
 }
 
@@ -397,7 +447,12 @@ async fn server_status_impl_inner(state: &AppState, id: &str) -> Result<ServerSt
     if connection_is_mock(state, id)? {
         return Ok(mock_server_status());
     }
-    let client = require_real_client(state, id)?;
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            return crate::server::ops::monitoring::server_status(state, &conn).await;
+        }
+    };
     let raw = client
         .database("admin")
         .run_command(doc! { "serverStatus": 1 })
@@ -428,16 +483,22 @@ pub async fn current_ops_impl(state: &AppState, id: &str) -> Result<Vec<CurrentO
 async fn current_ops_impl_inner(state: &AppState, id: &str) -> Result<Vec<CurrentOp>, String> {
     if connection_is_mock(state, id)? {
         return Ok(vec![CurrentOp {
-            opid: 10241,
+            opid: OpId::Num(10241),
             op: "query".into(),
             ns: "sales_db.orders".into(),
             secs_running: 3,
             client: "127.0.0.1:51544".into(),
             desc: "conn412".into(),
             command: "{ find: \"orders\", filter: { status: \"open\" } }".into(),
+            progress: None,
         }]);
     }
-    let client = require_real_client(state, id)?;
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            return crate::server::ops::monitoring::current_ops(state, &conn).await;
+        }
+    };
     let raw = client
         .database("admin")
         .run_command(doc! { "currentOp": 1, "active": true })
@@ -458,9 +519,9 @@ async fn current_ops_impl_inner(state: &AppState, id: &str) -> Result<Vec<Curren
     Ok(cap_current_ops(ops))
 }
 
-pub async fn kill_op_impl(state: &AppState, id: &str, opid: i64) -> Result<(), String> {
+pub async fn kill_op_impl(state: &AppState, id: &str, opid: OpId) -> Result<(), String> {
     let started = std::time::Instant::now();
-    let result = kill_op_inner(state, id, opid).await;
+    let result = kill_op_inner(state, id, opid.clone()).await;
     crate::audit::maybe_record_result(
         state,
         Some(id),
@@ -477,16 +538,21 @@ pub async fn kill_op_impl(state: &AppState, id: &str, opid: i64) -> Result<(), S
     result
 }
 
-async fn kill_op_inner(state: &AppState, id: &str, opid: i64) -> Result<(), String> {
+async fn kill_op_inner(state: &AppState, id: &str, opid: OpId) -> Result<(), String> {
     guard_writable(state, id, WriteOp::ServerAdmin, false)?;
 
     if connection_is_mock(state, id)? {
         return Ok(());
     }
-    let client = require_real_client(state, id)?;
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            return crate::server::ops::monitoring::kill_op(state, &conn, &opid).await;
+        }
+    };
     client
         .database("admin")
-        .run_command(doc! { "killOp": 1, "op": opid })
+        .run_command(doc! { "killOp": 1, "op": Bson::from(opid) })
         .await
         .map_err(|e| format!("killOp failed: {}", e))?;
     Ok(())
@@ -515,7 +581,12 @@ async fn profiling_status_impl_inner(state: &AppState, id: &str, database: &str)
     if connection_is_mock(state, id)? {
         return Ok(ProfilingStatus { level: 0, slow_ms: 100 });
     }
-    let client = require_real_client(state, id)?;
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            return crate::server::ops::monitoring::profiling_status(state, &conn, database).await;
+        }
+    };
     let raw = client
         .database(database)
         .run_command(doc! { "profile": -1 })
@@ -562,7 +633,13 @@ async fn set_profiling_level_inner(
     if connection_is_mock(state, id)? {
         return Ok(ProfilingStatus { level: level as i64, slow_ms: slow_ms as i64 });
     }
-    let client = require_real_client(state, id)?;
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            use crate::server::ops::monitoring;
+            return monitoring::set_profiling_level(state, &conn, database, level, slow_ms).await;
+        }
+    };
     client
         .database(database)
         .run_command(doc! { "profile": level, "slowms": slow_ms })
@@ -611,7 +688,13 @@ async fn read_profile_impl_inner(
             command: "{ find: \"orders\", filter: { region: \"EU\" } }".into(),
         }]);
     }
-    let client = require_real_client(state, id)?;
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            return crate::server::ops::monitoring::read_profile(state, &conn, database, limit)
+                .await;
+        }
+    };
     let mut cursor = client
         .database(database)
         .collection::<Document>("system.profile")
@@ -654,7 +737,12 @@ async fn repl_set_status_impl_inner(state: &AppState, id: &str) -> Result<ReplSe
     if connection_is_mock(state, id)? {
         return Ok(mock_repl_set_status());
     }
-    let client = require_real_client(state, id)?;
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            return crate::server::ops::monitoring::repl_set_status(state, &conn).await;
+        }
+    };
     let admin = client.database("admin");
     let hello = admin
         .run_command(doc! { "hello": 1 })
@@ -739,22 +827,36 @@ mod tests {
         let long = "x".repeat(5000);
         let d = doc! { "opid": 99i32, "op": "query", "ns": "db.c", "secs_running": 4i64, "client": "1.2.3.4", "desc": "conn1", "command": { "find": long } };
         let op = curate_current_op(&d);
-        assert_eq!(op.opid, 99);
+        assert_eq!(op.opid, OpId::Num(99));
+        // Through mongos an operation id is "shard:number", not a number.
+        let sharded = curate_current_op(&doc! { "opid": "shard01:12345", "op": "query" });
+        assert_eq!(sharded.opid, OpId::Str("shard01:12345".to_string()));
         assert_eq!(op.command.chars().count(), 2001, "command truncated to MAX + ellipsis");
         assert!(op.command.ends_with('…'));
+    }
+
+    // An index build counts its documents; most operations count nothing.
+    #[test]
+    fn an_operation_keeps_its_progress() {
+        let building = curate_current_op(&doc! { "opid": 1, "progress": { "done": 10, "total": 40 } });
+        let json = serde_json::to_value(&building).unwrap();
+        assert_eq!(json["progress"], serde_json::json!({ "done": 10, "total": 40 }));
+        let plain = serde_json::to_value(curate_current_op(&doc! { "opid": 1 })).unwrap();
+        assert!(plain.get("progress").is_none());
     }
 
     #[test]
     fn cap_current_ops_limits_count() {
         let ops: Vec<CurrentOp> = (0..300)
             .map(|i| CurrentOp {
-                opid: i,
+                opid: OpId::Num(i),
                 op: "query".into(),
                 ns: "db.c".into(),
                 secs_running: i as i64,
                 client: String::new(),
                 desc: String::new(),
                 command: "{ find: \"c\" }".into(),
+                progress: None,
             })
             .collect();
         let capped = cap_current_ops(ops);
@@ -765,13 +867,14 @@ mod tests {
     #[test]
     fn cap_current_ops_leaves_short_commands_intact() {
         let ops = vec![CurrentOp {
-            opid: 1,
+            opid: OpId::Num(1),
             op: "query".into(),
             ns: "db.c".into(),
             secs_running: 0,
             client: String::new(),
             desc: String::new(),
             command: "{ find: \"c\" }".into(),
+            progress: None,
         }];
         let capped = cap_current_ops(ops);
         assert_eq!(capped[0].command, "{ find: \"c\" }");

@@ -60,9 +60,13 @@ export function useMonacoValue(value: string, onChange: (value: string) => void)
     (ed: MonacoEditor, monaco: Monaco) => {
       editorRef.current = ed;
       monacoRef.current = monaco;
-      // The model was created from the value of an earlier render; catch up
-      // with one that arrived before the editor was ready.
-      pushValue();
+      // The library creates the editor from one effect but calls onMount and
+      // starts reporting changes from the next, so text can reach the model in
+      // between without being reported. An edited model is newer than the
+      // parent's value: report it. Otherwise the model was created from an
+      // earlier render's value; catch up with one that arrived since.
+      if ((ed.getModel()?.getVersionId() ?? 1) > 1) onChangeRef.current(ed.getValue());
+      else pushValue();
       ed.onDidDispose(() => {
         if (editorRef.current === ed) editorRef.current = null;
       });

@@ -20,6 +20,7 @@ describe('shortcuts', () => {
   it('formats known shortcuts for settings display', () => {
     const run = shortcutById('run-query')!;
     expect(formatShortcut(run, 'Win32')).toBe('Ctrl ↵');
+    expect(formatShortcut(shortcutById('shell-run-all')!, 'Win32')).toBe('Shift ↵');
     expect(formatShortcut(shortcutById('palette-navigate')!, 'MacIntel')).toBe('↑ / ↓');
   });
 
@@ -74,5 +75,20 @@ describe('shortcuts', () => {
     const rows = quickStartShortcutRows('Win32');
     expect(rows.find((r) => r.id === 'sidebar-search')?.keys).toBe('Ctrl F');
     expect(rows.find((r) => r.id === 'zoom-in')?.keys).toBe('Ctrl + / Ctrl −');
+  });
+});
+
+describe('tab shortcuts', () => {
+  it('lists the platform chords for the current platform only', () => {
+    const next = shortcutById('tab-next')!;
+    expect(formatShortcut(next, 'MacIntel')).toBe('⌃ Tab / ⌘ Shift ]');
+    expect(formatShortcut(next, 'Win32')).toBe('Ctrl Tab / Ctrl PageDown');
+    expect(formatShortcut(shortcutById('tab-close')!, 'MacIntel')).toBe('⌘ W');
+    expect(shortcutById('window-close')).toBeUndefined();
+  });
+
+  it('groups them under tabs', () => {
+    const grouped = groupKeyboardShortcuts(filterKeyboardShortcuts('tab', undefined, 'Win32'));
+    expect(grouped.tabs.map((s) => s.id)).toContain('tab-reopen');
   });
 });

@@ -9,7 +9,7 @@ import { callFrom, STAGING_URI } from '../helpers';
 // certificate — and a compressor chosen in the editor has to reach it too.
 
 const button = (page: Page, name: string) => page.getByRole('button', { name, exact: true });
-const tree = (page: Page) => page.getByRole('dialog').getByRole('complementary');
+const tree = (page: Page) => page.getByTestId('connection-table');
 
 const profiles: ProfileSeed[] = [
   {

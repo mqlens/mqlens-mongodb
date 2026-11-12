@@ -22,7 +22,6 @@ use crate::db::tasks::{fail_task, finish_task, now_ms, update_task};
 use crate::write_guard::stage_is_disallowed;
 use futures::stream::{Stream, StreamExt};
 use mongodb::bson::{doc, Document};
-use mongodb::Client;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 use tokio::io::AsyncWriteExt;
@@ -55,7 +54,8 @@ enum ExportSource {
 async fn open_export_cursor(
     coll: &mongodb::Collection<Document>,
     source: &ExportSource,
-) -> Result<mongodb::Cursor<Document>, String> {
+) -> Result<mongodb::Cursor<mongodb::bson::RawDocumentBuf>, String> {
+    let coll = coll.clone_with_type::<mongodb::bson::RawDocumentBuf>();
     match source {
         ExportSource::Find {
             filter,
@@ -81,9 +81,88 @@ async fn open_export_cursor(
         }
         ExportSource::Aggregate { stages } => coll
             .aggregate(stages.clone())
+            .with_type::<mongodb::bson::RawDocumentBuf>()
             .await
             .map_err(|e| format!("Aggregation failed: {}", e)),
     }
+}
+
+/// Where a real export reads: the driver's collection, or the same collection
+/// through MQLens Server. Both yield documents to the same writers.
+#[derive(Clone)]
+enum ExportReader {
+    Local(mongodb::Collection<Document>),
+    Remote(crate::server::ops::export::ExportFrom),
+}
+
+type DocStream = std::pin::Pin<Box<dyn Stream<Item = Result<Document, String>> + Send>>;
+
+impl ExportReader {
+    async fn open(&self, source: &ExportSource) -> Result<DocStream, String> {
+        match self {
+            ExportReader::Local(coll) => {
+                let cursor = open_export_cursor(coll, source).await?;
+                Ok(Box::pin(cursor.map(|r| {
+                    r.map_err(|e| format!("Cursor read error: {}", e))
+                        .and_then(crate::db::stored)
+                })))
+            }
+            ExportReader::Remote(from) => match source {
+                ExportSource::Find {
+                    filter,
+                    sort,
+                    projection,
+                    skip,
+                    limit,
+                } => {
+                    from.find(filter, sort.as_ref(), projection.as_ref(), *skip, *limit)
+                        .await
+                }
+                ExportSource::Aggregate { stages } => from.aggregate(stages).await,
+            },
+        }
+    }
+
+    async fn count(&self, source: &ExportSource) -> Result<u64, String> {
+        match self {
+            ExportReader::Local(coll) => count_export_source(coll, source).await,
+            ExportReader::Remote(from) => match source {
+                ExportSource::Find {
+                    filter,
+                    skip,
+                    limit,
+                    ..
+                } => Ok(clamp_count(from.count(filter).await?, *skip, *limit)),
+                ExportSource::Aggregate { stages } => {
+                    let mut counting = stages.clone();
+                    counting.push(doc! { "$count": "n" });
+                    let mut docs = from.aggregate(&counting).await?;
+                    match docs.next().await {
+                        Some(doc) => Ok(count_of(&doc?)),
+                        None => Ok(0),
+                    }
+                }
+            },
+        }
+    }
+}
+
+/// A find's count, less the skipped documents and at most the limit.
+fn clamp_count(n: u64, skip: Option<u64>, limit: Option<i64>) -> u64 {
+    let n = n.saturating_sub(skip.unwrap_or(0));
+    match limit {
+        Some(l) if (l as u64) < n => l as u64,
+        _ => n,
+    }
+}
+
+/// The figure a `$count: "n"` stage reports.
+fn count_of(doc: &Document) -> u64 {
+    // $count emits an Int32; tolerate Int64 too.
+    doc.get("n")
+        .and_then(|v| v.as_i64().or_else(|| v.as_i32().map(i64::from)))
+        .unwrap_or(0)
+        .max(0) as u64
 }
 
 /// Best-effort total for the progress denominator. For find we count the filter (then
@@ -104,11 +183,7 @@ async fn count_export_source(
                 .count_documents(filter.clone())
                 .await
                 .map_err(|e| format!("Count failed: {}", e))?;
-            let n = n.saturating_sub(skip.unwrap_or(0));
-            Ok(match limit {
-                Some(l) if (*l as u64) < n => *l as u64,
-                _ => n,
-            })
+            Ok(clamp_count(n, *skip, *limit))
         }
         ExportSource::Aggregate { stages } => {
             let mut counting = stages.clone();
@@ -120,12 +195,7 @@ async fn count_export_source(
             match cursor.next().await {
                 Some(result) => {
                     let doc = result.map_err(|e| format!("Count failed: {}", e))?;
-                    // $count emits an Int32; tolerate Int64 too.
-                    Ok(doc
-                        .get("n")
-                        .and_then(|v| v.as_i64().or_else(|| v.as_i32().map(i64::from)))
-                        .unwrap_or(0)
-                        .max(0) as u64)
+                    Ok(count_of(&doc))
                 }
                 // Empty pipeline output (no matches) yields no $count document.
                 None => Ok(0),
@@ -384,22 +454,16 @@ async fn export_mock_to_file(
 async fn export_real_to_file(
     tasks: Arc<Mutex<HashMap<String, TaskInfo>>>,
     task_id: String,
-    client: Client,
-    database: String,
-    collection: String,
+    reader: ExportReader,
     format: String,
     path: String,
     source: ExportSource,
     options: ExportOptions,
 ) -> Result<u64, String> {
-    let coll = client
-        .database(&database)
-        .collection::<Document>(&collection);
-
     update_task(&tasks, &task_id, |task| {
         task.message = "Counting documents".to_string();
     });
-    let total = count_export_source(&coll, &source).await?;
+    let total = reader.count(&source).await?;
     update_task(&tasks, &task_id, |task| {
         task.total = Some(total);
     });
@@ -437,10 +501,10 @@ async fn export_real_to_file(
                     task.message = "Scanning columns".to_string();
                 });
                 let mut fields_set = BTreeSet::new();
-                let mut scan_cursor = open_export_cursor(&coll, &source).await?;
+                let mut scan_cursor = reader.open(&source).await?;
                 let mut scanned = 0u64;
                 while let Some(result) = scan_cursor.next().await {
-                    let doc = result.map_err(|e| format!("Cursor read error: {}", e))?;
+                    let doc = result?;
                     for field in doc.keys().cloned() {
                         fields_set.insert(field);
                     }
@@ -461,8 +525,7 @@ async fn export_real_to_file(
         Vec::new()
     };
 
-    let cursor = open_export_cursor(&coll, &source).await?;
-    let doc_stream = cursor.map(|r| r.map_err(|e| format!("Cursor read error: {}", e)));
+    let doc_stream = reader.open(&source).await?;
     write_docs(
         &tasks,
         &task_id,
@@ -519,15 +582,25 @@ async fn start_export_task(
         return Err("Aggregation pipelines are not supported on mock connections".to_string());
     }
 
-    let client = if is_mock {
+    let reader = if is_mock {
         None
     } else {
-        Some({
-            let connections = state.connections.lock_safe()?;
-            connections
-                .get(id)
-                .cloned()
-                .ok_or_else(|| "Connection client not found".to_string())?
+        Some(match crate::server::remote::route(state, id)? {
+            crate::server::remote::Route::Local(client) => ExportReader::Local(
+                client.database(database).collection::<Document>(collection),
+            ),
+            crate::server::remote::Route::Remote(conn) => {
+                let command = match kind {
+                    "collection_export" => "start_collection_export",
+                    _ => "start_filtered_export",
+                };
+                ExportReader::Remote(
+                    crate::server::ops::export::ExportFrom::new(
+                        state, conn, command, database, collection,
+                    )
+                    .await?,
+                )
+            }
         })
     };
 
@@ -560,13 +633,11 @@ async fn start_export_task(
     let collection = collection.to_string();
     let path = path.to_string();
     tokio::spawn(async move {
-        let result = if let Some(client) = client {
+        let result = if let Some(reader) = reader {
             export_real_to_file(
                 tasks.clone(),
                 task_id.clone(),
-                client,
-                database,
-                collection,
+                reader,
                 format,
                 path,
                 real_source,
@@ -778,6 +849,7 @@ pub async fn sample_export_fields_impl(
     pipeline: &str,
 ) -> Result<Vec<String>, String> {
     let docs = collect_source_docs(
+        "sample_export_fields",
         state,
         id,
         database,
@@ -800,6 +872,7 @@ pub async fn sample_export_fields_impl(
 /// whether `sort`/`projection` are honored.
 #[allow(clippy::too_many_arguments)]
 async fn collect_source_docs(
+    command: &str,
     state: &AppState,
     id: &str,
     database: &str,
@@ -822,8 +895,17 @@ async fn collect_source_docs(
             .map(|s| crate::json_to_bson_document(s))
             .collect::<Result<_, _>>()?
     } else {
-        let client = crate::require_real_client(state, id)?;
-        let coll = client.database(database).collection::<Document>(collection);
+        let reader = match crate::server::remote::route(state, id)? {
+            crate::server::remote::Route::Local(client) => ExportReader::Local(
+                client.database(database).collection::<Document>(collection),
+            ),
+            crate::server::remote::Route::Remote(conn) => ExportReader::Remote(
+                crate::server::ops::export::ExportFrom::new(
+                    state, conn, command, database, collection,
+                )
+                .await?,
+            ),
+        };
         let source = build_source(filter, sort, projection, pipeline)?;
         let source = match source {
             ExportSource::Find {
@@ -843,10 +925,10 @@ async fn collect_source_docs(
                 ExportSource::Aggregate { stages }
             }
         };
-        let mut cursor = open_export_cursor(&coll, &source).await?;
+        let mut cursor = reader.open(&source).await?;
         let mut docs = Vec::new();
         while let Some(result) = cursor.next().await {
-            docs.push(result.map_err(|e| format!("Cursor read error: {}", e))?);
+            docs.push(result?);
         }
         docs
     };
@@ -922,6 +1004,7 @@ pub async fn preview_export_impl(
     options: Option<options::ExportOptions>,
 ) -> Result<String, String> {
     let docs = collect_source_docs(
+        "preview_export",
         state,
         id,
         database,

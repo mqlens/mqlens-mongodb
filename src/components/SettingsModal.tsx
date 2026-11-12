@@ -858,8 +858,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
     if (!window.confirm(t('security.resetVaultConfirm'))) return;
     setSecMsg('');
     try {
-      await resetVault();
-      setSecMsg(t('security.resetVaultSuccess'));
+      const warning = await resetVault();
+      setSecMsg(warning ?? t('security.resetVaultSuccess'));
       // Deliberately 'error' (not a bug): reuses the existing red/destructive
       // styling to underline that the vault reset is destructive, even
       // though this is the success path.

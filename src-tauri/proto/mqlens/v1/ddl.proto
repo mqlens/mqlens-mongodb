@@ -1,0 +1,102 @@
+syntax = "proto3";
+package mqlens.v1;
+option go_package = "github.com/mqlens/mqlens-server/gen/mqlens/v1;mqlensv1";
+
+service DdlService {
+  rpc CreateCollection(CreateCollectionRequest) returns (DdlAck);
+  rpc DropCollection(DropCollectionRequest) returns (DdlAck);
+  rpc RenameCollection(RenameCollectionRequest) returns (DdlAck);
+  rpc CreateView(CreateViewRequest) returns (DdlAck);
+  rpc DropDatabase(DropDatabaseRequest) returns (DdlAck);
+  rpc RenameDatabase(RenameDatabaseRequest) returns (DdlAck);
+  rpc GetCollectionOptions(GetCollectionOptionsRequest) returns (CollectionValidation);
+  // Copies every collection, its documents and indexes, into a new database,
+  // verifies the copy, and drops the source only when asked; reports what it
+  // copied. API version 2.
+  rpc RenameDatabaseDetailed(RenameDatabaseDetailedRequest) returns (RenameDatabaseResult);
+  rpc SetValidator(SetValidatorRequest) returns (DdlAck);
+  // Changes a TTL index's expireAfterSeconds with collMod. MongoDB's own
+  // error comes back for an index that is missing or cannot be a TTL index.
+  // API version 9.
+  rpc SetIndexExpiry(SetIndexExpiryRequest) returns (DdlAck);
+}
+
+message DdlAck {}
+
+message GetCollectionOptionsRequest {
+  string connection_id = 1;
+  string database = 2;
+  string collection = 3;
+}
+message CollectionValidation {
+  string validator = 1;         // relaxed Extended JSON, "{}" when no validator is set
+  string validation_level = 2;  // "off" | "moderate" | "strict" | "" when unset
+  string validation_action = 3; // "error" | "warn" | "" when unset
+  // The collection's options as stored, as BSON: a view's viewOn and
+  // pipeline, a time series' settings. Empty when it has none.
+  bytes options_bson = 4;
+}
+
+// validator is Extended JSON, so a value written by GetCollectionOptions can be
+// sent straight back. An empty validator clears validation. An empty level or
+// action leaves that setting unchanged.
+message SetValidatorRequest {
+  string connection_id = 1;
+  string database = 2;
+  string collection = 3;
+  string validator = 4;
+  string validation_level = 5;
+  string validation_action = 6;
+}
+
+message CreateCollectionRequest {
+  string connection_id = 1;
+  string database = 2;
+  string collection = 3;
+}
+message DropCollectionRequest {
+  string connection_id = 1;
+  string database = 2;
+  string collection = 3;
+}
+message RenameCollectionRequest {
+  string connection_id = 1;
+  string database = 2;
+  string collection = 3;
+  string new_name = 4;
+}
+message CreateViewRequest {
+  string connection_id = 1;
+  string database = 2;
+  string view = 3;
+  string view_on = 4;
+  string pipeline_json = 5;
+}
+message DropDatabaseRequest {
+  string connection_id = 1;
+  string database = 2;
+}
+message RenameDatabaseRequest {
+  string connection_id = 1;
+  string database = 2;
+  string new_name = 3;
+}
+message RenameDatabaseDetailedRequest {
+  string connection_id = 1;
+  string database = 2;
+  string new_name = 3;
+  bool drop_source = 4;
+}
+message RenameDatabaseResult {
+  int64 collections = 1;
+  int64 documents = 2;
+}
+
+// expire_after_seconds is 0 to 2147483647; index_name is required.
+message SetIndexExpiryRequest {
+  string connection_id = 1;
+  string database = 2;
+  string collection = 3;
+  string index_name = 4;
+  int64 expire_after_seconds = 5;
+}

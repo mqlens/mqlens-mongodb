@@ -122,13 +122,12 @@ test.describe('Documents in a collection', () => {
     await runFilter(page, '{ tier: "Premium" }');
     await expect(view(page).getByText('Bob Johnson')).toHaveCount(0);
 
-    await view(page).getByTestId('update-many-btn').click();
-    await page.getByTestId('dialog-input').fill('{ "$set": { "tier": "Gold" } }');
-    await page.getByTestId('dialog-confirm').click();
-    await expect(page.getByTestId('dialog-input')).toHaveCount(0);
-    // Then the destructive confirmation, which states how many documents match.
-    await expect(page.getByTestId('dialog-title')).toBeVisible();
-    await page.getByTestId('dialog-confirm').click();
+    await view(page).getByTestId('bulk-write-menu-btn').click();
+    await page.getByTestId('update-many-btn').click();
+    // The editor states the filter and how many documents match, so its button is the confirmation.
+    await expect(page.getByTestId('update-many-target')).toContainText('Premium');
+    await setEditorText(page, page.getByTestId('update-many-editor'), '{\n  $set: { tier: "Gold" }\n}');
+    await page.getByTestId('update-many-submit').click();
 
     // The filter still asks for Premium, and nothing is Premium any more.
     await expect(view(page).getByText('Alice Smith')).toHaveCount(0);
@@ -142,12 +141,13 @@ test.describe('Documents in a collection', () => {
   });
 
   test('Update Many rejects an update that is not valid JSON, without writing', async ({ app, page }) => {
-    await view(page).getByTestId('update-many-btn').click();
-    await page.getByTestId('dialog-input').fill('{ $set: ');
-    await page.getByTestId('dialog-confirm').click();
+    await view(page).getByTestId('bulk-write-menu-btn').click();
+    await page.getByTestId('update-many-btn').click();
+    await setEditorText(page, page.getByTestId('update-many-editor'), '{ $set: ');
 
-    await expect(page.getByTestId('dialog-error')).toBeVisible();
-    await page.getByTestId('dialog-cancel').click();
+    await expect(page.getByTestId('update-many-error')).toBeVisible();
+    await expect(page.getByTestId('update-many-submit')).toBeDisabled();
+    await page.getByTestId('update-many-cancel').click();
     expect(await app.calls('update_many')).toHaveLength(0);
   });
 
@@ -156,7 +156,8 @@ test.describe('Documents in a collection', () => {
     await expect(view(page).getByText('Alice Smith')).toHaveCount(0);
     await expect(view(page).getByText('Bob Johnson').first()).toBeVisible();
 
-    await view(page).getByTestId('delete-many-btn').click();
+    await view(page).getByTestId('bulk-write-menu-btn').click();
+    await page.getByTestId('delete-many-btn').click();
     await page.getByTestId('dialog-confirm').click();
 
     await expect(view(page).getByText('Bob Johnson')).toHaveCount(0);

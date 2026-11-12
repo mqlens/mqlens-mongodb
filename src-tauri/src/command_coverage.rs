@@ -24,7 +24,7 @@ use std::collections::HashSet;
 /// write only to the local filesystem) or from a local resource that
 /// doesn't need a connection-mode check. Never blocked by
 /// `read_only`/`confirm_destructive`, and never should be.
-const READ_COMMANDS: &[&str] = &[
+pub(crate) const READ_COMMANDS: &[&str] = &[
     "start_dump_task", // mongodump reads the DB, writes only to a local file
     "get_mongodb_version",
     "list_databases",
@@ -67,6 +67,7 @@ const LOCAL_COMMANDS: &[&str] = &[
     // Appends an uncaught-frontend-error report to a local log file; no DB.
     "log_frontend_error",
     "connect_db",
+    "forget_oidc_login", // vault-only token deletion, no database I/O
     "cancel_oidc_login", // flips an in-process OIDC login's cancel flag; no DB I/O
     "reopen_oidc_login", // reopens a stored login URL in the system browser; no DB I/O
     "detect_mongo_tools",
@@ -154,7 +155,22 @@ const LOCAL_COMMANDS: &[&str] = &[
     "load_connection_profiles",
     "save_connection_profile",
     "delete_connection_profile",
+    // MQLens Server accounts and sign-in (server mode). They read and write the
+    // encrypted accounts file and call the server's auth and connection-listing
+    // endpoints, which return references only; none reaches a deployment's data.
+    "server_account_list",
+    "server_account_save",
+    "server_account_delete",
+    "server_sign_in",
+    "server_oidc_providers",
+    "server_oidc_sign_in",
+    "server_sign_out",
+    "server_connection_mode_set", // a local preference in the accounts file
+    "server_list_connections",
+    "server_connect", // connects through the server; no data touched yet
     "test_connection_uri", // ephemeral test connection, never tracked in connection_meta
+    "discover_replica_set", // one unauthenticated hello to a seed member, never tracked
+    "resolve_srv_seed_list", // DNS SRV/TXT lookup for export, no connection
     "load_app_settings",
     "save_app_settings",
     "patch_app_settings",
@@ -200,12 +216,14 @@ const LOCAL_COMMANDS: &[&str] = &[
 ///   transitive — see `start_mongosh_session_impl`'s doc comment for the
 ///   `confirm_destructive` limitation this implies (arbitrary shell input
 ///   can't be gated per-command).
-const GUARDED_WRITE_COMMANDS: &[&str] = &[
+pub(crate) const GUARDED_WRITE_COMMANDS: &[&str] = &[
     "start_restore_task",
     "start_mongosh_session",
     "run_mongosh_command",
     "run_mongosh_script",
     "create_index",
+    "set_index_expiry",
+    "set_index_option",
     "delete_index",
     "delete_document",
     "delete_many",

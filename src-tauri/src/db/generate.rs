@@ -647,14 +647,12 @@ const PREVIEW_MAX_DOCS: u8 = 10;
 const PREVIEW_DEFAULT_DOCS: u8 = 3;
 
 /// Stringify a generated document the same way `execute_mql_query_impl`
-/// stringifies query results (`serde_json::to_value` then
-/// `serde_json::to_string`) — not `into_relaxed_extjson()` — so previewed
+/// stringifies query results (`crate::db::ui_string`) — not
+/// `into_relaxed_extjson()` — so previewed
 /// documents render through the same EJSON-ish viewer path the rest of the
 /// app already uses for query/document output.
 fn doc_to_relaxed_json_string(doc: &Document) -> Result<String, String> {
-    let json_val: Value =
-        serde_json::to_value(doc).map_err(|e| format!("BSON to JSON error: {}", e))?;
-    serde_json::to_string(&json_val).map_err(|e| format!("Serialization error: {}", e))
+    crate::db::ui_string(doc)
 }
 
 /// Parse `template`, then generate `count` documents (capped at
@@ -817,7 +815,7 @@ async fn start_generate_task_inner(
         }
         None
     } else {
-        Some(crate::require_real_client(state, id)?)
+        Some(crate::db::documents::write_target(state, id, "start_generate_task").await?)
     };
 
     let task_id = Uuid::new_v4().to_string();
@@ -897,14 +895,23 @@ async fn start_generate_task_inner(
             rng = next_rng;
             let n = batch.len() as u64;
 
-            if let Some(client) = &client {
-                let coll = client
-                    .database(&database)
-                    .collection::<Document>(&collection);
-                if let Err(e) = crate::db::documents::insert_many_batched(&coll, batch, "insert").await {
-                    run_error = Some(e);
-                    break;
+            let written = match &client {
+                Some(crate::db::documents::WriteTarget::Local(client)) => {
+                    let coll = client
+                        .database(&database)
+                        .collection::<Document>(&collection);
+                    crate::db::documents::insert_many_batched(&coll, batch, "insert").await
                 }
+                Some(crate::db::documents::WriteTarget::Remote(remote)) => {
+                    remote
+                        .insert_all(&database, &collection, batch, "insert")
+                        .await
+                }
+                None => Ok(()),
+            };
+            if let Err(e) = written {
+                run_error = Some(e);
+                break;
             }
             // Mock: validate-only, mirroring run_import's mock branch — the
             // batch is generated and dropped, nothing is persisted.
@@ -1308,6 +1315,7 @@ mod tests {
             presence,
             coverage: 1.0,
             enum_values,
+            enum_counts: None,
         }
     }
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
 // The modal's JSON editor wraps @monaco-editor/react; mock it with a plain
 // <textarea> that exposes the test id via wrapperProps and round-trips value.
@@ -93,11 +93,12 @@ describe('DocumentEditModal', () => {
     expect(onSave).toHaveBeenCalledWith('{ "_id": {"$oid":"507f1f77bcf86cd799439011"} }');
   });
 
-  it('flags malformed input (live) and disables Save', () => {
+  it('flags malformed input once typing pauses, and disables Save', async () => {
     const onSave = vi.fn();
     render(<DocumentEditModal isOpen mode="edit" initialJson="{}" onClose={() => {}} onSave={onSave} />);
     fireEvent.change(screen.getByTestId('document-json-input'), { target: { value: '{ "a": 1, j }' } });
-    expect(screen.getByTestId('document-edit-error')).toBeInTheDocument();
+    expect(screen.queryByTestId('document-edit-error')).toBeNull();
+    expect(await screen.findByTestId('document-edit-error')).toBeInTheDocument();
     expect(screen.getByTestId('document-save-btn')).toBeDisabled();
     fireEvent.click(screen.getByTestId('document-save-btn'));
     expect(onSave).not.toHaveBeenCalled();
@@ -142,13 +143,64 @@ describe('DocumentEditModal — an edit belongs to its tab (#277)', () => {
     onSave: vi.fn(),
   };
 
-  it('reports edits instead of keeping them, when the caller owns the text', () => {
+  it('reports edits instead of keeping them, when the caller owns the text', async () => {
     const onJsonChange = vi.fn();
     render(<DocumentEditModal {...props} json='{ "a": 1 }' onJsonChange={onJsonChange} />);
     fireEvent.change(screen.getByTestId('document-json-input'), {
       target: { value: '{ "a": 2 }' },
     });
-    expect(onJsonChange).toHaveBeenCalledWith('{ "a": 2 }');
+    await waitFor(() => expect(onJsonChange).toHaveBeenCalledWith('{ "a": 2 }'));
+  });
+
+  it('reports a burst of keys once, with the last text', async () => {
+    const onJsonChange = vi.fn();
+    render(<DocumentEditModal {...props} json='{ "a": 1 }' onJsonChange={onJsonChange} />);
+    const input = screen.getByTestId('document-json-input');
+    fireEvent.change(input, { target: { value: '{ "a": 12 }' } });
+    fireEvent.change(input, { target: { value: '{ "a": 123 }' } });
+    expect(onJsonChange).not.toHaveBeenCalled();
+    await waitFor(() => expect(onJsonChange).toHaveBeenCalledTimes(1));
+    expect(onJsonChange).toHaveBeenCalledWith('{ "a": 123 }');
+  });
+
+  it('hands over keys still queued when it unmounts', () => {
+    const onJsonChange = vi.fn();
+    const { unmount } = render(<DocumentEditModal {...props} json='{ "a": 1 }' onJsonChange={onJsonChange} />);
+    fireEvent.change(screen.getByTestId('document-json-input'), { target: { value: '{ "a": 9 }' } });
+    unmount();
+    expect(onJsonChange).toHaveBeenCalledWith('{ "a": 9 }');
+  });
+
+  it('hands queued keys to the edit they were typed into when the edit switches', () => {
+    // App keys the dialog by edit id, so switching edits unmounts the old one.
+    const first = vi.fn();
+    const second = vi.fn();
+    const { rerender } = render(<DocumentEditModal key="a" {...props} json='{ "a": 1 }' onJsonChange={first} />);
+    fireEvent.change(screen.getByTestId('document-json-input'), { target: { value: '{ "a": 7 }' } });
+    rerender(<DocumentEditModal key="b" {...props} json='{ "b": 1 }' onJsonChange={second} />);
+    expect(first).toHaveBeenCalledWith('{ "a": 7 }');
+    expect(second).not.toHaveBeenCalled();
+  });
+
+  it('commits queued keys through the flush handle and reports whether there were any', () => {
+    const onJsonChange = vi.fn();
+    const handle: { current: (() => boolean) | null } = { current: null };
+    render(<DocumentEditModal {...props} json='{ "a": 1 }' onJsonChange={onJsonChange} flushHandleRef={handle} />);
+    expect(handle.current?.()).toBe(false);
+    fireEvent.change(screen.getByTestId('document-json-input'), { target: { value: '{ "a": 3 }' } });
+    expect(handle.current?.()).toBe(true);
+    expect(onJsonChange).toHaveBeenCalledWith('{ "a": 3 }');
+    expect(handle.current?.()).toBe(false);
+  });
+
+  it('saves keys typed just before Save, without waiting for the pause', () => {
+    const onSave = vi.fn();
+    const onJsonChange = vi.fn();
+    render(<DocumentEditModal {...props} onSave={onSave} json='{ "a": 1 }' onJsonChange={onJsonChange} />);
+    fireEvent.change(screen.getByTestId('document-json-input'), { target: { value: '{ "a": 5 }' } });
+    fireEvent.click(screen.getByTestId('document-save-btn'));
+    expect(onJsonChange).toHaveBeenCalledWith('{ "a": 5 }');
+    expect(onSave).toHaveBeenCalledWith('{ "a": 5 }');
   });
 
   it('restores a draft rather than resetting it when it reappears', () => {
@@ -256,4 +308,17 @@ describe('DocumentEditModal — reports the save state it is given (#326 review)
     expect(screen.getByTestId('document-save-btn')).not.toBeDisabled();
   });
 
+});
+
+describe('DocumentEditModal — the editor', () => {
+  // The document editor offers no language help: no suggestions, no parameter
+  // hints, no hovers. Monaco 0.57 reads only 'on' | 'off' | 'onKeyboardModifier'
+  // here and treats anything else, `false` included, as its default of 'on'.
+  it('turns off hovers in the editor', () => {
+    render(
+      <DocumentEditModal isOpen mode="insert" initialJson="{}" onClose={() => {}} onSave={() => {}} />
+    );
+    const options = lastEditorProps?.options as { hover?: { enabled?: unknown } } | undefined;
+    expect(options?.hover?.enabled).toBe('off');
+  });
 });

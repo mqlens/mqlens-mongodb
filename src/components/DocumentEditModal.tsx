@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { FileJson } from 'lucide-react';
 import Editor from '@monaco-editor/react';
 import { useTranslation } from 'react-i18next';
@@ -19,6 +20,10 @@ import {
 import { DraggableDialogContent } from '@/components/ui/draggable-dialog-content';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
+
+// Every draft write copies the whole document into App state and the backend
+// mirror, so a large document lagged on each key. Typing settles first.
+const DRAFT_SYNC_MS = 250;
 
 function validateDocument(text: string, t: TFunction): string | null {
   if (!text.trim()) return t('documents:editModal.errors.empty');
@@ -68,6 +73,8 @@ interface DocumentEditModalProps {
    *  with it (#326 review). Read-only says so, rather than quietly dropping the
    *  keystrokes. */
   frozen?: boolean;
+  /** Set to a function that commits queued keys now; it returns whether any were queued. */
+  flushHandleRef?: React.MutableRefObject<(() => boolean) | null>;
 }
 
 export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
@@ -81,18 +88,73 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
   error = null,
   saving = false,
   frozen = false,
+  flushHandleRef,
 }) => {
   const { t } = useTranslation('documents');
   const [uncontrolledJson, setUncontrolledJson] = useState(initialJson);
   const json = controlledJson ?? uncontrolledJson;
-  const setJson = (next: string) => {
+  const onJsonChangeRef = useRef(onJsonChange);
+  onJsonChangeRef.current = onJsonChange;
+  const pendingRef = useRef<string | null>(null);
+  const committedRef = useRef<string | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const [hasPending, setHasPending] = useState(false);
+
+  const commit = (next: string) => {
+    committedRef.current = next;
     setUncontrolledJson(next);
-    onJsonChange?.(next);
+    setHasPending(false);
+    onJsonChangeRef.current?.(next);
   };
+  const flushDraft = (sync = false): string | null => {
+    clearTimeout(timerRef.current);
+    const next = pendingRef.current;
+    if (next === null) return null;
+    pendingRef.current = null;
+    // Synchronous so useMonacoValue sees the model still holding exactly this
+    // text, before another key can land and be overwritten by it.
+    if (sync) flushSync(() => commit(next));
+    else commit(next);
+    return next;
+  };
+  const queueDraft = (next: string) => {
+    pendingRef.current = next;
+    setHasPending(true);
+    clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => flushDraft(true), DRAFT_SYNC_MS);
+  };
+
+  useEffect(() => {
+    if (json === committedRef.current) return;
+    // Replaced from outside (a new edit, a reset): queued keys belong to the old text.
+    clearTimeout(timerRef.current);
+    pendingRef.current = null;
+    setHasPending(false);
+  }, [json]);
+
+  useEffect(() => {
+    if (!isOpen) flushDraft();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!flushHandleRef) return;
+    const flush = () => flushDraft(true) !== null;
+    flushHandleRef.current = flush;
+    return () => {
+      if (flushHandleRef.current === flush) flushHandleRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flushHandleRef]);
+
+  useEffect(() => () => {
+    clearTimeout(timerRef.current);
+    if (pendingRef.current !== null) onJsonChangeRef.current?.(pendingRef.current);
+  }, []);
   // Derived from the text on screen, so it needs no owner and no lifetime: it
   // is recomputed rather than remembered, and cannot outlive what it describes.
   const validationError = useMemo(() => validateDocument(json, t), [json, t]);
-  const editorValue = useMonacoValue(json, setJson);
+  const editorValue = useMonacoValue(json, queueDraft);
   const theme = useMonacoTheme();
   const monacoRef = useRef<Parameters<
     NonNullable<React.ComponentProps<typeof Editor>['onMount']>
@@ -122,12 +184,12 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, initialJson]);
 
-  // Save is disabled while `validationError` is set, so reaching here means the
-  // text parses. The caller runs the request and reports back through `saving`
-  // and `error`.
+  // Queued keys are committed first, so a still-invalid draft shows its error
+  // here. The caller runs the request and reports back through `saving` and `error`.
   const handleSave = () => {
-    if (validationError) return;
-    onSave(shellToEjson(json));
+    const text = flushDraft() ?? json;
+    if (validateDocument(text, t)) return;
+    onSave(shellToEjson(text));
   };
 
   return (
@@ -182,6 +244,7 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
               wrapperProps={{ 'data-testid': 'document-json-input' }}
               onMount={(editor, monaco) => {
                 editorValue.onMount(editor, monaco);
+                editor.onDidBlurEditorText(() => flushDraft(true));
                 monacoRef.current = monaco;
                 registerDocLanguage(monaco);
                 // The theme's token colours come from the same design tokens the
@@ -206,7 +269,7 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
                 suggestOnTriggerCharacters: false,
                 wordBasedSuggestions: 'off',
                 parameterHints: { enabled: false },
-                hover: { enabled: false },
+                hover: { enabled: 'off' },
                 readOnly: frozen,
               }}
             />
@@ -234,7 +297,7 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
           <Button
             type="button"
             onClick={handleSave}
-            disabled={saving || frozen || !!validationError}
+            disabled={saving || frozen || (!!validationError && !hasPending)}
             data-testid="document-save-btn"
           >
             {mode === 'insert' ? t('editModal.actions.insert') : t('editModal.actions.saveChanges')}

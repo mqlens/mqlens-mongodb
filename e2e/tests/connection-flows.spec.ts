@@ -11,8 +11,8 @@ const STAGING: ProfileSeed = { id: 'p-staging', name: 'Staging', uri: STAGING_UR
 
 const button = (page: Page, name: string) => page.getByRole('button', { name, exact: true });
 const editorTab = (page: Page, name: string) => page.getByRole('button', { name, exact: true });
-/** The manager's profile tree. */
-const tree = (page: Page) => page.getByRole('dialog').getByRole('complementary');
+/** The manager's connection table: folder rows with their connections nested under them. */
+const tree = (page: Page) => page.getByTestId('connection-table');
 const importError = (page: Page) => page.getByTestId('import-uri-error').last();
 /** Every value typed or loaded into the open dialogs' inputs. */
 const inputValues = (page: Page) =>
@@ -121,6 +121,26 @@ test.describe('Connecting from the editor', () => {
   });
 });
 
+test.describe('A connection saved without its password', () => {
+  test('asks for it, whatever the encoding of the mechanism name, and connects with what was typed', async ({ app, page }) => {
+    await openWithProfiles(app, page, [
+      { id: 'p-odd', name: 'Odd', uri: 'mongodb://bob@staging.example:27017/?authMechanism=GSSAPI%' },
+      { id: 'p-scram', name: 'Scram', uri: 'mongodb://alice@staging.example:27017/?authMechanism=SCRAM%2DSHA%2D256' },
+    ]);
+
+    await tree(page).getByText('Odd', { exact: true }).dblclick();
+    await expect(page.getByTestId('dialog-title')).toHaveText('Password for Odd');
+    await page.getByTestId('dialog-cancel').click();
+    expect(await app.calls('connect_db')).toHaveLength(0);
+
+    await tree(page).getByText('Scram', { exact: true }).dblclick();
+    await expect(page.getByTestId('dialog-title')).toHaveText('Password for Scram');
+    await page.getByTestId('dialog-input').fill(' pw ');
+    const connected = await callFrom(app, 'connect_db', () => page.getByTestId('dialog-confirm').click());
+    expect(connected.uri).toBe('mongodb://alice:%20pw%20@staging.example:27017/?authMechanism=SCRAM%2DSHA%2D256');
+  });
+});
+
 test.describe('Importing connections', () => {
   test('reads a URI from each kind of file, and says why a file could not be used', async ({ app, page }) => {
     await app.open({
@@ -212,6 +232,7 @@ test.describe('Saved connection settings', () => {
       { id: 'p-tls', name: 'TLS', uri: 'mongodb://reader:secret@tls.example:27017/sales?tls=true' },
       { id: 'p-aws', name: 'AWS', uri: 'mongodb://aws.example:27017/?authMechanism=MONGODB-AWS&authMechanismProperties=AWS_SESSION_TOKEN:tok-123' },
       { id: 'p-krb', name: 'Kerberos', uri: 'mongodb://alice@krb.example:27017/?authMechanism=GSSAPI&authMechanismProperties=SERVICE_NAME:mongosvc' },
+      { id: 'p-plain', name: 'Plaintext', uri: 'mongodb://plain.example:27017/?tls=false' },
     ]);
     const save = async () => ((await callFrom(app, 'save_connection_profile', () => button(page, 'Save').click())).profile as { uri: string }).uri;
 
@@ -219,7 +240,8 @@ test.describe('Saved connection settings', () => {
     await editorTab(page, 'Authentication').click();
     await expect.poll(() => inputValues(page)).toContain('sales');
     await editorTab(page, 'TLS / SSL').click();
-    await expect(page.getByRole('combobox').filter({ hasText: /System/i })).toBeVisible();
+    await expect(page.getByLabel('Use TLS/SSL to connect')).toBeChecked();
+    await expect(page.getByLabel(/operating system/)).toBeChecked();
     expect(await save()).toContain('tls=true');
 
     await editProfile(page, 'AWS');
@@ -234,6 +256,10 @@ test.describe('Saved connection settings', () => {
     await editorTab(page, 'Authentication').click();
     await expect.poll(() => inputValues(page)).toContain('mongosvc');
     expect(decodeURIComponent(await save())).toContain('SERVICE_NAME:mongosvc');
+
+    // An explicit tls=false is kept, so a host whose default is TLS stays plaintext.
+    await editProfile(page, 'Plaintext');
+    expect(await save()).toContain('tls=false');
   });
 
   test('tags a connection with a preset or custom colour, and reads short and named tags back', async ({ app, page }) => {
@@ -244,17 +270,20 @@ test.describe('Saved connection settings', () => {
     const colorOf = async () => ((await callFrom(app, 'save_connection_profile', () => button(page, 'Save').click())).profile as { color_tag: string }).color_tag;
 
     await editProfile(page, 'Short hex');
+    await button(page, 'Color tag').click();
     await expect(page.getByTestId('color-picker-custom-preview')).toBeVisible();
     expect(await colorOf()).toBe('#aabbcc');
 
     // A tag that isn't hex shows the picker's default, and is saved back as it was.
     await editProfile(page, 'Named');
+    await button(page, 'Color tag').click();
     await expect(page.getByTestId('color-picker-custom')).toHaveValue('#3b82f6');
     expect(await colorOf()).toBe('red');
 
     await button(page, 'New...').click();
     await page.getByLabel('Display Name').fill('Tagged');
     await page.getByTestId('host-list').fill('c.example:27017');
+    await button(page, 'Color tag').click();
     await page.getByTestId('color-swatch-green').click();
     await expect(page.getByTestId('color-swatch-green')).toHaveAttribute('aria-pressed', 'true');
     await page.getByTestId('color-picker-custom').fill('#123456');
@@ -304,5 +333,112 @@ test.describe('Profile tree', () => {
     await page.getByTestId('dialog-confirm').click();
     await expect.poll(async () => (await app.calls('delete_connection_profile')).length).toBe(1);
     await expect(tree(page).getByText('Staging', { exact: true })).toBeVisible();
+  });
+});
+
+test.describe('Folders from their menus', () => {
+  const storedFolders = (page: Page) =>
+    page.evaluate(() => ({
+      folders: (JSON.parse(localStorage.getItem('mqlens_folders') ?? '[]') as Array<{ name: string }>).map((folder) => folder.name),
+      placement: JSON.parse(localStorage.getItem('mqlens_profile_folders') ?? '{}') as Record<string, string>,
+    }));
+
+  test('moves and drags connections into a folder, renames it, and deleting it keeps them', async ({ app, page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem('mqlens_folders', JSON.stringify([{ id: 'f-prod', name: 'Prod', parentId: null }]));
+    });
+    await openWithProfiles(app, page, [
+      { id: 'p-alpha', name: 'Alpha', uri: 'mongodb://alpha.example:27017' },
+      { id: 'p-beta', name: 'Beta', uri: 'mongodb://beta.example:27017' },
+    ]);
+
+    await tree(page).getByText('Alpha', { exact: true }).click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Move to folder' }).hover();
+    await page.getByRole('menuitem', { name: 'Prod', exact: true }).click();
+    await expect.poll(async () => (await storedFolders(page)).placement).toEqual({ 'p-alpha': 'f-prod' });
+
+    await tree(page).getByText('Beta', { exact: true }).dragTo(tree(page).getByText('Prod', { exact: true }));
+    await expect.poll(async () => (await storedFolders(page)).placement).toEqual({ 'p-alpha': 'f-prod', 'p-beta': 'f-prod' });
+
+    // Open the folder to reach Beta inside it.
+    await tree(page).getByText('Prod', { exact: true }).click();
+    await tree(page).getByText('Beta', { exact: true }).click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Move to folder' }).hover();
+    await page.getByRole('menuitem', { name: '(root)', exact: true }).click();
+    await expect.poll(async () => (await storedFolders(page)).placement).toEqual({ 'p-alpha': 'f-prod' });
+
+    await tree(page).getByText('Prod', { exact: true }).click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Rename' }).click();
+    await page.getByTestId('dialog-input').fill('Production');
+    await page.getByTestId('dialog-input').press('Enter');
+    await expect.poll(async () => (await storedFolders(page)).folders).toEqual(['Production']);
+
+    await tree(page).getByText('Production', { exact: true }).click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Delete' }).click();
+    await page.getByTestId('dialog-confirm').click();
+    await expect.poll(() => storedFolders(page)).toEqual({ folders: [], placement: {} });
+    await expect(tree(page).getByText('Alpha', { exact: true })).toBeVisible();
+    await expect(tree(page).getByText('Beta', { exact: true })).toBeVisible();
+  });
+});
+
+test.describe('Connection table sorting', () => {
+  test('a header sorts by its column, and a second click reverses it', async ({ app, page }) => {
+    await openWithProfiles(app, page, [
+      { id: 'p-alpha', name: 'Alpha', uri: 'mongodb://zulu.example:27017' },
+      { id: 'p-beta', name: 'Beta', uri: 'mongodb://alpha.example:27017' },
+    ]);
+    const table = page.getByTestId('connection-table');
+    const names = () => table.getByTestId('connection-row-name').allTextContents();
+    await expect.poll(names).toEqual(['Alpha', 'Beta']);
+
+    await table.getByRole('button', { name: 'Server' }).click();
+    await expect.poll(names).toEqual(['Beta', 'Alpha']);
+    await table.getByRole('button', { name: 'Server' }).click();
+    await expect.poll(names).toEqual(['Alpha', 'Beta']);
+  });
+});
+
+test.describe('Editor settings added for parity', () => {
+  const BASTION = { enabled: true, host: 'bastion.example', port: 2222, user: 'ops', auth: { type: 'key', path: '/keys/ops' } };
+
+  test('saves a client key passphrase, read preference tags, other mechanism properties and a reused tunnel', async ({ app, page }) => {
+    await openWithProfiles(app, page, [
+      {
+        id: 'p-krb',
+        name: 'Kerberos',
+        uri: 'mongodb://alice@krb.example:27017/?authMechanism=GSSAPI&authMechanismProperties=SERVICE_NAME:mongosvc,CANONICALIZE_HOST_NAME:forward&readPreference=secondary&readPreferenceTags=dc:ny&readPreferenceTags=',
+      },
+      { id: 'p-bastion', name: 'Bastion', uri: 'mongodb://10.0.0.5:27017', ssh: BASTION },
+    ]);
+    await editProfile(page, 'Kerberos');
+
+    await editorTab(page, 'TLS / SSL').click();
+    await page.getByLabel('Use TLS/SSL to connect').check();
+    await page.getByLabel(/client certificate/i).fill('/certs/client.pem');
+    await page.getByLabel(/key passphrase/i).fill("it's(secret)");
+
+    await editorTab(page, 'SSH Tunnel').click();
+    await page.getByLabel(/enable ssh tunnel/i).check();
+    await page.getByTestId('ssh-reuse-select').click();
+    await page.getByRole('option', { name: /Bastion/ }).click();
+
+    const saved = (await callFrom(app, 'save_connection_profile', () => button(page, 'Save').click())).profile as {
+      uri: string;
+      ssh: { host: string; port: number; user: string };
+    };
+    expect(saved.uri).toContain('tlsCertificateKeyFile=%2Fcerts%2Fclient.pem');
+    expect(saved.uri).toContain('tlsCertificateKeyFilePassword=it%27s%28secret%29');
+    expect(saved.uri).toContain('readPreferenceTags=dc:ny&readPreferenceTags=');
+    expect(decodeURIComponent(saved.uri)).toContain('CANONICALIZE_HOST_NAME:forward');
+    expect(saved.ssh).toMatchObject({ host: 'bastion.example', port: 2222, user: 'ops' });
+  });
+
+  test('says when an SRV record cannot be resolved for a seed list', async ({ app, page }) => {
+    await openWithProfiles(app, page, [{ id: 'p-atlas', name: 'Atlas', uri: 'mongodb+srv://cluster0.example.net/app' }]);
+    await app.failNext('resolve_srv_seed_list', 'no SRV records');
+    await page.getByTestId('export-uri-btn').click();
+    await page.getByTestId('export-seed-list').click();
+    await expect(page.getByRole('alert').filter({ hasText: 'Could not resolve the SRV record: no SRV records' })).toBeVisible();
   });
 });

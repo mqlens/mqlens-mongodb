@@ -1,0 +1,28 @@
+syntax = "proto3";
+package mqlens.v1;
+option go_package = "github.com/mqlens/mqlens-server/gen/mqlens/v1;mqlensv1";
+
+service ConnectionService {
+  // Only the connections the caller can reach; one without a grant is omitted,
+  // so its name is not disclosed.
+  rpc ListConnections(ListConnectionsRequest) returns (ListConnectionsResponse);
+  rpc GetConnection(GetConnectionRequest) returns (ConnectionRef);
+}
+
+// References ONLY — never any URI or credential.
+message ConnectionRef {
+  string id = 1;
+  string name = 2;
+  repeated string tags = 3;
+  string deployment_kind = 4; // "standalone" | "replica_set" | "sharded" | "atlas"
+  // Op classes the caller may perform here: a subset of "read", "write",
+  // "ddl" and "admin".
+  repeated string op_classes = 5;
+}
+message ListConnectionsRequest {}
+message ListConnectionsResponse {
+  repeated ConnectionRef connections = 1;
+}
+message GetConnectionRequest {
+  string id = 1;
+}

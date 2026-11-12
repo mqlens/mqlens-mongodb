@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, within } from '@testing-library/react';
 import { renderWithProviders } from '../../test/render-with-providers';
 import { resetUpdateTabStateDebounce } from '../../workspace/workspaceStore';
-import App, { tabLabelFor, tabTooltipFor, type QueryTab } from '../../App';
+import App, { closedTabSnapshot, tabLabelFor, tabTooltipFor, type QueryTab } from '../../App';
 
 describe('collection tab labels', () => {
   const t = ((key: string) => key) as any;
@@ -126,8 +126,24 @@ vi.mock('@tauri-apps/plugin-fs', () => ({
 
 // Mock Sidebar component
 vi.mock('../Sidebar', () => ({
-  Sidebar: ({ onSelectCollection, onSelectIndex, onCreateIndex, onDeleteIndex, onOpenSettings, onOpenDump, onOpenRestore, onEditValidation, onOpenGenerate, onDatabaseRenamed, onDatabaseDropped, onWatchCollection, activeConnections, onConnectProfile }: any) => (
+  Sidebar: ({ onSelectCollection, onSelectIndex, onOpenIndexes, onCreateIndex, onDeleteIndex, onOpenSettings, onOpenDump, onOpenRestore, onEditValidation, onOpenGenerate, onDatabaseRenamed, onDatabaseDropped, onWatchCollection, activeConnections, onConnectProfile, isCommandBlocked, onOpenShell, onOpenUsers, onAnalyzeSchema, onOpenGridfs, onCreateView }: any) => (
     <div data-testid="mock-sidebar">
+      {(activeConnections ?? []).map((c: any) => (
+        <button key={c.id} data-testid={`mock-open-shell-${c.id}`} onClick={() => onOpenShell?.(c.id, 'sales_db')} />
+      ))}
+      {(activeConnections ?? []).map((c: any) => (
+        <button key={c.id} data-testid={`mock-open-users-${c.id}`} onClick={() => onOpenUsers?.(c.id)} />
+      ))}
+      {(activeConnections ?? []).map((c: any) => (
+        <span key={c.id}>
+          <button data-testid={`mock-open-schema-${c.id}`} onClick={() => onAnalyzeSchema?.(c.id, 'sales_db', 'customers')} />
+          <button data-testid={`mock-open-gridfs-${c.id}`} onClick={() => onOpenGridfs?.(c.id, 'sales_db', 'fs')} />
+          <button data-testid={`mock-open-create-view-${c.id}`} onClick={() => onCreateView?.(c.id, 'sales_db')} />
+        </span>
+      ))}
+      {(activeConnections ?? []).map((c: any) =>
+        isCommandBlocked?.(c.id, 'start_dump_task') ? <span key={c.id} data-testid={`mock-sidebar-dump-blocked-${c.id}`} /> : null,
+      )}
       {/* Phase 3 Task 6 (b): mirrors the real Sidebar's dependence on the
           `activeConnections` prop for its "Connections" tree — lets tests
           assert a connection landed in this window's sidebar without
@@ -169,6 +185,9 @@ vi.mock('../Sidebar', () => ({
         onClick={() => onSelectCollection('conn-trial', 'sales_db', 'customers')}
       >
         Select Collection On Trial
+      </button>
+      <button data-testid="open-indexes-btn" onClick={() => onOpenIndexes?.('conn-1', 'sales_db', 'customers')}>
+        Open Indexes
       </button>
       <button data-testid="select-collection-btn" onClick={() => onSelectCollection('conn-1', 'sales_db', 'customers')}>
         Select Collection
@@ -246,9 +265,10 @@ vi.mock('../Sidebar', () => ({
 // 3 Task 6's set_connection_meta call) — a single button that fires it with
 // fixed args, gated on `isOpen` like the real modal.
 vi.mock('../ConnectionManager', () => ({
-  ConnectionManager: ({ isOpen, onConnect }: any) =>
+  ConnectionManager: ({ isOpen, onConnect, showServerAccounts }: any) =>
     isOpen ? (
       <div data-testid="mock-connection-manager">
+        {showServerAccounts && <span data-testid="mock-cm-server-accounts" />}
         <button
           data-testid="mock-cm-connect-btn"
           onClick={() => onConnect('cm-live-1', 'Staging Cluster', 'mongodb://staging', 'p-cm', '#fff')}
@@ -358,6 +378,162 @@ describe('App Component', () => {
     expect(screen.queryByText(/User-defined single field index/i)).not.toBeInTheDocument();
   });
 
+  it('opens the consolidated Indexes view for a collection, and a row opens the index (#512)', async () => {
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'list_indexes') {
+        return Promise.resolve([
+          { name: '_id_', keys: '{"_id":1}', unique: false, sparse: false },
+          { name: 'email_1', keys: '{"email":1}', unique: true, sparse: false },
+        ]);
+      }
+      if (cmd === 'index_stats') return Promise.resolve([{ name: 'email_1', sizeBytes: 16_384, ops: 3, sinceMs: 0 }]);
+      return Promise.resolve([]);
+    });
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('open-indexes-btn'));
+    const row = await screen.findByTestId('index-row-email_1');
+    expect(row).toHaveTextContent('16 KB');
+    expect(screen.getByText('Indexes: customers')).toBeInTheDocument();
+
+    fireEvent.click(row);
+    // IndexViewer swaps its loading root for the loaded one, so wait for it to settle.
+    await waitFor(() => expect(screen.getByTestId('index-viewer')).toHaveTextContent('email_1'));
+  });
+
+  it('hides the collection and index actions a server connection cannot run', async () => {
+    const server = {
+      accountId: 'a1', accountName: 'Work', serverUrl: 'https://s', remoteId: 'c1', opClasses: ['read'],
+      blockedCommands: ['start_collection_export', 'start_filtered_export', 'start_import_task', 'create_index', 'delete_index'],
+    };
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd, args) => {
+      calls.push({ cmd, args });
+      if (cmd === 'connection_list') return Promise.resolve([{ id: 'conn-1', profileId: 'server:a1:c1', name: 'Orders', viaMcp: false, server }]);
+      if (cmd === 'execute_mql_query') return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+      if (cmd === 'list_indexes') return Promise.resolve([{ name: 'email_1', keys: '{"city":1}', unique: false, sparse: false }]);
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('sidebar-conn-conn-1');
+
+    fireEvent.click(screen.getByTestId('select-collection-btn'));
+    expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+    expect(screen.queryByTestId('export-btn')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('import-btn')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('select-index-btn'));
+    await waitFor(() => expect(calls.some((c) => c.cmd === 'list_indexes')).toBe(true));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByTestId('edit-index-btn')).not.toBeInTheDocument();
+  });
+
+  it('leaves blocked actions out of the command palette, and passes blocked commands to the admin views', async () => {
+    const server = {
+      accountId: 'a1', accountName: 'Work', serverUrl: 'https://s', remoteId: 'c1', opClasses: ['read'],
+      blockedCommands: ['start_collection_export', 'start_filtered_export', 'start_mongosh_session', 'create_user'],
+    };
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'connection_list') return Promise.resolve([{ id: 'conn-1', profileId: 'server:a1:c1', name: 'Orders', viaMcp: false, server }]);
+      if (cmd === 'execute_mql_query') return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+      if (cmd === 'list_users') return Promise.resolve([]);
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('sidebar-conn-conn-1');
+    fireEvent.click(screen.getByTestId('select-collection-btn'));
+    expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: 'k', metaKey: true });
+    fireEvent.change(await screen.findByTestId('command-palette-input'), { target: { value: 'Export Collection' } });
+    expect(screen.queryByText('Export Collection…')).not.toBeInTheDocument();
+    fireEvent.change(screen.getByTestId('command-palette-input'), { target: { value: 'Manage Users' } });
+    fireEvent.click(await screen.findByText('Manage Users: Orders'));
+
+    expect(await screen.findByTestId('create-user-btn')).toBeDisabled();
+  });
+
+  it('leaves out schema analysis, users and monitoring where their commands are blocked', async () => {
+    const server = {
+      accountId: 'a1', accountName: 'Work', serverUrl: 'https://s', remoteId: 'c1', opClasses: ['read'],
+      blockedCommands: ['analyze_schema', 'list_users', 'list_roles', 'server_status', 'repl_set_status', 'get_profiling_status'],
+    };
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'connection_list') return Promise.resolve([{ id: 'conn-1', profileId: 'server:a1:c1', name: 'Orders', viaMcp: false, server }]);
+      if (cmd === 'execute_mql_query') return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('sidebar-conn-conn-1');
+    fireEvent.click(screen.getByTestId('select-collection-btn'));
+    expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+    expect(screen.queryByTestId('analyze-schema-btn')).not.toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: 'k', metaKey: true });
+    const input = await screen.findByTestId('command-palette-input');
+    for (const query of ['Analyze Schema', 'Manage Users: Orders', 'Open Monitoring: Orders']) {
+      fireEvent.change(input, { target: { value: query } });
+      expect(screen.queryByText(query)).not.toBeInTheDocument();
+    }
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    fireEvent.click(screen.getByTestId('mock-open-users-conn-1'));
+    expect(await screen.findByText('Not available on MQLens Server yet.')).toBeInTheDocument();
+    expect(mockInvoke).not.toHaveBeenCalledWith('list_users', expect.anything());
+  });
+
+  it('does not offer aggregation on a server connection that cannot run it', async () => {
+    const server = {
+      accountId: 'a1', accountName: 'Work', serverUrl: 'https://s', remoteId: 'c1', opClasses: ['read'],
+      blockedCommands: ['execute_aggregate'],
+    };
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'connection_list') return Promise.resolve([{ id: 'conn-1', profileId: 'server:a1:c1', name: 'Orders', viaMcp: false, server }]);
+      if (cmd === 'execute_mql_query') return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('sidebar-conn-conn-1');
+    fireEvent.click(screen.getByTestId('select-collection-btn'));
+    expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+
+    expect(screen.getByTestId('mode-aggregate-tab')).toBeDisabled();
+  });
+
+  it('shows a tab whose command is blocked as unavailable instead of running it', async () => {
+    const server = {
+      accountId: 'a1', accountName: 'Work', serverUrl: 'https://s', remoteId: 'c1', opClasses: ['read'],
+      blockedCommands: ['analyze_schema', 'list_gridfs_files', 'create_view'],
+    };
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'connection_list') return Promise.resolve([{ id: 'conn-1', profileId: 'server:a1:c1', name: 'Orders', viaMcp: false, server }]);
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    fireEvent.click(await screen.findByTestId('mock-open-schema-conn-1'));
+    expect(await screen.findByText('Not available on MQLens Server yet.')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('mock-open-gridfs-conn-1'));
+    fireEvent.click(screen.getByTestId('mock-open-create-view-conn-1'));
+    expect(screen.queryByTestId('create-view')).not.toBeInTheDocument();
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(mockInvoke).not.toHaveBeenCalledWith('analyze_schema', expect.anything());
+    expect(mockInvoke).not.toHaveBeenCalledWith('list_gridfs_files', expect.anything());
+  });
+
   it('edits an index using its REAL spec, not specs guessed from the name (C2 regression)', async () => {
     const calls: any[] = [];
     mockInvoke.mockImplementation((cmd, args) => {
@@ -367,7 +543,7 @@ describe('App Component', () => {
       }
       if (cmd === 'list_indexes') {
         return Promise.resolve([
-          { name: 'email_1', keys: '{"city":1}', unique: false, sparse: false },
+          { name: 'email_1', keys: '{"city":1}', unique: false, sparse: false, spec: '{"key":{"city":1},"name":"email_1"}' },
         ]);
       }
       return Promise.resolve([]);
@@ -381,18 +557,350 @@ describe('App Component', () => {
     fireEvent.click(screen.getByTestId('select-collection-btn'));
     fireEvent.click(screen.getByTestId('select-index-btn'));
 
-    // Open the edit modal from the index viewer, then save unchanged.
+    // Open the edit modal from the index viewer, then change the flag.
     fireEvent.click(await screen.findByTestId('edit-index-btn'));
     expect(screen.getByTestId('index-modal')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('unique-checkbox'));
     fireEvent.click(screen.getByTestId('save-index-btn'));
 
     // create_index must be called with the REAL key pattern + unique flag.
     await waitFor(() => {
       const createCall = calls.find((c) => c.cmd === 'create_index');
       expect(createCall).toBeTruthy();
-      expect(createCall.args.keys).toBe('{"city":1}');
-      expect(createCall.args.unique).toBe(false);
+      expect(JSON.parse(createCall.args.spec)).toEqual({ key: { city: 1 }, name: 'email_1', unique: true });
     });
+  });
+
+  // Opens the edit modal on an index listed as `index`.
+  const editIndex = async (index: object, respond: (cmd: string, args: any) => unknown = () => undefined, server?: object) => {
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd, args) => {
+      calls.push({ cmd, args });
+      const answer = respond(cmd, args);
+      if (answer !== undefined) return answer as Promise<unknown>;
+      if (cmd === 'connection_list' && server) {
+        return Promise.resolve([{ id: 'conn-1', profileId: 'server:a1:c1', name: 'Orders', viaMcp: false, server }]);
+      }
+      if (cmd === 'execute_mql_query') return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+      if (cmd === 'list_indexes') return Promise.resolve([index]);
+      return Promise.resolve([]);
+    });
+    const { fireEvent } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId(server ? 'sidebar-conn-conn-1' : 'mock-sidebar');
+    fireEvent.click(screen.getByTestId('select-collection-btn'));
+    fireEvent.click(screen.getByTestId('select-index-btn'));
+    fireEvent.click(await screen.findByTestId('edit-index-btn'));
+    return { calls, fireEvent };
+  };
+  const writes = (calls: any[]) =>
+    calls.filter((c) => ['delete_index', 'create_index', 'set_index_option', 'set_index_expiry'].includes(c.cmd));
+  const specIndex = (document: Record<string, unknown>) => ({
+    name: document.name, keys: JSON.stringify(document.key), unique: Boolean(document.unique), sparse: false,
+    hidden: Boolean(document.hidden), spec: JSON.stringify(document),
+  });
+
+  it('writes nothing when an edit changes nothing', async () => {
+    const { waitFor } = await import('@testing-library/react');
+    const { calls, fireEvent } = await editIndex(specIndex({ v: 2, key: { _fts: 'text', _ftsx: 1 }, name: 'email_1', weights: { t: 1 }, textIndexVersion: 3 }));
+    fireEvent.click(screen.getByTestId('save-index-btn'));
+    await waitFor(() => expect(screen.queryByTestId('index-modal')).not.toBeInTheDocument());
+    expect(writes(calls)).toEqual([]);
+  });
+
+  it('hides an index in place, keeping its build', async () => {
+    const { waitFor } = await import('@testing-library/react');
+    const { calls, fireEvent } = await editIndex(specIndex({ v: 2, key: { city: 1 }, name: 'email_1' }));
+    fireEvent.click(screen.getByTestId('hidden-checkbox'));
+    fireEvent.click(screen.getByTestId('save-index-btn'));
+    await waitFor(() => expect(screen.queryByTestId('index-modal')).not.toBeInTheDocument());
+    expect(writes(calls).map((c) => c.cmd)).toEqual(['set_index_option']);
+    expect(writes(calls)[0].args).toEqual({
+      id: 'conn-1', database: 'sales_db', collection: 'customers', indexName: 'email_1', option: 'hidden', value: true,
+    });
+  });
+
+  it('changes hidden and the expiry together in place', async () => {
+    const { waitFor } = await import('@testing-library/react');
+    const { calls, fireEvent } = await editIndex(specIndex({ key: { city: 1 }, name: 'email_1', expireAfterSeconds: 60 }));
+    fireEvent.click(screen.getByTestId('hidden-checkbox'));
+    fireEvent.change(screen.getByTestId('ttl-seconds-input'), { target: { value: '90' } });
+    fireEvent.click(screen.getByTestId('save-index-btn'));
+    await waitFor(() => expect(writes(calls).map((c) => c.cmd)).toEqual(['set_index_expiry', 'set_index_option']));
+  });
+
+  it('rebuilds with every option where the connection cannot change it in place', async () => {
+    const { waitFor } = await import('@testing-library/react');
+    const server = {
+      accountId: 'a1', accountName: 'Work', serverUrl: 'https://s', remoteId: 'c1', opClasses: ['read', 'ddl'],
+      apiVersion: 9, blockedCommands: ['set_index_option'], roleBlockedCommands: [],
+    };
+    const { calls, fireEvent } = await editIndex(
+      specIndex({ v: 2, key: { city: 1 }, name: 'email_1', collation: { locale: 'de' } }),
+      undefined,
+      server
+    );
+    fireEvent.click(screen.getByTestId('hidden-checkbox'));
+    fireEvent.click(screen.getByTestId('save-index-btn'));
+    await waitFor(() => expect(writes(calls).map((c) => c.cmd)).toEqual(['delete_index', 'create_index']));
+    expect(JSON.parse(writes(calls)[1].args.spec)).toEqual({
+      key: { city: 1 }, name: 'email_1', collation: { locale: 'de' }, hidden: true,
+    });
+  });
+
+  it('carries a partial filter and a TTL through a rebuild', async () => {
+    const { waitFor } = await import('@testing-library/react');
+    const { calls, fireEvent } = await editIndex(
+      specIndex({ v: 2, key: { city: 1 }, name: 'email_1', expireAfterSeconds: 60, partialFilterExpression: { archived: true } })
+    );
+    fireEvent.click(screen.getByTestId('unique-checkbox'));
+    fireEvent.click(screen.getByTestId('save-index-btn'));
+    await waitFor(() => expect(writes(calls).map((c) => c.cmd)).toEqual(['delete_index', 'create_index']));
+    expect(JSON.parse(writes(calls)[1].args.spec)).toEqual({
+      key: { city: 1 }, name: 'email_1', unique: true, expireAfterSeconds: 60, partialFilterExpression: { archived: true },
+    });
+  });
+
+  it('puts the old index back when the rebuild fails, and says so', async () => {
+    let creates = 0;
+    const old = { v: 2, key: { city: 1 }, name: 'email_1', collation: { locale: 'de' } };
+    const { calls, fireEvent } = await editIndex(specIndex(old), (cmd) => {
+      if (cmd === 'create_index' && ++creates === 1) return Promise.reject('E11000 duplicate key');
+      return undefined;
+    });
+    fireEvent.click(screen.getByTestId('unique-checkbox'));
+    fireEvent.click(screen.getByTestId('save-index-btn'));
+    expect(await screen.findByText(/put back as it was: E11000 duplicate key/)).toBeInTheDocument();
+    expect(writes(calls).map((c) => c.cmd)).toEqual(['delete_index', 'create_index', 'create_index']);
+    expect(JSON.parse(writes(calls)[2].args.spec)).toEqual({ key: { city: 1 }, name: 'email_1', collation: { locale: 'de' } });
+    expect(screen.getByTestId('index-modal')).toBeInTheDocument();
+  });
+
+  it('gives the old definition when it cannot be put back either', async () => {
+    const { fireEvent } = await editIndex(specIndex({ key: { city: 1 }, name: 'email_1' }), (cmd) =>
+      cmd === 'create_index' ? Promise.reject('connection lost') : undefined
+    );
+    fireEvent.click(screen.getByTestId('unique-checkbox'));
+    fireEvent.click(screen.getByTestId('save-index-btn'));
+    expect(await screen.findByText(/could not be put back: connection lost/)).toBeInTheDocument();
+    expect(screen.getByText(/"key":\{"city":1\}/)).toBeInTheDocument();
+  });
+
+  // A second drop would abort the build the first save is waiting on.
+  it('runs one save at a time', async () => {
+    const { waitFor } = await import('@testing-library/react');
+    let finishCreate = () => {};
+    const { calls, fireEvent } = await editIndex(specIndex({ key: { city: 1 }, name: 'email_1' }), (cmd) =>
+      cmd === 'create_index' ? new Promise<void>((resolve) => (finishCreate = () => resolve())) : undefined
+    );
+    fireEvent.click(screen.getByTestId('unique-checkbox'));
+    fireEvent.click(screen.getByTestId('save-index-btn'));
+    await waitFor(() => expect(writes(calls).map((c) => c.cmd)).toEqual(['delete_index', 'create_index']));
+    expect(screen.getByTestId('save-index-btn')).toBeDisabled();
+    fireEvent.click(screen.getByTestId('save-index-btn'));
+    fireEvent.submit(screen.getByTestId('save-index-btn').closest('form')!);
+    expect(writes(calls)).toHaveLength(2);
+    finishCreate();
+    await waitFor(() => expect(screen.queryByTestId('index-modal')).not.toBeInTheDocument());
+  });
+
+  // Cancel closes the modal; the build goes on, and must not close the next one.
+  it('leaves a modal opened since alone when a long save ends', async () => {
+    const { waitFor } = await import('@testing-library/react');
+    let finishCreate = () => {};
+    const { calls, fireEvent } = await editIndex(specIndex({ key: { city: 1 }, name: 'email_1' }), (cmd) =>
+      cmd === 'create_index' ? new Promise<void>((resolve) => (finishCreate = () => resolve())) : undefined
+    );
+    fireEvent.click(screen.getByTestId('unique-checkbox'));
+    fireEvent.click(screen.getByTestId('save-index-btn'));
+    await waitFor(() => expect(writes(calls).map((c) => c.cmd)).toEqual(['delete_index', 'create_index']));
+    fireEvent.click(screen.getByLabelText('Close modal'));
+    await waitFor(() => expect(screen.queryByTestId('index-modal')).not.toBeInTheDocument());
+
+    fireEvent.click(await screen.findByTestId('edit-index-btn'));
+    expect(screen.getByTestId('index-modal')).toBeInTheDocument();
+    finishCreate();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.getByTestId('index-modal')).toBeInTheDocument();
+  });
+
+  it('passes a commit quorum to the create', async () => {
+    const { waitFor } = await import('@testing-library/react');
+    const { calls, fireEvent } = await editIndex(specIndex({ key: { city: 1 }, name: 'email_1' }));
+    fireEvent.change(screen.getByTestId('index-commit-quorum'), { target: { value: 'majority' } });
+    fireEvent.click(screen.getByTestId('unique-checkbox'));
+    fireEvent.click(screen.getByTestId('save-index-btn'));
+    await waitFor(() => expect(writes(calls).at(-1)?.args.commitQuorum).toBe('majority'));
+  });
+
+  it('does not offer a commit quorum on a server connection', async () => {
+    await editIndex(specIndex({ key: { city: 1 }, name: 'email_1' }), undefined, {
+      accountId: 'a1', accountName: 'Work', serverUrl: 'https://s', remoteId: 'c1', opClasses: ['read', 'ddl'],
+      apiVersion: 9, blockedCommands: [], roleBlockedCommands: [],
+    });
+    expect(screen.queryByTestId('index-commit-quorum')).not.toBeInTheDocument();
+  });
+
+  describe('index options from the viewer', () => {
+    const openViewer = async (index: object, respond: (cmd: string, args: any) => unknown = () => undefined, server?: object) => {
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd, args) => {
+        calls.push({ cmd, args });
+        const answer = respond(cmd, args);
+        if (answer !== undefined) return answer as Promise<unknown>;
+        if (cmd === 'connection_list' && server) {
+          return Promise.resolve([{ id: 'conn-1', profileId: 'server:a1:c1', name: 'Orders', viaMcp: false, server }]);
+        }
+        if (cmd === 'execute_mql_query') return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+        if (cmd === 'list_indexes') return Promise.resolve([index]);
+        return Promise.resolve([]);
+      });
+      const { fireEvent } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId(server ? 'sidebar-conn-conn-1' : 'mock-sidebar');
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      fireEvent.click(screen.getByTestId('select-index-btn'));
+      await screen.findByTestId('index-viewer');
+      return { calls, fireEvent };
+    };
+    const plain = specIndex({ key: { city: 1 }, name: 'email_1' });
+    const options = (calls: any[]) => calls.filter((c) => c.cmd === 'set_index_option').map((c) => [c.args.option, c.args.value]);
+
+    it('hides an index', async () => {
+      const { waitFor } = await import('@testing-library/react');
+      const { calls, fireEvent } = await openViewer(plain);
+      fireEvent.click(await screen.findByTestId('hide-index-btn'));
+      await waitFor(() => expect(options(calls)).toEqual([['hidden', true]]));
+    });
+
+    it('says when an option cannot be changed', async () => {
+      const { fireEvent } = await openViewer(plain, (cmd) =>
+        cmd === 'set_index_option' ? Promise.reject('not authorized') : undefined
+      );
+      fireEvent.click(await screen.findByTestId('hide-index-btn'));
+      expect(await screen.findByText(/not authorized/)).toBeInTheDocument();
+    });
+
+    it('asks, then prepares and converts to unique', async () => {
+      const { waitFor } = await import('@testing-library/react');
+      const { calls, fireEvent } = await openViewer(plain);
+      fireEvent.click(await screen.findByTestId('convert-unique-btn'));
+      fireEvent.click(await screen.findByTestId('dialog-confirm'));
+      await waitFor(() => expect(options(calls)).toEqual([['prepareUnique', true], ['unique', true]]));
+    });
+
+    it('does nothing when the conversion is declined', async () => {
+      const { calls, fireEvent } = await openViewer(plain);
+      fireEvent.click(await screen.findByTestId('convert-unique-btn'));
+      fireEvent.click(await screen.findByTestId('dialog-cancel'));
+      await new Promise((r) => setTimeout(r, 20));
+      expect(options(calls)).toEqual([]);
+    });
+
+    it('says when duplicates stop the conversion, leaving it prepared', async () => {
+      const { calls, fireEvent } = await openViewer(plain, (cmd, args) =>
+        cmd === 'set_index_option' && args.option === 'unique' ? Promise.reject('Cannot convert the index to unique.') : undefined
+      );
+      fireEvent.click(await screen.findByTestId('convert-unique-btn'));
+      fireEvent.click(await screen.findByTestId('dialog-confirm'));
+      expect(await screen.findByText(/stays non-unique: Cannot convert the index to unique/)).toBeInTheDocument();
+      expect(options(calls)).toEqual([['prepareUnique', true], ['unique', true]]);
+    });
+
+    it('offers neither on a connection that cannot run them', async () => {
+      await openViewer(plain, undefined, {
+        accountId: 'a1', accountName: 'Work', serverUrl: 'https://s', remoteId: 'c1', opClasses: ['read', 'ddl'],
+        apiVersion: 9, blockedCommands: ['set_index_option'], roleBlockedCommands: [],
+      });
+      expect(screen.queryByTestId('hide-index-btn')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('convert-unique-btn')).not.toBeInTheDocument();
+    });
+  });
+
+  // The server would refuse the TTL only after the old index was dropped.
+  it('refuses a TTL a server below API version 5 cannot create, before dropping anything', async () => {
+    const server = {
+      accountId: 'a1', accountName: 'Work', serverUrl: 'https://s', remoteId: 'c1', opClasses: ['read', 'ddl'],
+      apiVersion: 4, blockedCommands: ['set_index_expiry'], roleBlockedCommands: [],
+    };
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd, args) => {
+      calls.push({ cmd, args });
+      if (cmd === 'connection_list') return Promise.resolve([{ id: 'conn-1', profileId: 'server:a1:c1', name: 'Orders', viaMcp: false, server }]);
+      if (cmd === 'execute_mql_query') return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+      if (cmd === 'list_indexes') {
+        return Promise.resolve([{ name: 'email_1', keys: '{"city":1}', unique: false, sparse: false, spec: '{"key":{"city":1},"name":"email_1"}' }]);
+      }
+      return Promise.resolve([]);
+    });
+    const { fireEvent } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('sidebar-conn-conn-1');
+    fireEvent.click(screen.getByTestId('select-collection-btn'));
+    fireEvent.click(screen.getByTestId('select-index-btn'));
+    fireEvent.click(await screen.findByTestId('edit-index-btn'));
+    fireEvent.click(screen.getByTestId('ttl-checkbox'));
+    fireEvent.change(screen.getByTestId('ttl-seconds-input'), { target: { value: '60' } });
+    fireEvent.click(screen.getByTestId('save-index-btn'));
+
+    expect(await screen.findByText(/need MQLens API version 5, and this MQLens Server speaks 4/)).toBeInTheDocument();
+    expect(calls.some((c) => c.cmd === 'delete_index' || c.cmd === 'create_index')).toBe(false);
+  });
+
+  const editTtlExpiry = async (server?: object) => {
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd, args) => {
+      calls.push({ cmd, args });
+      if (cmd === 'connection_list' && server) {
+        return Promise.resolve([{ id: 'conn-1', profileId: 'server:a1:c1', name: 'Orders', viaMcp: false, server }]);
+      }
+      if (cmd === 'execute_mql_query') return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+      if (cmd === 'list_indexes') {
+        return Promise.resolve([{
+          name: 'email_1', keys: '{"city":1}', unique: false, sparse: false, expireAfterSeconds: 3600,
+          spec: '{"key":{"city":1},"name":"email_1","expireAfterSeconds":3600}',
+        }]);
+      }
+      return Promise.resolve([]);
+    });
+    const { fireEvent } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId(server ? 'sidebar-conn-conn-1' : 'mock-sidebar');
+    fireEvent.click(screen.getByTestId('select-collection-btn'));
+    fireEvent.click(screen.getByTestId('select-index-btn'));
+    fireEvent.click(await screen.findByTestId('edit-index-btn'));
+    fireEvent.change(screen.getByTestId('ttl-seconds-input'), { target: { value: '7200' } });
+    fireEvent.click(screen.getByTestId('save-index-btn'));
+    return calls;
+  };
+
+  it('changes only the expiry of a TTL index in place, without rebuilding it', async () => {
+    const { waitFor } = await import('@testing-library/react');
+    const calls = await editTtlExpiry();
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith('set_index_expiry', {
+        id: 'conn-1',
+        database: 'sales_db',
+        collection: 'customers',
+        indexName: 'email_1',
+        expireAfterSeconds: 7200,
+      })
+    );
+    await waitFor(() => expect(screen.queryByTestId('index-modal')).not.toBeInTheDocument());
+    expect(calls.some((c) => c.cmd === 'delete_index' || c.cmd === 'create_index')).toBe(false);
+  });
+
+  it('rebuilds a TTL index with its new expiry where the connection cannot change it in place', async () => {
+    const { waitFor } = await import('@testing-library/react');
+    const calls = await editTtlExpiry({
+      accountId: 'a1', accountName: 'Work', serverUrl: 'https://s', remoteId: 'c1', opClasses: ['read', 'ddl'],
+      blockedCommands: ['set_index_expiry'],
+    });
+    await waitFor(() => {
+      const create = calls.find((c) => c.cmd === 'create_index');
+      expect(JSON.parse(create?.args.spec)).toEqual({ key: { city: 1 }, name: 'email_1', expireAfterSeconds: 7200 });
+    });
+    expect(calls.some((c) => c.cmd === 'set_index_expiry')).toBe(false);
   });
 
   it('handles create_index and delete_index flows', async () => {
@@ -430,16 +938,23 @@ describe('App Component', () => {
     await waitFor(() => {
       expect(screen.queryByTestId('index-modal')).not.toBeInTheDocument();
     });
-    expect(mockInvoke).toHaveBeenCalledWith('create_index', expect.objectContaining({
+    expect(mockInvoke).toHaveBeenCalledWith('create_index', {
       id: 'conn-1',
       database: 'sales_db',
       collection: 'customers',
-      indexName: 'custom_index',
-    }));
+      spec: JSON.stringify({ key: { _id: 1 }, name: 'custom_index' }),
+      commitQuorum: null,
+    });
 
     // Click Delete Index button in mock sidebar
     const deleteIndexBtn = screen.getByTestId('mock-delete-index-btn');
     fireEvent.click(deleteIndexBtn);
+    const confirmInput = await screen.findByTestId('dialog-input');
+    const confirmButton = screen.getByTestId('dialog-confirm');
+    expect(confirmButton).toBeDisabled();
+    fireEvent.change(confirmInput, { target: { value: 'email_1' } });
+    expect(confirmButton).toBeEnabled();
+    fireEvent.click(confirmButton);
 
     // Verify delete_index invoke was called
     await waitFor(() => {
@@ -506,6 +1021,7 @@ describe('App Component', () => {
     fireEvent.click(screen.getByTestId('select-collection-btn'));
     expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
 
+    fireEvent.pointerDown(screen.getByTestId('bulk-write-menu-btn'), { button: 0, pointerType: 'mouse' });
     fireEvent.click(screen.getByTestId('delete-many-btn'));
     fireEvent.click(await screen.findByTestId('dialog-confirm'));
 
@@ -542,6 +1058,7 @@ describe('App Component', () => {
     fireEvent.click(screen.getByTestId('select-collection-btn'));
     expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
 
+    fireEvent.pointerDown(screen.getByTestId('bulk-write-menu-btn'), { button: 0, pointerType: 'mouse' });
     fireEvent.click(screen.getByTestId('delete-many-btn'));
 
     // Wrong typed name -> no invoke, dialog stays open with an error.
@@ -563,7 +1080,7 @@ describe('App Component', () => {
     });
   });
 
-  it('updates many via an operator prompt + confirm (M7)', async () => {
+  it('updates many from the counted update editor (M7)', async () => {
     const calls: any[] = [];
     mockInvoke.mockImplementation((cmd, args) => {
       calls.push({ cmd, args });
@@ -579,13 +1096,14 @@ describe('App Component', () => {
     fireEvent.click(screen.getByTestId('select-collection-btn'));
     expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
 
+    fireEvent.pointerDown(screen.getByTestId('bulk-write-menu-btn'), { button: 0, pointerType: 'mouse' });
     fireEvent.click(screen.getByTestId('update-many-btn'));
-    // Prompt for the update doc, then submit it.
-    const input = await screen.findByTestId('dialog-input');
-    fireEvent.change(input, { target: { value: '{"$set":{"tier":"Gold"}}' } });
-    fireEvent.click(screen.getByTestId('dialog-confirm'));
-    // Then the counted confirm dialog.
-    fireEvent.click(await screen.findByTestId('dialog-confirm'));
+    // One editor that names the count and filter, so submitting it is the confirmation.
+    const editor = await screen.findByTestId('update-many-editor');
+    expect(screen.getByTestId('update-many-target')).toHaveTextContent('3');
+    fireEvent.change(editor, { target: { value: '{"$set":{"tier":"Gold"}}' } });
+    fireEvent.click(screen.getByTestId('update-many-submit'));
+    expect(screen.queryByTestId('dialog-confirm')).toBeNull();
 
     await waitFor(() => {
       const um = calls.find((c) => c.cmd === 'update_many');
@@ -597,6 +1115,74 @@ describe('App Component', () => {
         update: '{"$set":{"tier":"Gold"}}',
         confirmed: false,
       });
+    });
+  });
+
+  it('accepts shell syntax in the update-many editor, the way the query bar does', async () => {
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd, args) => {
+      calls.push({ cmd, args });
+      if (cmd === 'execute_mql_query')
+        return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+      if (cmd === 'count_documents') return Promise.resolve(3);
+      if (cmd === 'update_many') return Promise.resolve(3);
+      return Promise.resolve([]);
+    });
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+    fireEvent.click(screen.getByTestId('select-collection-btn'));
+    expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+
+    fireEvent.pointerDown(screen.getByTestId('bulk-write-menu-btn'), { button: 0, pointerType: 'mouse' });
+    fireEvent.click(screen.getByTestId('update-many-btn'));
+    fireEvent.change(await screen.findByTestId('update-many-editor'), {
+      target: { value: '{ $set: { lastSeen: ISODate("2024-01-01"), managerId: ObjectId("6af1b1a32e3d410c48e8594b") } }' },
+    });
+    fireEvent.click(screen.getByTestId('update-many-submit'));
+
+    // Sent as Extended JSON, so the server stores a real Date and ObjectId.
+    await waitFor(() => {
+      const um = calls.find((c) => c.cmd === 'update_many');
+      expect(um).toBeTruthy();
+      expect(JSON.parse(um.args.update)).toEqual({
+        $set: { lastSeen: { $date: '2024-01-01T00:00:00Z' }, managerId: { $oid: '6af1b1a32e3d410c48e8594b' } },
+      });
+    });
+  });
+
+  it('shows the update-many editor only on the tab it was opened from, keeping its draft (#550 review)', async () => {
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd, args) => {
+      calls.push({ cmd, args });
+      if (cmd === 'execute_mql_query')
+        return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+      if (cmd === 'count_documents') return Promise.resolve(3);
+      if (cmd === 'update_many') return Promise.resolve(3);
+      return Promise.resolve([]);
+    });
+    const { fireEvent, waitFor, within } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+    fireEvent.click(screen.getByTestId('select-collection-btn'));
+    expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+
+    fireEvent.pointerDown(screen.getByTestId('bulk-write-menu-btn'), { button: 0, pointerType: 'mouse' });
+    fireEvent.click(screen.getByTestId('update-many-btn'));
+    fireEvent.change(await screen.findByTestId('update-many-editor'), { target: { value: '{ $set: { tier: "Gold" } }' } });
+
+    // Another tab: the editor would otherwise write to a collection no longer on screen.
+    const tabStrip = screen.getByTestId('workspace-tab-strip');
+    fireEvent.click(within(tabStrip).getByText('Quick Start'));
+    await waitFor(() => expect(screen.queryByTestId('update-many-modal')).toBeNull());
+
+    // Back again, the draft is where it was left.
+    fireEvent.click(within(tabStrip).getByText('customers'));
+    expect(await screen.findByTestId('update-many-editor')).toHaveValue('{ $set: { tier: "Gold" } }');
+    fireEvent.click(screen.getByTestId('update-many-submit'));
+    await waitFor(() => {
+      const um = calls.find((c) => c.cmd === 'update_many');
+      expect(um?.args).toMatchObject({ collection: 'customers', update: '{"$set":{"tier":"Gold"}}' });
     });
   });
 
@@ -621,11 +1207,11 @@ describe('App Component', () => {
     fireEvent.click(screen.getByTestId('select-collection-btn'));
     expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
 
+    fireEvent.pointerDown(screen.getByTestId('bulk-write-menu-btn'), { button: 0, pointerType: 'mouse' });
     fireEvent.click(screen.getByTestId('update-many-btn'));
-    // The update-body prompt is unchanged (data entry, not a confirmation).
-    const updateInput = await screen.findByTestId('dialog-input');
-    fireEvent.change(updateInput, { target: { value: '{"$set":{"tier":"Gold"}}' } });
-    fireEvent.click(screen.getByTestId('dialog-confirm'));
+    // The update editor still comes first; the typed name is asked after it.
+    fireEvent.change(await screen.findByTestId('update-many-editor'), { target: { value: '{"$set":{"tier":"Gold"}}' } });
+    fireEvent.click(screen.getByTestId('update-many-submit'));
 
     // Wrong typed name -> no invoke.
     const wrongInput = await screen.findByTestId('dialog-input');
@@ -767,13 +1353,13 @@ describe('App Component', () => {
     fireEvent.click(screen.getByTestId('select-collection-btn'));
     expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
 
+    fireEvent.pointerDown(screen.getByTestId('bulk-write-menu-btn'), { button: 0, pointerType: 'mouse' });
     fireEvent.click(screen.getByTestId('update-many-btn'));
-    const input = await screen.findByTestId('dialog-input');
-    fireEvent.change(input, { target: { value: '{"tier":"Gold"}' } });
-    fireEvent.click(screen.getByTestId('dialog-confirm'));
+    fireEvent.change(await screen.findByTestId('update-many-editor'), { target: { value: '{"tier":"Gold"}' } });
+    fireEvent.click(screen.getByTestId('update-many-submit'));
 
     // Validation blocks submit; no update_many call.
-    expect(await screen.findByTestId('dialog-error')).toBeInTheDocument();
+    expect(screen.getByTestId('update-many-error')).toBeInTheDocument();
     expect(calls.find((c) => c.cmd === 'update_many')).toBeFalsy();
   });
 
@@ -1005,6 +1591,7 @@ describe('App Component', () => {
       fireEvent.change(await screen.findByTestId('document-json-input'), {
         target: { value: '{"name":"second"}' },
       });
+      await waitFor(() => expect(screen.getByTestId('document-json-input')).toHaveValue('{"name":"second"}'));
 
       resolveInsert('"new-id"');
 
@@ -2821,6 +3408,132 @@ describe('App Component', () => {
 
       const connectCalls = calls.filter((c) => c.cmd === 'connect_db');
       expect(connectCalls).toHaveLength(1); // one connect_db for the whole profile, not per-tab
+    });
+
+    it('(b-server) reconnecting a server profile connects through its MQLens Server account', async () => {
+      const serverSnapshot = JSON.parse(
+        JSON.stringify(workspaceSnapshot).split('profile:p1').join('profile:server:a1:c1').split('"p1"').join('"server:a1:c1"'),
+      );
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'workspace_get') return Promise.resolve(serverSnapshot);
+        if (cmd === 'server_connect') return Promise.resolve({ id: 'remote-conn-1', mongoVersion: '8.0.0', opClasses: ['read'] });
+        if (cmd === 'execute_mql_query') return Promise.resolve([JSON.stringify({ _id: '1', name: 'Ada' })]);
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+
+      const [firstBtn] = await screen.findAllByRole('button', { name: /Reconnect Prod Cluster/ });
+      fireEvent.click(firstBtn);
+
+      await waitFor(() => expect(screen.queryAllByTestId('reconnect-banner')).toHaveLength(0));
+      expect(calls.filter((c) => c.cmd === 'server_connect').map((c) => c.args)).toEqual([{ accountId: 'a1', remoteId: 'c1' }]);
+      expect(calls.some((c) => c.cmd === 'connect_db')).toBe(false);
+      await waitFor(() =>
+        expect(calls.filter((c) => c.cmd === 'execute_mql_query').every((c) => c.args?.id === 'remote-conn-1')).toBe(true),
+      );
+    });
+
+    it('(b-server-mode) reconnecting a server profile restores the mode chosen for it', async () => {
+      const serverSnapshot = JSON.parse(
+        JSON.stringify(workspaceSnapshot).split('profile:p1').join('profile:server:a1:c1').split('"p1"').join('"server:a1:c1"'),
+      );
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'workspace_get') return Promise.resolve(serverSnapshot);
+        if (cmd === 'server_account_list') {
+          return Promise.resolve([{ id: 'a1', name: 'Work', url: 'https://s', tenant: 'acme', email: 'd@x.test', allowInsecureHttp: false, signedIn: true, connectionModes: { c1: 'read_only' } }]);
+        }
+        if (cmd === 'server_connect') return Promise.resolve({ id: 'remote-conn-1', mongoVersion: '8.0.0', opClasses: ['read'], mode: 'read_only' });
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+
+      const [firstBtn] = await screen.findAllByRole('button', { name: /Reconnect Prod Cluster/ });
+      fireEvent.click(firstBtn);
+
+      await waitFor(() =>
+        expect(calls.find((c) => c.cmd === 'set_connection_meta' && c.args?.id === 'remote-conn-1')?.args?.mode).toBe('read_only'),
+      );
+    });
+
+    it('(b-server-signin) a server profile that needs a sign-in offers one, in the connection manager', async () => {
+      const serverSnapshot = JSON.parse(
+        JSON.stringify(workspaceSnapshot).split('profile:p1').join('profile:server:a1:c1').split('"p1"').join('"server:a1:c1"'),
+      );
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'workspace_get') return Promise.resolve(serverSnapshot);
+        if (cmd === 'server_connect') return Promise.reject('Sign in to the MQLens Server account "Work" first');
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+
+      const [firstBtn] = await screen.findAllByRole('button', { name: /Reconnect Prod Cluster/ });
+      fireEvent.click(firstBtn);
+      const [signIn] = await screen.findAllByRole('button', { name: 'Sign in…' });
+      fireEvent.click(signIn);
+
+      expect(await screen.findByTestId('mock-cm-server-accounts')).toBeInTheDocument();
+    });
+
+    it('(b-server-blocked) tells the sidebar what a server connection cannot run', async () => {
+      const server = { accountId: 'a1', accountName: 'Work', serverUrl: 'https://s', remoteId: 'c1', opClasses: ['read'], blockedCommands: ['start_dump_task'] };
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'connection_list') {
+          return Promise.resolve([
+            { id: 'remote-1', profileId: 'server:a1:c1', name: 'Orders', viaMcp: false, server },
+            { id: 'local-1', profileId: 'p9', name: 'Local', viaMcp: false },
+          ]);
+        }
+        return Promise.resolve([]);
+      });
+
+      renderWithProviders(<App />);
+
+      expect(await screen.findByTestId('mock-sidebar-dump-blocked-remote-1')).toBeInTheDocument();
+      expect(screen.queryByTestId('mock-sidebar-dump-blocked-local-1')).not.toBeInTheDocument();
+    });
+
+    it('(b-server-shell) a server connection without the shell says so instead of starting one', async () => {
+      const server = { accountId: 'a1', accountName: 'Work', serverUrl: 'https://s', remoteId: 'c1', opClasses: ['read'], blockedCommands: ['start_mongosh_session'] };
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'connection_list') {
+          return Promise.resolve([{ id: 'remote-1', profileId: 'server:a1:c1', name: 'Orders', viaMcp: false, server }]);
+        }
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      fireEvent.click(await screen.findByTestId('mock-open-shell-remote-1'));
+
+      expect(await screen.findByText('The shell is not available on MQLens Server yet.')).toBeInTheDocument();
+      expect(mockInvoke).not.toHaveBeenCalledWith('start_mongosh_session', expect.anything());
+    });
+
+    it('(b-server-shell-role) a shell the role rules out says the role is why', async () => {
+      const server = { accountId: 'a1', accountName: 'Work', serverUrl: 'https://s', remoteId: 'c1', opClasses: ['read'], blockedCommands: ['start_mongosh_session'], roleBlockedCommands: ['start_mongosh_session'] };
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'connection_list') {
+          return Promise.resolve([{ id: 'remote-1', profileId: 'server:a1:c1', name: 'Orders', viaMcp: false, server }]);
+        }
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      fireEvent.click(await screen.findByTestId('mock-open-shell-remote-1'));
+
+      expect(await screen.findByText('Your role on this MQLens Server connection does not allow this.')).toBeInTheDocument();
+      expect(mockInvoke).not.toHaveBeenCalledWith('start_mongosh_session', expect.anything());
     });
 
     it('(b2) reconnecting a profile sends its saved OIDC config to connect_db (#430)', async () => {
@@ -5046,19 +5759,17 @@ describe('App Component', () => {
         fireEvent.click(screen.getByTestId('select-collection-btn'));
         expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
 
+        fireEvent.pointerDown(screen.getByTestId('bulk-write-menu-btn'), { button: 0, pointerType: 'mouse' });
         fireEvent.click(screen.getByTestId('delete-many-btn'));
         expect(await screen.findByTestId('dialog-confirm')).toHaveTextContent('Löschen');
         fireEvent.click(screen.getByTestId('dialog-cancel'));
 
+        fireEvent.pointerDown(screen.getByTestId('bulk-write-menu-btn'), { button: 0, pointerType: 'mouse' });
         fireEvent.click(screen.getByTestId('update-many-btn'));
         expect(
           await screen.findByText('Dokument aktualisieren (Operatoren, z. B. {"$set": {...}}):'),
         ).toBeInTheDocument();
-        fireEvent.change(screen.getByTestId('dialog-input'), {
-          target: { value: '{"$set":{"tier":"Gold"}}' },
-        });
-        fireEvent.click(screen.getByTestId('dialog-confirm'));
-        expect(await screen.findByTestId('dialog-confirm')).toHaveTextContent('Aktualisieren');
+        expect(screen.getByTestId('update-many-submit')).toHaveTextContent('Aktualisieren');
       } finally {
         await i18next.changeLanguage('en');
       }
@@ -5192,5 +5903,259 @@ describe('quick-connect toast translates OIDC error keys (#430)', () => {
       expect(screen.getByText(/Could not connect to Prod Cluster: The login was cancelled\./)).toBeInTheDocument();
     });
     expect(screen.queryByText(/auth\.oidc\.errors\.cancelled/)).not.toBeInTheDocument();
+  });
+});
+
+describe('tab shortcuts', () => {
+  const tasksAndActivity = {
+    revision: 1,
+    windows: [
+      {
+        id: 'main',
+        focusedPaneId: 'pane-1',
+        splitTree: { kind: 'pane', id: 'pane-1', tabIds: ['tasks', 'activity'], activeTabId: 'activity' },
+      },
+    ],
+    tabs: [
+      { id: 'tasks', type: 'tasks', profileId: '', profileName: '', db: '', collection: '' },
+      { id: 'activity', type: 'activity', profileId: '', profileName: '', db: '', collection: '' },
+    ],
+  };
+
+  const appliedOps = () =>
+    mockInvoke.mock.calls
+      .filter(([cmd]) => cmd === 'workspace_apply')
+      .map(([, args]) => (args as { op: Record<string, unknown> }).op);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    eventListeners.clear();
+    resetUpdateTabStateDebounce();
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'load_app_settings') return Promise.resolve({});
+      if (cmd === 'workspace_get') return Promise.resolve(tasksAndActivity);
+      return Promise.resolve([]);
+    });
+  });
+
+  async function renderRestored() {
+    renderWithProviders(<App />);
+    await screen.findByTestId('tab-content-activity');
+  }
+
+  it('Ctrl+W closes the active tab, not the window', async () => {
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    await renderRestored();
+
+    fireEvent.keyDown(window, { key: 'w', code: 'KeyW', ctrlKey: true });
+
+    await waitFor(() => expect(screen.queryByTestId('tab-content-activity')).not.toBeInTheDocument());
+    expect(appliedOps()).toContainEqual(expect.objectContaining({ type: 'close_tab', tab_id: 'activity' }));
+    expect(screen.getByTestId('tab-content-tasks')).toBeInTheDocument();
+  });
+
+  it('the native menu tab-command closes the active tab too', async () => {
+    const { waitFor } = await import('@testing-library/react');
+    await renderRestored();
+
+    fireMockEvent('tab-command', 'close-tab');
+
+    await waitFor(() => expect(screen.queryByTestId('tab-content-activity')).not.toBeInTheDocument());
+  });
+
+  it('Ctrl+Shift+T reopens the tab Ctrl+W closed', async () => {
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    await renderRestored();
+
+    fireEvent.keyDown(window, { key: 'w', code: 'KeyW', ctrlKey: true });
+    await waitFor(() => expect(screen.queryByTestId('tab-content-activity')).not.toBeInTheDocument());
+    fireEvent.keyDown(window, { key: 'T', code: 'KeyT', ctrlKey: true, shiftKey: true });
+
+    expect(await screen.findByTestId('tab-content-activity')).toBeInTheDocument();
+    expect(appliedOps()).toContainEqual(
+      expect.objectContaining({ type: 'open_tab', tab_id: 'activity', tab: expect.objectContaining({ type: 'activity' }) })
+    );
+  });
+
+  it('Ctrl+1 and Ctrl+Tab switch tabs in the focused pane', async () => {
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    await renderRestored();
+
+    fireEvent.keyDown(window, { key: '1', code: 'Digit1', ctrlKey: true });
+    await waitFor(() =>
+      expect(appliedOps()).toContainEqual(expect.objectContaining({ type: 'set_active', tab_id: 'tasks' }))
+    );
+
+    fireEvent.keyDown(window, { key: 'Tab', code: 'Tab', ctrlKey: true });
+    await waitFor(() =>
+      expect(appliedOps().filter((op) => op.type === 'set_active').at(-1)).toMatchObject({ tab_id: 'activity' })
+    );
+  });
+
+  it('Ctrl+Shift+W is not bound: it closes neither the tab nor the window', async () => {
+    const { fireEvent } = await import('@testing-library/react');
+    await renderRestored();
+
+    fireEvent.keyDown(window, { key: 'W', code: 'KeyW', ctrlKey: true, shiftKey: true });
+
+    expect(appliedOps()).not.toContainEqual(expect.objectContaining({ type: 'close_tab' }));
+    expect(screen.getByTestId('tab-content-activity')).toBeInTheDocument();
+  });
+
+  it('Close Other Tabs feeds the closed-tab history too', async () => {
+    const { fireEvent, within, waitFor } = await import('@testing-library/react');
+    await renderRestored();
+
+    const tabStrip = screen.getByTestId('workspace-tab-strip');
+    fireEvent.contextMenu((await within(tabStrip).findByText('Tasks')).closest('div')!);
+    fireEvent.click(await screen.findByText('Close Other Tabs'));
+    await waitFor(() => expect(screen.queryByTestId('tab-content-activity')).not.toBeInTheDocument());
+
+    fireEvent.keyDown(window, { key: 'T', code: 'KeyT', ctrlKey: true, shiftKey: true });
+    expect(await screen.findByTestId('tab-content-activity')).toBeInTheDocument();
+  });
+
+  describe('a session-restored tab closed before it reconnected', () => {
+    const disconnected = {
+      revision: 1,
+      windows: [
+        {
+          id: 'main',
+          focusedPaneId: 'pane-1',
+          splitTree: {
+            kind: 'pane',
+            id: 'pane-1',
+            tabIds: ['profile:p1.sales_db.customers', 'profile:p1.sales_db.orders'],
+            activeTabId: 'profile:p1.sales_db.orders',
+          },
+        },
+      ],
+      tabs: ['customers', 'orders'].map((collection) => ({
+        id: `profile:p1.sales_db.${collection}`,
+        type: 'collection',
+        profileId: 'p1',
+        profileName: 'Prod Cluster',
+        db: 'sales_db',
+        collection,
+      })),
+    };
+
+    beforeEach(() => {
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'load_app_settings') return Promise.resolve({});
+        if (cmd === 'workspace_get') return Promise.resolve(disconnected);
+        if (cmd === 'load_connection_profiles') {
+          return Promise.resolve([{ id: 'p1', name: 'Prod Cluster', uri: 'mongodb://prod', ssh: null }]);
+        }
+        if (cmd === 'connect_db') return Promise.resolve('new-conn-1');
+        return Promise.resolve([]);
+      });
+    });
+
+    async function closeOrders() {
+      const { fireEvent, waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('tab-content-profile:p1.sales_db.orders');
+      fireEvent.keyDown(window, { key: 'w', code: 'KeyW', ctrlKey: true });
+      await waitFor(() =>
+        expect(screen.queryByTestId('tab-content-profile:p1.sales_db.orders')).not.toBeInTheDocument()
+      );
+    }
+
+    it('comes back with its Reconnect banner, persisted under its profile', async () => {
+      const { fireEvent, within } = await import('@testing-library/react');
+      await closeOrders();
+
+      fireEvent.keyDown(window, { key: 'T', code: 'KeyT', ctrlKey: true, shiftKey: true });
+
+      const content = await screen.findByTestId('tab-content-profile:p1.sales_db.orders');
+      expect(within(content).getByTestId('reconnect-banner')).toBeInTheDocument();
+      expect(appliedOps()).toContainEqual(expect.objectContaining({
+        type: 'open_tab',
+        tab_id: 'profile:p1.sales_db.orders',
+        tab: expect.objectContaining({ profileId: 'p1', profileName: 'Prod Cluster' }),
+      }));
+      expect(mockInvoke).not.toHaveBeenCalledWith('execute_mql_query', expect.anything());
+    });
+
+    it('comes back live when its profile reconnected in the meantime', async () => {
+      const { fireEvent, waitFor } = await import('@testing-library/react');
+      await closeOrders();
+      fireEvent.click(screen.getByRole('button', { name: /Reconnect Prod Cluster/ }));
+      await screen.findByTestId('tab-content-new-conn-1.sales_db.customers');
+
+      fireEvent.keyDown(window, { key: 'T', code: 'KeyT', ctrlKey: true, shiftKey: true });
+
+      expect(await screen.findByTestId('tab-content-new-conn-1.sales_db.orders')).toBeInTheDocument();
+      await waitFor(() =>
+        expect(mockInvoke).toHaveBeenCalledWith('execute_mql_query', expect.objectContaining({ id: 'new-conn-1', collection: 'orders' }))
+      );
+      expect(screen.queryByTestId('tab-content-profile:p1.sales_db.orders')).not.toBeInTheDocument();
+    });
+
+    it.each([
+      ['does not repeat a $out pipeline', { $out: 'orders_archive' }, false],
+      ['does not repeat a $merge pipeline', { $merge: { into: 'orders_archive' } }, false],
+      ['reruns a read-only pipeline', { $limit: 10 }, true],
+    ])('%s when it comes back, with the pipeline kept in the builder', async (_name, lastStage, reruns) => {
+      const { fireEvent, waitFor, within } = await import('@testing-library/react');
+      const withPipeline = {
+        ...disconnected,
+        tabs: disconnected.tabs.map((tab) =>
+          tab.collection === 'orders' ? { ...tab, lastAggregate: [{ $match: { status: 'closed' } }, lastStage] } : tab
+        ),
+      };
+      const base = mockInvoke.getMockImplementation()!;
+      mockInvoke.mockImplementation((cmd: string, args?: unknown) =>
+        cmd === 'workspace_get' ? Promise.resolve(withPipeline) : base(cmd, args)
+      );
+      await closeOrders();
+      fireEvent.click(screen.getByRole('button', { name: /Reconnect Prod Cluster/ }));
+      await screen.findByTestId('tab-content-new-conn-1.sales_db.customers');
+      fireEvent.keyDown(window, { key: 'T', code: 'KeyT', ctrlKey: true, shiftKey: true });
+
+      const content = await screen.findByTestId('tab-content-new-conn-1.sales_db.orders');
+      const lastStageOp = within(content).getByTestId('pipeline-stage-1').querySelector('select')!;
+      expect(lastStageOp).toHaveValue(Object.keys(lastStage)[0]);
+      const ordersRun = (cmd: string) => () =>
+        expect(mockInvoke).toHaveBeenCalledWith(cmd, expect.objectContaining({ collection: 'orders' }));
+      await waitFor(ordersRun(reruns ? 'execute_aggregate' : 'execute_mql_query'));
+      if (!reruns) {
+        expect(mockInvoke).not.toHaveBeenCalledWith('execute_aggregate', expect.objectContaining({ collection: 'orders' }));
+      }
+    });
+  });
+
+  it('keeps no results, plan or draft for a closed tab', () => {
+    const tab = {
+      id: 'c1.db.coll', type: 'collection', connectionId: 'c1', db: 'db', collection: 'coll',
+      results: [{ _id: 1 }], loading: false, error: 'boom', explainResult: '{}',
+      lastQuery: { filter: '{"a":1}', sort: '{}', projection: '{}', limit: 50, skip: 0 },
+      documentEdit: { mode: 'edit' }, pagerRequest: { limit: 50, skip: 0, revision: 1 },
+      totalCount: 9, countLoading: false, estimated: true, initialShellCommand: 'db.dropDatabase()',
+      columnWidths: { a: 120 },
+    } as unknown as QueryTab;
+
+    const snapshot = closedTabSnapshot(tab);
+
+    expect(Object.keys(snapshot).sort()).toEqual(
+      ['collection', 'columnWidths', 'connectionId', 'db', 'id', 'lastQuery', 'type']
+    );
+  });
+
+  it('closing the lone Quick Start tab in main is a no-op', async () => {
+    const { fireEvent } = await import('@testing-library/react');
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'load_app_settings') return Promise.resolve({});
+      if (cmd === 'workspace_get') return Promise.resolve(null);
+      return Promise.resolve([]);
+    });
+    renderWithProviders(<App />);
+    await screen.findByTestId('quickstart-tab');
+
+    fireEvent.keyDown(window, { key: 'w', code: 'KeyW', ctrlKey: true });
+
+    expect(appliedOps()).not.toContainEqual(expect.objectContaining({ type: 'close_tab' }));
+    expect(screen.getByTestId('quickstart-tab')).toBeInTheDocument();
   });
 });

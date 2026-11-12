@@ -288,8 +288,13 @@ pub fn build_restore_args(o: &RestoreOptions) -> Result<Vec<String>, String> {
 
 /// Redact the password component of a MongoDB connection string, if any.
 /// `mongodb://user:pass@host` -> `mongodb://user:***@host`. Leaves the URI
-/// unchanged when there is no userinfo or no password.
+/// unchanged when there is no userinfo or no password. Secret options
+/// (`proxyPassword`, client-key passphrases) are redacted too.
 pub fn redact_uri_password(uri: &str) -> String {
+    crate::audit::redact::redact_secret_uri_options(&redact_userinfo_password(uri), false)
+}
+
+fn redact_userinfo_password(uri: &str) -> String {
     let scheme_end = match uri.find("://") {
         Some(idx) => idx + 3,
         None => return uri.to_string(),
@@ -633,6 +638,9 @@ pub fn parse_tool_progress(line: &str) -> Option<ToolProgress> {
 /// `connect_db_impl` for a real connection. Mock connections are never
 /// inserted into `conn_uris`, so they — and unknown ids — fail here.
 pub fn resolve_conn_uri(state: &AppState, id: &str) -> Result<String, String> {
+    if state.server.remote(id)?.is_some() {
+        return Err(crate::server::remote::NOT_SERVED.to_string());
+    }
     let conn_uris = state.conn_uris.lock_safe()?;
     conn_uris
         .get(id)
@@ -654,28 +662,28 @@ fn require_real_conn_uri(state: &AppState, id: &str) -> Result<String, String> {
     resolve_conn_uri(state, id)
 }
 
-fn basename(path: &str) -> String {
+pub(crate) fn basename(path: &str) -> String {
     std::path::Path::new(path)
         .file_name()
         .map(|f| f.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.to_string())
 }
 
-fn dump_destination(target: &DumpTarget) -> &str {
+pub(crate) fn dump_destination(target: &DumpTarget) -> &str {
     match target {
         DumpTarget::Folder { out } => out,
         DumpTarget::Archive { file } => file,
     }
 }
 
-fn restore_source_path(source: &RestoreSource) -> &str {
+pub(crate) fn restore_source_path(source: &RestoreSource) -> &str {
     match source {
         RestoreSource::Folder { dir } => dir,
         RestoreSource::Archive { file } => file,
     }
 }
 
-fn dump_scope_desc(scope: &DumpScope) -> String {
+pub(crate) fn dump_scope_desc(scope: &DumpScope) -> String {
     match scope {
         DumpScope::Server => "server".to_string(),
         DumpScope::Db { db } => db.clone(),
@@ -959,6 +967,10 @@ pub async fn start_dump_task_impl(
     tool_path: &str,
     options: DumpOptions,
 ) -> Result<TaskInfo, String> {
+    // On MQLens Server the server runs mongodump.
+    if let Some(conn) = state.server.remote(id)? {
+        return crate::server::ops::tools::start_dump(state, conn, options).await;
+    }
     let uri = require_real_conn_uri(state, id)?;
     let tunneled = state.ssh_tunnels.lock_safe()?.contains_key(id);
     let args = build_dump_args(&options)?;
@@ -1032,6 +1044,10 @@ async fn start_restore_task_inner(
     options: RestoreOptions,
 ) -> Result<TaskInfo, String> {
     guard_writable(state, id, WriteOp::RestoreWrite, false)?;
+    // On MQLens Server the server runs mongorestore.
+    if let Some(conn) = state.server.remote(id)? {
+        return crate::server::ops::tools::start_restore(state, conn, options).await;
+    }
 
     let uri = require_real_conn_uri(state, id)?;
     let tunneled = state.ssh_tunnels.lock_safe()?.contains_key(id);
@@ -1496,6 +1512,23 @@ mod tests {
 
     #[test]
     fn redacts_password_only_when_present() {
+        // Inside one URI only the option separators end a value.
+        assert_eq!(
+            redact_uri_password("mongodb://h/?tlsCertificateKeyFilePassword=a)b'c`d\"e&w=1"),
+            "mongodb://h/?tlsCertificateKeyFilePassword=***&w=1"
+        );
+        assert_eq!(
+            redact_uri_password("mongodb://h/?sslCertificateKeyFilePassword=kp"),
+            "mongodb://h/?sslCertificateKeyFilePassword=***"
+        );
+        assert_eq!(
+            redact_uri_password("mongodb://h/?tls=true&tlsCertificateKeyFilePassword=kp&proxyPassword=pp&appName=x"),
+            "mongodb://h/?tls=true&tlsCertificateKeyFilePassword=***&proxyPassword=***&appName=x"
+        );
+        assert_eq!(
+            redact_uri_password("mongodb://alice:pw@h/?sslPEMKeyPassword=kp"),
+            "mongodb://alice:***@h/?sslPEMKeyPassword=***"
+        );
         assert_eq!(
             redact_uri_password("mongodb://alice:s3cr3t@host:27017/db?x=1"),
             "mongodb://alice:***@host:27017/db?x=1"

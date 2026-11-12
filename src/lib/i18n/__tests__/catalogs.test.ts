@@ -36,6 +36,7 @@ const ALLOWED_IDENTICAL_VALUES = new Set([
   // Product / brand names
   'common:appName', // MQLens
   'settings:tools.dbToolsTitle', // MongoDB Database Tools
+  'connections:serverAccounts.title', // MQLens Server
   // Established German loanwords (identical spelling in both languages)
   'common:ok', // OK — universal loanword, never translated in German software UI
   'settings:appearance.system', // System
@@ -45,6 +46,9 @@ const ALLOWED_IDENTICAL_VALUES = new Set([
   'sidebar:footer.themeLabel', // Theme
   'settings:mcp.port', // Port
   'settings:ai.providerName', // Name — identical in German
+  'connections:serverAccounts.name', // Name — identical in German
+  'sidebar:indexesView.columns.name', // Name — identical in German
+  'sidebar:connection.serverBadge', // Server
   'settings:updates.resultValues.offline', // Offline — established loanword, matches shell:updatePrompt.toast.offline's "offline" usage
   'settings:tools.tabLabel', // Tools
   'shell:watch.status.running', // live — the loanword German uses for a running stream too
@@ -57,7 +61,8 @@ const ALLOWED_IDENTICAL_VALUES = new Set([
   'sidebar:tree.collectionsLabel', // Collections
   'sidebar:tree.viewsLabel', // Views
   'documents:dataGrid.explain.labels.collectionNode', // Collection\n{{namespace}}
-  'documents:dataGrid.explain.labels.collectionFallback', // Collection
+  'documents:dataGrid.labels.utc', // UTC — universal time-zone abbreviation
+  'documents:dataGrid.explain.stats.ms', // {{n}} ms — SI unit symbol, same in German
   'admin:statsCards.collStats.collection', // Collection:
   'admin:statsCards.dbStats.labels.collections', // Collections
   'admin:statsCards.dbStats.labels.views', // Views
@@ -85,6 +90,8 @@ const ALLOWED_IDENTICAL_VALUES = new Set([
   'settings:mcp.tabLabel', // MCP
   'connections:filePicker.jsonFilter', // JSON
   'documents:dataGrid.viewModes.json', // JSON
+  'documents:schemaView.export.json', // JSON
+  'documents:schemaView.export.markdown', // Markdown
   'connections:form.uriBadge', // URI
   'connections:tabs.tls', // TLS / SSL
   'connections:auth.methodScram1', // SCRAM-SHA-1

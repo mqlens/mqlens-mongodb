@@ -32,8 +32,12 @@ export interface PromptRequest {
   confirmLabel?: string;
   cancelLabel?: string;
   validate?: (value: string) => string | null;
+  confirmEnabled?: (value: string) => boolean;
+  destructive?: boolean;
   /** Render a multi-line textarea instead of a single-line input. */
   multiline?: boolean;
+  /** Mask the input, for a password. */
+  password?: boolean;
 }
 
 export interface ChooseRequest {
@@ -70,7 +74,9 @@ export const DialogModal: React.FC<DialogModalProps> = ({ request, onResolve }) 
 
   const submitPrompt = () => {
     const r = request as PromptRequest;
-    const trimmed = value.trim();
+    if (r.confirmEnabled && !r.confirmEnabled(value)) return;
+    // A password is taken as typed: spaces at either end can be part of it.
+    const trimmed = r.password ? value : value.trim();
     const err = r.validate ? r.validate(trimmed) : null;
     if (err) {
       setError(err);
@@ -122,8 +128,9 @@ export const DialogModal: React.FC<DialogModalProps> = ({ request, onResolve }) 
                   rows={5}
                   placeholder={request.placeholder}
                   onChange={(e) => {
-                    setValue(e.target.value);
-                    if (error) setError(null);
+                    const next = e.target.value;
+                    setValue(next);
+                    setError(request.confirmEnabled && request.validate ? request.validate(next) : null);
                   }}
                   onKeyDown={(e) => {
                     // Cmd/Ctrl+Enter submits; plain Enter inserts a newline.
@@ -136,13 +143,15 @@ export const DialogModal: React.FC<DialogModalProps> = ({ request, onResolve }) 
               ) : (
                 <Input
                   ref={inputRef as React.RefObject<HTMLInputElement>}
+                  type={request.password ? 'password' : 'text'}
                   className="dialog-input"
                   data-testid="dialog-input"
                   value={value}
                   placeholder={request.placeholder}
                   onChange={(e) => {
-                    setValue(e.target.value);
-                    if (error) setError(null);
+                    const next = e.target.value;
+                    setValue(next);
+                    setError(request.confirmEnabled && request.validate ? request.validate(next) : null);
                   }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
@@ -194,12 +203,11 @@ export const DialogModal: React.FC<DialogModalProps> = ({ request, onResolve }) 
               <Button
                 ref={confirmRef}
                 type="button"
-                variant={
-                  request.type === 'confirm' && request.destructive ? 'destructive' : 'default'
-                }
+                disabled={request.type === 'prompt' && request.confirmEnabled?.(value) === false}
+                variant={request.destructive ? 'destructive' : 'default'}
                 className={cn(
                   'dialog-btn',
-                  request.type === 'confirm' && request.destructive
+                  request.destructive
                     ? 'dialog-btn--destructive'
                     : 'dialog-btn--primary',
                 )}

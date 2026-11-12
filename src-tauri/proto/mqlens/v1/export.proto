@@ -1,0 +1,18 @@
+syntax = "proto3";
+package mqlens.v1;
+option go_package = "github.com/mqlens/mqlens-server/gen/mqlens/v1;mqlensv1";
+
+service ExportService {
+  rpc ExportCollection(ExportRequest) returns (stream ExportChunk);
+}
+
+message ExportRequest {
+  string connection_id = 1;
+  string database = 2;
+  string collection = 3;
+  string filter_json = 4;
+  string format = 5; // "jsonl" | "csv"
+}
+message ExportChunk {
+  bytes data = 1;
+}

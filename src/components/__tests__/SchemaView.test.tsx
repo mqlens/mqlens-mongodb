@@ -1,10 +1,31 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { SchemaView } from '../SchemaView';
 
 const mockInvoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: (...args: any[]) => mockInvoke(...args),
+}));
+const mockSave = vi.fn();
+vi.mock('@tauri-apps/plugin-dialog', () => ({
+  save: (...args: any[]) => mockSave(...args),
+}));
+const mockWriteTextFile = vi.fn();
+vi.mock('@tauri-apps/plugin-fs', () => ({
+  writeTextFile: (...args: any[]) => mockWriteTextFile(...args),
+}));
+
+// Monaco does not render under jsdom.
+vi.mock('../QueryEditor', () => ({
+  QueryEditor: ({
+    value,
+    onChange,
+    'data-testid': testId,
+  }: {
+    value: string;
+    onChange: (v: string) => void;
+    'data-testid'?: string;
+  }) => <textarea data-testid={testId} value={value} onChange={(e) => onChange(e.target.value)} />,
 }));
 
 describe('SchemaView (M6)', () => {
@@ -48,18 +69,164 @@ describe('SchemaView (M6)', () => {
       database: 'shop',
       collection: 'products',
       sampleSize: 1000,
+      first: false,
     });
   });
 
+  it('re-samples with the chosen size and mode', async () => {
+    mockInvoke.mockResolvedValue(JSON.stringify(report));
+    render(<SchemaView connectionId="c1" databaseName="shop" collectionName="products" />);
+    fireEvent.change(await screen.findByTestId('schema-sample-size'), { target: { value: '250' } });
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenLastCalledWith('analyze_schema', expect.objectContaining({ sampleSize: 250, first: false }))
+    );
+    fireEvent.change(await screen.findByTestId('schema-sample-mode'), { target: { value: 'first' } });
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenLastCalledWith('analyze_schema', expect.objectContaining({ sampleSize: 250, first: true }))
+    );
+  });
+
+  it("shows a field's top values when its row is clicked", async () => {
+    const withValues = {
+      sampled: 4,
+      fields: [
+        {
+          path: 'tier',
+          types: [{ type: 'string', count: 4 }],
+          presence: 4,
+          coverage: 1,
+          enumValues: ['Gold', 'Silver'],
+          enumCounts: { Gold: 1, Silver: 3 },
+        },
+      ],
+    };
+    mockInvoke.mockResolvedValue(JSON.stringify(withValues));
+    render(<SchemaView connectionId="c1" databaseName="shop" collectionName="customers" />);
+    const toggle = await screen.findByRole('button', { name: 'tier' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    const values = screen.getByTestId('schema-values-tier');
+    expect(values).toHaveTextContent(/Silver.*3.*75%.*Gold.*1.*25%/);
+    fireEvent.click(toggle);
+    expect(screen.queryByTestId('schema-values-tier')).not.toBeInTheDocument();
+  });
+
+  it('exports the schema as JSON or Markdown', async () => {
+    mockInvoke.mockResolvedValue(JSON.stringify(report));
+    mockSave.mockResolvedValueOnce('C:/out/products.schema.json').mockResolvedValueOnce('C:/out/products.schema.md');
+    render(<SchemaView connectionId="c1" databaseName="shop" collectionName="products" />);
+
+    fireEvent.click(await screen.findByTestId('schema-export-json'));
+    await waitFor(() => expect(mockWriteTextFile).toHaveBeenCalledTimes(1));
+    expect(mockSave).toHaveBeenLastCalledWith(expect.objectContaining({ defaultPath: 'shop.products.schema.json' }));
+    expect(JSON.parse(mockWriteTextFile.mock.calls[0][1])).toEqual(report);
+    expect(mockWriteTextFile.mock.calls[0][0]).toBe('C:/out/products.schema.json');
+
+    fireEvent.click(screen.getByTestId('schema-export-md'));
+    await waitFor(() => expect(mockWriteTextFile).toHaveBeenCalledTimes(2));
+    expect(mockWriteTextFile.mock.calls[1][0]).toBe('C:/out/products.schema.md');
+    expect(mockWriteTextFile.mock.calls[1][1]).toMatch(/^# Schema of shop.products/);
+  });
+
+  it('writes nothing when the export dialog is cancelled', async () => {
+    mockInvoke.mockResolvedValue(JSON.stringify(report));
+    mockSave.mockResolvedValue(null);
+    render(<SchemaView connectionId="c1" databaseName="shop" collectionName="products" />);
+    fireEvent.click(await screen.findByTestId('schema-export-json'));
+    await waitFor(() => expect(mockSave).toHaveBeenCalled());
+    expect(mockWriteTextFile).not.toHaveBeenCalled();
+  });
+
   it('shows an error state when analysis fails', async () => {
-    mockInvoke.mockRejectedValue('Sampling failed: boom');
+    mockInvoke.mockImplementation((cmd: string) =>
+      cmd === 'analyze_schema'
+        ? Promise.reject('Sampling failed: boom')
+        : Promise.resolve({ validator: '{}', validationLevel: '', validationAction: '' })
+    );
     render(<SchemaView connectionId="c1" databaseName="shop" collectionName="products" />);
     expect(await screen.findByText(/Sampling failed/)).toBeInTheDocument();
+  });
+
+  it('shows the validation rules editor in the Validation Rules tab', async () => {
+    mockInvoke.mockImplementation((cmd: string) =>
+      cmd === 'get_collection_options'
+        ? Promise.resolve({ validator: '{}', validationLevel: '', validationAction: '' })
+        : Promise.resolve(JSON.stringify(report))
+    );
+    render(<SchemaView connectionId="c1" databaseName="shop" collectionName="products" />);
+
+    fireEvent.mouseDown(await screen.findByTestId('schema-tab-validation'), { button: 0 });
+
+    expect(await screen.findByTestId('validation-rules-view')).toBeInTheDocument();
+    expect(screen.queryByText(/coming soon/i)).toBeNull();
+    expect(mockInvoke).toHaveBeenCalledWith('get_collection_options', {
+      id: 'c1',
+      database: 'shop',
+      collection: 'products',
+    });
+  });
+
+  it('keeps a validator draft across a switch to Field Analysis and back', async () => {
+    mockInvoke.mockImplementation((cmd: string) =>
+      cmd === 'get_collection_options'
+        ? Promise.resolve({ validator: '{}', validationLevel: '', validationAction: '' })
+        : Promise.resolve(JSON.stringify(report))
+    );
+    render(<SchemaView connectionId="c1" databaseName="shop" collectionName="products" />);
+    fireEvent.mouseDown(await screen.findByTestId('schema-tab-validation'), { button: 0 });
+    const editor = (await screen.findByTestId('validation-editor')) as HTMLTextAreaElement;
+    fireEvent.change(editor, { target: { value: '{"draft":1}' } });
+
+    fireEvent.mouseDown(screen.getByTestId('schema-tab-fields'), { button: 0 });
+    fireEvent.mouseDown(screen.getByTestId('schema-tab-validation'), { button: 0 });
+
+    expect((screen.getByTestId('validation-editor') as HTMLTextAreaElement).value).toBe('{"draft":1}');
+    expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === 'get_collection_options')).toHaveLength(1);
+  });
+
+  it('keeps a validator draft while the fields are sampled again', async () => {
+    mockInvoke.mockImplementation((cmd: string) =>
+      cmd === 'get_collection_options'
+        ? Promise.resolve({ validator: '{}', validationLevel: '', validationAction: '' })
+        : Promise.resolve(JSON.stringify(report))
+    );
+    render(<SchemaView connectionId="c1" databaseName="shop" collectionName="products" />);
+    fireEvent.mouseDown(await screen.findByTestId('schema-tab-validation'), { button: 0 });
+    fireEvent.change(await screen.findByTestId('validation-editor'), { target: { value: '{"draft":1}' } });
+
+    fireEvent.change(screen.getByTestId('schema-sample-size'), { target: { value: '250' } });
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith('analyze_schema', expect.objectContaining({ sampleSize: 250 }))
+    );
+
+    expect((await screen.findByTestId('validation-editor') as HTMLTextAreaElement).value).toBe('{"draft":1}');
+    expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === 'get_collection_options')).toHaveLength(1);
   });
 
   it('shows an empty state when the collection has no documents', async () => {
     mockInvoke.mockResolvedValue(JSON.stringify({ sampled: 0, fields: [] }));
     render(<SchemaView connectionId="c1" databaseName="shop" collectionName="empty" />);
-    expect(await screen.findByText(/empty/i)).toBeInTheDocument();
+    expect(await screen.findByText(/nothing to analyze/i)).toBeInTheDocument();
+  });
+
+  it('hides the validation rules where the connection may not set them', async () => {
+    mockInvoke.mockResolvedValue(JSON.stringify(report));
+    render(<SchemaView connectionId="c1" databaseName="shop" collectionName="products" validationBlocked />);
+    expect(await screen.findByTestId('schema-tab-fields')).toBeInTheDocument();
+    expect(screen.queryByTestId('schema-tab-validation')).toBeNull();
+    expect(screen.queryByTestId('validation-rules-view')).toBeNull();
+    expect(mockInvoke).not.toHaveBeenCalledWith('get_collection_options', expect.anything());
+  });
+
+  it('still offers the validation rules for an empty collection', async () => {
+    mockInvoke.mockImplementation((cmd: string) =>
+      cmd === 'get_collection_options'
+        ? Promise.resolve({ validator: '{}', validationLevel: '', validationAction: '' })
+        : Promise.resolve(JSON.stringify({ sampled: 0, fields: [] }))
+    );
+    render(<SchemaView connectionId="c1" databaseName="shop" collectionName="empty" />);
+    fireEvent.mouseDown(await screen.findByTestId('schema-tab-validation'), { button: 0 });
+    expect(await screen.findByTestId('validation-rules-view')).toBeInTheDocument();
   });
 });

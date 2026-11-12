@@ -24,7 +24,7 @@ import {
 } from '../mongo';
 import { parseExactJson } from '../numeric';
 import { buildFieldUpdate, parseProjection } from '../projection';
-import type { Doc } from '../seed';
+import type { Doc, IndexSeed } from '../seed';
 import type { Collection, CollectionQueries, E2EState, Server } from '../state';
 import { recordTask } from '../tasks';
 import { duplicateIndexKey, duplicateKey, parallelArrays, parallelArraysOver } from '../unique';
@@ -46,6 +46,38 @@ const normalizeQueryLimit = (limit: number) => (limit <= 0 ? 100 : Math.min(limi
  * The backend takes filters, sorts and pipelines as JSON strings; blank means
  * "none". An integer past 2^53 stays exact, as serde_json reads it.
  */
+/** The document listIndexes gives for an index. */
+const indexDocument = (index: IndexSeed): Doc => ({
+  v: 2,
+  key: index.keys,
+  name: index.name,
+  ...(index.unique ? { unique: true } : {}),
+  ...(index.sparse ? { sparse: true } : {}),
+  ...(index.expireAfterSeconds === undefined ? {} : { expireAfterSeconds: index.expireAfterSeconds }),
+  ...index.options,
+});
+
+/** Keys and options as MongoDB stores them: a text index moves under `_fts`, with its fields in `weights`. */
+function asListed(keys: Doc, options: Doc): Pick<IndexSeed, 'keys' | 'options'> {
+  const fields = Object.keys(keys).filter((field) => keys[field] === 'text' && field !== '_fts');
+  if (fields.length === 0) return { keys, options };
+  return {
+    keys: Object.fromEntries(
+      Object.entries(keys).flatMap(([field, type]): [string, unknown][] => {
+        if (type !== 'text') return [[field, type]];
+        return field === fields[0] ? [['_fts', 'text'], ['_ftsx', 1]] : [];
+      })
+    ),
+    options: {
+      default_language: 'english',
+      language_override: 'language',
+      textIndexVersion: 3,
+      ...options,
+      weights: { ...Object.fromEntries(fields.map((field) => [field, 1])), ...(options.weights as Doc | undefined) },
+    },
+  };
+}
+
 function parseJson<T>(value: unknown, fallback: T, what: string): T {
   if (value === undefined || value === null) return fallback;
   if (typeof value !== 'string') return value as T;
@@ -174,13 +206,10 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
       name: conn.name,
       viaMcp: false,
       mode: conn.mode,
+      ...(conn.server ? { server: conn.server } : {}),
     }));
 
-  // A human OIDC login (#430) that `test_connection_uri` or `connect_db` is waiting on, keyed
-  // by `loginId`. This fake can't observe a real browser or socket, so it
-  // never completes a login on its own — it only ever answers Cancel, which
-  // is all the e2e suite here exercises (Rust tests cover the real listener).
-  const pendingOidcLogins = new Map<string, () => void>();
+  const { pendingOidcLogins } = state;
 
   /**
    * Write an aggregation's results the way its final `$out` or `$merge` stage
@@ -365,6 +394,23 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
       send({ phase: 'ping', status: 'ok' });
       return null;
     },
+    // The editor's Discover button: the seeded server's replica set, as its
+    // `hello` reply would describe it.
+    discover_replica_set: ({ uri }) => {
+      const key = serverKeyFor(state, String(uri));
+      if (!key) throw `no server answers at ${String(uri)}`;
+      const replSet = state.monitoring[key]?.replSet as { isReplicaSet?: boolean; set?: string; members?: { name: string }[] } | undefined;
+      if (!replSet?.isReplicaSet) return { set_name: null, hosts: [], arbiters: [] };
+      return { set_name: replSet.set, hosts: (replSet.members ?? []).map((m) => m.name), arbiters: [] };
+    },
+    // Export's SRV -> seed list: every SRV name resolves to three shards.
+    resolve_srv_seed_list: ({ uri }) => {
+      const m = String(uri).match(/^mongodb\+srv:\/\/([^/?]*@)?([^/?]+)(\/[^?]*)?/i);
+      if (!m) throw `not an SRV URI: ${String(uri)}`;
+      const hosts = [0, 1, 2].map((i) => `shard-0${i}.${m[2]}:27017`).join(',');
+      return `mongodb://${m[1] ?? ''}${hosts}${m[3] || '/'}?tls=true`;
+    },
+    forget_oidc_login: () => undefined,
     cancel_oidc_login: ({ loginId }) => {
       const cancel = pendingOidcLogins.get(String(loginId));
       pendingOidcLogins.delete(String(loginId));
@@ -661,33 +707,81 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
 
     // Indexes
     list_indexes: ({ id, db, collection: coll }) => [
-      { name: '_id_', keys: JSON.stringify({ _id: 1 }), unique: true, sparse: false },
+      {
+        name: '_id_',
+        keys: JSON.stringify({ _id: 1 }),
+        unique: true,
+        sparse: false,
+        spec: JSON.stringify({ v: 2, key: { _id: 1 }, name: '_id_', unique: true }),
+      },
       ...collection(id, db, coll).indexes.map((index) => ({
         name: index.name,
         keys: JSON.stringify(index.keys),
         unique: Boolean(index.unique),
         sparse: Boolean(index.sparse),
+        ...(index.expireAfterSeconds === undefined ? {} : { expireAfterSeconds: index.expireAfterSeconds }),
+        ...(index.options?.hidden ? { hidden: true } : {}),
+        ...(index.options?.partialFilterExpression === undefined
+          ? {}
+          : { partialFilterExpression: JSON.stringify(index.options.partialFilterExpression) }),
+        spec: JSON.stringify(indexDocument(index)),
       })),
     ],
-    create_index: ({ id, database: db, collection: coll, indexName, keys, unique, sparse }) => {
+    create_index: ({ id, database: db, collection: coll, spec }) => {
       guardWritable(state, id);
       const found = collection(id, db, coll);
-      const name = String(indexName);
+      const { key, name, unique, sparse, expireAfterSeconds, ...rest } = parseJson<Doc>(spec, {}, 'index document');
       const mock = isMock(state, id);
       const exists = found.indexes.some((index) => index.name === name);
       // The sample server keeps its own list of indexes, which this adds to; a name it already has stays as it is.
       if (exists && mock) return null;
-      if (exists) throw `Index already exists: ${name}`;
-      const parsedKeys = parseJson<Doc>(keys, {}, 'index keys');
+      if (exists) throw `Index already exists: ${String(name)}`;
+      const parsedKeys = key as Doc;
       // MongoDB won't build a compound index over a document with parallel
       // arrays, or a unique index over documents that already share a key.
       if (!mock) {
         const clash =
           parallelArraysOver(parsedKeys, found.docs) ??
-          (unique ? duplicateIndexKey(`${String(db)}.${String(coll)}`, name, parsedKeys, found.docs, Boolean(sparse)) : null);
+          (unique ? duplicateIndexKey(`${String(db)}.${String(coll)}`, String(name), parsedKeys, found.docs, Boolean(sparse)) : null);
         if (clash) throw `Failed to create index: ${clash}`;
       }
-      found.indexes.push({ name, keys: parsedKeys, unique: Boolean(unique), sparse: Boolean(sparse) });
+      found.indexes.push({
+        name: String(name),
+        unique: Boolean(unique),
+        sparse: Boolean(sparse),
+        ...(typeof expireAfterSeconds === 'number' ? { expireAfterSeconds } : {}),
+        ...asListed(parsedKeys, rest),
+      });
+      return null;
+    },
+    // collMod on a TTL index: only its expiry changes.
+    set_index_expiry: ({ id, database: db, collection: coll, indexName, expireAfterSeconds }) => {
+      guardWritable(state, id);
+      const index = collection(id, db, coll).indexes.find((each) => each.name === indexName);
+      if (index?.expireAfterSeconds === undefined) throw `Index ${String(indexName)} has no TTL to change`;
+      index.expireAfterSeconds = Number(expireAfterSeconds);
+      return null;
+    },
+    // collMod on an index option, with MongoDB's own refusals.
+    set_index_option: ({ id, database: db, collection: coll, indexName, option, value }) => {
+      guardWritable(state, id);
+      const found = collection(id, db, coll);
+      const index = found.indexes.find((each) => each.name === indexName);
+      if (!index) throw `Failed to change the index: index not found with name [${String(indexName)}]`;
+      const options = (index.options ??= {});
+      if (option === 'unique') {
+        if (!options.prepareUnique) {
+          throw "Failed to change the index: Cannot make index unique with 'prepareUnique=false'. Run collMod to set it first.";
+        }
+        if (duplicateIndexKey(`${String(db)}.${String(coll)}`, index.name, index.keys, found.docs, Boolean(index.sparse))) {
+          throw 'Failed to change the index: Cannot convert the index to unique. Please resolve conflicting documents before running collMod again.';
+        }
+        index.unique = true;
+      } else if (value) {
+        options[String(option)] = true;
+      } else {
+        delete options[String(option)];
+      }
       return null;
     },
     delete_index: ({ id, database: db, collection: coll, indexName }) => {

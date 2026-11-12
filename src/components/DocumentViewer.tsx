@@ -11,6 +11,7 @@ import {
   saveQuery,
   deleteSavedQuery,
   setDefaultQuery,
+  QUERIES_CHANGED_EVENT,
   type SavedQuery,
   type HistoryEntry,
 } from '../lib/queryStore';
@@ -225,6 +226,10 @@ interface DocumentViewerProps {
   onOpenShell?: (command: string) => void;
   onOpenExport?: () => void;
   onImport?: () => void;
+  /** Explain cannot run on this connection (a server connection); the explain controls do nothing. */
+  explainBlocked?: boolean;
+  /** Aggregation cannot run on this connection (a server connection); its mode is not offered. */
+  aggregateBlocked?: boolean;
   loading: boolean;
   availableFields?: string[];
   /** Restored when remounting this tab's viewer (see App tab cache). */
@@ -582,6 +587,8 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   onOpenShell,
   onOpenExport,
   onImport,
+  explainBlocked,
+  aggregateBlocked,
   loading,
   availableFields = [],
   initialBuilderState = DEFAULT_BUILDER_STATE,
@@ -660,8 +667,12 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
     }
   }, [storeKey, databaseName, collectionName]);
 
+  // Runs are recorded by App, not here, so follow the store's change event too.
   useEffect(() => {
     refreshStoredQueries();
+    const onChange = () => { refreshStoredQueries(); };
+    window.addEventListener(QUERIES_CHANGED_EVENT, onChange);
+    return () => window.removeEventListener(QUERIES_CHANGED_EVENT, onChange);
   }, [refreshStoredQueries]);
 
   // Query mode: traditional find vs aggregate pipeline
@@ -669,8 +680,12 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   const [stages, setStages] = useState<PipelineStage[]>(initialBuilderState.stages);
   const [optionsOpen, setOptionsOpen] = useState<boolean | undefined>(initialBuilderState.optionsOpen);
 
+  // The parent passes a new arrow on every render, and each report is mirrored
+  // to the backend. Reading it through a ref reports changes to the state only.
+  const onBuilderStateChangeRef = useRef(onBuilderStateChange);
+  onBuilderStateChangeRef.current = onBuilderStateChange;
   useEffect(() => {
-    onBuilderStateChange?.({
+    onBuilderStateChangeRef.current?.({
       queryMode,
       filterQuery,
       sortQuery,
@@ -680,7 +695,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
       stages,
       optionsOpen,
     });
-  }, [queryMode, filterQuery, sortQuery, projectionQuery, limit, skip, stages, optionsOpen, onBuilderStateChange]);
+  }, [queryMode, filterQuery, sortQuery, projectionQuery, limit, skip, stages, optionsOpen]);
 
   // AI chat assistant. Open/close is per TAB (App owns it, so two tabs on one
   // collection can differ), but it also seeds from — and writes through to —
@@ -1418,6 +1433,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   };
 
   const handleExplain = async () => {
+    if (explainBlocked) return;
     setError(null);
     setExplainLoading(true);
     try {
@@ -1589,7 +1605,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                   <Play size={11} />
                   {td('documentViewer.actions.runQuery')}
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={handleExplain}>
+                <DropdownMenuItem onClick={handleExplain} disabled={explainBlocked}>
                   <Cpu size={11} />
                   {td('documentViewer.actions.runExplain')}
                 </DropdownMenuItem>
@@ -1743,6 +1759,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-[180px]">
               <DropdownMenuItem
+                disabled={!onOpenShell}
                 onClick={() => {
                   const shellCommand = buildShellCommand();
                   onOpenShell?.(shellCommand);
@@ -1867,6 +1884,8 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
               <button
                 type="button"
                 data-testid="mode-aggregate-tab"
+                disabled={aggregateBlocked}
+                title={aggregateBlocked ? td('common:notOnServer') : undefined}
                 onClick={() => setQueryMode('aggregate')}
                 className={cn(
                   'border-b-2 px-3 py-1.5 text-[11.5px] font-semibold transition-colors',

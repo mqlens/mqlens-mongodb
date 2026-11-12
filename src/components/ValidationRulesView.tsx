@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { ShieldCheck, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { ShieldCheck, Loader2, AlertCircle, CheckCircle2, Wand2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import {
@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/select';
 import { QueryEditor } from './QueryEditor';
 import { useTranslation } from 'react-i18next';
+import { validatorFromSchemaReport, type SchemaReport } from '@/lib/schemaReport';
 
 interface ValidationRulesViewProps {
   connectionId: string;
@@ -19,6 +20,8 @@ interface ValidationRulesViewProps {
   collectionName: string;
   /** Called after a successful `set_validator` apply. */
   onApplied: () => void;
+  /** Whether the connection may sample the collection, which Generate needs. */
+  canSample?: boolean;
 }
 
 interface CollectionValidationUi {
@@ -34,6 +37,7 @@ export const ValidationRulesView: React.FC<ValidationRulesViewProps> = ({
   databaseName,
   collectionName,
   onApplied,
+  canSample = true,
 }) => {
   const { t } = useTranslation('admin');
   const [validator, setValidator] = useState('{}');
@@ -42,6 +46,8 @@ export const ValidationRulesView: React.FC<ValidationRulesViewProps> = ({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const [valid, setValid] = useState(false);
+  const [generating, setGenerating] = useState(false);
   const [applying, setApplying] = useState(false);
 
   useEffect(() => {
@@ -71,23 +77,60 @@ export const ValidationRulesView: React.FC<ValidationRulesViewProps> = ({
     };
   }, [connectionId, databaseName, collectionName]);
 
-  const handleApply = async () => {
+  const editValidator = (v: string) => {
+    setValidator(v);
+    setSuccess(false);
+    setValid(false);
+  };
+
+  /** Clears the messages; returns false (and shows why) if the text can't be applied. */
+  const checkValidator = (): boolean => {
     setError(null);
     setSuccess(false);
+    setValid(false);
     const trimmed = validator.trim();
-    if (trimmed) {
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(trimmed);
-      } catch (e: any) {
-        setError(t('validationRulesView.errors.invalidValidatorJson', { message: e?.message || t('validationRulesView.errors.syntaxErrorFallback') }));
-        return;
-      }
-      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-        setError(t('validationRulesView.errors.mustBeObject'));
-        return;
-      }
+    if (!trimmed) return true;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch (e: any) {
+      setError(t('validationRulesView.errors.invalidValidatorJson', { message: e?.message || t('validationRulesView.errors.syntaxErrorFallback') }));
+      return false;
     }
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      setError(t('validationRulesView.errors.mustBeObject'));
+      return false;
+    }
+    return true;
+  };
+
+  // The editor stays editable while sampling; the result only fills it if
+  // nothing was typed in the meantime.
+  const validatorRef = useRef(validator);
+  validatorRef.current = validator;
+
+  const handleGenerate = async () => {
+    setError(null);
+    setGenerating(true);
+    const before = validatorRef.current;
+    try {
+      const json = await invoke<string>('analyze_schema', {
+        id: connectionId,
+        database: databaseName,
+        collection: collectionName,
+        sampleSize: 1000,
+      });
+      if (validatorRef.current !== before) return;
+      editValidator(JSON.stringify(validatorFromSchemaReport(JSON.parse(json) as SchemaReport), null, 2));
+    } catch (err: any) {
+      setError(String(err?.message || err));
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const handleApply = async () => {
+    if (!checkValidator()) return;
 
     setApplying(true);
     try {
@@ -126,10 +169,7 @@ export const ValidationRulesView: React.FC<ValidationRulesViewProps> = ({
             <QueryEditor
               surface="filter"
               value={validator}
-              onChange={(v) => {
-                setValidator(v);
-                setSuccess(false);
-              }}
+              onChange={editValidator}
               fields={['_id']}
               height={220}
               data-testid="validation-editor"
@@ -192,6 +232,16 @@ export const ValidationRulesView: React.FC<ValidationRulesViewProps> = ({
             </div>
           )}
 
+          {valid && !error && (
+            <div
+              className="flex items-center gap-2 font-mono text-xs text-success"
+              data-testid="validation-valid"
+            >
+              <CheckCircle2 size={13} className="flex-shrink-0" />
+              <span>{t('validationRulesView.success.valid')}</span>
+            </div>
+          )}
+
           {success && !error && (
             <div
               className="flex items-center gap-2 font-mono text-xs text-success"
@@ -202,7 +252,28 @@ export const ValidationRulesView: React.FC<ValidationRulesViewProps> = ({
             </div>
           )}
 
-          <div>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              data-testid="validation-check-btn"
+              onClick={() => setValid(checkValidator())}
+            >
+              {t('validationRulesView.actions.validate')}
+            </Button>
+            {canSample && (
+            <Button
+              type="button"
+              variant="outline"
+              className="gap-1.5"
+              data-testid="validation-generate-btn"
+              onClick={handleGenerate}
+              disabled={generating}
+            >
+              <Wand2 size={13} />
+              {generating ? t('validationRulesView.actions.generating') : t('validationRulesView.actions.generate')}
+            </Button>
+            )}
             <Button
               type="button"
               data-testid="validation-apply-btn"

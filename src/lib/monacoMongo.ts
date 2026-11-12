@@ -1,8 +1,10 @@
 import type { Monaco } from '@monaco-editor/react';
-import { getCompletions, type Surface, type CompletionKind } from './mongoCompletions';
+import { getCompletions, inQuote, openQuote, type Surface, type CompletionKind } from './mongoCompletions';
 import type { SchemaMap } from './useCollectionSchema';
 
-interface ModelMeta { surface: Surface; getFields: () => string[]; getSchema: () => SchemaMap | undefined; getCollections?: () => string[]; getStageOperator?: () => string | undefined; getShellSyntax?: () => boolean | undefined; }
+// The getters get the editor's text up to the cursor, and may answer later.
+type Lookup<T> = (textBeforeCursor: string) => T;
+interface ModelMeta { surface: Surface; getFields: Lookup<string[]>; getSchema: Lookup<SchemaMap | undefined>; getCollections?: () => string[]; getStageOperator?: () => string | undefined; getShellSyntax?: () => boolean | undefined; /** True while a lookup is still loading, so Monaco asks again as the user types. */ isIncomplete?: () => boolean; }
 const modelMeta = new Map<string, ModelMeta>();
 let registered = false;
 
@@ -29,21 +31,19 @@ export function registerMongoCompletionProvider(monaco: Monaco) {
   // Drop the DOM library from the JS language service so the mongosh editor
   // doesn't suggest browser types (Headers, HTMLElement, …). Keep core
   // JavaScript (ES) + our Mongo completions only.
-  const ts = (monaco.languages as unknown as { typescript?: any }).typescript;
-  if (ts?.javascriptDefaults) {
-    const d = ts.javascriptDefaults;
-    d.setCompilerOptions({ ...d.getCompilerOptions(), lib: ['es2020'], allowNonTsExtensions: true });
-  }
+  //
+  // The language services are top-level namespaces (`monaco.typescript`,
+  // `monaco.json`). Monaco 0.55 also aliased them under `monaco.languages`;
+  // 0.56 dropped the alias, and reading it then quietly configured nothing.
+  const d = monaco.typescript.javascriptDefaults;
+  d.setCompilerOptions({ ...d.getCompilerOptions(), lib: ['es2020'], allowNonTsExtensions: true });
 
   // Belt-and-braces: also disable the built-in JSON language completions
   // ($schema, etc.) in case any editor still uses JSON mode. The query editors
   // themselves now run in JavaScript mode with diagnostics turned off (see
   // QueryEditor), since query text is mongosh-style, not strict JSON.
-  const json = (monaco.languages as unknown as { json?: any }).json;
-  if (json?.jsonDefaults) {
-    const jd = json.jsonDefaults;
-    jd.setModeConfiguration({ ...jd.modeConfiguration, completionItems: false });
-  }
+  const jd = monaco.json.jsonDefaults;
+  jd.setModeConfiguration({ ...jd.modeConfiguration, completionItems: false });
 
   const provider = {
     // Word-starting characters: '.' (db.<coll>, field paths), '$' (operators),
@@ -64,23 +64,42 @@ export function registerMongoCompletionProvider(monaco: Monaco) {
       });
       // In the query surfaces a dotted field path (usage.total) is ONE token, so
       // a half-typed nested key like "usage.to" matches and replaces the whole
-      // path. The shell surface keeps db.coll.method segmented (dot-free token).
-      const token = textBeforeCursor.match(meta.surface === 'shell' ? /[\w$]*$/ : /[\w$.]*$/)?.[0] ?? '';
+      // path. The shell surface keeps db.coll.method segmented (dot-free token),
+      // except inside a quoted key, where the dot is part of the path.
+      const segmented = meta.surface === 'shell' && !inQuote(textBeforeCursor);
+      const token = textBeforeCursor.match(segmented ? /[\w$]*$/ : /[\w$.]*$/)?.[0] ?? '';
+      const textUpToCursor: string = model.getValueInRange({
+        startLineNumber: 1, startColumn: 1, endLineNumber: position.lineNumber, endColumn: position.column,
+      });
+      const fields = meta.getFields(textUpToCursor);
+      const schema = meta.getSchema(textUpToCursor);
+      // A shell query often spans lines (`find({` above, `ti` here), so the
+      // shell's context comes from all the text before the cursor; the token
+      // and its range stay on this line.
       const items = getCompletions({
-        surface: meta.surface, textBeforeCursor, textAfterCursor, token,
-        fields: meta.getFields(), schema: meta.getSchema(), collections: meta.getCollections?.(),
+        surface: meta.surface, textAfterCursor, token,
+        textBeforeCursor: meta.surface === 'shell' ? textUpToCursor : textBeforeCursor,
+        fields, schema, collections: meta.getCollections?.(),
         stageOperator: meta.getStageOperator?.(), shellSyntax: meta.getShellSyntax?.(),
       });
       const range = {
         startLineNumber: position.lineNumber, endLineNumber: position.lineNumber,
         startColumn: position.column - token.length, endColumn: position.column,
       };
+      // Typing `"` makes Monaco auto-insert the closing one after the cursor. An
+      // item that closes the quote itself (`city": "value"`) replaces that one
+      // too, or the text ends up with `""`.
+      const quote = openQuote(textBeforeCursor);
+      const autoClosed = quote !== null && textAfterCursor.startsWith(quote);
+      const rangeFor = (insertText: string) =>
+        autoClosed && insertText.includes(quote) ? { ...range, endColumn: range.endColumn + 1 } : range;
       return {
+        incomplete: meta.isIncomplete?.() ?? false,
         // sortText preserves getCompletions' intentional order (e.g. the
         // schema-matched EJSON wrapper first) against Monaco's default sort.
         suggestions: items.map((it, idx) => ({
           label: it.label, kind: kindToMonaco(monaco, it.kind),
-          insertText: it.insertText, detail: it.detail, range,
+          insertText: it.insertText, detail: it.detail, range: rangeFor(it.insertText),
           sortText: String(idx).padStart(4, '0'),
           insertTextRules: it.isSnippet
             ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet

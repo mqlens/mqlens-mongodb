@@ -3,7 +3,7 @@ import { Trans, useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { relaunch } from '@tauri-apps/plugin-process';
-import { Download, X, RefreshCw, CheckCircle2, AlertTriangle, ArrowUpCircle, WifiOff } from 'lucide-react';
+import { Download, X, RefreshCw, CheckCircle2, AlertTriangle, ArrowUpCircle, WifiOff, Sparkles } from 'lucide-react';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { Button } from '@/components/ui/button';
 import {
@@ -361,5 +361,60 @@ export const UpdatePrompt: React.FC = () => {
         )}
       </DialogContent>
     </Dialog>
+  );
+};
+
+export const LAST_SEEN_VERSION_KEY = 'mqlens-last-seen-version';
+
+/**
+ * A one-time "updated to X" notice. A fresh install only records its version;
+ * the notice shows on the first launch of a version newer than the one recorded.
+ */
+export const WhatsNew: React.FC<{ version: string }> = ({ version }) => {
+  const { t } = useTranslation('shell');
+  const [shown, setShown] = useState(false);
+
+  useEffect(() => {
+    if (!version) return;
+    let lastSeen: string | null = null;
+    try {
+      lastSeen = localStorage.getItem(LAST_SEEN_VERSION_KEY);
+      localStorage.setItem(LAST_SEEN_VERSION_KEY, version);
+    } catch {
+      /* storage blocked: nothing to compare against */
+    }
+    setShown(lastSeen !== null && lastSeen !== version);
+  }, [version]);
+
+  if (!shown) return null;
+  const notesUrl = `https://github.com/mqlens/mqlens-mongodb/releases/tag/mqlens-v${version}`;
+  return (
+    <div
+      className="fixed bottom-4 right-4 z-50 flex items-center gap-2 rounded-lg border border-border bg-card px-4 py-2.5 text-sm shadow-lg"
+      data-testid="whats-new"
+    >
+      <Sparkles size={14} className="text-primary" />
+      {t('updatePrompt.whatsNew.message', { version })}
+      <a
+        href={notesUrl}
+        className="font-medium text-primary underline-offset-2 hover:underline"
+        onClick={(e) => {
+          e.preventDefault();
+          void openUrl(notesUrl);
+        }}
+      >
+        {t('updatePrompt.whatsNew.link')}
+      </a>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className="ml-1 h-6 w-6"
+        onClick={() => setShown(false)}
+        aria-label={t('updatePrompt.toast.dismiss')}
+      >
+        <X size={12} />
+      </Button>
+    </div>
   );
 };

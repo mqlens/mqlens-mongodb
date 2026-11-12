@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import ts from 'typescript';
+// TypeScript 7 (the native compiler) has no JS API; its parser lives on in
+// Microsoft's TypeScript 6 API package.
+import ts from '@typescript/typescript6';
 
 /**
  * i18n coverage gate.
@@ -129,6 +131,14 @@ const EXEMPT_HITS: Record<string, string[]> = {
     // OIDC allowed-hosts example (#430) — a hostname the user would type, not
     // instructional prose; same treatment as the other example placeholders above.
     'placeholder="mongo.corp.example.com"',
+    // Replica set member rows, client certificate and Advanced tab examples:
+    // a host, port and path to type, and URI option syntax, not prose.
+    'placeholder="db1.example.com"',
+    'placeholder="27017"',
+    'placeholder="/path/to/client.pem"',
+    "placeholder={'dc:ny,rack:1\\n{}'}",
+    'placeholder="majority"',
+    'placeholder="maxConnecting=2&zlibCompressionLevel=6"',
     // Stored profile default value, not UI copy (see the source comment at
     // its definition) — it is written straight into connection state and
     // must never be a translated word (Global Constraint 1's "sammlung" bug).
@@ -218,6 +228,8 @@ const EXEMPT_HITS: Record<string, string[]> = {
     "label: 'BSON'",
   ],
   'src/components/IndexModal.tsx': [
+    // A commit quorum MongoDB itself names, typed as it is.
+    'placeholder="votingMembers"',
     // Example index-keys JSON syntax, matching CreateViewView's pipeline example.
     'placeholder=\'{ "',
   ],
@@ -345,6 +357,12 @@ const EXEMPT_HITS: Record<string, string[]> = {
   'src/lib/clusterHealth.ts': [
     // A backtick-quoted `new URL` inside a JSDoc comment, read as a template
     // literal — the comment blindness this file's header warns about.
+  ],
+  'src/lib/schemaExport.ts': [
+    // The exported Markdown schema file is a portable document, kept in
+    // English like the generated code queryCodeGen.ts writes.
+    '# Schema of ${namespace}',
+    'Sampled ${report.sampled} documents.',
   ],
   'src/lib/generateTemplate.ts': [
     // The GEN_KIND_TOKENS DSL's own field token, matching the `$name`

@@ -65,6 +65,25 @@ describe('DocumentDiffModal', () => {
     expect(screen.getByTestId('diff-right')).not.toHaveTextContent('NumberLong');
   });
 
+  it('compares and renders BSON numeric wrappers without losing precision', () => {
+    const numericLeft = {
+      long: { $numberLong: '9007199254740993' },
+      int: { $numberInt: '7' },
+      double: { $numberDouble: '2.5' },
+    };
+    const numericRight = {
+      ...numericLeft,
+      long: { $numberLong: '9007199254740992' },
+    };
+    render(<DocumentDiffModal isOpen left={numericLeft} right={numericRight} onClose={() => {}} />);
+
+    expect(screen.getByTestId('diff-left')).toHaveTextContent('NumberLong(9007199254740993)');
+    expect(screen.getByTestId('diff-right')).toHaveTextContent('NumberLong(9007199254740992)');
+    expect(screen.getByTestId('diff-left')).toHaveTextContent('NumberInt(7)');
+    expect(screen.getByTestId('diff-left')).toHaveTextContent('Double(2.5)');
+    expect(screen.getByTestId('diff-summary')).toHaveTextContent('1 changed');
+  });
+
   it('renders a nested-object preview instead of "[object Object]" on a scalar<->container change', () => {
     const scalarLeft = { x: 1 };
     const containerRight = { x: { y: 2 } };

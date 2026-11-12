@@ -3,6 +3,7 @@ import React, { type ReactElement } from 'react';
 import { render as rtlRender, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { DocumentViewer, DocumentViewerContext, builderStateToQuery } from '../DocumentViewer';
 import { DialogProvider } from '../dialogs/DialogProvider';
+import { recordHistory } from '@/lib/queryStore';
 
 const render = (ui: ReactElement) => rtlRender(<DialogProvider>{ui}</DialogProvider>);
 
@@ -786,6 +787,46 @@ describe('DocumentViewer Component', () => {
     expect(mockOnExplain).toHaveBeenCalledWith('{}');
   });
 
+  it('does not offer aggregation where it is blocked', () => {
+    render(
+      <DocumentViewer
+        connectionName="test-conn"
+        databaseName="test-db"
+        collectionName="test-coll"
+        onExecute={mockOnExecute}
+        onExecuteAggregate={mockOnExecuteAggregate}
+        onExplain={mockOnExplain}
+        aggregateBlocked
+        loading={false}
+      />
+    );
+
+    expect(screen.getByTestId('mode-aggregate-tab')).toBeDisabled();
+  });
+
+  it('does not explain where explain is blocked', async () => {
+    const { DataGrid } = await import('../DataGrid');
+    render(
+      <DocumentViewer
+        connectionName="test-conn"
+        databaseName="test-db"
+        collectionName="test-coll"
+        onExecute={mockOnExecute}
+        onExplain={mockOnExplain}
+        explainBlocked
+        loading={false}
+      >
+        <DataGrid documents={[]} explainResult={null} />
+      </DocumentViewer>
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('explain-plan-tab'));
+    });
+
+    expect(mockOnExplain).not.toHaveBeenCalled();
+  });
+
   it('toggles aggregation pipeline editor mode and adds/moves/deletes stages', async () => {
     render(
       <DocumentViewer
@@ -1132,6 +1173,24 @@ describe('DocumentViewer query persistence (H1)', () => {
     vi.clearAllMocks();
   });
 
+  it('reports the builder state when it changes, not on every parent re-render', () => {
+    // App passes a new arrow each render. Each report is mirrored to the
+    // backend (update_tab_state), so an unrelated re-render must not send one.
+    const props = { connectionName: 'Local', databaseName: 'sales_db', collectionName: 'customers', onExecute, onExplain, loading: false };
+    const first = vi.fn();
+    const { rerender } = render(<DocumentViewer {...props} onBuilderStateChange={(s) => first(s)} />);
+    const second = vi.fn();
+    rerender(
+      <DialogProvider>
+        <DocumentViewer {...props} onBuilderStateChange={(s) => second(s)} />
+      </DialogProvider>
+    );
+    expect(second).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId('mode-aggregate-tab'));
+    expect(second).toHaveBeenCalledWith(expect.objectContaining({ queryMode: 'aggregate' }));
+  });
+
   it('saves the current query via save_query (H1)', async () => {
     const calls: any[] = [];
     mockInvoke.mockImplementation((cmd: string, args: any) => {
@@ -1226,6 +1285,40 @@ describe('DocumentViewer query persistence (H1)', () => {
       const input = screen.getByTestId('query-filter-input') as HTMLTextAreaElement;
       expect(input.value).toContain('"age"');
     });
+  });
+
+  it('shows a run recorded after mount in the history dropdown', async () => {
+    let history: unknown[] = [];
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      if (cmd === 'load_collection_queries') {
+        return Promise.resolve({ saved: [], history, default: null });
+      }
+      if (cmd === 'record_history') history = [args.entry];
+      return Promise.resolve(undefined);
+    });
+
+    render(
+      <DocumentViewer
+        connectionName="Local"
+        databaseName="sales_db"
+        collectionName="customers"
+        onExecute={onExecute}
+        onExecuteAggregate={onExecuteAggregate}
+        onExplain={onExplain}
+        loading={false}
+      />
+    );
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith('load_collection_queries', expect.anything())
+    );
+
+    // App records the run while this viewer is already mounted.
+    await act(() =>
+      recordHistory('Local', 'sales_db', 'customers', { queryType: 'find', filter: { age: 1 } })
+    );
+
+    fireEvent.click(screen.getByTestId('history-btn'));
+    expect(await screen.findByTestId('history-item-0')).toHaveTextContent('"age":1');
   });
 });
 

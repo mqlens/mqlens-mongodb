@@ -1,0 +1,139 @@
+// Server mode: MQLens Server accounts, sign-in, and connections made through a
+// server rather than straight to MongoDB.
+import { invoke } from '@tauri-apps/api/core';
+import type { ConnectionMode } from './connection';
+import type { ConnectionEntry } from '../workspace/workspaceStore';
+
+/** How an account signs in. `oidc` is through an identity provider, in the system browser. */
+export type AuthMethod = 'password' | 'oidc';
+
+/** An MQLens Server account as the backend shows it: never a token. */
+export interface ServerAccountView {
+  id: string;
+  name: string;
+  url: string;
+  tenant: string;
+  /** Empty for an `oidc` account until someone signs in: the server says who it is. */
+  email: string;
+  auth: AuthMethod;
+  allowInsecureHttp: boolean;
+  extraCaPem?: string | null;
+  signedIn: boolean;
+  /** The mode chosen for each of the account's server connections, by id; absent is normal. */
+  connectionModes?: Record<string, ConnectionMode>;
+  /** Set when an action half-succeeded, e.g. a session could not be ended on its server. */
+  warning?: string;
+}
+
+export interface ServerAccountInput {
+  /** Omitted for a new account. */
+  id?: string;
+  name: string;
+  url: string;
+  tenant: string;
+  email: string;
+  auth: AuthMethod;
+  allowInsecureHttp: boolean;
+  extraCaPem?: string | null;
+}
+
+/** One of the identity providers an account's tenant can sign in through. */
+export interface OidcProviderView {
+  id: string;
+  name: string;
+}
+
+export interface AccountDeleteResult {
+  deleted: boolean;
+  /** Whether the server confirmed the session ended; absent when there was none. */
+  sessionRevoked?: boolean | null;
+}
+
+export interface SignOutResult {
+  endedOnServer: boolean;
+}
+
+/** One of a server's connections: a reference and what the user may do there. */
+export interface RemoteConnectionView {
+  id: string;
+  name: string;
+  tags: string[];
+  deploymentKind: string;
+  opClasses: string[];
+}
+
+export interface ServerConnectResult {
+  /** The desktop connection id the server connection now has. */
+  id: string;
+  mongoVersion: string;
+  opClasses: string[];
+  /** The mode the accounts file holds for the connection: the one to open it in. */
+  mode: ConnectionMode;
+}
+
+/** What a connection-list entry carries for a connection made through a server. */
+export interface RemoteConnectionInfo {
+  accountId: string;
+  accountName: string;
+  serverUrl: string;
+  remoteId: string;
+  opClasses: string[];
+  /** The MQLens API version it speaks. */
+  apiVersion: number;
+  /** Commands the connection cannot run; the UI disables them. */
+  blockedCommands: string[];
+  /** Those of them that only the user's role rules out. */
+  roleBlockedCommands: string[];
+}
+
+export const listServerAccounts = () => invoke<ServerAccountView[]>('server_account_list');
+export const saveServerAccount = (account: ServerAccountInput) =>
+  invoke<ServerAccountView>('server_account_save', { account });
+export const deleteServerAccount = (id: string) =>
+  invoke<AccountDeleteResult>('server_account_delete', { id });
+export const signInToServer = (accountId: string, password: string) =>
+  invoke<ServerAccountView>('server_sign_in', { accountId, password });
+export const listOidcProviders = (accountId: string) =>
+  invoke<OidcProviderView[]>('server_oidc_providers', { accountId });
+/** Opens the system browser and waits for the sign-in; `loginId` names it to cancel or reopen. */
+export const signInThroughBrowser = (accountId: string, providerId: string, loginId: string) =>
+  invoke<ServerAccountView>('server_oidc_sign_in', { accountId, providerId, loginId });
+export const cancelOidcLogin = (loginId: string) => invoke<void>('cancel_oidc_login', { loginId });
+export const reopenOidcLogin = (loginId: string) => invoke<void>('reopen_oidc_login', { loginId });
+export const signOutOfServer = (accountId: string) =>
+  invoke<SignOutResult>('server_sign_out', { accountId });
+export const listServerConnections = (accountId: string) =>
+  invoke<RemoteConnectionView[]>('server_list_connections', { accountId });
+export const connectToServer = (accountId: string, remoteId: string) =>
+  invoke<ServerConnectResult>('server_connect', { accountId, remoteId });
+export const setServerConnectionMode = (accountId: string, remoteId: string, mode: ConnectionMode) =>
+  invoke<ServerAccountView>('server_connection_mode_set', { accountId, remoteId, mode });
+/** The mode `account` keeps for one of its server connections. */
+export const serverConnectionMode = (account: ServerAccountView | undefined, remoteId: string): ConnectionMode =>
+  account?.connectionModes?.[remoteId] ?? 'normal';
+
+const PREFIX = 'server:';
+
+/** The profile id a server connection is remembered by, for reconnecting. */
+export const serverProfileId = (accountId: string, remoteId: string) =>
+  `${PREFIX}${accountId}:${remoteId}`;
+
+/** The account and server connection behind a profile id, or null for a local one. */
+export function parseServerProfileId(
+  profileId: string
+): { accountId: string; remoteId: string } | null {
+  if (!profileId.startsWith(PREFIX)) return null;
+  const rest = profileId.slice(PREFIX.length);
+  const colon = rest.indexOf(':');
+  if (colon <= 0 || colon === rest.length - 1) return null;
+  return { accountId: rest.slice(0, colon), remoteId: rest.slice(colon + 1) };
+}
+
+export const isServerConnection = (entry: ConnectionEntry | undefined) => !!entry?.server;
+
+/** Whether `command` cannot run on this connection. Local connections block nothing. */
+export const isCommandBlocked = (entry: ConnectionEntry | undefined, command: string) =>
+  entry?.server?.blockedCommands.includes(command) ?? false;
+
+/** The monitoring view's reads: it is worth opening while any of them can run. */
+export const MONITORING_READS = ['server_status', 'repl_set_status', 'get_profiling_status'];

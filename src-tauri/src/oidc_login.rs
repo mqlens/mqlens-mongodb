@@ -124,12 +124,13 @@ pub struct HumanLogin<'a> {
     /// `prepare_human_login` knows the connection is OIDC. Only tests
     /// substitute one that also trusts a TEST-ONLY CA.
     pub http: Option<reqwest::Client>,
+    pub cache: Option<Arc<crate::oidc_cache::TokenCache>>,
 }
 
 impl<'a> HumanLogin<'a> {
     /// A login the user started and is watching: the system browser opens.
     pub fn interactive(config: Option<&'a OidcProfileConfig>, login_id: Option<String>, open: BrowserOpener) -> Self {
-        Self { config, login_id, open, http: None }
+        Self { config, login_id, open, http: None, cache: None }
     }
 
     /// For callers no human is watching: no browser ever opens.
@@ -1095,12 +1096,12 @@ mod tests {
     /// The tunnel path clears only the custom host list.
     #[test]
     fn a_tunnelled_login_keeps_the_id_token_option() {
-        let config = OidcProfileConfig { allowed_hosts: vec!["db.internal".into()], use_id_token: true };
+        let config = OidcProfileConfig { allowed_hosts: vec!["db.internal".into()], use_id_token: true, ..Default::default() };
         let uri = "mongodb://db.internal:27017/?authMechanism=MONGODB-OIDC&authSource=$external";
 
         let tunnelled = check_real_host_before_tunnel(uri, Some(&config)).expect("db.internal is allowed");
 
-        assert_eq!(tunnelled, OidcProfileConfig { allowed_hosts: vec![], use_id_token: true });
+        assert_eq!(tunnelled, OidcProfileConfig { allowed_hosts: vec![], use_id_token: true, ..Default::default() });
     }
 
     /// The driver checks allowed hosts before it ever calls back, so no

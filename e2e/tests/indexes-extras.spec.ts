@@ -124,10 +124,10 @@ test.describe('The index modal', () => {
     await raw.fill('{ "tier": 2 }');
     await expect(name).toHaveValue('tier_2');
 
-    // Every direction is 1 or -1.
+    // Every key is a direction or an index type.
     await name.fill('tier_idx');
     await save.click();
-    await expect(modal).toContainText('Index direction for "tier" must be 1 (Ascending) or -1 (Descending)');
+    await expect(modal).toContainText('Index type for "tier" must be 1, -1, "text", "2dsphere", "2d" or "hashed"');
 
     // A list of keys is not an index definition.
     await raw.fill('[1]');
@@ -143,9 +143,8 @@ test.describe('The index modal', () => {
     await raw.fill('{ "tier": -1 }');
     await save.click();
     await expect(modal).toHaveCount(0);
-    const args = (await app.calls('create_index'))[0].args as { indexName: string; keys: unknown };
-    expect(args.indexName).toBe('tier_idx');
-    expect(typeof args.keys === 'string' ? JSON.parse(args.keys) : args.keys).toEqual({ tier: -1 });
+    const args = (await app.calls('create_index'))[0].args as { spec: string };
+    expect(JSON.parse(args.spec)).toEqual({ key: { tier: -1 }, name: 'tier_idx' });
   });
 
   test('every key needs a field, and the index needs a name', async ({ app, page }) => {
@@ -166,6 +165,28 @@ test.describe('The index modal', () => {
     await name.fill('   ');
     await save.click();
     await expect(modal).toContainText('Index name is required');
+    expect(await app.calls('create_index')).toHaveLength(0);
+  });
+
+  test('a TTL index needs one field other than _id, and an expiry MongoDB can keep', async ({ app, page }) => {
+    const modal = page.getByTestId('index-modal');
+    const save = modal.getByTestId('save-index-btn');
+    await modal.getByTestId('ttl-checkbox').check();
+    await modal.getByTestId('ttl-seconds-input').fill('60');
+
+    // The key starts on _id.
+    await save.click();
+    await expect(modal).toContainText('A TTL index cannot be on _id');
+
+    await modal.getByTestId('index-key-field-0').selectOption('tier');
+    await modal.getByRole('button', { name: 'Add Index Key' }).click();
+    await save.click();
+    await expect(modal).toContainText('A TTL index must have exactly one key field');
+    await modal.getByTitle('Remove Key').nth(1).click();
+
+    await modal.getByTestId('ttl-seconds-input').fill('2147483648');
+    await save.click();
+    await expect(modal).toContainText('Expire after seconds must be a whole number from 0 to 2147483647');
     expect(await app.calls('create_index')).toHaveLength(0);
   });
 

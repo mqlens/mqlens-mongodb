@@ -33,6 +33,12 @@ export async function callFrom(app: App, cmd: string, action: () => Promise<unkn
   return (await app.calls(cmd))[before].args as Record<string, unknown>;
 }
 
+/** Confirm a destructive drop by typing the exact target name. */
+export async function confirmTypedName(page: Page, name: string): Promise<void> {
+  await page.getByTestId('dialog-input').fill(name);
+  await page.getByTestId('dialog-confirm').click();
+}
+
 /**
  * Replace the text of the Monaco editor inside `container`.
  *

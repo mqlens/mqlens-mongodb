@@ -166,6 +166,15 @@ test.describe('Query tools', () => {
     expect(JSON.parse(String(applied.filter))).toEqual({ tier: 'Standard' });
   });
 
+  test('a run shows up in the same tab\'s query history', async ({ app, page }) => {
+    await openCustomers(app, page);
+    await runFilter(page, '{ tier: "Standard" }');
+    await expect(view(page)).not.toContainText('Alice Smith');
+
+    await view(page).getByTestId('history-btn').click();
+    await expect(page.getByTestId('history-dropdown').getByText(/Standard/).first()).toBeVisible();
+  });
+
   test('query code is generated for every language', async ({ app, page }) => {
     await openCustomers(app, page);
     await runFilter(page, '{ tier: "Premium" }');
@@ -313,7 +322,7 @@ test.describe('Query tools', () => {
     const modal = page.getByTestId('index-modal');
     await expect(modal).toBeVisible();
     const created = await callFrom(app, 'create_index', () => modal.getByTestId('save-index-btn').click());
-    expect(typeof created.keys === 'string' ? JSON.parse(created.keys) : created.keys).toEqual({ tier: 1 });
+    expect(JSON.parse(String(created.spec)).key).toEqual({ tier: 1 });
   });
 
   test('creates a view from a pipeline and opens it', async ({ app, page }) => {

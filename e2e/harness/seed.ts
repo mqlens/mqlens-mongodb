@@ -13,6 +13,9 @@ export interface IndexSeed {
   keys: Record<string, unknown>;
   unique?: boolean;
   sparse?: boolean;
+  expireAfterSeconds?: number;
+  /** Every other field of the index document. */
+  options?: Doc;
 }
 
 export interface CollectionSeed {
@@ -33,6 +36,7 @@ export interface ProfileSeed {
   color_tag?: string | null;
   mcp_enabled?: boolean;
   connection_mode?: string;
+  ssh?: Record<string, unknown> | null;
 }
 
 /** What the monitoring commands report; any part left out comes from SAMPLE_MONITORING. */
@@ -44,6 +48,52 @@ export interface MonitoringSeed {
   /** Profiling level and slow threshold by database; a database not listed is off. */
   profiling?: Record<string, { level: number; slowMs: number }>;
   replSet?: Record<string, unknown>;
+}
+
+/** One of an MQLens Server's connections, as an account lists it. */
+export interface RemoteConnectionSeed {
+  id: string;
+  name: string;
+  tags?: string[];
+  deploymentKind?: string;
+  opClasses?: string[];
+  /** The seeded server, by URI, whose data the connection reads. */
+  server: string;
+  /**
+   * Commands the connection cannot run, as the backend reports them. The fake
+   * reports this list as given rather than deriving it from `opClasses`, so a
+   * seed keeps the two consistent: a read-only connection lists its writes.
+   */
+  blockedCommands?: string[];
+  /** Those of them the role rules out. */
+  roleBlockedCommands?: string[];
+  /** The MQLens API version the connection speaks; 9 by default. */
+  apiVersion?: number;
+}
+
+export interface ServerAccountSeed {
+  id: string;
+  name: string;
+  url: string;
+  tenant: string;
+  email: string;
+  auth?: 'password' | 'oidc';
+  allowInsecureHttp?: boolean;
+  extraCaPem?: string | null;
+  signedIn?: boolean;
+  /** When set, server_sign_in rejects any other password. */
+  password?: string;
+  /** What server_oidc_providers answers with. */
+  oidcProviders?: { id: string; name: string }[];
+  /** Who a browser sign-in signs in, at once. Unset, it waits until it is cancelled. */
+  oidcEmail?: string;
+  connections?: RemoteConnectionSeed[];
+  /** Signing out (or deleting while signed in) cannot confirm the session ended. */
+  signOutUnconfirmed?: boolean;
+  /** The warning server_account_save returns. */
+  saveWarning?: string;
+  /** The mode chosen for each server connection, by id; absent is normal. */
+  connectionModes?: Record<string, string>;
 }
 
 export interface McpSeed {
@@ -117,6 +167,8 @@ export interface Seed {
   vaultPassword?: string;
   settings?: Record<string, unknown>;
   profiles?: ProfileSeed[];
+  /** MQLens Server accounts; none by default. */
+  serverAccounts?: ServerAccountSeed[];
   /** A `PersistedWorkspace` to restore at startup; null or absent opens Quick Start. */
   workspace?: unknown;
   /** Servers the app can connect to, keyed by connection URI. */

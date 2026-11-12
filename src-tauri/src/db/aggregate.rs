@@ -109,12 +109,15 @@ async fn execute_aggregate_inner(
         return Err("Aggregation pipelines are not supported on mock connections".to_string());
     }
 
-    let client = {
-        let connections = state.connections.lock_safe()?;
-        connections
-            .get(id)
-            .cloned()
-            .ok_or_else(|| "Connection client not found".to_string())?
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            let writes = stages_val.iter().any(stage_is_disallowed);
+            return crate::server::ops::query::aggregate(
+                state, &conn, database, collection, &stages, writes,
+            )
+            .await;
+        }
     };
 
     let coll = client
@@ -123,6 +126,7 @@ async fn execute_aggregate_inner(
 
     let mut cursor = coll
         .aggregate(stages)
+        .with_type::<mongodb::bson::RawDocumentBuf>()
         .await
         .map_err(|e| format!("Aggregation failed: {}", e))?;
 
@@ -135,10 +139,8 @@ async fn execute_aggregate_inner(
                 MAX_AGGREGATE_RESULTS
             ));
         }
-        let doc = result.map_err(|e| format!("Cursor read error: {}", e))?;
-        let json_val: serde_json::Value =
-            serde_json::to_value(&doc).map_err(|e| format!("BSON to JSON error: {}", e))?;
-        results.push(serde_json::to_string(&json_val).unwrap());
+        let doc = crate::db::stored(result.map_err(|e| format!("Cursor read error: {}", e))?)?;
+        results.push(crate::db::ui_string(&doc)?);
     }
 
     Ok(results)
@@ -206,12 +208,19 @@ async fn explain_aggregate_query_impl_inner(
         return Err("Aggregation explain is not supported on mock connections".to_string());
     }
 
-    let client = {
-        let connections = state.connections.lock_safe()?;
-        connections
-            .get(id)
-            .cloned()
-            .ok_or_else(|| "Connection client not found".to_string())?
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            use crate::server::ops::query::{explain, Explained};
+            return explain(
+                state,
+                &conn,
+                database,
+                collection,
+                Explained::Aggregate(&stages),
+            )
+            .await;
+        }
     };
 
     let db = client.database(database);
@@ -229,8 +238,7 @@ async fn explain_aggregate_query_impl_inner(
         .await
         .map_err(|e| format!("Explain failed: {}", e))?;
 
-    let json_val: serde_json::Value =
-        serde_json::to_value(&explain_result).map_err(|e| format!("BSON to JSON error: {}", e))?;
+    let json_val = crate::db::ui_json(&explain_result)?;
 
     Ok(serde_json::to_string_pretty(&json_val).unwrap())
 }

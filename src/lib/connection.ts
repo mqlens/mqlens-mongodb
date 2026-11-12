@@ -44,6 +44,8 @@ export type ImportedConnection = {
   uri: string;
   /** Folder name to place the connection in; omitted/null means root. */
   folder?: string | null;
+  /** An SSH tunnel carried in an MQLens JSON export. */
+  ssh?: SshConfig;
 };
 
 export type ParseConnectionsResult =
@@ -56,7 +58,11 @@ export type ExportFolderInfo = {
 };
 
 // Query params whose values are secrets in their own right.
-const SECRET_PARAM_KEYS = /^(proxyPassword|tlsCertificateKeyFilePassword|sslClientCertificateKeyPassword)$/i;
+// Every spelling the backend normalises (connections.rs) is listed.
+const SECRET_PARAM_NAMES = 'proxyPassword|tlsCertificateKeyFilePassword|sslCertificateKeyFilePassword|sslClientCertificateKeyPassword|sslPEMKeyPassword';
+const SECRET_PARAM_KEYS = new RegExp(`^(${SECRET_PARAM_NAMES})$`, 'i');
+// The value of a secret option inside a URI, for display masks.
+const SECRET_OPTION_VALUE = new RegExp(`([?&;](?:${SECRET_PARAM_NAMES})=)[^&;#]*`, 'gi');
 
 const isSecretParam = (param: string): boolean => {
   const key = param.split('=')[0];
@@ -77,11 +83,56 @@ export const stripUriSecrets = (uri: string): string => {
 
   const qIdx = out.indexOf('?');
   if (qIdx === -1) return out;
+  // The driver accepts ; between options as well as &.
   const kept = out
     .slice(qIdx + 1)
-    .split('&')
+    .split(/[&;]/)
     .filter((p) => p !== '' && !isSecretParam(p));
   return kept.length ? `${out.slice(0, qIdx)}?${kept.join('&')}` : out.slice(0, qIdx);
+};
+
+// Userinfo of a mongodb URI: user, then an optional `:password`, before `@`.
+const USERINFO = /^(mongodb(?:\+srv)?:\/\/)([^:/@?#]+)(:[^@/?#]*)?@/i;
+// Mechanisms that authenticate without a password (certificate, ticket, browser).
+// Options split on & or ;, as the driver reads them, and the value is decoded.
+const MECHANISM_OPTION = /[?&;]authMechanism=([^&;#]*)/i;
+const PASSWORDLESS_MECHANISM = /^(MONGODB-X509|GSSAPI|MONGODB-OIDC)$/i;
+const isPasswordlessMechanism = (uri: string): boolean => {
+  const raw = uri.match(MECHANISM_OPTION)?.[1] ?? '';
+  try {
+    return PASSWORDLESS_MECHANISM.test(decodeURIComponent(raw));
+  } catch {
+    return PASSWORDLESS_MECHANISM.test(raw);
+  }
+};
+
+/**
+ * Whether connecting `uri` needs a password the profile does not hold: a
+ * user with no `:password` at all, under a mechanism that sends one. A saved
+ * `user:@` is an explicit empty password and is left alone.
+ */
+export const needsPasswordPrompt = (uri: string): boolean => {
+  const m = uri.match(USERINFO);
+  return !!m && m[3] === undefined && !isPasswordlessMechanism(uri);
+};
+
+/** `uri` with `password` (percent-encoded) added to its userinfo. */
+export const withPassword = (uri: string, password: string): string =>
+  uri.replace(USERINFO, (_m, scheme, user) => `${scheme}${user}:${encodeURIComponent(password)}@`);
+
+/**
+ * The URI to connect a saved profile with: its own, or — when it was saved
+ * without its password — with the one the user types now, which is never
+ * stored. `null` when the user cancels.
+ */
+export const uriWithAskedPassword = async (
+  uri: string,
+  ask: (opts: { title: string; message: string; password: boolean; confirmLabel: string }) => Promise<string | null>,
+  text: { title: string; message: string; confirmLabel: string },
+): Promise<string | null> => {
+  if (!needsPasswordPrompt(uri)) return uri;
+  const password = await ask({ ...text, password: true });
+  return password === null ? null : withPassword(uri, password);
 };
 
 /**
@@ -188,6 +239,49 @@ function parseTextConnections(text: string, out: ImportedConnection[]): void {
   }
 }
 
+/** An exported SSH tunnel read back, or null when it is not one MQLens can use. */
+function sshFromJson(value: unknown): SshConfig | null {
+  if (!value || typeof value !== 'object') return null;
+  const ssh = value as { host?: unknown; port?: unknown; user?: unknown; auth?: { type?: unknown; path?: unknown; password?: unknown; passphrase?: unknown } };
+  if (typeof ssh.host !== 'string' || !ssh.host || typeof ssh.user !== 'string') return null;
+  const str = (v: unknown) => (typeof v === 'string' ? v : '');
+  const a = ssh.auth ?? {};
+  const auth: SshConfig['auth'] | null =
+    a.type === 'agent' ? { type: 'agent' }
+    : a.type === 'password' ? { type: 'password', password: str(a.password) }
+    : a.type === 'key' && typeof a.path === 'string' ? { type: 'key', path: a.path, ...(a.passphrase ? { passphrase: str(a.passphrase) } : {}) }
+    : null;
+  if (!auth) return null;
+  return { enabled: true, host: ssh.host, port: Number(ssh.port) || 22, user: ssh.user, auth };
+}
+
+/**
+ * Robo 3T's robo3t.json stores a connection as fields, not a URI: host and
+ * port (or replica set members), the first enabled credential, and SSL. Its
+ * SSH settings are not carried over.
+ */
+function robo3tUri(obj: Record<string, unknown>): string | null {
+  if (typeof obj.serverHost !== 'string' || !obj.serverHost) return null;
+  const replicaSet = (obj.replicaSet ?? {}) as { setName?: unknown; members?: unknown };
+  const members = Array.isArray(replicaSet.members) ? replicaSet.members.filter((m): m is string => typeof m === 'string') : [];
+  const hosts = members.length ? members.join(',') : `${obj.serverHost}:${Number(obj.serverPort) || 27017}`;
+  const credentials = Array.isArray(obj.credentials) ? obj.credentials : [];
+  const cred = credentials.find((c) => c && typeof c === 'object' && (c as { enabled?: unknown }).enabled) as
+    | { userName?: string; userPassword?: string; databaseName?: string; mechanism?: string }
+    | undefined;
+  const userinfo = cred?.userName
+    ? `${encodeURIComponent(cred.userName)}${cred.userPassword ? `:${encodeURIComponent(cred.userPassword)}` : ''}@`
+    : '';
+  const params: string[] = [];
+  if (cred?.userName && cred.databaseName) params.push(`authSource=${encodeURIComponent(cred.databaseName)}`);
+  if (cred?.userName && cred.mechanism) params.push(`authMechanism=${encodeURIComponent(cred.mechanism)}`);
+  if ((obj.ssl as { enabled?: unknown } | undefined)?.enabled) params.push('tls=true');
+  if (members.length && typeof replicaSet.setName === 'string' && replicaSet.setName) {
+    params.push(`replicaSet=${encodeURIComponent(replicaSet.setName)}`);
+  }
+  return `mongodb://${userinfo}${hosts}/${params.length ? `?${params.join('&')}` : ''}`;
+}
+
 function collectConnectionsFromJson(value: unknown, out: ImportedConnection[], inheritedFolder?: string): void {
   if (typeof value === 'string') {
     const uri = normalizeUriCandidate(value);
@@ -205,20 +299,29 @@ function collectConnectionsFromJson(value: unknown, out: ImportedConnection[], i
   if (!value || typeof value !== 'object') return;
 
   const obj = value as Record<string, unknown>;
-  const name = pickString(obj, ['connectionName', 'name', 'title', 'label']);
+  const asRecord = (v: unknown) => (v && typeof v === 'object' ? (v as Record<string, unknown>) : {});
+  // Compass keeps the name in `favorite` and the URI in `connectionOptions`.
+  const name =
+    pickString(obj, ['connectionName', 'name', 'title', 'label'])
+    || pickString(asRecord(obj.favorite), ['name']);
   const folder =
     pickString(obj, ['folder', 'folderName', 'connectionFolder', 'group', 'groupName'])
     || inheritedFolder
     || null;
-  const uri = pickString(obj, ['uri', 'connectionString', 'connectionUri', 'url', 'connection_url']);
+  const uri =
+    pickString(obj, ['uri', 'connectionString', 'connectionUri', 'url', 'connection_url'])
+    || pickString(asRecord(obj.connectionOptions), ['connectionString'])
+    || robo3tUri(obj);
 
   if (uri) {
     const normalized = normalizeUriCandidate(uri);
     if (normalized) {
+      const ssh = sshFromJson(obj.ssh);
       out.push({
         name: name || deriveNameFromUri(normalized),
         uri: normalized,
         folder,
+        ...(ssh ? { ssh } : {}),
       });
       return;
     }
@@ -315,25 +418,77 @@ export function resolveImportUri(raw: string): ImportUriResult {
   return { ok: true, uri: result.connections[0].uri };
 }
 
-/** Display mask: replace the auth password with bullets without changing the URI. */
+/** What the connection table shows for a URI: never its password. */
+export const connectionSummary = (uri: string) => {
+  const m = uri.match(/^mongodb(\+srv)?:\/\/(?:([^:@/?#]*)(?::[^@/?#]*)?@)?([^/?#]*)[^?#]*(?:\?([^#]*))?/i);
+  const srv = !!m?.[1];
+  const query = (m?.[4] ?? '').replace(/;/g, '&');
+  const param = (name: string) => query.match(new RegExp(`(?:^|&)${name}=([^&]*)`, 'i'))?.[1];
+  const hosts = (m?.[3] ?? '').split(',').filter(Boolean).join(', ');
+  let user = m?.[2] ?? '';
+  try {
+    user = decodeURIComponent(user);
+  } catch {
+    // A malformed escape is shown as written rather than failing the render.
+  }
+  return {
+    server: srv ? `${hosts} (SRV)` : hosts,
+    user,
+    mechanism: param('authMechanism') ?? '',
+    // SRV turns TLS on unless the URI turns it off.
+    tls: srv ? !/(?:^|&)(?:tls|ssl)=false/i.test(query) : /(?:^|&)(?:tls|ssl)=true/i.test(query),
+  };
+};
+
+const LAST_CONNECTED_KEY = 'mqlens.lastConnected';
+
+/** When each profile last connected on this device, by profile id (ms since epoch). */
+export const readLastConnected = (): Record<string, number> => {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(LAST_CONNECTED_KEY) ?? '{}');
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+};
+
+export const recordLastConnected = (profileId: string, at = Date.now()) => {
+  try {
+    localStorage.setItem(LAST_CONNECTED_KEY, JSON.stringify({ ...readLastConnected(), [profileId]: at }));
+  } catch {
+    /* storage unavailable: the table shows "Never" */
+  }
+};
+
+/** Display mask: replace the auth password and secret options with bullets without changing the URI. */
 export function maskUriPassword(uri: string): string {
-  return uri.replace(/(\/\/[^/:@\s]+:)([^@/\s]+)(@)/, (_m, a, _p, c) => `${a}••••••${c}`);
+  return uri
+    .replace(/(\/\/[^/:@\s]+:)([^@/\s]+)(@)/, (_m, a, _p, c) => `${a}••••••${c}`)
+    .replace(SECRET_OPTION_VALUE, '$1••••••');
 }
 
 /** Format every saved connection as JSON, preserving folder structure for MQLens / Studio 3T transfer. */
 export function buildExportAllUris(
-  profiles: Array<Pick<ConnectionProfile, 'id' | 'name' | 'uri'> | Pick<ConnectionProfile, 'name' | 'uri'>>,
+  profiles: Array<Pick<ConnectionProfile, 'name' | 'uri'> & Partial<Pick<ConnectionProfile, 'id' | 'ssh'>>>,
   options: ExportUriOptions,
   folderInfo?: ExportFolderInfo,
 ): string {
-  type ExportConnection = { name: string; uri: string };
+  type ExportSsh = Omit<SshConfig, 'enabled' | 'auth'> & { auth: Record<string, string> };
+  type ExportConnection = { name: string; uri: string; ssh?: ExportSsh };
   type ExportFolder = { name: string; connections: ExportConnection[] };
 
+  // The tunnel's password or key passphrase goes only where URI passwords do.
+  const exportSsh = ({ enabled: _enabled, auth, ...rest }: SshConfig): ExportSsh => {
+    if (options.includePassword || auth.type === 'agent') return { ...rest, auth: { ...auth } };
+    return { ...rest, auth: auth.type === 'key' ? { type: 'key', path: auth.path } : { type: 'password' } };
+  };
+
   const toExportConnection = (
-    profile: Pick<ConnectionProfile, 'name' | 'uri'>,
+    profile: Pick<ConnectionProfile, 'name' | 'uri' | 'ssh'>,
   ): ExportConnection => ({
     name: profile.name,
     uri: buildExportUri(profile.uri, options),
+    ...(profile.ssh?.enabled ? { ssh: exportSsh(profile.ssh) } : {}),
   });
 
   if (!folderInfo || folderInfo.folders.length === 0) {

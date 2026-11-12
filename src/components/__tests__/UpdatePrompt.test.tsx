@@ -10,7 +10,7 @@ vi.mock('@tauri-apps/plugin-process', () => ({ relaunch: () => mockRelaunch() })
 const mockOpenUrl = vi.fn((_url: string) => Promise.resolve());
 vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: (url: string) => mockOpenUrl(url) }));
 
-import { UpdatePrompt, CHECK_UPDATE_EVENT } from '../UpdatePrompt';
+import { UpdatePrompt, CHECK_UPDATE_EVENT, WhatsNew, LAST_SEEN_VERSION_KEY } from '../UpdatePrompt';
 
 const triggerManualCheck = () => fireEvent(window, new Event(CHECK_UPDATE_EVENT));
 
@@ -131,5 +131,38 @@ describe('UpdatePrompt', () => {
     });
     expect(readUpdateCheckSnapshot()?.result).toBe('offline');
     expect(screen.queryByTestId('update-toast')).toBeNull();
+  });
+});
+
+describe('WhatsNew', () => {
+  it('says nothing on a fresh install, and remembers the version', () => {
+    render(<WhatsNew version="0.21.0" />);
+    expect(screen.queryByTestId('whats-new')).not.toBeInTheDocument();
+    expect(localStorage.getItem(LAST_SEEN_VERSION_KEY)).toBe('0.21.0');
+  });
+
+  it('announces a new version once, with a link to its release notes', async () => {
+    localStorage.setItem(LAST_SEEN_VERSION_KEY, '0.20.0');
+    const { unmount } = render(<WhatsNew version="0.21.0" />);
+    const notice = await screen.findByTestId('whats-new');
+    expect(notice).toHaveTextContent('0.21.0');
+    fireEvent.click(screen.getByRole('link'));
+    expect(mockOpenUrl).toHaveBeenCalledWith('https://github.com/mqlens/mqlens-mongodb/releases/tag/mqlens-v0.21.0');
+    unmount();
+
+    render(<WhatsNew version="0.21.0" />);
+    expect(screen.queryByTestId('whats-new')).not.toBeInTheDocument();
+  });
+
+  it('can be dismissed', async () => {
+    localStorage.setItem(LAST_SEEN_VERSION_KEY, '0.20.0');
+    render(<WhatsNew version="0.21.0" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Dismiss' }));
+    expect(screen.queryByTestId('whats-new')).not.toBeInTheDocument();
+  });
+
+  it('waits for the version', () => {
+    render(<WhatsNew version="" />);
+    expect(localStorage.getItem(LAST_SEEN_VERSION_KEY)).toBeNull();
   });
 });

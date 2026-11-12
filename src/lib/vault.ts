@@ -10,7 +10,8 @@ export const unlockVault = (password: string) =>
 export const lockVault = () => invoke<void>('vault_lock');
 export const changeVaultPassword = (oldPassword: string, newPassword: string) =>
   invoke<void>('vault_change_password', { oldPassword, newPassword });
-export const resetVault = () => invoke<void>('vault_reset');
+export const resetVault = (allowUnrevokedServerSessions = false) =>
+  invoke<string | null>('vault_reset', { allowUnrevokedServerSessions });
 
 export interface BiometricStatus {
   available: boolean;

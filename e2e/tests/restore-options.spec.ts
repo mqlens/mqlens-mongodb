@@ -107,9 +107,25 @@ test.describe('Restore options', () => {
     await page.getByTestId('restore-run-btn').click();
     await expect(page.getByTestId('restore-drop-confirm')).toContainText('(entire archive)');
 
-    await page.getByTestId('restore-drop-confirm').getByRole('button', { name: 'Cancel' }).click();
+    await page.getByTestId('restore-drop-cancel-btn').click();
     await expect(page.getByTestId('restore-drop-confirm')).toHaveCount(0);
     expect(await app.calls('start_restore_task')).toHaveLength(0);
+  });
+
+  test('a command preview that arrives late does not move the drop confirmation', async ({ app, page }) => {
+    await openRestore(app, page, { dialog: { open: '/backups/staging.archive' } });
+    await page.getByTestId('restore-source-archive').click();
+    await page.getByTestId('restore-opt-drop').check();
+    const release = await app.hold('preview_restore_command');
+    await page.getByTestId('restore-pick-source-btn').click();
+    await expect.poll(async () => (await app.calls('preview_restore_command')).length).toBe(1);
+    await page.getByTestId('restore-run-btn').click();
+    const cancel = page.getByTestId('restore-drop-cancel-btn');
+    const before = await cancel.boundingBox();
+
+    await release();
+    await expect(page.getByTestId('restore-preview-cmd')).toContainText('--drop');
+    expect(await cancel.boundingBox()).toEqual(before);
   });
 
   test('a picker the user closes leaves the restore where it was', async ({ app, page }) => {

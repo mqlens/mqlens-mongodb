@@ -1,0 +1,74 @@
+syntax = "proto3";
+package mqlens.v1;
+option go_package = "github.com/mqlens/mqlens-server/gen/mqlens/v1;mqlensv1";
+
+// DeploymentUserService manages users and roles defined on the MongoDB
+// deployment behind a connection. These are not MQLens accounts, which
+// AdminService manages. Passwords are write-only: never returned, never audited.
+service DeploymentUserService {
+  rpc ListUsers(ListDeploymentUsersRequest) returns (ListDeploymentUsersResponse);
+  rpc ListRoles(ListDeploymentRolesRequest) returns (ListDeploymentRolesResponse);
+  rpc CreateUser(CreateDeploymentUserRequest) returns (DeploymentUserAck);
+  rpc UpdateUser(UpdateDeploymentUserRequest) returns (DeploymentUserAck);
+  rpc DropUser(DropDeploymentUserRequest) returns (DeploymentUserAck);
+}
+
+message DeploymentUserAck {}
+
+message RoleSpec {
+  string role = 1;
+  string db = 2;
+}
+
+message DeploymentUser {
+  string user = 1;
+  string db = 2;
+  repeated RoleSpec roles = 3;
+  repeated string mechanisms = 4;
+}
+message ListDeploymentUsersRequest {
+  string connection_id = 1;
+  string database = 2; // empty lists users across all databases
+}
+message ListDeploymentUsersResponse {
+  repeated DeploymentUser users = 1;
+}
+
+message DeploymentRole {
+  string role = 1;
+  string db = 2;
+  bool is_builtin = 3;
+}
+message ListDeploymentRolesRequest {
+  string connection_id = 1;
+  string database = 2;
+}
+message ListDeploymentRolesResponse {
+  repeated DeploymentRole roles = 1;
+}
+
+message CreateDeploymentUserRequest {
+  string connection_id = 1;
+  string database = 2;
+  string username = 3;
+  string password = 4;
+  repeated RoleSpec roles = 5;
+}
+
+message UpdateDeploymentUserRequest {
+  string connection_id = 1;
+  string database = 2;
+  string username = 3;
+  optional string password = 4; // unset or empty leaves the password unchanged
+  // repeated fields cannot distinguish "leave roles alone" from "remove all
+  // roles", so replace_roles says which: true replaces them with roles, even
+  // when roles is empty.
+  bool replace_roles = 5;
+  repeated RoleSpec roles = 6;
+}
+
+message DropDeploymentUserRequest {
+  string connection_id = 1;
+  string database = 2;
+  string username = 3;
+}

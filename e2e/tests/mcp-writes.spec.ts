@@ -55,3 +55,52 @@ test.describe('A write nobody asked for', () => {
     expect(await app.calls('mcp_resolve_write')).toHaveLength(0);
   });
 });
+
+// An inline SVG avatar is one unbroken token thousands of characters long
+// (#458). Shown as-is it widened the dialog's contents past the window and
+// pushed Refuse and Allow out of sight, so the write could only be answered
+// blind or left to time out. This is the summary the backend sends: the
+// operation pretty-printed.
+const longSummary = JSON.stringify(
+  {
+    connectionId: 'c1',
+    namespace: 'seed-demo.examples',
+    document: {
+      name: 'Synthetic approval preview test',
+      image: 'data:image/svg+xml;utf8,' + 'A'.repeat(4000),
+    },
+  },
+  null,
+  2,
+);
+
+// The default test window, and the smallest the app's window can be.
+for (const viewport of [
+  { width: 1440, height: 900 },
+  { width: 800, height: 600 },
+]) {
+  test.describe(`A write with a long unbroken string, in a ${viewport.width}×${viewport.height} window`, () => {
+    test.use({ viewport });
+
+    test('keeps the preview inside the dialog and both answers on screen', async ({ app, page }) => {
+      await app.open();
+      await expect(page.getByTestId('quickstart-tab')).toBeVisible();
+
+      await requestWrite(app, 'w1', 'insert_one', longSummary);
+      await expect(confirm(page)).toBeVisible();
+
+      await expect(confirm(page).getByTestId('mcp-write-confirm-refuse')).toBeInViewport({ ratio: 1 });
+      await expect(confirm(page).getByTestId('mcp-write-confirm-allow')).toBeInViewport({ ratio: 1 });
+
+      // The long line scrolls within the preview rather than spilling past it.
+      const dialog = (await confirm(page).boundingBox())!;
+      const preview = (await confirm(page).getByTestId('mcp-write-confirm-summary').boundingBox())!;
+      expect(preview.x + preview.width).toBeLessThanOrEqual(dialog.x + dialog.width);
+
+      const answered = await callFrom(app, 'mcp_resolve_write', () =>
+        confirm(page).getByTestId('mcp-write-confirm-allow').click(),
+      );
+      expect(answered).toMatchObject({ id: 'w1', approved: true });
+    });
+  });
+}

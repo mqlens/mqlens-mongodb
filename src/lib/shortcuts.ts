@@ -2,6 +2,7 @@ import type { TFunction } from 'i18next';
 
 export type ShortcutGroup =
   | 'navigation'
+  | 'tabs'
   | 'query-editor'
   | 'sidebar'
   | 'zoom'
@@ -19,6 +20,7 @@ export type ShortcutGroup =
 // resolves identically at the existing call site and pins the extraction.
 export const SHORTCUT_GROUP_LABEL_KEYS: Record<ShortcutGroup, string> = {
   navigation: 'shell:keyboardShortcuts.groups.navigation',
+  tabs: 'shell:keyboardShortcuts.groups.tabs',
   'query-editor': 'shell:keyboardShortcuts.groups.query-editor',
   sidebar: 'shell:keyboardShortcuts.groups.sidebar',
   zoom: 'shell:keyboardShortcuts.groups.zoom',
@@ -27,6 +29,7 @@ export const SHORTCUT_GROUP_LABEL_KEYS: Record<ShortcutGroup, string> = {
 
 export const SHORTCUT_GROUP_ORDER: ShortcutGroup[] = [
   'navigation',
+  'tabs',
   'query-editor',
   'sidebar',
   'zoom',
@@ -35,8 +38,12 @@ export const SHORTCUT_GROUP_ORDER: ShortcutGroup[] = [
 
 export interface ShortcutChord {
   mod?: boolean;
+  /** The Control key itself, on macOS too (Ctrl+Tab), unlike `mod`. */
+  ctrl?: boolean;
   key: string;
   shift?: boolean;
+  /** Only listed on that platform. */
+  platform?: 'mac' | 'other';
 }
 
 export interface KeyboardShortcut {
@@ -70,6 +77,7 @@ function displayKey(key: string): string {
 export function formatShortcutChord(chord: ShortcutChord, platform = navigator.platform): string {
   const mod = primaryShortcutModifier(platform);
   const parts: string[] = [];
+  if (chord.ctrl) parts.push(isMacPlatform(platform) ? '⌃' : 'Ctrl');
   if (chord.mod) parts.push(mod);
   if (chord.shift) parts.push('Shift');
   parts.push(displayKey(chord.key));
@@ -77,7 +85,11 @@ export function formatShortcutChord(chord: ShortcutChord, platform = navigator.p
 }
 
 export function formatShortcut(shortcut: KeyboardShortcut, platform = navigator.platform): string {
-  return shortcut.chords.map((chord) => formatShortcutChord(chord, platform)).join(' / ');
+  const onPlatform = isMacPlatform(platform) ? 'mac' : 'other';
+  return shortcut.chords
+    .filter((chord) => !chord.platform || chord.platform === onPlatform)
+    .map((chord) => formatShortcutChord(chord, platform))
+    .join(' / ');
 }
 
 export const KEYBOARD_SHORTCUTS: KeyboardShortcut[] = [
@@ -89,11 +101,82 @@ export const KEYBOARD_SHORTCUTS: KeyboardShortcut[] = [
     keywords: 'dismiss cancel overlay',
   },
   {
+    id: 'open-settings',
+    group: 'navigation',
+    labelKey: 'keyboardShortcuts.items.open-settings',
+    chords: [{ mod: true, key: ',' }],
+    keywords: 'settings preferences options',
+  },
+  {
+    id: 'tab-close',
+    group: 'tabs',
+    labelKey: 'keyboardShortcuts.items.tab-close',
+    chords: [{ mod: true, key: 'W' }],
+    keywords: 'close tab',
+  },
+  {
+    id: 'tab-new',
+    group: 'tabs',
+    labelKey: 'keyboardShortcuts.items.tab-new',
+    chords: [{ mod: true, key: 'T' }],
+    keywords: 'new tab open',
+  },
+  {
+    id: 'tab-reopen',
+    group: 'tabs',
+    labelKey: 'keyboardShortcuts.items.tab-reopen',
+    chords: [{ mod: true, shift: true, key: 'T' }],
+    keywords: 'reopen restore undo closed tab',
+  },
+  {
+    id: 'tab-next',
+    group: 'tabs',
+    labelKey: 'keyboardShortcuts.items.tab-next',
+    chords: [
+      { ctrl: true, key: 'Tab' },
+      { mod: true, shift: true, key: ']', platform: 'mac' },
+      { ctrl: true, key: 'PageDown', platform: 'other' },
+    ],
+    keywords: 'next tab switch cycle',
+  },
+  {
+    id: 'tab-prev',
+    group: 'tabs',
+    labelKey: 'keyboardShortcuts.items.tab-prev',
+    chords: [
+      { ctrl: true, shift: true, key: 'Tab' },
+      { mod: true, shift: true, key: '[', platform: 'mac' },
+      { ctrl: true, key: 'PageUp', platform: 'other' },
+    ],
+    keywords: 'previous tab switch cycle',
+  },
+  {
+    id: 'tab-select',
+    group: 'tabs',
+    labelKey: 'keyboardShortcuts.items.tab-select',
+    chords: [{ mod: true, key: '1–8' }],
+    keywords: 'jump go to tab number',
+  },
+  {
+    id: 'tab-last',
+    group: 'tabs',
+    labelKey: 'keyboardShortcuts.items.tab-last',
+    chords: [{ mod: true, key: '9' }],
+    keywords: 'jump go to last tab',
+  },
+  {
     id: 'run-query',
     group: 'query-editor',
     labelKey: 'keyboardShortcuts.items.run-query',
     chords: [{ mod: true, key: 'Enter' }],
     keywords: 'execute mongosh shell builder',
+  },
+  {
+    id: 'shell-run-all',
+    group: 'query-editor',
+    labelKey: 'keyboardShortcuts.items.shell-run-all',
+    chords: [{ shift: true, key: 'Enter' }],
+    keywords: 'execute mongosh shell script whole',
   },
   {
     id: 'submit-dialog',

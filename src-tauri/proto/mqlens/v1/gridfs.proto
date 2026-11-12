@@ -1,0 +1,59 @@
+syntax = "proto3";
+package mqlens.v1;
+option go_package = "github.com/mqlens/mqlens-server/gen/mqlens/v1;mqlensv1";
+
+service GridFsService {
+  rpc ListFiles(ListFilesRequest) returns (ListFilesResponse);
+  rpc DownloadFile(DownloadFileRequest) returns (stream FileChunk);
+  rpc UploadFile(stream UploadChunk) returns (UploadFileResponse);
+  // Removes the file document and all of its chunks.
+  rpc DeleteFile(DeleteFileRequest) returns (DeleteFileResponse);
+}
+
+message DeleteFileRequest {
+  string connection_id = 1;
+  string database = 2;
+  string bucket = 3;        // empty => "fs"
+  string file_id_ejson = 4; // {"_id": <id>} in Extended JSON, as UploadFile returns; a ListFiles document also works
+}
+message DeleteFileResponse {}
+
+message ListFilesRequest {
+  string connection_id = 1;
+  string database = 2;
+  string bucket = 3; // empty => "fs"
+  // Return file documents in files_bson instead of files_ejson.
+  // API version 2.
+  bool raw_bson = 4;
+}
+// Exactly one of the two fields is filled, as the request's raw_bson chose.
+message ListFilesResponse {
+  repeated string files_ejson = 1; // canonical Extended JSON file documents
+  repeated bytes files_bson = 2;   // file documents' BSON bytes, exactly as stored
+}
+
+message DownloadFileRequest {
+  string connection_id = 1;
+  string database = 2;
+  string bucket = 3;
+  string file_id_ejson = 4; // {"_id": <id>} in Extended JSON, as UploadFile returns; a ListFiles document also works
+}
+message FileChunk {
+  bytes data = 1;
+}
+
+// The first UploadChunk carries the metadata (+ optional first bytes);
+// subsequent messages carry only data.
+message UploadChunk {
+  string connection_id = 1;
+  string database = 2;
+  string bucket = 3;
+  string filename = 4;
+  bytes data = 5;
+  // First chunk only. API version 2.
+  string content_type = 6;  // stored as the file document's contentType
+  string metadata_json = 7; // Extended JSON document stored as its metadata
+}
+message UploadFileResponse {
+  string file_id_ejson = 1;
+}

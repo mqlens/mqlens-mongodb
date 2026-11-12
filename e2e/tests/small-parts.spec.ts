@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from '../fixtures';
-import { connectStaging, expandCollections } from '../helpers';
+import { confirmTypedName, connectStaging, expandCollections } from '../helpers';
 
 // Corners of the app that are one control each (#396): a toast dismissed by
 // hand, a shortcut list narrowed to one group, and Quick Start with no saved
@@ -17,8 +17,9 @@ test.describe('A toast', () => {
     // A failed drop is reported as a toast.
     await app.failNext('drop_collection', 'not authorized on sales_db to drop products');
     await sidebar(page).getByText('products', { exact: true }).click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Manage', exact: true }).press('ArrowRight');
     await page.getByRole('menuitem', { name: 'Drop Collection' }).click();
-    await page.getByTestId('dialog-confirm').click();
+    await confirmTypedName(page, 'products');
 
     const toast = page.getByTestId('dialog-toast').filter({ hasText: 'not authorized on sales_db' });
     await expect(toast).toBeVisible();

@@ -18,6 +18,7 @@ import {
 } from './lib/aiChatRequest';
 import { stopChangeStream } from './lib/changeStream';
 import { describeConnectError } from './lib/describeConnectError';
+import { connectToServer, MONITORING_READS, parseServerProfileId, type RemoteConnectionInfo } from './lib/serverMode';
 import { startWriteRequests } from './lib/mcpWriteRequests';
 import { McpWriteConfirm } from './components/McpWriteConfirm';
 import {
@@ -38,11 +39,14 @@ import { ConnectionManager } from './components/ConnectionManager';
 import { WatchPanel } from './components/WatchPanel';
 import { SettingsView, type SettingsTabId, MONGO_TOOLS_DIR_KEY } from './components/SettingsModal';
 import { IndexViewer } from './components/IndexViewer';
+import { CollectionIndexes } from './components/CollectionIndexes';
 import { IndexModal } from './components/IndexModal';
+import { inPlaceEdits, isPlainIndex, withoutServerFields, type IndexDocument } from './lib/indexSpec';
 import { MongoShell } from './components/MongoShell';
 import { ToolSetupDialog, type ManagedToolStatusUi, type InstallTaskUi } from './components/ToolSetupDialog';
 import { QuickStart } from './components/QuickStart';
 import { DocumentEditModal } from './components/DocumentEditModal';
+import { UpdateManyModal } from './components/UpdateManyModal';
 import {
   ExportView,
   DEFAULT_EXPORT_OPTIONS,
@@ -75,6 +79,7 @@ import {
   windowLabel,
   subscribeWorkspaceChanged,
   subscribeConnectionsChanged,
+  subscribeTabCommand,
   setConnectionMeta,
   connectionList,
   detachTabToNewWindow,
@@ -106,6 +111,9 @@ import {
 import { ReconnectBanner } from './workspace/ReconnectBanner';
 import { collectionTabsMatching } from './workspace/collectionTabs';
 import { uniqueCollectionTabId } from './workspace/tabId';
+import { rememberClosedTab, takeClosedTab, type ClosedTab } from './workspace/closedTabs';
+import { tabCommandForKey, tabCommandFromMenu, targetTabId, type TabCommand } from './lib/tabShortcuts';
+import { isMacPlatform } from './lib/shortcuts';
 import { ContextMenu, type ContextMenuItem } from './components/ContextMenu';
 import { CreateViewView } from './components/CreateViewView';
 import { ValidationRulesView } from './components/ValidationRulesView';
@@ -116,7 +124,7 @@ import { UserManagementView } from './components/UserManagementView';
 import { TaskManager, type ExportTaskInfo } from './components/TaskManager';
 import { ActivityPanel } from './components/ActivityPanel';
 import { VaultGate } from './components/VaultGate';
-import { UpdatePrompt } from './components/UpdatePrompt';
+import { UpdatePrompt, WhatsNew } from './components/UpdatePrompt';
 import { DialogProvider, useDialogs } from './components/dialogs/DialogProvider';
 import { formatBytes } from './lib/format';
 import type { QueryCodeSpec } from './lib/queryCodeGen';
@@ -127,7 +135,7 @@ import { clearNamespaceIndex, loadNamespaceIndex, matchesNamespaceScope } from '
 import { CHECK_UPDATE_EVENT } from './components/UpdatePrompt';
 import { confirmByTypedName } from './lib/typedNameConfirm';
 import { detectAggregateWriteStage } from './lib/aggregateWriteStage';
-import type { ConnectionProfile } from './lib/connection';
+import { recordLastConnected, uriWithAskedPassword, type ConnectionProfile } from './lib/connection';
 import { save, open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
@@ -178,7 +186,7 @@ const newEditId = (): string =>
 
 export interface QueryTab {
   id: string;
-  type: 'collection' | 'index' | 'shell' | 'settings' | 'quickstart' | 'export' | 'import' | 'tasks' | 'activity' | 'schema' | 'create-view' | 'gridfs' | 'monitoring' | 'users' | 'dump' | 'restore' | 'validation' | 'generate' | 'watch';
+  type: 'collection' | 'index' | 'indexes' | 'shell' | 'settings' | 'quickstart' | 'export' | 'import' | 'tasks' | 'activity' | 'schema' | 'create-view' | 'gridfs' | 'monitoring' | 'users' | 'dump' | 'restore' | 'validation' | 'generate' | 'watch';
   connectionId: string;
   db: string;
   collection: string;
@@ -281,6 +289,22 @@ const EMPTY_COLUMN_WIDTHS: Record<string, number> = {};
 
 const DEFAULT_QUERY = { filter: '{}', sort: '{}', projection: '{}', limit: 50, skip: 0 };
 
+/** What "Reopen Closed Tab" keeps of a tab: where it pointed and how it was
+ *  queried, never its results, plan or draft (up to 20 of them stay in memory). */
+export type ClosedTabSnapshot = Omit<
+  QueryTab,
+  | 'results' | 'loading' | 'error' | 'explainResult' | 'documentEdit' | 'pagerRequest'
+  | 'totalCount' | 'countLoading' | 'estimated' | 'initialShellCommand'
+>;
+
+export function closedTabSnapshot(tab: QueryTab): ClosedTabSnapshot {
+  const {
+    results, loading, error, explainResult, documentEdit, pagerRequest,
+    totalCount, countLoading, estimated, initialShellCommand, ...snapshot
+  } = tab;
+  return snapshot;
+}
+
 // A cached/restored builder state may carry "{}" in the query/sort/projection
 // fields (from workspaces saved before empties were blanked); normalize it to
 // blank on read so those fields never display "{}". Passthrough for undefined.
@@ -342,6 +366,22 @@ const buildTabQuerySpec = (tab: QueryTab): QueryCodeSpec | null => {
     };
   }
   return null;
+};
+
+/** The command a tab type cannot work without; on a connection that cannot run it, the tab is not mounted. */
+const TAB_COMMANDS: Partial<Record<string, string>> = {
+  indexes: 'list_indexes',
+  schema: 'analyze_schema',
+  'create-view': 'create_view',
+  gridfs: 'list_gridfs_files',
+  validation: 'set_validator',
+  users: 'list_users',
+  export: 'start_collection_export',
+  import: 'start_import_task',
+  dump: 'start_dump_task',
+  restore: 'start_restore_task',
+  generate: 'start_generate_task',
+  watch: 'start_change_stream',
 };
 
 interface ActiveConnection {
@@ -434,6 +474,7 @@ const tabIconFor = (tab: QueryTab, isActive: boolean): React.ReactNode => {
   const size = 11;
   switch (tab.type) {
     case 'index':
+    case 'indexes':
       return <KeyRound size={size} className={className} />;
     case 'shell':
       return <Terminal size={size} className={className} />;
@@ -483,6 +524,8 @@ export const tabLabelFor = (
   switch (tab.type) {
     case 'index':
       return `${tab.collection}.${tab.indexName}`;
+    case 'indexes':
+      return t('tabs.indexes', { collection: tab.collection });
     case 'shell':
       return `mongosh: ${tab.collection || tab.db}`;
     case 'watch':
@@ -567,6 +610,7 @@ const tabColorLabel = (t: TFunction, color: TabColorId): string => {
 const CONNECTION_TAB_TYPES = new Set<QueryTab['type']>([
   'collection',
   'index',
+  'indexes',
   'shell',
   'export',
   'import',
@@ -624,6 +668,7 @@ function Workspace() {
   // to solve for `handleBuilderStateChange`. Mirrors `tabs` on every change,
   // in a layout effect for the reason given on `activeConnectionsRef` below.
   const tabsRef = useRef<QueryTab[]>(tabs);
+  const documentEditFlushRef = useRef<(() => boolean) | null>(null);
   useLayoutEffect(() => {
     tabsRef.current = tabs;
   }, [tabs]);
@@ -670,6 +715,7 @@ function Workspace() {
   const tabChatCache = useRef(
     new Map<string, { messages: ChatMessage[]; isOpen: boolean; chatId?: string }>()
   );
+  const closedTabsRef = useRef<ClosedTab<ClosedTabSnapshot, BuilderState>[]>([]);
   // Workspace-store mirroring plumbing (Phase 2 Task 5). Mirroring starts
   // DISABLED — the restore effect below is the only thing allowed to turn it
   // on, once workspace_get has resolved (snapshot applied or none found).
@@ -808,6 +854,17 @@ function Workspace() {
   }, []);
   const [profilesRefreshKey, setProfilesRefreshKey] = useState(0);
   const [isConnectionModalOpen, setIsConnectionModalOpen] = useState(false);
+  // What each connection made through an MQLens Server cannot run, by
+  // connection id, from the latest connection list.
+  const [serverConnections, setServerConnections] = useState<Map<string, RemoteConnectionInfo>>(new Map());
+  const noteServerConnections = (connections: ConnectionEntry[]) =>
+    setServerConnections(new Map(connections.flatMap((c) => (c.server ? [[c.id, c.server] as const] : []))));
+  const isCommandBlocked = (connectionId: string, command: string) =>
+    serverConnections.get(connectionId)?.blockedCommands.includes(command) ?? false;
+  const isBlockedByRole = (connectionId: string, command: string) =>
+    serverConnections.get(connectionId)?.roleBlockedCommands?.includes(command) ?? false;
+  // Whether the connection manager opens on the MQLens Server accounts.
+  const [connectionModalServer, setConnectionModalServer] = useState(false);
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTabId | undefined>();
 
   // (final fix wave, agent-connection visibility) `viaMcp` entries dedupe by
@@ -835,6 +892,7 @@ function Workspace() {
     viaMcp?: boolean,
     mode?: ActiveConnection['mode']
   ) => {
+    if (!viaMcp) recordLastConnected(profileId);
     setActiveConnections((prev) => {
       if (prev.some((c) => c.id === id)) return prev;
       if (!viaMcp && prev.some((c) => c.profileId === profileId)) return prev;
@@ -1116,6 +1174,7 @@ function Workspace() {
         try {
           const connections = await connectionList();
           if (Array.isArray(connections) && connections.length > 0) {
+            noteServerConnections(connections);
             applyConnectionsAdditions(connections);
           }
         } catch {
@@ -1138,6 +1197,15 @@ function Workspace() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // A profile saved without its password asks for it here, every time; the
+  // answer goes to this one connect and is never stored.
+  const askMissingPassword = (profile: ConnectionProfile) =>
+    uriWithAskedPassword(profile.uri, prompt, {
+      title: t('connections:passwordPrompt.title', { name: profile.name }),
+      message: t('connections:passwordPrompt.message'),
+      confirmLabel: t('connections:actions.connect'),
+    });
+
   const handleQuickConnect = async (profile: ConnectionProfile): Promise<string | null> => {
     const existing = activeConnections.find(
       (c) =>
@@ -1149,8 +1217,10 @@ function Workspace() {
         (c.name === profile.name && !isEphemeralProfileId(c.profileId)),
     );
     if (existing) return existing.id;
+    const uri = await askMissingPassword(profile);
+    if (uri === null) return null;
     try {
-      const id = await invoke<string>('connect_db', { uri: profile.uri, ssh: profile.ssh ?? null, oidc: profile.oidc ?? null });
+      const id = await invoke<string>('connect_db', { uri, ssh: profile.ssh ?? null, oidc: profile.oidc ?? null, profileId: profile.id });
       addActiveConnection(id, profile.name, profile.uri, profile.id, profile.color_tag ?? undefined, undefined, profile.connection_mode ?? 'normal');
       // Announce this fresh id to every other window (Phase 3 Task 6) — see
       // `setConnectionMeta`'s doc comment for why every connect path calls it.
@@ -1176,21 +1246,19 @@ function Workspace() {
     }
   };
   const [isIndexModalOpen, setIsIndexModalOpen] = useState(false);
+  const [isSavingIndex, setIsSavingIndex] = useState(false);
   const [indexModalTarget, setIndexModalTarget] = useState<{
     connectionId: string;
     db: string;
     collection: string;
-    initialData?: {
-      name: string;
-      keys: Record<string, number>;
-      unique: boolean;
-      sparse: boolean;
-    } | null;
+    initialData?: IndexDocument | null;
     prefill?: {
       name: string;
       keys: Record<string, number>;
     } | null;
   } | null>(null);
+  const indexModalTargetRef = useRef(indexModalTarget);
+  indexModalTargetRef.current = indexModalTarget;
   // Document writes sent and not yet answered, one entry per request.
   //
   // Kept beside the tabs rather than on them because a request outlives the
@@ -1638,16 +1706,9 @@ function Workspace() {
     }
   };
 
-  const handleDuplicateTab = (sourceTabId: string) => {
-    const src = tabs.find((t) => t.id === sourceTabId && t.type === 'collection');
-    if (!src) return;
-
-    const baseId = `${src.connectionId}.${src.db}.${src.collection}`;
-    const tabId = uniqueCollectionTabId(baseId, tabs.map((t) => t.id));
-
-    let def: QueryDef | null;
+  const lastQueryDefOf = (src: QueryTab): QueryDef | null => {
     try {
-      def = src.lastAggregate
+      return src.lastAggregate
         ? { queryType: 'aggregate', pipeline: src.lastAggregate }
         : src.lastQuery
           ? {
@@ -1660,8 +1721,17 @@ function Workspace() {
             }
           : null;
     } catch {
-      def = null; // corrupted persisted query — fall back to the default find
+      return null; // corrupted persisted query — fall back to the default find
     }
+  };
+
+  const handleDuplicateTab = (sourceTabId: string) => {
+    const src = tabs.find((t) => t.id === sourceTabId && t.type === 'collection');
+    if (!src) return;
+
+    const baseId = `${src.connectionId}.${src.db}.${src.collection}`;
+    const tabId = uniqueCollectionTabId(baseId, tabs.map((t) => t.id));
+    const def = lastQueryDefOf(src);
 
     const newTab: QueryTab = {
       id: tabId,
@@ -1705,6 +1775,28 @@ function Workspace() {
     } else {
       dispatchWorkspace({ type: 'open_tab', tabId });
     }
+  };
+
+  /** Open the consolidated Indexes view for a collection (#512). */
+  const handleOpenIndexesTab = (connectionId: string, dbName: string, collName: string) => {
+    const tabId = `indexes.${connectionId}.${dbName}.${collName}`;
+    if (!tabs.some(t => t.id === tabId)) {
+      const newTab: QueryTab = {
+        id: tabId,
+        type: 'indexes',
+        connectionId,
+        db: dbName,
+        collection: collName,
+        results: [],
+        loading: false,
+        error: null,
+        explainResult: null,
+      };
+      setTabs(prev => [...prev, newTab]);
+      dispatchWorkspace({ type: 'open_tab', tabId }, { tab: newTab });
+      return;
+    }
+    dispatchWorkspace({ type: 'open_tab', tabId });
   };
 
   /** Open a live tail. One tab per target, so re-opening focuses rather than
@@ -2060,9 +2152,21 @@ function Workspace() {
     void loadMongoTools();
   };
 
+  // On an MQLens Server connection the server runs the Database Tools.
+  const serverHostOf = (connectionId: string): string | undefined => {
+    const url = serverConnections.get(connectionId)?.serverUrl;
+    if (!url) return undefined;
+    try {
+      return new URL(url).host || url;
+    } catch {
+      return url;
+    }
+  };
+
   const handleRunDump = async (tab: QueryTab, options: DumpOptionsUi) => {
-    const toolPath = mongoTools?.mongodump?.path;
-    if (!toolPath) return;
+    const onServer = !!serverHostOf(tab.connectionId);
+    const toolPath = onServer ? '' : mongoTools?.mongodump?.path;
+    if (!onServer && !toolPath) return;
     try {
       const task = await invoke<ExportTaskInfo>('start_dump_task', {
         id: tab.connectionId,
@@ -2078,8 +2182,9 @@ function Workspace() {
   };
 
   const handleRunRestore = async (tab: QueryTab, options: RestoreOptionsUi) => {
-    const toolPath = mongoTools?.mongorestore?.path;
-    if (!toolPath) return;
+    const onServer = !!serverHostOf(tab.connectionId);
+    const toolPath = onServer ? '' : mongoTools?.mongorestore?.path;
+    if (!onServer && !toolPath) return;
     try {
       const task = await invoke<ExportTaskInfo>('start_restore_task', {
         id: tab.connectionId,
@@ -2322,6 +2427,9 @@ function Workspace() {
       if (tab.type === 'index') {
         return { ...tab, id: `${connectionId}.${dbName}.${newName}.${tab.indexName}`, collection: newName };
       }
+      if (tab.type === 'indexes') {
+        return { ...tab, id: `indexes.${connectionId}.${dbName}.${newName}`, collection: newName };
+      }
       if (tab.type === 'shell') {
         return { ...tab, id: `shell.${connectionId}.${dbName}.${newName}`, collection: newName };
       }
@@ -2402,6 +2510,9 @@ function Workspace() {
           id: `${connectionId}.${newName}.${tab.collection}.${tab.indexName}`,
           db: newName,
         };
+      }
+      if (tab.type === 'indexes') {
+        return { ...tab, id: `indexes.${connectionId}.${newName}.${tab.collection}`, db: newName };
       }
       if (tab.type === 'shell') {
         return {
@@ -2507,69 +2618,140 @@ function Workspace() {
     connectionId: string,
     dbName: string,
     collName: string,
-    indexName: string,
-    keys: Record<string, number>,
-    unique: boolean,
-    sparse: boolean
+    spec: IndexDocument
   ) => {
     setIndexModalTarget({
       connectionId,
       db: dbName,
       collection: collName,
-      initialData: {
-        name: indexName,
-        keys,
-        unique,
-        sparse,
-      },
+      initialData: spec,
     });
     setIsIndexModalOpen(true);
   };
 
-  const handleSaveIndex = async (indexName: string, keys: string, unique: boolean, sparse: boolean) => {
-    if (!indexModalTarget) return;
-    const { connectionId, db, collection, initialData } = indexModalTarget;
+  const handleSaveIndex = async (spec: IndexDocument, commitQuorum: string | null) => {
+    // Dropping the index a save is building would abort the build.
+    if (!indexModalTarget || isSavingIndex) return;
+    setIsSavingIndex(true);
+    const target = indexModalTarget;
+    const { connectionId, db, collection, initialData } = target;
+    const place = { id: connectionId, database: db, collection };
+    const create = (document: IndexDocument, quorum: string | null) =>
+      invoke('create_index', { ...place, spec: JSON.stringify(document), commitQuorum: quorum });
+    const finish = () => {
+      // A long build can outlast this modal, and another may be open by now.
+      if (indexModalTargetRef.current === target) {
+        setIsIndexModalOpen(false);
+        setIndexModalTarget(null);
+      }
+      // Trigger sidebar refresh; an open viewer refetches on it too.
+      setIndexMutationTrigger(prev => prev + 1);
+      // Automatically open/focus the index tab!
+      handleSelectIndex(connectionId, db, collection, spec.name);
+    };
 
     try {
-      if (initialData) {
-        // Edit mode: drop index first
-        await invoke('delete_index', {
-          id: connectionId,
-          database: db,
-          collection,
-          indexName: initialData.name,
-        });
-
-        // Close/rename tab
-        const oldTabId = `${connectionId}.${db}.${collection}.${initialData.name}`;
-        closeTabById(oldTabId);
+      // What collMod can change keeps the build, where the connection can run it.
+      const edits = initialData ? inPlaceEdits(initialData, spec) : null;
+      if (edits?.every(({ command }) => !isCommandBlocked(connectionId, command))) {
+        for (const { command, args } of edits) {
+          await invoke(command, { ...place, indexName: spec.name, ...args });
+        }
+        finish();
+        return;
       }
 
-      // Create new index
-      await invoke('create_index', {
-        id: connectionId,
-        database: db,
-        collection,
-        indexName,
-        keys,
-        unique,
-        sparse,
-      });
+      // Refused before an edit drops the old index, not after.
+      const apiVersion = serverConnections.get(connectionId)?.apiVersion;
+      if (!isPlainIndex(spec) && apiVersion !== undefined && apiVersion < 5) {
+        toast(t('toast.indexOptionsNeedServerApi5', { version: apiVersion }), 'error');
+        return;
+      }
 
-      setIsIndexModalOpen(false);
-      setIndexModalTarget(null);
+      if (!initialData) {
+        await create(spec, commitQuorum);
+        finish();
+        return;
+      }
 
-      // Trigger sidebar refresh
+      await invoke('delete_index', { ...place, indexName: initialData.name });
+      try {
+        await create(spec, commitQuorum);
+      } catch (err: any) {
+        // The new definition did not build, so put back the one just dropped.
+        const original = withoutServerFields(initialData);
+        try {
+          await create(original, null);
+          toast(t('toast.indexPutBack', { detail: err }), 'error');
+        } catch {
+          toast(t('toast.indexNotPutBack', { detail: err, spec: JSON.stringify(original) }), 'error');
+        }
+        setIndexMutationTrigger(prev => prev + 1);
+        return;
+      }
+      // Under the same name the open tab is still right, and refetches.
+      if (spec.name !== initialData.name) {
+        closeTabById(`${connectionId}.${db}.${collection}.${initialData.name}`);
+      }
+      finish();
+    } catch (err: any) {
+      toast(t('toast.failedToSaveIndex', { detail: err }), 'error');
+    } finally {
+      setIsSavingIndex(false);
+    }
+  };
+
+  const setIndexOption = (
+    connectionId: string,
+    dbName: string,
+    collName: string,
+    indexName: string,
+    option: 'hidden' | 'prepareUnique' | 'unique',
+    value: boolean
+  ) =>
+    invoke('set_index_option', { id: connectionId, database: dbName, collection: collName, indexName, option, value });
+
+  const handleSetIndexOption = async (
+    connectionId: string,
+    dbName: string,
+    collName: string,
+    indexName: string,
+    option: 'hidden' | 'prepareUnique',
+    value: boolean
+  ) => {
+    try {
+      await setIndexOption(connectionId, dbName, collName, indexName, option, value);
       setIndexMutationTrigger(prev => prev + 1);
-
-      // Automatically open/focus the new index tab!
-      handleSelectIndex(connectionId, db, collection, indexName);
     } catch (err: any) {
       toast(t('toast.failedToSaveIndex', { detail: err }), 'error');
     }
   };
 
+  // Writes that would add a duplicate are refused from the first step, so the
+  // second can check the documents. If it finds duplicates the index stays
+  // prepared, and the viewer offers to undo that.
+  const handleConvertToUnique = async (connectionId: string, dbName: string, collName: string, indexName: string) => {
+    if (!(await confirm({
+      title: t('admin:indexViewer.confirm.convertToUniqueTitle'),
+      message: t('admin:indexViewer.confirm.convertToUniqueMessage'),
+      confirmLabel: t('admin:indexViewer.actions.convertToUnique'),
+    }))) return;
+    try {
+      await setIndexOption(connectionId, dbName, collName, indexName, 'prepareUnique', true);
+      await setIndexOption(connectionId, dbName, collName, indexName, 'unique', true);
+    } catch (err: any) {
+      toast(t('toast.indexStaysNonUnique', { detail: err }), 'error');
+    }
+    setIndexMutationTrigger(prev => prev + 1);
+  };
+
   const handleDeleteIndex = async (connectionId: string, dbName: string, collName: string, indexName: string) => {
+    if (!(await confirmByTypedName(prompt, {
+      title: t('admin:indexViewer.confirm.deleteTitle'),
+      kind: 'index',
+      expectedName: indexName,
+      destructive: true,
+    }, t))) return;
     try {
       await invoke('delete_index', {
         id: connectionId,
@@ -2584,6 +2766,7 @@ function Workspace() {
 
       // Trigger sidebar refresh
       setIndexMutationTrigger(prev => prev + 1);
+      toast(t('toast.deleteIndexSuccess', { name: indexName }), 'success');
     } catch (err: any) {
       toast(t('toast.failedToDeleteIndex', { detail: err }), 'error');
     }
@@ -2625,7 +2808,7 @@ function Workspace() {
   //     since the tab itself was never going to be restored anyway.
   const dispatchWorkspace = (
     action: WorkspaceAction,
-    options?: { tab?: QueryTab }
+    options?: { tab?: QueryTab; rememberClosed?: boolean }
   ) => {
     // Cross-window open dedupe (Phase 3 Task 4 — MANDATE from Task 2
     // review): the backend's own OpenTab dedupe only applies WITHIN one
@@ -2657,6 +2840,18 @@ function Workspace() {
         invoke('focus_window', { label: foreignWindow.id }).catch(console.warn);
         return;
       }
+    }
+    // Before the evictions below, which drop the builder states it keeps.
+    const closedIds = action.type === 'close_tab'
+      ? [action.tabId]
+      : action.type === 'close_many' && options?.rememberClosed ? action.tabIds : [];
+    for (const id of closedIds) {
+      const closing = tabs.find(t => t.id === id);
+      if (!closing) continue;
+      closedTabsRef.current = rememberClosedTab(closedTabsRef.current, {
+        tab: closedTabSnapshot(closing),
+        builderState: tabBuilderStateCache.current.get(id),
+      });
     }
     if (action.type === 'close_tab') {
       tabBuilderStateCache.current.delete(action.tabId);
@@ -2761,7 +2956,8 @@ function Workspace() {
     switch (action.type) {
       case 'open_tab': {
         if (options?.tab) {
-          const conn = activeConnections.find(c => c.id === options.tab!.connectionId);
+          const conn = activeConnections.find(c => c.id === options.tab!.connectionId)
+            ?? disconnectedProfileConnection(options.tab.connectionId);
           const builderState = tabBuilderStateCache.current.get(options.tab.id);
           const persisted = toPersistedTab(options.tab, conn, builderState);
           if (persisted === null) {
@@ -2880,6 +3076,9 @@ function Workspace() {
    *  to be there. */
   const readyForWindowChange = async (tabId: string): Promise<boolean> => {
     const profileId = toProfileSpaceId(tabId, activeConnections);
+    // The editor holds the last keys until typing pauses; they must reach the
+    // tab before it is read, and again after every await below.
+    documentEditFlushRef.current?.();
     // Re-read on every pass, from the ref rather than the render closure: the
     // await below is a gap the user can type, cancel or start a save in, and a
     // check made before it describes a state the move no longer happens in
@@ -2912,6 +3111,7 @@ function Workspace() {
         toast(t('toast.documentEditNotSynced'), 'error');
         return false;
       }
+      if (documentEditFlushRef.current?.()) continue;
       if (!hasPendingDocumentEdit(profileId)) {
         // Settled: nothing new arrived while that was in flight.
         const still = tabsRef.current.find(x => x.id === tabId)?.documentEdit;
@@ -3060,14 +3260,14 @@ function Workspace() {
       items.push({
         label: tShell('workspaceTabBar.contextMenu.closeOthers'),
         icon: <XSquare />,
-        onClick: () => dispatchWorkspace({ type: 'close_many', tabIds: otherTabIds }),
+        onClick: () => dispatchWorkspace({ type: 'close_many', tabIds: otherTabIds }, { rememberClosed: true }),
       });
     }
     if (rightTabIds.length > 0) {
       items.push({
         label: tShell('workspaceTabBar.contextMenu.closeToTheRight'),
         icon: <ChevronsRight />,
-        onClick: () => dispatchWorkspace({ type: 'close_many', tabIds: rightTabIds }),
+        onClick: () => dispatchWorkspace({ type: 'close_many', tabIds: rightTabIds }, { rememberClosed: true }),
       });
     }
 
@@ -3111,6 +3311,116 @@ function Workspace() {
     const next = p.tabIds[(i + dir + p.tabIds.length) % p.tabIds.length];
     dispatchWorkspace({ type: 'set_active', paneId: p.id, tabId: next });
   };
+
+  // A session-restored tab is still `profile:<id>` until it reconnects; this
+  // stands in for its connection so a reopen persists it under that profile.
+  const disconnectedProfileConnection = (connectionId: string) => {
+    if (!connectionId.startsWith('profile:')) return undefined;
+    const profileId = connectionId.slice('profile:'.length);
+    return { id: connectionId, profileId, name: restoredProfileNames.get(profileId) ?? '' };
+  };
+
+  const reopenClosedTab = () => {
+    const { entry, history } = takeClosedTab(closedTabsRef.current, (tab) =>
+      tab.type === 'settings' || tab.type === 'tasks' || tab.type === 'activity'
+        || tab.connectionId.startsWith('profile:')
+        || activeConnections.some(c => c.id === tab.connectionId)
+    );
+    closedTabsRef.current = history;
+    if (!entry) return;
+    const { tab: closed, builderState } = entry;
+    // Its profile may have connected since it closed: come back live, not as a banner.
+    const live = closed.connectionId.startsWith('profile:')
+      ? activeConnections.find(c => `profile:${c.profileId}` === closed.connectionId)
+      : undefined;
+    const id = live ? toLiveSpaceId(closed.id, activeConnections) : closed.id;
+    const connectionId = live ? live.id : closed.connectionId;
+    if (tabs.some(t => t.id === id)) {
+      dispatchWorkspace({ type: 'open_tab', tabId: id });
+      return;
+    }
+    const runsQuery = closed.type === 'collection' && !connectionId.startsWith('profile:');
+    // A $out/$merge pipeline stays in the builder but only runs when the user presses Run.
+    const writes = detectAggregateWriteStage(closed.lastAggregate).hasWriteStage;
+    const restoredBuilder = builderState
+      ?? (writes ? builderStateFromQueryTab(closed.lastQuery, closed.lastAggregate) : undefined);
+    if (restoredBuilder) tabBuilderStateCache.current.set(id, restoredBuilder);
+    const reopened: QueryTab = {
+      ...closed,
+      ...(writes && { lastAggregate: undefined }),
+      id,
+      connectionId,
+      results: [],
+      loading: runsQuery,
+      error: null,
+      explainResult: null,
+    };
+    setTabs(prev => [...prev, reopened]);
+    dispatchWorkspace({ type: 'open_tab', tabId: id }, { tab: reopened });
+    if (runsQuery) {
+      void loadTabResults(id, connectionId, reopened.db, reopened.collection, lastQueryDefOf(reopened));
+    }
+  };
+
+  const runTabCommand = (command: TabCommand) => {
+    switch (command.type) {
+      case 'close-tab':
+        if (!activeTabId) return;
+        // Main always falls back to Quick Start, so closing a lone Quick Start
+        // would only flash it away and back.
+        if (isMainWindow && tabs.length === 1 && activeTabId === QUICK_START_TAB_ID) return;
+        closeTabById(activeTabId);
+        return;
+      case 'new-tab': {
+        const active = tabs.find(t => t.id === activeTabId);
+        if (active?.type === 'collection') {
+          void handleSelectCollection(active.connectionId, active.db, active.collection, undefined, { newTab: true });
+        } else {
+          openQuickStartTab();
+        }
+        return;
+      }
+      case 'reopen-closed-tab':
+        reopenClosedTab();
+        return;
+      case 'open-settings':
+        handleOpenSettingsTab();
+        return;
+      default: {
+        if (!focusedPane) return;
+        const target = targetTabId(focusedPane.tabIds, focusedPane.activeTabId, command);
+        if (target && target !== focusedPane.activeTabId) {
+          dispatchWorkspace({ type: 'set_active', paneId: focusedPane.id, tabId: target });
+        }
+      }
+    }
+  };
+  const runTabCommandRef = useRef(runTabCommand);
+  runTabCommandRef.current = runTabCommand;
+
+  useEffect(() => {
+    const mac = isMacPlatform();
+    const onKey = (e: KeyboardEvent) => {
+      const command = tabCommandForKey(e, mac);
+      if (!command) return;
+      e.preventDefault();
+      runTabCommandRef.current(command);
+    };
+    window.addEventListener('keydown', onKey);
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    subscribeTabCommand((payload) => {
+      const command = tabCommandFromMenu(payload);
+      if (command) runTabCommandRef.current(command);
+    })
+      .then((fn) => (cancelled ? fn() : (unlisten = fn)))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      window.removeEventListener('keydown', onKey);
+      unlisten?.();
+    };
+  }, []);
 
   const openQuickStartTab = () => {
     const alreadyOpen = tabs.some(t => t.id === QUICK_START_TAB_ID);
@@ -3228,9 +3538,9 @@ function Workspace() {
     { id: 'density-cozy', title: tShell('commandPalette.paletteActions.densityCozy.title'), keywords: tShell('commandPalette.paletteActions.densityCozy.keywords'), run: () => setSpacingDensity('cozy') },
     { id: 'density-compact', title: tShell('commandPalette.paletteActions.densityCompact.title'), keywords: tShell('commandPalette.paletteActions.densityCompact.keywords'), run: () => setSpacingDensity('compact') },
     ...(activeTab && activeTab.type === 'collection' ? [
-      { id: 'open-shell', title: tShell('commandPalette.paletteActions.openShell.title'), hint: `${activeTab.db}.${activeTab.collection}`, keywords: tShell('commandPalette.paletteActions.openShell.keywords'), run: () => handleOpenShell(activeTab.connectionId, activeTab.db, activeTab.collection) },
-      { id: 'export-collection', title: tShell('commandPalette.paletteActions.exportCollection.title'), hint: `${activeTab.db}.${activeTab.collection}`, keywords: tShell('commandPalette.paletteActions.exportCollection.keywords'), run: () => handleOpenExportTab(activeTab) },
-      { id: 'analyze-schema', title: tShell('commandPalette.paletteActions.analyzeSchema.title'), hint: `${activeTab.db}.${activeTab.collection}`, keywords: tShell('commandPalette.paletteActions.analyzeSchema.keywords'), run: () => handleOpenSchemaTab(activeTab.connectionId, activeTab.db, activeTab.collection) },
+      ...(isCommandBlocked(activeTab.connectionId, 'start_mongosh_session') ? [] : [{ id: 'open-shell', title: tShell('commandPalette.paletteActions.openShell.title'), hint: `${activeTab.db}.${activeTab.collection}`, keywords: tShell('commandPalette.paletteActions.openShell.keywords'), run: () => handleOpenShell(activeTab.connectionId, activeTab.db, activeTab.collection) }]),
+      ...(isCommandBlocked(activeTab.connectionId, 'start_collection_export') || isCommandBlocked(activeTab.connectionId, 'start_filtered_export') ? [] : [{ id: 'export-collection', title: tShell('commandPalette.paletteActions.exportCollection.title'), hint: `${activeTab.db}.${activeTab.collection}`, keywords: tShell('commandPalette.paletteActions.exportCollection.keywords'), run: () => handleOpenExportTab(activeTab) }]),
+      ...(isCommandBlocked(activeTab.connectionId, 'analyze_schema') ? [] : [{ id: 'analyze-schema', title: tShell('commandPalette.paletteActions.analyzeSchema.title'), hint: `${activeTab.db}.${activeTab.collection}`, keywords: tShell('commandPalette.paletteActions.analyzeSchema.keywords'), run: () => handleOpenSchemaTab(activeTab.connectionId, activeTab.db, activeTab.collection) }]),
     ] : []),
     ...(activeTabId ? [{ id: 'close-tab', title: tShell('commandPalette.paletteActions.closeTab.title'), keywords: tShell('commandPalette.paletteActions.closeTab.keywords'), run: () => closeTabById(activeTabId) }] : []),
     ...(focusedPane && focusedPane.tabIds.length > 1 ? [
@@ -3248,13 +3558,13 @@ function Workspace() {
         dispatchWorkspace({ type: 'focus_pane', paneId: panes[(i + 1) % panes.length].id });
       } },
     ] : []),
-    ...activeConnections.map(c => ({
+    ...activeConnections.filter(c => !MONITORING_READS.every(cmd => isCommandBlocked(c.id, cmd))).map(c => ({
       id: `monitoring:${c.id}`,
       title: tShell('commandPalette.paletteActions.openMonitoring.title', { name: c.name }),
       keywords: tShell('commandPalette.paletteActions.openMonitoring.keywords'),
       run: () => handleOpenMonitoringTab(c.id),
     })),
-    ...activeConnections.map(c => ({
+    ...activeConnections.filter(c => !isCommandBlocked(c.id, 'list_users')).map(c => ({
       id: `users:${c.id}`,
       title: tShell('commandPalette.paletteActions.manageUsers.title', { name: c.name }),
       keywords: tShell('commandPalette.paletteActions.manageUsers.keywords'),
@@ -3720,6 +4030,7 @@ function Workspace() {
         // (the status bar's username display) degrades to '' for a
         // connection registered this way rather than crash.
         applyConnectionsAdditions(payload.connections);
+        noteServerConnections(payload.connections);
 
         // Phase 3 Task 6 (LEDGER MANDATE) considered — and deliberately does
         // NOT implement — a self-healing cleanup for "stale" backend
@@ -3844,8 +4155,17 @@ function Workspace() {
       // (`load_connection_profiles`) is needed to reuse it either.
       const existing = activeConnections.find((c) => c.profileId === profileId);
       let newId: string;
+      const server = parseServerProfileId(profileId);
       if (existing) {
         newId = existing.id;
+      } else if (server) {
+        // Opened in the mode the accounts file holds for it, as the connect
+        // itself reads it.
+        const connected = await connectToServer(server.accountId, server.remoteId);
+        const mode = connected.mode;
+        newId = connected.id;
+        addActiveConnection(newId, profileName, '', profileId, undefined, undefined, mode);
+        setConnectionMeta(newId, profileId, profileName, mode);
       } else {
         const profiles = await invoke<ConnectionProfile[]>('load_connection_profiles');
         const profile = profiles.find((p) => p.id === profileId);
@@ -3854,7 +4174,12 @@ function Workspace() {
           return;
         }
 
-        newId = await invoke<string>('connect_db', { uri: profile.uri, ssh: profile.ssh ?? null, oidc: profile.oidc ?? null });
+        const uri = await askMissingPassword(profile);
+        if (uri === null) {
+          patchReconnectState(profileId, { busy: false });
+          return;
+        }
+        newId = await invoke<string>('connect_db', { uri, ssh: profile.ssh ?? null, oidc: profile.oidc ?? null, profileId: profile.id });
         addActiveConnection(newId, profileName, profile.uri, profile.id, profile.color_tag ?? undefined, undefined, profile.connection_mode ?? 'normal');
         // Announce this fresh id to every other window (Phase 3 Task 6) —
         // see `setConnectionMeta`'s doc comment. Deliberately NOT called on
@@ -4329,32 +4654,15 @@ function Workspace() {
     }
   };
 
+  // Update Many counts first, then opens UpdateManyModal, which names the
+  // filter and the count, so submitting it is the confirmation. It belongs to
+  // the tab it was opened from and shows only while that tab does, since it
+  // does not name the collection it writes to (#550 review).
+  const [updateManyTarget, setUpdateManyTarget] = useState<{ tab: QueryTab; filter: string; count: number; openedAt: number } | null>(null);
+
   const handleUpdateMany = async (tab: QueryTab) => {
     if (tab.type !== 'collection') return;
     const filter = bulkFilter(tab);
-    const update = await prompt({
-      title: t('documents:dataGrid.dialogs.updateMany.title'),
-      message: t('documents:dataGrid.dialogs.updateMany.promptMessage'),
-      defaultValue: '{ "$set": {} }',
-      validate: (v) => {
-        let parsed: any;
-        try {
-          parsed = JSON.parse(v);
-        } catch {
-          return t('documents:dataGrid.dialogs.updateMany.validation.invalidJson');
-        }
-        if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-          return t('documents:dataGrid.dialogs.updateMany.validation.mustBeObject');
-        }
-        if (Object.keys(parsed).length === 0 || !Object.keys(parsed).every((k) => k.startsWith('$'))) {
-          return t('documents:dataGrid.dialogs.updateMany.validation.mustUseOperators');
-        }
-        return null;
-      },
-    });
-    if (!update) return; // cancelled
-    // #188 Task 3: see handleDeleteMany's comment on this same lookup.
-    const mode = activeConnections.find((c) => c.id === tab.connectionId)?.mode ?? 'normal';
     try {
       const count = await invoke<number>('count_documents', {
         id: tab.connectionId,
@@ -4362,6 +4670,20 @@ function Workspace() {
         collection: tab.collection,
         filter,
       });
+      setUpdateManyTarget({ tab, filter, count, openedAt: Date.now() });
+    } catch (err: any) {
+      toast(t('toast.updateFailed', { detail: err?.message || err }), 'error');
+    }
+  };
+
+  /** `update` is Extended JSON from UpdateManyModal. */
+  const runUpdateMany = async (update: string) => {
+    if (!updateManyTarget) return;
+    const { tab, filter, count } = updateManyTarget;
+    setUpdateManyTarget(null);
+    // #188 Task 3: see handleDeleteMany's comment on this same lookup.
+    const mode = activeConnections.find((c) => c.id === tab.connectionId)?.mode ?? 'normal';
+    try {
       let confirmed = false;
       if (mode === 'confirm_destructive') {
         const ok = await confirmByTypedName(prompt, {
@@ -4374,15 +4696,6 @@ function Workspace() {
         }, t);
         if (!ok) return;
         confirmed = true;
-      } else if (
-        !(await confirm({
-          title: t('documents:dataGrid.dialogs.updateMany.title'),
-          message: bulkConfirmMessage('update', count, filter),
-          confirmLabel: t('documents:dataGrid.dialogs.updateMany.confirmLabel'),
-          destructive: true,
-        }))
-      ) {
-        return;
       }
       const modified = await invoke<number>('update_many', {
         id: tab.connectionId,
@@ -4456,11 +4769,44 @@ function Workspace() {
       return;
     }
 
-    const target = edit.targetDoc;
+    await writeDocumentUpdate(tab, edit.targetDoc, json);
+    const savedIn = tabHoldingEdit(edit.id) ?? tab;
+    closeEditById(edit.id);
+    await refreshTabResults(savedIn);
+    toast(t('toast.documentSavedIn', { collection }), 'success', { title: t('toast.savedTitle') });
+  };
+
+  /** Saves one value edited in place in the results grid. Rejects, after a
+   *  toast, so the grid keeps the cell editor open with the value typed. */
+  const handleEditField = async (tab: QueryTab, doc: Record<string, any>, edited: Record<string, any>) => {
+    // A tab on its way to another window is frozen; the edit goes with it.
+    if (movingTabIds.has(tab.id)) throw new Error(t('toast.tabMoving'));
+    // Registered like a dialog save, through the refresh, so the tab is not
+    // moved and its namespace not dropped or renamed while the write is out.
+    const editId = `cell:${crypto.randomUUID()}`;
+    setPendingSaves(prev => [
+      ...prev,
+      { editId, tabId: tab.id, connectionId: tab.connectionId, db: tab.db, collection: tab.collection },
+    ]);
+    try {
+      try {
+        await writeDocumentUpdate(tab, doc, shellToEjson(docToShell(edited)));
+      } catch (err: any) {
+        toast(t('toast.updateFailed', { detail: err?.message || err }), 'error');
+        throw err;
+      }
+      await refreshTabResults(tab);
+      toast(t('toast.documentSavedIn', { collection: tab.collection }), 'success', { title: t('toast.savedTitle') });
+    } finally {
+      setPendingSaves(prev => prev.filter(s => s.editId !== editId));
+    }
+  };
+
+  const writeDocumentUpdate = async (tab: QueryTab, target: Record<string, any> | null | undefined, json: string) => {
     if (!target || target._id === undefined) {
-      // Caught by handleSaveDocument and filed on the edit, which the dialog
-      // renders straight into its error banner — so the text is user-facing
-      // copy, not a dev invariant.
+      // A row shown without its `_id` would update by an empty filter. The
+      // message is user-facing: the document dialog shows it in its error
+      // banner, and the cell editor in its tooltip.
       throw new Error(t('documents:editModal.errors.noId'));
     }
     // Send the document as loaded *and* as edited so the backend can apply only
@@ -4470,7 +4816,7 @@ function Workspace() {
     await invoke('update_document', {
       id: tab.connectionId,
       database: tab.db,
-      collection,
+      collection: tab.collection,
       filter: JSON.stringify({ _id: target._id }),
       // Must be EJSON, not shell text: the backend parses both sides with strict
       // `serde_json`, and DocumentEditModal already converts the editor contents
@@ -4494,10 +4840,6 @@ function Workspace() {
         ? (pipelineYieldsWholeDocuments(tab.lastAggregate) ? '{}' : null)
         : (tab.lastQuery?.projection ?? '{}'),
     });
-    const savedIn = tabHoldingEdit(edit.id) ?? tab;
-    closeEditById(edit.id);
-    await refreshTabResults(savedIn);
-    toast(t('toast.documentSavedIn', { collection }), 'success', { title: t('toast.savedTitle') });
   };
 
   const handleExplainQuery = async (tab: QueryTab, filter: string): Promise<string> => {
@@ -4546,6 +4888,14 @@ function Workspace() {
           busy={!!state?.busy}
           error={state?.error ?? null}
           onReconnect={() => handleReconnectProfile(profileId, profileName)}
+          onSignIn={
+            parseServerProfileId(profileId)
+              ? () => {
+                  setConnectionModalServer(true);
+                  setIsConnectionModalOpen(true);
+                }
+              : undefined
+          }
         />
       );
     }
@@ -4556,6 +4906,14 @@ function Workspace() {
     // content (not instead of it, unlike the ReconnectBanner above) for every
     // tab type that operates on a connection; `settings`/`quickstart`/`tasks`
     // have no connection to badge.
+    // A tab whose work a server connection cannot do (one restored from an
+    // earlier session, say) says so rather than running it.
+    const tabCommand = TAB_COMMANDS[tab.type];
+    if (tabCommand && isCommandBlocked(tab.connectionId, tabCommand)) {
+      return (
+        <div className="flex h-full items-center justify-center p-8 text-center text-xs text-muted-foreground">{isBlockedByRole(tab.connectionId, tabCommand) ? t('notForRole') : t('notOnServer')}</div>
+      );
+    }
     const connMode = activeConnections.find((c) => c.id === tab.connectionId)?.mode;
     const showModeBanner = !!connMode && connMode !== 'normal' && CONNECTION_TAB_TYPES.has(tab.type);
     const body = (
@@ -4566,24 +4924,41 @@ function Workspace() {
             databaseName={tab.db}
             collectionName={tab.collection}
             indexName={tab.indexName || ''}
-            onEditIndex={(indexName, keys, unique, sparse) =>
-              handleOpenIndexModalForEdit(
-                tab.connectionId,
-                tab.db,
-                tab.collection,
-                indexName,
-                keys,
-                unique,
-                sparse
-              )
+            refreshKey={indexMutationTrigger}
+            onEditIndex={isCommandBlocked(tab.connectionId, 'create_index') || isCommandBlocked(tab.connectionId, 'delete_index') ? undefined : (spec) =>
+              handleOpenIndexModalForEdit(tab.connectionId, tab.db, tab.collection, spec)
             }
-            onDeleteIndex={(indexName) =>
+            onDeleteIndex={isCommandBlocked(tab.connectionId, 'delete_index') ? undefined : (indexName) =>
               handleDeleteIndex(
                 tab.connectionId,
                 tab.db,
                 tab.collection,
                 indexName
               )
+            }
+            onSetIndexOption={isCommandBlocked(tab.connectionId, 'set_index_option') ? undefined : (option, value) =>
+              handleSetIndexOption(tab.connectionId, tab.db, tab.collection, tab.indexName || '', option, value)
+            }
+            onConvertToUnique={isCommandBlocked(tab.connectionId, 'set_index_option') ? undefined : () =>
+              handleConvertToUnique(tab.connectionId, tab.db, tab.collection, tab.indexName || '')
+            }
+          />
+        )}
+        {tab.type === 'indexes' && (
+          <CollectionIndexes
+            connectionId={tab.connectionId}
+            databaseName={tab.db}
+            collectionName={tab.collection}
+            refreshKey={indexMutationTrigger}
+            onOpenIndex={(indexName) => handleSelectIndex(tab.connectionId, tab.db, tab.collection, indexName)}
+            onCreateIndex={isCommandBlocked(tab.connectionId, 'create_index') ? undefined : () =>
+              handleOpenIndexModalForCreate(tab.connectionId, tab.db, tab.collection)
+            }
+            onEditIndex={isCommandBlocked(tab.connectionId, 'create_index') || isCommandBlocked(tab.connectionId, 'delete_index') ? undefined : (spec) =>
+              handleOpenIndexModalForEdit(tab.connectionId, tab.db, tab.collection, spec)
+            }
+            onDeleteIndex={isCommandBlocked(tab.connectionId, 'delete_index') ? undefined : (indexName) =>
+              handleDeleteIndex(tab.connectionId, tab.db, tab.collection, indexName)
             }
           />
         )}
@@ -4615,12 +4990,14 @@ function Workspace() {
               aiChatId={tabChatCache.current.get(tab.id)?.chatId}
               onAIChatIdChange={(chatId) => handleAIChatIdChange(tab.id, chatId)}
               onExecute={q => handleExecuteQuery(tab, q)}
-              onExecuteAggregate={pipeline => handleExecuteAggregate(tab, pipeline)}
+              onExecuteAggregate={isCommandBlocked(tab.connectionId, 'execute_aggregate') ? undefined : pipeline => handleExecuteAggregate(tab, pipeline)}
+              aggregateBlocked={isCommandBlocked(tab.connectionId, 'execute_aggregate')}
               onExplain={filter => handleExplainQuery(tab, filter)}
               onExplainAggregate={pipeline => handleExplainAggregate(tab, pipeline)}
-              onOpenShell={(command) => handleOpenShell(tab.connectionId, tab.db, tab.collection, command)}
-              onOpenExport={() => handleOpenExportTab(tab)}
-              onImport={() => handleImport(tab)}
+              onOpenShell={isCommandBlocked(tab.connectionId, 'start_mongosh_session') ? undefined : (command) => handleOpenShell(tab.connectionId, tab.db, tab.collection, command)}
+              onOpenExport={isCommandBlocked(tab.connectionId, 'start_collection_export') || isCommandBlocked(tab.connectionId, 'start_filtered_export') ? undefined : () => handleOpenExportTab(tab)}
+              onImport={isCommandBlocked(tab.connectionId, 'start_import_task') ? undefined : () => handleImport(tab)}
+              explainBlocked={isCommandBlocked(tab.connectionId, 'explain_mql_query') || isCommandBlocked(tab.connectionId, 'explain_aggregate_query')}
               loading={tab.loading}
               availableFields={fieldsFromResults(tab.results)}
             >
@@ -4651,12 +5028,14 @@ function Workspace() {
                     querySpec={buildTabQuerySpec(tab)}
                     onInsertDocument={() => handleInsertDocument(tab)}
                     onEditDocument={rowsAreStoredDocuments(tab) ? (doc => handleEditDocument(tab, doc)) : undefined}
+                    onEditField={rowsAreStoredDocuments(tab) ? ((doc, edited) => handleEditField(tab, doc, edited)) : undefined}
                     onDuplicateDocument={doc => handleDuplicateDocument(tab, doc)}
                     onDeleteDocument={rowsAreStoredDocuments(tab) ? (doc => handleDeleteDocument(tab, doc)) : undefined}
-                    onAnalyzeSchema={() => handleOpenSchemaTab(tab.connectionId, tab.db, tab.collection)}
+                    onAnalyzeSchema={isCommandBlocked(tab.connectionId, 'analyze_schema') ? undefined : () => handleOpenSchemaTab(tab.connectionId, tab.db, tab.collection)}
                     onUpdateMany={() => handleUpdateMany(tab)}
                     onDeleteMany={() => handleDeleteMany(tab)}
                     connectionMode={connMode}
+                    blockedCommands={serverConnections.get(tab.connectionId)?.blockedCommands}
                     totalCount={tab.totalCount}
                     estimated={tab.estimated}
                     countLoading={tab.countLoading}
@@ -4683,6 +5062,8 @@ function Workspace() {
             connectionId={tab.connectionId}
             databaseName={tab.db}
             collectionName={tab.collection}
+            onValidatorApplied={() => setCollectionMutationTrigger(prev => prev + 1)}
+            validationBlocked={isCommandBlocked(tab.connectionId, 'set_validator')}
           />
         )}
         {tab.type === 'create-view' && (
@@ -4701,6 +5082,7 @@ function Workspace() {
             databaseName={tab.db}
             collectionName={tab.collection}
             onApplied={() => setCollectionMutationTrigger(prev => prev + 1)}
+            canSample={!isCommandBlocked(tab.connectionId, 'analyze_schema')}
           />
         )}
         {tab.type === 'generate' && (
@@ -4727,10 +5109,10 @@ function Workspace() {
           />
         )}
         {tab.type === 'monitoring' && (
-          <MonitoringView connectionId={tab.connectionId} />
+          <MonitoringView connectionId={tab.connectionId} blockedCommands={serverConnections.get(tab.connectionId)?.blockedCommands} roleBlockedCommands={serverConnections.get(tab.connectionId)?.roleBlockedCommands} />
         )}
         {tab.type === 'users' && (
-          <UserManagementView connectionId={tab.connectionId} database={tab.db || undefined} />
+          <UserManagementView connectionId={tab.connectionId} database={tab.db || undefined} blockedCommands={serverConnections.get(tab.connectionId)?.blockedCommands} />
         )}
         {tab.type === 'export' && (() => {
           const activeConnection = activeConnections.find(c => c.id === tab.connectionId);
@@ -4828,6 +5210,7 @@ function Workspace() {
               databases={dumpDbTrees[tab.connectionId] ?? []}
               initialScope={initialScope}
               tools={mongoTools}
+              serverHost={serverHostOf(tab.connectionId)}
               onOpenSettings={handleOpenToolsSettings}
               onInstallTools={handleOpenToolSetup}
               onPickFolder={async () => {
@@ -4838,7 +5221,7 @@ function Workspace() {
                 const p = await save({ defaultPath: defaultName });
                 return p ?? null;
               }}
-              onPreviewCommand={(options) =>
+              onPreviewCommand={serverHostOf(tab.connectionId) ? undefined : (options) =>
                 invoke<string>('preview_dump_command', {
                   id: tab.connectionId,
                   toolPath: mongoTools?.mongodump?.path ?? '',
@@ -4858,6 +5241,7 @@ function Workspace() {
               key={tab.id}
               connectionName={connectionName}
               tools={mongoTools}
+              serverHost={serverHostOf(tab.connectionId)}
               onOpenSettings={handleOpenToolsSettings}
               onInstallTools={handleOpenToolSetup}
               onPickFolder={async () => {
@@ -4869,7 +5253,7 @@ function Workspace() {
                 return typeof p === 'string' ? p : null;
               }}
               onBrowseFolder={(path) => invoke<DumpTreeUi>('browse_dump_folder', { path })}
-              onPreviewCommand={(options) =>
+              onPreviewCommand={serverHostOf(tab.connectionId) ? undefined : (options) =>
                 invoke<string>('preview_restore_command', {
                   id: tab.connectionId,
                   toolPath: mongoTools?.mongorestore?.path ?? '',
@@ -4915,7 +5299,12 @@ function Workspace() {
             streamId={tab.id}
           />
         )}
-        {tab.type === 'shell' && (() => {
+        {tab.type === 'shell' && isCommandBlocked(tab.connectionId, 'start_mongosh_session') && (
+          <div className="flex h-full items-center justify-center p-8 text-center text-xs text-muted-foreground">
+            {isBlockedByRole(tab.connectionId, 'start_mongosh_session') ? t('notForRole') : tShell('shellNotOnServer')}
+          </div>
+        )}
+        {tab.type === 'shell' && !isCommandBlocked(tab.connectionId, 'start_mongosh_session') && (() => {
           const activeConnection = activeConnections.find(c => c.id === tab.connectionId);
           const connectionName = activeConnection ? activeConnection.name : tab.connectionId;
           return (
@@ -4925,6 +5314,7 @@ function Workspace() {
               connectionName={connectionName}
               scopeKey={connectionQueryKeyFor(tab.connectionId)}
               connectionUri={activeConnection?.uri || ''}
+              server={serverConnections.has(tab.connectionId)}
               databaseName={tab.db}
               collectionName={tab.collection || undefined}
               initialCommand={tab.initialShellCommand}
@@ -5009,6 +5399,9 @@ function Workspace() {
       sidebar={
         <Sidebar
           onSelectCollection={handleSelectCollection}
+          isCommandBlocked={isCommandBlocked}
+          isBlockedByRole={isBlockedByRole}
+          serverAccountFor={(id) => serverConnections.get(id)?.accountName}
           pendingSaves={pendingSaves}
           isCollectionOpen={(connectionId, db, collection) =>
             collectionTabsMatching(tabs, { connectionId, db, collection }).length > 0
@@ -5016,6 +5409,7 @@ function Workspace() {
           onSelectIndex={handleSelectIndex}
           onCreateIndex={handleOpenIndexModalForCreate}
           onDeleteIndex={handleDeleteIndex}
+          onOpenIndexes={handleOpenIndexesTab}
           onOpenShell={handleOpenShell}
           onWatchCollection={handleOpenWatch}
           onOpenMonitoring={handleOpenMonitoringTab}
@@ -5089,7 +5483,8 @@ function Workspace() {
 
           <ConnectionManager
             isOpen={isConnectionModalOpen}
-            onClose={() => { setIsConnectionModalOpen(false); setProfilesRefreshKey((k) => k + 1); }}
+            onClose={() => { setIsConnectionModalOpen(false); setConnectionModalServer(false); setProfilesRefreshKey((k) => k + 1); }}
+            showServerAccounts={connectionModalServer}
             onConnect={(id, name, uri, profileId, colorTag, connectionMode) => {
               addActiveConnection(id, name, uri, profileId, colorTag ?? undefined, undefined, connectionMode ?? 'normal');
               // Announce this fresh id to every other window (Phase 3 Task 6)
@@ -5100,6 +5495,7 @@ function Workspace() {
               // doc comment.
               rebindProfileTabs(profileId, id);
               setIsConnectionModalOpen(false);
+              setConnectionModalServer(false);
               setProfilesRefreshKey((k) => k + 1);
             }}
             activeConnections={activeConnections}
@@ -5117,6 +5513,8 @@ function Workspace() {
             collectionName={indexModalTarget?.collection}
             availableFields={fieldsFromResults(activeTab?.results)}
             initialData={indexModalTarget?.initialData}
+            allowCommitQuorum={!serverConnections.has(indexModalTarget?.connectionId ?? '')}
+            saving={isSavingIndex}
             prefill={indexModalTarget?.prefill}
           />
 
@@ -5124,6 +5522,9 @@ function Workspace() {
               switching back restores it, because the text lives on the tab
               rather than in the dialog (#277). */}
           <DocumentEditModal
+            // One instance per edit: queued keys leave with the edit they were typed into.
+            key={activeTab?.documentEdit?.id ?? 'none'}
+            flushHandleRef={documentEditFlushRef}
             isOpen={activeTab?.documentEdit !== undefined}
             mode={activeTab?.documentEdit?.mode || 'insert'}
             initialJson={activeTab?.documentEdit?.initialJson || '{}'}
@@ -5136,7 +5537,18 @@ function Workspace() {
             onSave={handleSaveDocument}
           />
 
+          <UpdateManyModal
+            // A fresh draft per Update Many; hiding it on another tab keeps the draft.
+            key={updateManyTarget?.openedAt ?? 'none'}
+            isOpen={updateManyTarget !== null && updateManyTarget.tab.id === activeTab?.id}
+            filter={updateManyTarget?.filter ?? '{}'}
+            count={updateManyTarget?.count ?? 0}
+            onClose={() => setUpdateManyTarget(null)}
+            onSubmit={runUpdateMany}
+          />
+
           <UpdatePrompt />
+          <WhatsNew version={appVersion} />
 
           {/* A write no conversation asked for — an external MCP client's —
               is confirmed here rather than in a chat panel, which is not on

@@ -2,7 +2,7 @@
 
 use crate::limits::{GRIDFS_STREAM_BUF, MAX_GRIDFS_LIST, MAX_GRIDFS_UPLOAD_BYTES};
 use crate::write_guard::{guard_writable, WriteOp};
-use crate::{connection_is_mock, require_real_client, AppState};
+use crate::{connection_is_mock, AppState};
 use serde::Serialize;
 use std::path::Path;
 
@@ -93,7 +93,12 @@ pub async fn list_gridfs_files_impl(
     if connection_is_mock(state, id)? {
         return Err("GridFS is not supported on mock connections".to_string());
     }
-    let client = require_real_client(state, id)?;
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            return crate::server::ops::gridfs::list_files(state, &conn, database, bucket).await;
+        }
+    };
     let files_coll = format!("{}.files", bucket);
     let coll = client
         .database(database)
@@ -109,35 +114,40 @@ pub async fn list_gridfs_files_impl(
     let mut files = Vec::new();
     while let Some(res) = cursor.next().await {
         let doc = res.map_err(|e| format!("Cursor read error: {}", e))?;
-        let id_extjson = doc
-            .get("_id")
-            .cloned()
-            .unwrap_or(mongodb::bson::Bson::Null)
-            .into_relaxed_extjson()
-            .to_string();
-        let filename = doc.get_str("filename").unwrap_or("").to_string();
-        let length = doc
-            .get_i64("length")
-            .map(|v| v as u64)
-            .or_else(|_| doc.get_i32("length").map(|v| v as u64))
-            .unwrap_or(0);
-        let chunk_size_bytes = doc.get_i32("chunkSize").map(|v| v as u32).unwrap_or(0);
-        let upload_date = doc
-            .get_datetime("uploadDate")
-            .ok()
-            .and_then(|d| d.try_to_rfc3339_string().ok())
-            .unwrap_or_default();
-        let content_type = doc.get_str("contentType").ok().map(|s| s.to_string());
-        files.push(GridFsFileInfo {
-            id: id_extjson,
-            filename,
-            length,
-            chunk_size_bytes,
-            upload_date,
-            content_type,
-        });
+        files.push(file_info(&doc));
     }
     serde_json::to_string(&files).map_err(|e| format!("Serialization error: {}", e))
+}
+
+/// A stored file document as the bucket listing shows it.
+pub(crate) fn file_info(doc: &mongodb::bson::Document) -> GridFsFileInfo {
+    let id_extjson = doc
+        .get("_id")
+        .cloned()
+        .unwrap_or(mongodb::bson::Bson::Null)
+        .into_relaxed_extjson()
+        .to_string();
+    let filename = doc.get_str("filename").unwrap_or("").to_string();
+    let length = doc
+        .get_i64("length")
+        .map(|v| v as u64)
+        .or_else(|_| doc.get_i32("length").map(|v| v as u64))
+        .unwrap_or(0);
+    let chunk_size_bytes = doc.get_i32("chunkSize").map(|v| v as u32).unwrap_or(0);
+    let upload_date = doc
+        .get_datetime("uploadDate")
+        .ok()
+        .and_then(|d| d.try_to_rfc3339_string().ok())
+        .unwrap_or_default();
+    let content_type = doc.get_str("contentType").ok().map(|s| s.to_string());
+    GridFsFileInfo {
+        id: id_extjson,
+        filename,
+        length,
+        chunk_size_bytes,
+        upload_date,
+        content_type,
+    }
 }
 
 pub async fn upload_gridfs_file_impl(
@@ -242,7 +252,21 @@ async fn upload_gridfs_file_inner(
         .map(|s| s.to_string())
         .or_else(|| guess_content_type(&upload_name).map(|s| s.to_string()));
 
-    let client = require_real_client(state, id)?;
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            let upload = crate::server::ops::gridfs::Upload {
+                database,
+                bucket,
+                source_path,
+                filename: upload_name,
+                content_type: resolved_content_type,
+                metadata,
+                total,
+            };
+            return crate::server::ops::gridfs::upload(state, &conn, upload, on_progress).await;
+        }
+    };
     let bucket_obj = gridfs_bucket(&client, database, bucket);
 
     let mut upload_builder = bucket_obj.open_upload_stream(&upload_name);
@@ -348,7 +372,13 @@ async fn delete_gridfs_file_inner(
     let file_id = mongodb::bson::Bson::try_from(id_value)
         .map_err(|e| format!("Invalid file id: {}", e))?;
 
-    let client = require_real_client(state, id)?;
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            return crate::server::ops::gridfs::delete(state, &conn, database, bucket, &file_id)
+                .await;
+        }
+    };
     let bucket_obj = gridfs_bucket(&client, database, bucket);
     bucket_obj
         .delete(file_id)
@@ -375,7 +405,19 @@ pub async fn download_gridfs_file_impl(
     let file_id = mongodb::bson::Bson::try_from(id_value)
         .map_err(|e| format!("Invalid file id: {}", e))?;
 
-    let client = require_real_client(state, id)?;
+    let client = match crate::server::remote::route(state, id)? {
+        crate::server::remote::Route::Local(client) => client,
+        crate::server::remote::Route::Remote(conn) => {
+            let download = crate::server::ops::gridfs::Download {
+                database,
+                bucket,
+                file_id: &file_id,
+                dest_path,
+                total: total_bytes.unwrap_or(0),
+            };
+            return crate::server::ops::gridfs::download(state, &conn, download, on_progress).await;
+        }
+    };
     let bucket_obj = gridfs_bucket(&client, database, bucket);
     let mut stream = bucket_obj
         .open_download_stream(file_id)

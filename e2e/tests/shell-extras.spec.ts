@@ -35,8 +35,32 @@ test.describe('mongosh commands', () => {
     await openShell(page);
     await expect(transcript(page)).toContainText('sales_db> show collections');
 
-    const found = await callFrom(app, 'execute_mql_query', () => run(page, "db.customers.find({ tier: 'Premium' }, { name: 1 })"));
+    const found = await callFrom(app, 'execute_mql_query', () =>
+      run(page, "db.customers.find({ tier: 'Premium' }).skip(0).limit(50).projection({ name: 1 })")
+    );
     expect(JSON.parse(String(found.filter))).toEqual({ tier: 'Premium' });
+    expect(JSON.parse(String(found.projection))).toEqual({ name: 1 });
+    expect(found).toMatchObject({ skip: 0, limit: 50 });
+
+    await shell(page).getByRole('tab', { name: 'Console' }).click();
+    const positional = await callFrom(app, 'execute_mql_query', () =>
+      run(page, "db.customers.find({ tier: 'Premium' }, { name: 1 })")
+    );
+    expect(JSON.parse(String(positional.projection))).toEqual({ name: 1 });
+
+    await shell(page).getByRole('tab', { name: 'Console' }).click();
+    const one = await callFrom(app, 'execute_mql_query', () =>
+      run(page, 'db.customers.findOne().projection({ name: 1 })')
+    );
+    expect(JSON.parse(String(one.projection))).toEqual({ name: 1 });
+    expect(one).toMatchObject({ limit: 1 });
+
+    await shell(page).getByRole('tab', { name: 'Console' }).click();
+    const onePositional = await callFrom(app, 'execute_mql_query', () =>
+      run(page, 'db.customers.findOne({}, { name: 1 })')
+    );
+    expect(JSON.parse(String(onePositional.projection))).toEqual({ name: 1 });
+    expect(onePositional).toMatchObject({ limit: 1 });
 
     await shell(page).getByRole('tab', { name: 'Console' }).click();
     await run(page, 'db.customers.find({ tier: ObjectId("x") })');
@@ -67,6 +91,96 @@ test.describe('mongosh commands', () => {
     await shell(page).locator('.monaco-editor').first().click();
     await page.keyboard.press('Control+Enter');
     await expect(transcript(page)).toContainText('from the keyboard');
+  });
+
+  test('Ctrl+Enter runs the statement or selection at the cursor, Shift+Enter runs everything', async ({ app, page }) => {
+    await connectStaging(app, page);
+    await openShell(page);
+    await expect(transcript(page)).toContainText('transactions');
+
+    // setValue leaves the cursor on the first line. `show dbs` is mongosh, not
+    // JavaScript, so the statement comes from the fallback reading.
+    await setEditorText(page, shell(page), 'print("one")\nprint("two")\nprint("three")\nshow dbs');
+    await page.keyboard.press('Control+Enter');
+    await expect(transcript(page)).toContainText('one');
+    await expect(transcript(page)).not.toContainText('two');
+
+    // Select the last line with the mouse: WebKit's Ctrl+End/Shift+Home differ.
+    await shell(page).locator('.view-line', { hasText: 'print("three")' }).click({ clickCount: 3 });
+    await page.keyboard.press('Control+Enter');
+    await expect(transcript(page)).toContainText('three');
+    await expect(transcript(page)).not.toContainText('two');
+
+    await page.keyboard.press('Shift+Enter');
+    await expect(transcript(page)).toContainText('two');
+  });
+
+  test('Ctrl+Enter still runs only the statement at the cursor in a script that is not plain JavaScript', async ({ app, page }) => {
+    await connectStaging(app, page);
+    await openShell(page);
+    await expect(transcript(page)).toContainText('transactions');
+
+    // `use` is mongosh and `@` is no JavaScript at all, so the whole script is
+    // read by the fallback: blocks, loops, templates, and the comments after
+    // the `@`, which nothing masks.
+    const script = [
+      'print("first"); print("second")',
+      'use sales_db',
+      'if (true) { print("block") } print("same line")',
+      'do { print("loop") } while (false)',
+      'globalThis. do',
+      'print(\x60t ${\x60n\x60}\x60) // masked',
+      '@',
+      '// a note',
+      '/* a longer',
+      '   note */ print("after")',
+    ].join('\n');
+    // setValue leaves the cursor at the start of the first line.
+    await setEditorText(page, shell(page), script);
+    await page.keyboard.press('Control+Enter');
+    await expect(transcript(page)).toContainText('first');
+    await expect(transcript(page)).not.toContainText('second');
+  });
+
+  test('opens a script file into the editor and saves it back', async ({ app, page }) => {
+    await connectStaging(app, page, {
+      dialog: { open: '/scripts/report.js', save: '/scripts/report.js' },
+      files: { '/scripts/report.js': 'print("from a file")' },
+    });
+    await openShell(page);
+    await expect(transcript(page)).toContainText('transactions');
+
+    await shell(page).getByTestId('shell-open-script').click();
+    await expect.poll(() => getEditorText(page, shell(page))).toBe('print("from a file")');
+    await shell(page).getByRole('button', { name: 'Run', exact: true }).click();
+    await expect(transcript(page)).toContainText('from a file');
+
+    await callFrom(app, 'plugin:fs|write_text_file', () => shell(page).getByTestId('shell-save-script').click());
+    const [saveCall] = await app.calls('plugin:dialog|save');
+    expect(JSON.stringify(saveCall.args)).toContain('/scripts/report.js');
+  });
+
+  test('says why a script could not be opened or saved, and does nothing when the dialog is cancelled', async ({ app, page }) => {
+    await connectStaging(app, page, { dialog: { open: null, save: null } });
+    await openShell(page);
+    await expect(transcript(page)).toContainText('transactions');
+    await setEditorText(page, shell(page), 'print("kept")');
+
+    await callFrom(app, 'plugin:dialog|open', () => shell(page).getByTestId('shell-open-script').click());
+    expect(await app.calls('plugin:fs|read_text_file')).toHaveLength(0);
+    expect(await getEditorText(page, shell(page))).toBe('print("kept")');
+
+    await app.failNext('plugin:dialog|open', 'the open dialog is unavailable');
+    await shell(page).getByTestId('shell-open-script').click();
+    await expect(transcript(page)).toContainText('the open dialog is unavailable');
+    expect(await getEditorText(page, shell(page))).toBe('print("kept")');
+
+    await callFrom(app, 'plugin:dialog|save', () => shell(page).getByTestId('shell-save-script').click());
+    expect(await app.calls('plugin:fs|write_text_file')).toHaveLength(0);
+
+    await app.failNext('plugin:dialog|save', 'the file picker is unavailable');
+    await shell(page).getByTestId('shell-save-script').click();
+    await expect(transcript(page)).toContainText('the file picker is unavailable');
   });
 
   test('inserts or runs what the AI helper writes, and Escape cancels a destructive command', async ({ app, page }) => {

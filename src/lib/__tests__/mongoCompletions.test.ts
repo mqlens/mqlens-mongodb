@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getCompletions, TYPE_VALUE_SCAFFOLDS, type CompletionCtx } from '../mongoCompletions';
+import { getCompletions, shellCollectionAt, TYPE_VALUE_SCAFFOLDS, type CompletionCtx } from '../mongoCompletions';
 
 const base = (over: Partial<CompletionCtx>): CompletionCtx => ({
   surface: 'filter', textBeforeCursor: '', token: '', fields: ['region', 'plan', '_id'], ...over,
@@ -115,6 +115,11 @@ describe('getCompletions — shell collections vs methods', () => {
 describe('getCompletions — shell globals & chain methods', () => {
   it('suggests mongosh globals at the top level (print, ObjectId)', () => {
     const items = getCompletions(base({ surface: 'shell', textBeforeCursor: 'pr', token: 'pr' }));
+    expect(labels(items)).toEqual(expect.arrayContaining(['print', 'printjson']));
+  });
+  it('still suggests globals after earlier lines with brackets in strings or comments', () => {
+    const textBeforeCursor = 'print("a(")\n// open {\npr';
+    const items = getCompletions(base({ surface: 'shell', textBeforeCursor, token: 'pr' }));
     expect(labels(items)).toEqual(expect.arrayContaining(['print', 'printjson']));
   });
   it('suggests cursor chain methods after find()', () => {
@@ -544,6 +549,50 @@ describe('getCompletions — shell-style projection/sort keys', () => {
   });
 });
 
+describe('getCompletions — a key that already has a value', () => {
+  const schema = new Map([['tier', { type: 'string' }], ['total', { type: 'int' }]]);
+  const insertFor = (over: Partial<CompletionCtx>, label: string) =>
+    getCompletions(base({ fields: ['tier', 'total'], schema, ...over })).find((i) => i.label === label)?.insertText;
+  it('inserts only the key when a colon already follows it', () => {
+    expect(insertFor({ surface: 'shell', textBeforeCursor: 'db.customers.find({ ti', textAfterCursor: ': "gold" })', token: 'ti' }, 'tier')).toBe('tier');
+    expect(insertFor({ surface: 'shell', textBeforeCursor: 'db.customers.find({ "ti', textAfterCursor: '": "gold" })', token: 'ti' }, 'tier')).toBe('tier');
+    expect(insertFor({ surface: 'projection', shellSyntax: true, textBeforeCursor: '{ to', textAfterCursor: 'tal : 1 }', token: 'to' }, 'total')).toBe('total');
+  });
+  it('inserts only the name for a field-name string argument', () => {
+    expect(insertFor({ surface: 'shell', textBeforeCursor: 'db.customers.distinct("ti', textAfterCursor: '")', token: 'ti' }, 'tier')).toBe('tier');
+    expect(insertFor({ surface: 'shell', textBeforeCursor: "db.customers.distinct('ti", textAfterCursor: "')", token: 'ti' }, 'tier')).toBe('tier');
+    // With no closing quote yet, the name closes the string.
+    expect(insertFor({ surface: 'shell', textBeforeCursor: 'db.customers.distinct("ti', textAfterCursor: '', token: 'ti' }, 'tier')).toBe('tier"');
+    expect(insertFor({ surface: 'shell', textBeforeCursor: "db.customers.distinct('ti", textAfterCursor: ')', token: 'ti' }, 'tier')).toBe("tier'");
+  });
+  it('still scaffolds the value when none follows', () => {
+    expect(insertFor({ surface: 'shell', textBeforeCursor: 'db.customers.find({ ti', textAfterCursor: ' })', token: 'ti' }, 'tier')).toBe('tier: "${1:value}"');
+  });
+});
+
+describe('getCompletions — shell aggregate stages and callbacks', () => {
+  const shell = (textBeforeCursor: string, token = '') =>
+    getCompletions(base({ surface: 'shell', textBeforeCursor, token, fields: ['tier'], schema: new Map([['tier', { type: 'string' }]]) }));
+  it('completes a $project or $sort body the way that stage reads it', () => {
+    expect(shell('db.customers.aggregate([{ $project: { ti', 'ti').find((i) => i.label === 'tier')?.insertText).toBe('tier: ${1|1,0|}');
+    expect(shell('db.customers.aggregate([\n  { $sort: { ti', 'ti').find((i) => i.label === 'tier')?.insertText).toBe('tier: ${1|1,-1|}');
+  });
+  it('completes an index key document with a direction, not a value', () => {
+    expect(shell('db.customers.createIndex({ ti', 'ti').find((i) => i.label === 'tier')?.insertText).toBe('tier: ${1|1,-1|}');
+    expect(shell('db.customers.find({}).hint({ ti', 'ti').find((i) => i.label === 'tier')?.insertText).toBe('tier: ${1|1,-1|}');
+    // Its options are not keys.
+    expect(shell('db.customers.createIndex({ tier: 1 }, { ti', 'ti').find((i) => i.label === 'tier')?.insertText).not.toContain('1,-1');
+  });
+  it('still completes a $match body as a filter', () => {
+    expect(shell('db.customers.aggregate([{ $match: { ti', 'ti').find((i) => i.label === 'tier')?.insertText).toContain('value');
+  });
+  it('offers globals inside a callback body, not fields', () => {
+    const items = shell('db.customers.find().forEach(doc => {\n  pr', 'pr');
+    expect(labels(items)).toEqual(expect.arrayContaining(['print', 'printjson']));
+    expect(labels(shell('db.customers.find().forEach(function (doc) {\n  pr', 'pr'))).toContain('print');
+  });
+});
+
 describe('getCompletions — shell keys respect an already-typed quote (#222 review)', () => {
   it('filter: closes the quote instead of inserting a bare key when inQuote', () => {
     const items = getCompletions(base({ surface: 'filter', shellSyntax: true, textBeforeCursor: '{ "', token: '', fields: ['createdTime'], schema: new Map([['createdTime', { type: 'date' }]]) }));
@@ -554,5 +603,78 @@ describe('getCompletions — shell keys respect an already-typed quote (#222 rev
     const items = getCompletions(base({ surface: 'projection', shellSyntax: true, textBeforeCursor: '{ "', token: '', fields: ['total'] }));
     const f = items.find((i) => i.label === 'total');
     expect(f?.insertText).toBe('total": ${1|1,0|}');
+  });
+});
+
+describe('shellCollectionAt', () => {
+  it('names the collection of the last db.<coll> before the cursor', () => {
+    expect(shellCollectionAt('db.orders.find({}).limit(1)\ndb.customers.find({ ti')).toBe('customers');
+    expect(shellCollectionAt('db.getCollection("audit-log").find({ ')).toBe('audit-log');
+  });
+
+  it('ignores collection-like text in strings and comments', () => {
+    expect(shellCollectionAt('db.customers.find({ note: "see db.orders.find()", ti')).toBe('customers');
+    expect(shellCollectionAt("db.customers.find({ note: 'db.orders.x', ti")).toBe('customers');
+    expect(shellCollectionAt('db.customers.find({ // db.orders.find\n ti')).toBe('customers');
+    expect(shellCollectionAt('db.customers.find({ /* db.orders. */ ti')).toBe('customers');
+    expect(shellCollectionAt('db.customers.find({ note: "db.orders.')).toBe('customers');
+    expect(shellCollectionAt('db.customers.find({ note: \x60db.orders.x\x60, ti')).toBe('customers');
+    // Nor in a regex literal; division is still code.
+    expect(shellCollectionAt('db.customers.find({ note: /db.orders.find/, ti')).toBe('customers');
+    expect(shellCollectionAt('const half = 4 / 2 / 1\ndb.customers.find({ ti')).toBe('customers');
+  });
+
+  it('names none for db methods or text without a collection', () => {
+    expect(shellCollectionAt('db.getCollectionNames()')).toBeUndefined();
+    expect(shellCollectionAt('show collections')).toBeUndefined();
+  });
+});
+
+describe('shell: a quoted dotted key', () => {
+  it('completes the field path, not cursor methods, inside the quote', () => {
+    const items = getCompletions(base({
+      surface: 'shell', textBeforeCursor: 'db.customers.find({ "address.ci', token: 'address.ci',
+      fields: ['address.city', 'tier'],
+    }));
+    expect(items.map((i) => i.label)).toEqual(['address.city']);
+  });
+});
+
+describe('getCompletions — shell sort and projection arguments', () => {
+  const schema = new Map([['tier', { type: 'string' }], ['age', { type: 'int' }]]);
+  const insertFor = (textBeforeCursor: string, label: string) =>
+    getCompletions(base({ surface: 'shell', textBeforeCursor, token: 'ti', fields: ['tier', 'age'], schema }))
+      .find((i) => i.label === label)?.insertText;
+
+  it('offers sort directions, not a filter value, inside sort()', () => {
+    expect(insertFor('db.customers.find({}).sort({ ti', 'tier')).toBe('tier: ${1|1,-1|}');
+  });
+
+  it('offers include or exclude in a projection', () => {
+    expect(insertFor('db.customers.find({}, { ti', 'tier')).toBe('tier: ${1|1,0|}');
+    expect(insertFor('db.customers.findOne({ a: [1, 2] }, { ti', 'tier')).toBe('tier: ${1|1,0|}');
+    expect(insertFor('db.customers.find({}).projection({ ti', 'tier')).toBe('tier: ${1|1,0|}');
+  });
+
+  it('still scaffolds a filter value in the filter argument', () => {
+    expect(insertFor('db.customers.find({ ti', 'tier')).not.toMatch(/\$\{1\|1,/);
+    expect(insertFor('db.customers.find({ $or: [{ a: 1 }, { ti', 'tier')).not.toMatch(/\$\{1\|1,/);
+  });
+});
+
+describe('getCompletions — shell regex literals and single quotes', () => {
+  const schema = new Map([['tier', { type: 'string' }]]);
+  const insertFor = (textBeforeCursor: string) =>
+    getCompletions(base({ surface: 'shell', textBeforeCursor, token: 'ti', fields: ['tier'], schema }))
+      .find((i) => i.label === 'tier')?.insertText;
+
+  it('reads a regex literal in a filter as a value, not as brackets', () => {
+    expect(insertFor('db.customers.find({ note: /\}/, ti')).toBe('tier: "${1:value}"');
+    expect(insertFor('db.customers.find({ note: /[(]/ }, { ti')).toBe('tier: ${1|1,0|}');
+  });
+
+  it('closes a single-quoted key with a single quote', () => {
+    expect(insertFor("db.customers.find({ 'ti")).toBe('tier\': "${1:value}"');
+    expect(insertFor("db.customers.find({}).sort({ 'ti")).toBe("tier': ${1|1,-1|}");
   });
 });

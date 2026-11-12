@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useContext } from 'react';
 import { useTranslation, Trans } from 'react-i18next';
 import { DocumentViewerContext } from './DocumentViewer';
 import { List } from 'react-window';
-import { Table, Braces, ChevronRight, ChevronDown, ListFilter, Copy, Check, Edit, Trash2, Plus, Table2, BarChart3, Lightbulb, GitCompareArrows } from 'lucide-react';
+import { Table, Braces, ChevronRight, ChevronDown, ListFilter, Copy, Check, Edit, Trash2, Plus, Table2, BarChart3, Lightbulb, GitCompareArrows, AlertTriangle } from 'lucide-react';
 import { ChartView } from './ChartView';
 import { ContextMenu, type ContextMenuItem } from './ContextMenu';
 import { DocumentDiffModal } from './DocumentDiffModal';
@@ -11,7 +11,9 @@ import { generateQueryCode, CODE_LANGUAGES, CODE_LANGUAGE_MONACO_IDS, type CodeL
 import { suggestESRIndex, type IndexSuggestion } from '../lib/indexSuggestions';
 import { useMonacoTheme, useMonacoFontSize } from '../lib/useMonacoTheme';
 import { EJSON } from 'bson';
+import { toPlainJson } from '../lib/plainJson';
 import { copyValueToText } from '../lib/copyValue';
+import { docToShell, parseShellJson } from '../lib/shellDoc';
 import { ResultsFindBar } from './ResultsFindBar';
 import {
   isTextEntryContext,
@@ -24,13 +26,21 @@ import {
   bsonInstanceTypeLabel,
   bsonValueText,
   isBsonInstance,
+  isEjsonWrapper,
   jsonStringLiteral,
   plainBsonShape,
   tableValueText,
+  type DateDisplayTimezone,
 } from '../lib/bsonDisplay';
 import type { ListImperativeAPI } from 'react-window';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { useThemeOptional } from '@/hooks/use-theme';
 import { getScaledRowHeight } from '@/lib/themes/ui-scale';
 import { cn } from '@/lib/utils';
@@ -60,6 +70,10 @@ interface DataGridProps {
   querySpec?: QueryCodeSpec | null;
   onInsertDocument?: () => void;
   onEditDocument?: (doc: Record<string, any>) => void;
+  /** Saves one value edited in place in the Table or Tree view. `edited` is a
+   *  copy of `doc` with that one value replaced, both in Extended JSON; the
+   *  promise rejects to keep the cell editor open. Omit to make cells read-only. */
+  onEditField?: (doc: Record<string, any>, edited: Record<string, any>) => Promise<void>;
   onDuplicateDocument?: (doc: Record<string, any>) => void;
   onDeleteDocument?: (doc: Record<string, any>) => void;
   onAnalyzeSchema?: () => void;
@@ -111,19 +125,55 @@ interface DataGridProps {
   // modal (Task 3) gates the actually-destructive ones. Undefined/'normal'
   // behaves exactly as before this feature existed.
   connectionMode?: 'normal' | 'read_only' | 'confirm_destructive';
+  /** Commands this connection cannot run (a server connection). Blocked writes make the grid read-only. */
+  blockedCommands?: readonly string[];
 }
+
+const WRITE_COMMANDS = ['insert_document', 'update_document', 'update_many', 'delete_document', 'delete_many'];
 
 export type ViewMode = 'table' | 'tree' | 'json' | 'chart';
 
 /** Which pane of the results area is showing. */
 export type ResultsTab = 'results' | 'explain' | 'query';
 
+interface ExplainStats {
+  nReturned?: number;
+  docsExamined?: number;
+  keysExamined?: number;
+  ms?: number;
+}
+
 interface ExplainNode {
   name: string;
   type: 'result' | 'stage' | 'collection' | 'index';
   detail?: string;
   children?: ExplainNode[];
+  stats?: ExplainStats;
 }
+
+// executionStats spells the same counters differently per level: a plan stage
+// carries docsExamined/executionTimeMillisEstimate, the totals block
+// totalDocsExamined/executionTimeMillis.
+const STAGE_STAT_KEYS: [keyof ExplainStats, string][] = [
+  ['nReturned', 'nReturned'],
+  ['docsExamined', 'docsExamined'],
+  ['keysExamined', 'keysExamined'],
+  ['ms', 'executionTimeMillisEstimate'],
+];
+const TOTAL_STAT_KEYS: [keyof ExplainStats, string][] = [
+  ['nReturned', 'nReturned'],
+  ['docsExamined', 'totalDocsExamined'],
+  ['keysExamined', 'totalKeysExamined'],
+  ['ms', 'executionTimeMillis'],
+];
+
+const pickStats = (src: any, keys: [keyof ExplainStats, string][]): ExplainStats | undefined => {
+  const stats: ExplainStats = {};
+  for (const [to, from] of keys) {
+    if (typeof src?.[from] === 'number') stats[to] = src[from];
+  }
+  return Object.keys(stats).length > 0 ? stats : undefined;
+};
 
 const GridIcon = () => (
   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-primary">
@@ -198,18 +248,22 @@ const getStageNameLabel = (stage: string, t: ExplainTFunc = defaultExplainT): st
 };
 
 // Build a parseStage bound to a namespace (the find winningPlan walker).
+// `execObj` is the matching node of executionStats.executionStages, walked in
+// step with the plan. Stats attach only where the stage names agree, so a plan
+// the executor reshapes (the SBE engine) gets no misattributed numbers.
 const makeParseStage = (namespace: string, t: ExplainTFunc = defaultExplainT) => {
-  const parseStage = (stageObj: any): ExplainNode => {
+  const parseStage = (stageObj: any, execObj?: any): ExplainNode => {
     const stageName = stageObj?.stage || "STAGE";
     const name = getStageNameLabel(stageName, t);
     const children: ExplainNode[] = [];
+    const exec = execObj && execObj.stage === stageObj?.stage ? execObj : undefined;
 
     if (stageObj?.inputStage) {
-      children.push(parseStage(stageObj.inputStage));
+      children.push(parseStage(stageObj.inputStage, exec?.inputStage));
     }
     if (Array.isArray(stageObj?.inputStages)) {
-      stageObj.inputStages.forEach((sub: any) => {
-        if (sub) children.push(parseStage(sub));
+      stageObj.inputStages.forEach((sub: any, i: number) => {
+        if (sub) children.push(parseStage(sub, exec?.inputStages?.[i]));
       });
     }
 
@@ -239,7 +293,8 @@ const makeParseStage = (namespace: string, t: ExplainTFunc = defaultExplainT) =>
       name,
       type: 'stage',
       detail: stageName + (stageObj.indexName ? ` (${stageObj.indexName})` : ''),
-      children: children.length > 0 ? children : undefined
+      children: children.length > 0 ? children : undefined,
+      stats: pickStats(exec, STAGE_STAT_KEYS),
     };
   };
   return parseStage;
@@ -259,7 +314,7 @@ export const getExplainTree = (explainStr: string, t: ExplainTFunc = defaultExpl
       const namespace = cursorQP?.namespace || "collection";
       const parseStage = makeParseStage(namespace, t);
       const cursorChild: ExplainNode = cursorQP?.winningPlan
-        ? parseStage(cursorQP.winningPlan)
+        ? parseStage(cursorQP.winningPlan, cursorStage.$cursor.executionStats?.executionStages)
         : {
             name: t('documents:dataGrid.explain.labels.collectionNode', { namespace, defaultValue: 'Collection\n{{namespace}}' }),
             type: 'collection',
@@ -276,6 +331,7 @@ export const getExplainTree = (explainStr: string, t: ExplainTFunc = defaultExpl
             type: 'stage',
             detail: t('documents:dataGrid.explain.labels.documentsFromCollection', { defaultValue: 'Documents from collection' }),
             children: [cursorChild],
+            stats: pickStats(stageObj, STAGE_STAT_KEYS),
           };
         } else {
           current = {
@@ -283,6 +339,7 @@ export const getExplainTree = (explainStr: string, t: ExplainTFunc = defaultExpl
             type: 'stage',
             detail: key,
             children: current ? [current] : undefined,
+            stats: pickStats(stageObj, STAGE_STAT_KEYS),
           };
         }
       });
@@ -292,56 +349,29 @@ export const getExplainTree = (explainStr: string, t: ExplainTFunc = defaultExpl
     const queryPlanner = explainJson?.queryPlanner || {};
     const namespace = queryPlanner?.namespace || "collection";
     const winningPlan = queryPlanner?.winningPlan;
+    const executionStats = explainJson?.executionStats;
 
-    if (!winningPlan) {
-      return {
-        name: t('documents:dataGrid.explain.stage.result', { defaultValue: 'Result' }),
-        type: "result",
-        children: [
-          {
-            name: t('documents:dataGrid.explain.stage.collectionScan', { defaultValue: 'Collection scan' }),
-            type: "stage",
-            detail: "COLLSCAN",
-            children: [
-              {
-                name: t('documents:dataGrid.explain.labels.collectionNode', { namespace, defaultValue: 'Collection\n{{namespace}}' }),
-                type: "collection",
-                detail: namespace
-              }
-            ]
-          }
-        ]
-      };
-    }
+    if (!winningPlan) return planUnavailable(t);
 
     return {
       name: t('documents:dataGrid.explain.stage.result', { defaultValue: 'Result' }),
       type: "result",
-      children: [makeParseStage(namespace, t)(winningPlan)]
+      children: [makeParseStage(namespace, t)(winningPlan, executionStats?.executionStages)],
+      stats: pickStats(executionStats, TOTAL_STAT_KEYS),
     };
 
   } catch (e) {
     console.error("Failed to parse explain tree", e);
-    return {
-      name: t('documents:dataGrid.explain.stage.result', { defaultValue: 'Result' }),
-      type: "result",
-      children: [
-        {
-          name: t('documents:dataGrid.explain.stage.collectionScan', { defaultValue: 'Collection scan' }),
-          type: "stage",
-          detail: "COLLSCAN",
-          children: [
-            {
-              name: t('documents:dataGrid.explain.labels.collectionFallback', { defaultValue: 'Collection' }),
-              type: "collection",
-              detail: "collection"
-            }
-          ]
-        }
-      ]
-    };
+    return planUnavailable(t);
   }
 };
+
+// Said plainly rather than drawn as a COLLSCAN the server never reported.
+const planUnavailable = (t: ExplainTFunc): ExplainNode => ({
+  name: t('documents:dataGrid.explain.stage.result', { defaultValue: 'Result' }),
+  type: 'result',
+  detail: t('documents:dataGrid.explain.labels.planUnavailable', { defaultValue: 'Plan unavailable' }),
+});
 
 const explainNodeHover: Record<ExplainNode['type'], string> = {
   result: 'hover:border-success/40',
@@ -350,7 +380,19 @@ const explainNodeHover: Record<ExplainNode['type'], string> = {
   index: 'hover:border-warning/40',
 };
 
+// Numbers follow the UI language, not the OS locale, so they match the labels.
+const formatExplainStats = (stats: ExplainStats, t: ExplainTFunc, language: string): string => {
+  const n = (v: number) => v.toLocaleString(language);
+  const parts: string[] = [];
+  if (stats.nReturned !== undefined) parts.push(t('documents:dataGrid.explain.stats.returned', { n: n(stats.nReturned), defaultValue: '{{n}} returned' }));
+  if (stats.docsExamined !== undefined) parts.push(t('documents:dataGrid.explain.stats.docsExamined', { n: n(stats.docsExamined), defaultValue: '{{n}} docs examined' }));
+  if (stats.keysExamined !== undefined) parts.push(t('documents:dataGrid.explain.stats.keysExamined', { n: n(stats.keysExamined), defaultValue: '{{n}} keys examined' }));
+  if (stats.ms !== undefined) parts.push(t('documents:dataGrid.explain.stats.ms', { n: n(stats.ms), defaultValue: '{{n}} ms' }));
+  return parts.join(' · ');
+};
+
 const RenderTreeNode: React.FC<{ node: ExplainNode }> = ({ node }) => {
+  const { t, i18n } = useTranslation('documents');
   return (
     <div className="flex w-full flex-col items-center">
       <div
@@ -379,6 +421,11 @@ const RenderTreeNode: React.FC<{ node: ExplainNode }> = ({ node }) => {
           )}
           {node.type !== 'stage' && node.detail && (
             <span className="font-mono text-[11px] text-muted-foreground">{node.detail}</span>
+          )}
+          {node.stats && (
+            <span data-testid="explain-node-stats" className="text-[11px] tabular-nums text-muted-foreground">
+              {formatExplainStats(node.stats, t, i18n.language)}
+            </span>
           )}
         </div>
       </div>
@@ -429,7 +476,7 @@ interface JsonLine {
 const jsonPunct = (text: string) => <span className="text-muted-foreground">{text}</span>;
 const jsonKeyNode = (k: string) => (
   <>
-    <span className="text-syntax-key">"{k}"</span>
+    <span className="text-syntax-key">{jsonStringLiteral(k)}</span>
     {jsonPunct(' : ')}
   </>
 );
@@ -450,6 +497,11 @@ interface TreeRow {
   num: number;
   depth: number;
   keyName: string;
+  /** Keys from the document root down to this value; empty for the root. */
+  path: string[];
+  /** Inside an array, which the backend writes back whole: not edited in place,
+   *  so a save cannot overwrite another element changed since the results loaded. */
+  underArray?: boolean;
   kind: 'scalar' | 'object' | 'array';
   value?: any; // scalar value
   childCount: number; // for object/array containers
@@ -478,9 +530,83 @@ interface JsonRowExtra {
   ) => void;
   renderContent: (line: JsonLine) => React.ReactNode;
   hasRowActions: boolean;
-  RowActions: React.ComponentType<{ doc: Record<string, any> }>;
+  rowActions: RowActionsContext;
   t: (key: string) => string;
 }
+
+/** What the per-row controls need from DataGrid, passed in as props. */
+interface RowActionsContext {
+  t: (key: string) => string;
+  onCopy: (doc: Record<string, any>) => void;
+  onEditDocument?: (doc: Record<string, any>) => void;
+  onDeleteDocument?: (doc: Record<string, any>) => void;
+  isReadOnly: boolean;
+}
+
+// One-click "Copy JSON" for a single document, with a brief "Copied"
+// confirmation. Copies the pretty-printed (2-space) document, matching the
+// "Copy document (JSON)" context-menu action.
+//
+// This and RowActions live at module scope so their identity is stable: when
+// they were defined inside DataGrid, every grid re-render made a new component
+// type, React remounted them, and the "Copied" state vanished early.
+const CopyDocButton = ({ doc, t, onCopy }: { doc: Record<string, any> } & Pick<RowActionsContext, 't' | 'onCopy'>) => {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onCopy(doc);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
+  };
+  return (
+    <button
+      onClick={handleCopy}
+      className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-primary"
+      title={copied ? t('documents:dataGrid.tooltips.copied') : t('documents:dataGrid.actions.copyDocumentJson')}
+      aria-label={copied ? t('documents:dataGrid.tooltips.copied') : t('documents:dataGrid.tooltips.copyDocument')}
+      data-testid="copy-doc-btn"
+    >
+      {copied ? <Check size={12} className="text-success" /> : <Copy size={12} />}
+    </button>
+  );
+};
+
+// Per-row copy/edit/delete controls, shared across all view modes.
+const RowActions = ({ doc, t, onCopy, onEditDocument, onDeleteDocument, isReadOnly }: { doc: Record<string, any> } & RowActionsContext) => {
+  return (
+    <div className="flex items-center gap-1 flex-shrink-0">
+      <CopyDocButton doc={doc} t={t} onCopy={onCopy} />
+      {onEditDocument && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onEditDocument(doc);
+          }}
+          disabled={isReadOnly}
+          className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-primary disabled:pointer-events-none disabled:opacity-50"
+          title={isReadOnly ? t('documents:dataGrid.tooltips.readOnly') : t('documents:dataGrid.tooltips.editDocument')}
+          data-testid="edit-doc-btn"
+        >
+          <Edit size={12} />
+        </button>
+      )}
+      {onDeleteDocument && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onDeleteDocument(doc);
+          }}
+          disabled={isReadOnly}
+          className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:pointer-events-none disabled:opacity-50"
+          title={isReadOnly ? t('documents:dataGrid.tooltips.readOnly') : t('documents:dataGrid.tooltips.deleteDocument')}
+          data-testid="delete-doc-btn"
+        >
+          <Trash2 size={12} />
+        </button>
+      )}
+    </div>
+  );
+};
 
 // Virtualized row for the JSON view (one descriptor per row).
 //
@@ -502,7 +628,7 @@ const JsonRow = ({
   openCtxMenu,
   renderContent,
   hasRowActions,
-  RowActions,
+  rowActions,
   t,
 }: { index: number; style: React.CSSProperties } & JsonRowExtra) => {
   const line = lines[index];
@@ -566,10 +692,267 @@ const JsonRow = ({
             arrived with three blank lines under its opening brace (#329). */}
         {line.isDocRoot && hasRowActions && line.doc && (
           <span className="ml-2.5 inline-flex select-none align-middle opacity-0 group-hover:opacity-100 [.flex:hover>&]:opacity-100">
-            <RowActions doc={line.doc} />
+            <RowActions doc={line.doc} {...rowActions} />
           </span>
         )}
       </span>
+    </div>
+  );
+};
+
+// A sub-document the table's "Embedded fields" opens into columns: not an
+// array, and not one typed value such as `{ $date: … }` or an ObjectId.
+const isEmbeddedDoc = (v: unknown): v is Record<string, any> =>
+  v !== null && typeof v === 'object' && !Array.isArray(v) && !isBsonInstance(v)
+  && Object.keys(v).length > 0 && !isEjsonWrapper(v as Record<string, unknown>);
+
+/** The cell open in the in-place editor: a document and the path to one value. */
+interface CellEdit {
+  docIndex: number;
+  path: string[];
+}
+
+const isCellEditing = (edit: CellEdit | null, docIndex: number, path: string[]): boolean =>
+  !!edit && edit.docIndex === docIndex && edit.path.length === path.length
+  && edit.path.every((k, i) => k === path[i]);
+
+// `_id` cannot be changed by an update, so it is never edited in place.
+const isEditablePath = (path: string[]): boolean => path.length > 0 && path[0] !== '_id';
+
+const valueAtPath = (doc: any, path: string[]): any => path.reduce((v, k) => v?.[k], doc);
+
+// A one-line editor over a Table or Tree cell, in shell syntax so a value keeps
+// or changes its type the way it is written: `"42"`, `42`, `ISODate("…")`.
+// Holds its own text so typing does not re-render the grid. Enter saves;
+// Escape or leaving the field cancels, so a stray click never writes.
+const InlineCellEditor = ({
+  initial,
+  hint,
+  onCommit,
+  onCancel,
+}: {
+  initial: string;
+  hint: string;
+  onCommit: (text: string) => Promise<void>;
+  onCancel: () => void;
+}) => {
+  const [text, setText] = useState(initial);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const commit = async () => {
+    setSaving(true);
+    try {
+      await onCommit(text);
+    } catch (err: any) {
+      setError(String(err?.message ?? err));
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <input
+      autoFocus
+      data-testid="cell-editor"
+      value={text}
+      // Not `disabled`: disabling the focused field would blur it, and a blur cancels.
+      readOnly={saving}
+      spellCheck={false}
+      aria-invalid={error ? true : undefined}
+      title={error ?? hint}
+      onFocus={(e) => e.currentTarget.select()}
+      onChange={(e) => {
+        setText(e.target.value);
+        setError(null);
+      }}
+      onKeyDown={(e) => {
+        // The grid's own shortcuts must not see keys typed into a value.
+        e.stopPropagation();
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          onCancel();
+        } else if (e.key === 'Enter' && !saving && !e.nativeEvent.isComposing) {
+          // An Enter that confirms an IME candidate is still typing, not a save.
+          e.preventDefault();
+          void commit();
+        }
+      }}
+      onBlur={() => {
+        if (!saving) onCancel();
+      }}
+      onDoubleClick={(e) => e.stopPropagation()}
+      className={cn(
+        'h-full w-full min-w-0 select-text bg-background px-1 font-mono text-xs text-foreground outline-none ring-1 ring-inset',
+        error ? 'ring-destructive' : 'ring-primary'
+      )}
+    />
+  );
+};
+
+// Extra (per-render) data handed to the table view's virtualized rows.
+interface TableRowExtra {
+  documents: Array<Record<string, any>>;
+  columns: string[];
+  colWidth: (col: string) => number;
+  findHighlightClass: (rowId: number, columnKey?: string) => string | undefined;
+  openCtxMenu: JsonRowExtra['openCtxMenu'];
+  renderCell: (val: any) => React.ReactNode;
+  /** The column's value in a document; undefined when the field is missing. */
+  cellValue: (doc: Record<string, any>, col: string) => any;
+  /** The column's path into a document: `['address', 'city']` for `address.city`. */
+  cellPath: (col: string) => string[];
+  cellEdit: CellEdit | null;
+  /** Undefined when this grid cannot write. */
+  startCellEdit?: (edit: CellEdit) => void;
+  renderCellEditor: () => React.ReactNode;
+  hasRowActions: boolean;
+  rowActions: RowActionsContext;
+}
+
+// Virtualized row for the table view. Module scope for the same reason as
+// JsonRow: an inline component remounts every row on each DataGrid render.
+const TableRow = ({
+  index,
+  style,
+  documents,
+  columns,
+  colWidth,
+  findHighlightClass,
+  openCtxMenu,
+  renderCell,
+  cellValue,
+  cellPath,
+  cellEdit,
+  startCellEdit,
+  renderCellEditor,
+  hasRowActions,
+  rowActions,
+}: { index: number; style: React.CSSProperties } & TableRowExtra) => {
+  const rawDoc = documents[index];
+  if (!rawDoc) return null;
+  // One stored value: a sub-document or an array goes through the document editor.
+  const editable = (col: string) => {
+    const v = cellValue(rawDoc, col);
+    return isEditablePath(cellPath(col)) && v !== undefined && !Array.isArray(v) && !isEmbeddedDoc(v);
+  };
+
+  return (
+    <div
+      style={style}
+      className="flex items-center border-b border-border font-mono text-xs hover:bg-accent"
+      onContextMenu={(e) => openCtxMenu(e, rawDoc)}
+    >
+      <div
+        className="flex h-full shrink-0 select-none items-center justify-center border-r border-border text-[10px] text-muted-foreground"
+        style={{ width: `${TABLE_ROW_NUMBER_WIDTH_PX}px` }}
+      >
+        {index + 1}
+      </div>
+      {columns.map((col) => (
+        <div
+          key={col}
+          className={cn(
+            'flex h-full items-center truncate border-r border-border px-3 text-foreground',
+            findHighlightClass(index, col)
+          )}
+          style={{ width: `${colWidth(col)}px`, flexShrink: 0 }}
+          onContextMenu={(e) => openCtxMenu(e, rawDoc, col, cellValue(rawDoc, col))}
+          onDoubleClick={startCellEdit && editable(col) ? () => startCellEdit({ docIndex: index, path: cellPath(col) }) : undefined}
+        >
+          {isCellEditing(cellEdit, index, cellPath(col)) ? renderCellEditor() : renderCell(cellValue(rawDoc, col))}
+        </div>
+      ))}
+      {hasRowActions && (
+        <div className="flex h-full w-[72px] shrink-0 items-center justify-center px-2">
+          <RowActions doc={rawDoc} {...rowActions} />
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Extra (per-render) data handed to the tree-table view's virtualized rows.
+interface TreeRowExtra {
+  rows: TreeRow[];
+  collapsedFolds: Set<number>;
+  findHighlightClass: (rowId: number) => string | undefined;
+  toggleFold: (id: number) => void;
+  documents: Array<Record<string, any>>;
+  openCtxMenu: JsonRowExtra['openCtxMenu'];
+  keyWidth: number;
+  renderValue: (row: TreeRow) => React.ReactNode;
+  cellEdit: CellEdit | null;
+  startCellEdit?: (edit: CellEdit) => void;
+  renderCellEditor: () => React.ReactNode;
+  hasRowActions: boolean;
+  rowActions: RowActionsContext;
+  t: (key: string) => string;
+}
+
+// Virtualized row for the tree-table view (Key | Value | Type). Module scope
+// for the same reason as JsonRow.
+const TreeRowComponent = ({
+  index,
+  style,
+  rows,
+  collapsedFolds,
+  findHighlightClass,
+  toggleFold,
+  documents,
+  openCtxMenu,
+  keyWidth,
+  renderValue,
+  cellEdit,
+  startCellEdit,
+  renderCellEditor,
+  hasRowActions,
+  rowActions,
+  t,
+}: { index: number; style: React.CSSProperties } & TreeRowExtra) => {
+  const row = rows[index];
+  if (!row) return null;
+  const collapsed = row.foldId !== undefined && collapsedFolds.has(row.foldId);
+  const editing = isCellEditing(cellEdit, row.docIndex, row.path);
+  const editable = startCellEdit && row.kind === 'scalar' && !row.underArray && isEditablePath(row.path);
+  return (
+    <div
+      style={style}
+      className={cn(
+        'flex items-center border-b border-border font-mono text-[11.5px] hover:bg-accent',
+        row.docIndex % 2 === 0 ? 'bg-background' : 'bg-card',
+        row.isDocRoot && row.docIndex > 0 && 'border-t border-border',
+        findHighlightClass(row.num)
+      )}
+      data-doc-even={row.docIndex % 2 === 0}
+      onContextMenu={(e) => openCtxMenu(e, documents[row.docIndex], row.kind === 'scalar' ? row.keyName : undefined, row.value)}
+    >
+      <div className="flex min-w-0 items-center border-r border-border" style={{ width: keyWidth, paddingLeft: 6 + row.depth * 14 }}>
+        {row.foldId !== undefined ? (
+          <button
+            type="button"
+            onClick={() => toggleFold(row.foldId!)}
+            className="mr-1 flex shrink-0 items-center text-muted-foreground hover:text-foreground"
+            data-testid="tree-fold-btn"
+            aria-label={collapsed ? t('documents:dataGrid.tooltips.expand') : t('documents:dataGrid.tooltips.collapse')}
+          >
+            {collapsed ? <ChevronRight size={11} /> : <ChevronDown size={11} />}
+          </button>
+        ) : (
+          <span className="mr-1 inline-block w-[11px] shrink-0" />
+        )}
+        <span className="truncate text-syntax-key" title={row.keyName}>{row.keyName}</span>
+      </div>
+      <div
+        className="flex min-w-0 flex-1 items-center gap-2 border-r border-border px-3"
+        onDoubleClick={editable ? () => startCellEdit({ docIndex: row.docIndex, path: row.path }) : undefined}
+      >
+        {editing ? renderCellEditor() : <span className="truncate">{renderValue(row)}</span>}
+        {row.isDocRoot && hasRowActions && row.doc && (
+          <span className="ml-auto inline-flex opacity-0 group-hover:opacity-100 [.flex:hover>&]:opacity-100">
+            <RowActions doc={row.doc} {...rowActions} />
+          </span>
+        )}
+      </div>
+      <div className="w-28 shrink-0 px-3 text-muted-foreground">{row.type}</div>
     </div>
   );
 };
@@ -582,6 +965,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   querySpec = null,
   onInsertDocument,
   onEditDocument,
+  onEditField,
   onDuplicateDocument,
   onDeleteDocument,
   onAnalyzeSchema,
@@ -602,6 +986,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   onViewModeChange,
   onCreateSuggestedIndex,
   connectionMode,
+  blockedCommands,
   chromeless = false,
 }) => {
   const { t } = useTranslation('documents');
@@ -611,7 +996,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
 
   // #188: read_only disables writes in this grid; confirm_destructive does
   // NOT (see the connectionMode doc comment on DataGridProps above).
-  const isReadOnly = connectionMode === 'read_only';
+  const isReadOnly = connectionMode === 'read_only' || WRITE_COMMANDS.some((c) => blockedCommands?.includes(c));
 
   // ESR-rule suggestion derived from the current explain plan (null unless it's a COLLSCAN).
   const indexSuggestion = useMemo(
@@ -646,6 +1031,28 @@ export const DataGrid: React.FC<DataGridProps> = ({
     setPendingCompare(null);
   }, [documents]);
 
+  // The Table or Tree cell open in the in-place editor. Closed by new results
+  // (its document index may now point elsewhere) and by a view switch.
+  const [cellEdit, setCellEdit] = useState<CellEdit | null>(null);
+  // A save and the refresh after it are in flight. No other cell opens until
+  // they settle: either one would close it and drop what was typed there.
+  const [cellSaving, setCellSaving] = useState(false);
+
+  const [plainJson, setPlainJson] = useState(false);
+  const [embeddedFields, setEmbeddedFields] = useState(false);
+  const plainDocument = (doc: Record<string, any>) => {
+    try {
+      // Canonical parsing retains large integers until conversion to strings.
+      return toPlainJson(EJSON.parse(JSON.stringify(doc), { relaxed: false }));
+    } catch {
+      // Match the BSON view's fallback for malformed Extended JSON.
+      return toPlainJson(doc);
+    }
+  };
+  const documentCopyText = (doc: Record<string, any>) => JSON.stringify(
+    usePlainJson ? plainDocument(doc) : doc, null, 2,
+  );
+
   const writeClipboard = (text: string) => {
     try { navigator.clipboard?.writeText(text); } catch { /* clipboard unavailable */ }
   };
@@ -664,7 +1071,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
     const items: ContextMenuItem[] = [];
     if (onEditDocument) items.push({ label: t('dataGrid.actions.editDocument'), icon: <Edit size={13} />, onClick: () => onEditDocument(m.doc), disabled: isReadOnly, title: isReadOnly ? t('dataGrid.tooltips.readOnly') : undefined });
     if (onDuplicateDocument) items.push({ label: t('dataGrid.actions.duplicateDocument'), icon: <Plus size={13} />, onClick: () => onDuplicateDocument(m.doc), disabled: isReadOnly, title: isReadOnly ? t('dataGrid.tooltips.readOnly') : undefined });
-    items.push({ label: t('dataGrid.actions.copyDocumentJson'), icon: <Copy size={13} />, onClick: () => writeClipboard(JSON.stringify(m.doc, null, 2)) });
+    items.push({ label: t('dataGrid.actions.copyDocumentJson'), icon: <Copy size={13} />, onClick: () => writeClipboard(documentCopyText(m.doc)) });
     if (!pendingCompare) {
       items.push({
         label: t('dataGrid.actions.compareWith'),
@@ -707,6 +1114,8 @@ export const DataGrid: React.FC<DataGridProps> = ({
   // Chromeless has no switcher, so JSON is the only mode reachable — and the
   // right one for a single document nobody queried for.
   const viewMode = chromeless ? 'json' : (controlledViewMode ?? uncontrolledViewMode);
+  const usePlainJson = viewMode === 'json' && plainJson;
+  useEffect(() => setCellEdit(null), [documents, viewMode]);
   const setViewMode = (mode: ViewMode) => {
     setUncontrolledViewMode(mode);
     onViewModeChange?.(mode);
@@ -941,6 +1350,37 @@ export const DataGrid: React.FC<DataGridProps> = ({
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const [dateTimezone, setDateTimezone] = useState<DateDisplayTimezone>(() => {
+    try {
+      return localStorage.getItem('mqlens.dateDisplayTimezone') === 'local' ? 'local' : 'utc';
+    } catch {
+      return 'utc';
+    }
+  });
+  useEffect(() => {
+    const syncDateTimezone = () => {
+      try {
+        setDateTimezone(localStorage.getItem('mqlens.dateDisplayTimezone') === 'local' ? 'local' : 'utc');
+      } catch {
+        setDateTimezone('utc');
+      }
+    };
+    window.addEventListener('mqlens:date-timezone-changed', syncDateTimezone);
+    return () => window.removeEventListener('mqlens:date-timezone-changed', syncDateTimezone);
+  }, []);
+
+  const bsonDisplayOptions = { dateTimezone };
+  const toggleDateTimezone = () => {
+    const next: DateDisplayTimezone = dateTimezone === 'utc' ? 'local' : 'utc';
+    setDateTimezone(next);
+    try {
+      localStorage.setItem('mqlens.dateDisplayTimezone', next);
+      window.dispatchEvent(new Event('mqlens:date-timezone-changed'));
+    } catch {
+      // Display preference is best-effort only.
+    }
+  };
+
   // Parse documents as rich BSON-typed objects once
   const parsedDocs = useMemo(() => {
     return documents.map(doc => {
@@ -953,15 +1393,43 @@ export const DataGrid: React.FC<DataGridProps> = ({
     });
   }, [documents]);
 
-  // Extract all unique columns present in documents
-  const columns = useMemo(() => {
-    if (!documents || documents.length === 0) return [];
-    const keys = new Set<string>();
-    documents.forEach((doc) => {
-      Object.keys(doc).forEach((k) => keys.add(k));
-    });
-    return Array.from(keys);
-  }, [documents]);
+  const jsonDocs = useMemo(
+    () => usePlainJson
+      ? documents.map(plainDocument)
+      : parsedDocs,
+    [documents, parsedDocs, usePlainJson],
+  );
+
+  // Each column's name and the path to its value, in first-seen order. Top-level
+  // keys, unless the table's "Embedded fields" is on: then sub-documents open
+  // into dot-path columns. Arrays and typed values (`{ $date: … }`, `{ $oid: … }`)
+  // stay one column. ponytail: a key that itself contains a dot can share a name
+  // with an embedded path; the first one seen wins the column.
+  const flattenEmbedded = embeddedFields && viewMode === 'table';
+  const columnPaths = useMemo(() => {
+    const paths = new Map<string, string[]>();
+    const walk = (obj: Record<string, any>, prefix: string[]) => {
+      for (const [k, v] of Object.entries(obj)) {
+        const path = [...prefix, k];
+        if (flattenEmbedded && isEmbeddedDoc(v)) walk(v, path);
+        else if (!paths.has(path.join('.'))) paths.set(path.join('.'), path);
+      }
+    };
+    documents?.forEach((doc) => walk(doc, []));
+    return paths;
+  }, [documents, flattenEmbedded]);
+  const columns = useMemo(() => Array.from(columnPaths.keys()), [columnPaths]);
+  // undefined when the document has no such field, which the table leaves blank.
+  // Own fields only: a missing `constructor` is not a stored value. The row is
+  // read directly (it is always a document, and checking it would enumerate
+  // every field per cell); deeper steps go only into sub-documents, never
+  // through an array's `length` or a typed value (#551 review).
+  const cellValue = (doc: Record<string, any> | undefined, col: string): any => {
+    const [first, ...rest] = columnPaths.get(col) ?? [col];
+    let v = doc && Object.hasOwn(doc, first) ? doc[first] : undefined;
+    for (const k of rest) v = isEmbeddedDoc(v) && Object.hasOwn(v, k) ? v[k] : undefined;
+    return v;
+  };
 
   // A value the grid gives a constructor call to. Delegates so this list cannot
   // fall behind bsonDisplay's.
@@ -978,10 +1446,10 @@ export const DataGrid: React.FC<DataGridProps> = ({
       return <span className="text-syntax-string">{printableJsonString(val)}</span>;
     }
 
-    const call = bsonCallOf(val);
+    const call = bsonCallOf(val, bsonDisplayOptions);
     if (call) {
       return (
-        <>
+        <span title={call.title}>
           <span className="text-syntax-boolean">{call.ctor}</span>(
           {call.args.map((arg, i) => (
             <React.Fragment key={i}>
@@ -992,7 +1460,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
             </React.Fragment>
           ))}
           )
-        </>
+        </span>
       );
     }
     return <span>{String(val)}</span>;
@@ -1001,17 +1469,26 @@ export const DataGrid: React.FC<DataGridProps> = ({
   // Colored Table cell — same syntax palette as the Tree/JSON views (strings,
   // numbers, booleans, BSON types) so the Table is visually consistent.
   const renderColoredCell = (val: any): React.ReactNode => {
-    if (val === null || val === undefined) return '';
+    // A field set to null and a field that is missing are different things.
+    if (val === null) {
+      return (
+        <span data-testid="table-null" className="rounded bg-muted px-1 text-[10px] italic text-syntax-null">
+          null
+        </span>
+      );
+    }
+    if (val === undefined) return '';
     if (typeof val === 'string') return <span className="text-syntax-string">{val}</span>;
     if (typeof val === 'number') return <span className="text-syntax-number">{String(val)}</span>;
     if (typeof val === 'boolean') return <span className="text-syntax-boolean font-bold">{val ? 'true' : 'false'}</span>;
     if (typeof val === 'object') {
       if (isBsonInstance(val)) return renderBsonValueNode(val);
-      const plain = plainBsonShape(val);
+      const plain = plainBsonShape(val, bsonDisplayOptions);
       if (plain) {
         return (
           <span
             className={plain.kind === 'number' ? 'text-syntax-number' : 'text-syntax-string'}
+            title={plain.title}
           >
             {plain.text}
           </span>
@@ -1030,7 +1507,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
     if (v !== null && typeof v === 'object' && !isBsonObject(v)) return 12;
     // Exact rather than estimated: the displayed text is now available, so the
     // per-type guesses (40 for an ObjectId, 64 for any Binary) are gone.
-    return bsonValueText(v).length;
+    return bsonValueText(v, bsonDisplayOptions).length;
   };
 
   const { jsonLines, jsonMaxWidthPx } = useMemo<{ jsonLines: JsonLine[]; jsonMaxWidthPx: number }>(() => {
@@ -1102,14 +1579,14 @@ export const DataGrid: React.FC<DataGridProps> = ({
       lines.push({ num: lines.length + 1, depth, kind: 'close', keyName: null, bracket: close, hasComma: trailingComma, ancestors: childAncestors, docIndex });
     };
 
-    parsedDocs.forEach((doc, di) => {
+    jsonDocs.forEach((doc, di) => {
       walk(doc, null, 0, false, [], di, true, documents[di]);
     });
     // Gutter (~68px) + monospace char width (~7.2px); min keeps a sensible floor.
     const maxWidthPx = Math.max(320, 68 + Math.ceil(maxChars * 7.2));
     return { jsonLines: lines, jsonMaxWidthPx: maxWidthPx };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [parsedDocs, documents]);
+  }, [jsonDocs, documents, dateTimezone]);
 
   // The result's identity: what was asked for — the query, the page — and the
   // shape of what came back: its documents in order, then every foldable
@@ -1214,11 +1691,11 @@ export const DataGrid: React.FC<DataGridProps> = ({
   // searches exactly what that renderer paints, so a visible `ObjectId(`, a
   // quote, or an escaped `\n` is matchable.
   const jsonLineText = (line: JsonLine): string => {
-    const key = line.keyName !== null ? `"${line.keyName}" : ` : '';
+    const key = line.keyName !== null ? `${jsonStringLiteral(line.keyName)} : ` : '';
     const comma = line.hasComma ? ',' : '';
     switch (line.kind) {
       case 'scalar':
-        return `${key}${bsonValueText(line.value)}${comma}`;
+        return `${key}${bsonValueText(line.value, bsonDisplayOptions)}${comma}`;
       case 'open':
         return `${key}${line.bracket || '{'}`;
       case 'empty':
@@ -1568,11 +2045,13 @@ export const DataGrid: React.FC<DataGridProps> = ({
     const walk = (
       value: any,
       keyName: string,
+      path: string[],
       depth: number,
       ancestors: number[],
       docIndex: number,
       isDocRoot: boolean,
-      rawDoc?: Record<string, any>
+      rawDoc?: Record<string, any>,
+      underArray = false
     ) => {
       const isArr = Array.isArray(value);
       const isObj = value !== null && typeof value === 'object' && !isBsonObject(value) && !isArr;
@@ -1582,12 +2061,14 @@ export const DataGrid: React.FC<DataGridProps> = ({
           num: rows.length + 1,
           depth,
           keyName,
+          path,
           kind: 'scalar',
           value,
           childCount: 0,
           type: bsonTypeLabel(value),
           ancestors,
           docIndex,
+          underArray,
         });
         return;
       }
@@ -1603,6 +2084,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
         num: rows.length + 1,
         depth,
         keyName,
+        path,
         kind: isArr ? 'array' : 'object',
         childCount: entries.length,
         type: isArr ? 'Array' : 'Object',
@@ -1614,11 +2096,11 @@ export const DataGrid: React.FC<DataGridProps> = ({
       });
 
       const childAncestors = [...ancestors, foldId];
-      entries.forEach(([k, v]) => walk(v, k, depth + 1, childAncestors, docIndex, false));
+      entries.forEach(([k, v]) => walk(v, k, [...path, k], depth + 1, childAncestors, docIndex, false, undefined, underArray || isArr));
     };
 
     parsedDocs.forEach((doc, di) => {
-      walk(doc, String(di + 1), 0, [], di, true, documents[di]);
+      walk(doc, String(di + 1), [], 0, [], di, true, documents[di]);
     });
     return { treeRows: rows, treeDefaultCollapsed: defaultCollapsed };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1639,7 +2121,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const treeRowText = (row: TreeRow): string => {
     const value =
       row.kind === 'scalar'
-        ? bsonValueText(row.value)
+        ? bsonValueText(row.value, bsonDisplayOptions)
         : row.kind === 'array'
           ? t('dataGrid.labels.elements', { count: row.childCount })
           : t('dataGrid.labels.fields', { count: row.childCount });
@@ -1685,7 +2167,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
           columns.map((col) => ({
             rowIndex: index,
             columnKey: col,
-            text: tableValueText((doc as Record<string, unknown>)?.[col]),
+            text: tableValueText(cellValue(doc, col), bsonDisplayOptions),
           }))
         )
       );
@@ -1695,7 +2177,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
     // jsonLineText/treeRowText are recreated each render but read only the rows
     // and the translator, both of which are already dependencies.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [findOpen, viewMode, jsonLines, treeRows, documents, columns, t]);
+  }, [findOpen, viewMode, jsonLines, treeRows, documents, columns, t, dateTimezone]);
 
   const findMatchList = useMemo(() => findMatches(findCells, findQuery), [findCells, findQuery]);
 
@@ -1756,108 +2238,51 @@ export const DataGrid: React.FC<DataGridProps> = ({
   // Every document now carries at least a copy control, so the actions
   // area is always present; edit/delete remain gated on their handlers.
   const hasRowActions = true;
-
-  // One-click "Copy JSON" for a single document, with a brief "Copied"
-  // confirmation. Copies the pretty-printed (2-space) document, matching the
-  // "Copy document (JSON)" context-menu action.
-  const CopyDocButton = ({ doc }: { doc: Record<string, any> }) => {
-    const [copied, setCopied] = useState(false);
-    const handleCopy = (e: React.MouseEvent) => {
-      e.stopPropagation();
-      writeClipboard(JSON.stringify(doc, null, 2));
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1500);
-    };
-    return (
-      <button
-        onClick={handleCopy}
-        className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-primary"
-        title={copied ? t('dataGrid.tooltips.copied') : t('dataGrid.actions.copyDocumentJson')}
-        aria-label={copied ? t('dataGrid.tooltips.copied') : t('dataGrid.tooltips.copyDocument')}
-        data-testid="copy-doc-btn"
-      >
-        {copied ? <Check size={12} className="text-success" /> : <Copy size={12} />}
-      </button>
-    );
+  const rowActions: RowActionsContext = {
+    t,
+    onCopy: (doc) => writeClipboard(documentCopyText(doc)),
+    onEditDocument,
+    onDeleteDocument,
+    isReadOnly,
   };
 
-  // Per-row copy/edit/delete controls, shared across all view modes.
-  const RowActions = ({ doc }: { doc: Record<string, any> }) => {
-    return (
-      <div className="flex items-center gap-1 flex-shrink-0">
-        <CopyDocButton doc={doc} />
-        {onEditDocument && (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onEditDocument(doc);
-            }}
-            disabled={isReadOnly}
-            className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-primary disabled:pointer-events-none disabled:opacity-50"
-            title={isReadOnly ? t('dataGrid.tooltips.readOnly') : t('dataGrid.tooltips.editDocument')}
-            data-testid="edit-doc-btn"
-          >
-            <Edit size={12} />
-          </button>
-        )}
-        {onDeleteDocument && (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onDeleteDocument(doc);
-            }}
-            disabled={isReadOnly}
-            className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:pointer-events-none disabled:opacity-50"
-            title={isReadOnly ? t('dataGrid.tooltips.readOnly') : t('dataGrid.tooltips.deleteDocument')}
-            data-testid="delete-doc-btn"
-          >
-            <Trash2 size={12} />
-          </button>
-        )}
-      </div>
-    );
+  const startCellEdit = onEditField && !isReadOnly && !cellSaving ? setCellEdit : undefined;
+  // Saves the open cell. A value written as it was loaded is not a change and
+  // closes without a write. Throws to keep the editor open with the reason.
+  const commitCellEdit = async (text: string) => {
+    if (!cellEdit || !onEditField) return;
+    const doc = documents[cellEdit.docIndex];
+    if (text === docToShell(valueAtPath(doc, cellEdit.path))) {
+      setCellEdit(null);
+      return;
+    }
+    let value: unknown;
+    try {
+      if (!text.trim()) throw new Error('empty');
+      value = parseShellJson(text);
+    } catch {
+      throw new Error(t('dataGrid.inlineEdit.invalidValue'));
+    }
+    const edited = structuredClone(doc);
+    const parent = valueAtPath(edited, cellEdit.path.slice(0, -1));
+    parent[cellEdit.path[cellEdit.path.length - 1]] = value;
+    setCellSaving(true);
+    try {
+      await onEditField(doc, edited);
+    } finally {
+      setCellSaving(false);
+    }
+    setCellEdit(null);
   };
-
-  // Row Renderer for Virtualized List (table mode only; JSON & tree have their own).
-  const Row = ({ index, style }: { index: number; style: React.CSSProperties }) => {
-    const rawDoc = documents[index];
-    if (!rawDoc) return null;
-
-    // Table mode
-    return (
-      <div
-        style={style}
-        className="flex items-center border-b border-border font-mono text-xs hover:bg-accent"
-        onContextMenu={(e) => openCtxMenu(e, rawDoc)}
-      >
-        <div
-          className="flex h-full shrink-0 select-none items-center justify-center border-r border-border text-[10px] text-muted-foreground"
-          style={{ width: `${TABLE_ROW_NUMBER_WIDTH_PX}px` }}
-        >
-          {index + 1}
-        </div>
-        {columns.map((col) => (
-          <div
-            key={col}
-            className={cn(
-              'flex h-full items-center truncate border-r border-border px-3 text-foreground',
-              findHighlightClass(index, col)
-            )}
-            style={{ width: `${colWidth(col)}px`, flexShrink: 0 }}
-            onContextMenu={(e) => openCtxMenu(e, rawDoc, col, rawDoc[col])}
-          >
-            {renderColoredCell(rawDoc[col])}
-          </div>
-        ))}
-        {hasRowActions && (
-          <div className="flex h-full w-[72px] shrink-0 items-center justify-center px-2">
-            <RowActions doc={rawDoc} />
-          </div>
-        )}
-      </div>
+  const renderCellEditor = () =>
+    cellEdit && (
+      <InlineCellEditor
+        initial={docToShell(valueAtPath(documents[cellEdit.docIndex], cellEdit.path))}
+        hint={t('dataGrid.inlineEdit.hint')}
+        onCommit={commitCellEdit}
+        onCancel={() => setCellEdit(null)}
+      />
     );
-  };
-
 
   // Bring the matched column into view as well as the matched row. The table
   // scrolls in both directions once resized columns overflow, so a vertical jump
@@ -1964,51 +2389,6 @@ export const DataGrid: React.FC<DataGridProps> = ({
     return getScaledRowHeight(24, density);
   };
 
-  // Virtualized row for the tree-table view (Key | Value | Type).
-  const TreeRowComponent = ({ index, style }: { index: number; style: React.CSSProperties }) => {
-    const row = visibleTreeRows[index];
-    if (!row) return null;
-    const collapsed = row.foldId !== undefined && treeCollapsed.has(row.foldId);
-    return (
-      <div
-        style={style}
-        className={cn(
-          'flex items-center border-b border-border font-mono text-[11.5px] hover:bg-accent',
-          row.docIndex % 2 === 0 ? 'bg-background' : 'bg-card',
-          row.isDocRoot && row.docIndex > 0 && 'border-t border-border',
-          findHighlightClass(row.num)
-        )}
-        data-doc-even={row.docIndex % 2 === 0}
-        onContextMenu={(e) => openCtxMenu(e, documents[row.docIndex], row.kind === 'scalar' ? row.keyName : undefined, row.value)}
-      >
-        <div className="flex min-w-0 items-center border-r border-border" style={{ width: treeKeyWidth, paddingLeft: 6 + row.depth * 14 }}>
-          {row.foldId !== undefined ? (
-            <button
-              type="button"
-              onClick={() => toggleTreeFold(row.foldId!)}
-              className="mr-1 flex shrink-0 items-center text-muted-foreground hover:text-foreground"
-              data-testid="tree-fold-btn"
-              aria-label={collapsed ? t('documents:dataGrid.tooltips.expand') : t('documents:dataGrid.tooltips.collapse')}
-            >
-              {collapsed ? <ChevronRight size={11} /> : <ChevronDown size={11} />}
-            </button>
-          ) : (
-            <span className="mr-1 inline-block w-[11px] shrink-0" />
-          )}
-          <span className="truncate text-syntax-key" title={row.keyName}>{row.keyName}</span>
-        </div>
-        <div className="flex min-w-0 flex-1 items-center gap-2 border-r border-border px-3">
-          <span className="truncate">{renderTreeValue(row)}</span>
-          {row.isDocRoot && hasRowActions && row.doc && (
-            <span className="ml-auto inline-flex opacity-0 group-hover:opacity-100 [.flex:hover>&]:opacity-100">
-              <RowActions doc={row.doc} />
-            </span>
-          )}
-        </div>
-        <div className="w-28 shrink-0 px-3 text-muted-foreground">{row.type}</div>
-      </div>
-    );
-  };
   return (
     <>
       {/* The accessible announcement of a run in flight, kept OUTSIDE the inert
@@ -2063,6 +2443,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
             {t('dataGrid.tabs.results')}
           </button>
           <button
+            disabled={blockedCommands?.includes('explain_mql_query')}
             onClick={() => {
               setActiveTab('explain');
               if (docViewerContext && !docViewerContext.explainLoading) {
@@ -2121,37 +2502,67 @@ export const DataGrid: React.FC<DataGridProps> = ({
               {t('dataGrid.actions.schema')}
             </Button>
           )}
-          {activeTab === 'results' && onUpdateMany && (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={onUpdateMany}
-              disabled={isReadOnly}
-              className="h-7 gap-1.5 text-[11px]"
-              title={isReadOnly ? t('dataGrid.tooltips.readOnly') : t('dataGrid.tooltips.updateMany')}
-              data-testid="update-many-btn"
-            >
-              <Edit size={12} />
-              {t('dataGrid.actions.updateMany')}
-            </Button>
-          )}
-          {activeTab === 'results' && onDeleteMany && (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={onDeleteMany}
-              disabled={isReadOnly}
-              className="h-7 gap-1.5 border-destructive/30 bg-destructive/10 text-[11px] text-destructive hover:bg-destructive/20"
-              title={isReadOnly ? t('dataGrid.tooltips.readOnly') : t('dataGrid.tooltips.deleteMany')}
-              data-testid="delete-many-btn"
-            >
-              <Trash2 size={12} />
-              {t('dataGrid.actions.deleteMany')}
-            </Button>
+          {activeTab === 'results' && (onUpdateMany || onDeleteMany) && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={isReadOnly}
+                  className="h-7 gap-1.5 text-[11px]"
+                  title={isReadOnly ? t('dataGrid.tooltips.readOnly') : undefined}
+                  data-testid="bulk-write-menu-btn"
+                >
+                  <Edit size={12} />
+                  {t('dataGrid.actions.updateOrDelete')}
+                  <ChevronDown size={11} />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start">
+                {onUpdateMany && (
+                  <DropdownMenuItem onSelect={onUpdateMany} data-testid="update-many-btn">
+                    <Edit />
+                    {t('dataGrid.actions.updateMany')}
+                  </DropdownMenuItem>
+                )}
+                {onDeleteMany && (
+                  <DropdownMenuItem
+                    onSelect={onDeleteMany}
+                    className="text-destructive focus:text-destructive"
+                    data-testid="delete-many-btn"
+                  >
+                    <Trash2 />
+                    {t('dataGrid.actions.deleteMany')}
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
           )}
           {activeTab === 'results' ? (
+            <>
+            <button
+              type="button"
+              onClick={toggleDateTimezone}
+              className="rounded-md border border-border bg-background px-2 py-1 text-[11px] font-medium text-muted-foreground hover:text-foreground"
+              title={t('dataGrid.tooltips.dateTimezone')}
+              data-testid="date-timezone-toggle"
+            >
+              {dateTimezone === 'utc' ? t('dataGrid.labels.utc') : t('dataGrid.labels.local')}
+            </button>
+            {viewMode === 'json' && (
+              <label className="flex items-center gap-2 text-[11px] text-muted-foreground" title={t('dataGrid.labels.plainJsonWarning')}>
+                <input type="checkbox" aria-label={t('dataGrid.labels.plainJson')} checked={plainJson} onChange={e => setPlainJson(e.target.checked)} />
+                {t('dataGrid.labels.plainJson')}
+                {plainJson && <AlertTriangle size={12} role="img" aria-label={t('dataGrid.labels.plainJsonWarning')} />}
+              </label>
+            )}
+            {viewMode === 'table' && (
+              <label className="flex items-center gap-2 text-[11px] text-muted-foreground" title={t('dataGrid.labels.embeddedFieldsHint')}>
+                <input type="checkbox" aria-label={t('dataGrid.labels.embeddedFields')} checked={embeddedFields} onChange={e => setEmbeddedFields(e.target.checked)} />
+                {t('dataGrid.labels.embeddedFields')}
+              </label>
+            )}
             <div className="flex items-center rounded-md border border-border bg-background p-0.5">
               <button
                 role="button"
@@ -2205,6 +2616,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
                 <span>{t('dataGrid.viewModes.chart')}</span>
               </button>
             </div>
+            </>
           ) : activeTab === 'explain' ? (
             explainResult && (
               <Button
@@ -2301,7 +2713,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
                   openCtxMenu,
                   renderContent: renderJsonLineContent,
                   hasRowActions,
-                  RowActions,
+                  rowActions,
                   t,
                 }}
                 style={{ height: '100%', width: `${jsonMaxWidthPx}px`, minWidth: '100%' }}
@@ -2323,12 +2735,27 @@ export const DataGrid: React.FC<DataGridProps> = ({
               <div className="w-28 shrink-0 px-3">{t('dataGrid.labels.type')}</div>
             </div>
             <div className="min-h-0 flex-1 min-w-0 overflow-hidden">
-              <List<{}>
+              <List<TreeRowExtra>
                 rowCount={visibleTreeRows.length}
                 listRef={treeListRef}
                 rowHeight={getRowHeight()}
                 rowComponent={TreeRowComponent}
-                rowProps={{}}
+                rowProps={{
+                  rows: visibleTreeRows,
+                  collapsedFolds: treeCollapsed,
+                  findHighlightClass,
+                  toggleFold: toggleTreeFold,
+                  documents,
+                  openCtxMenu,
+                  keyWidth: treeKeyWidth,
+                  renderValue: renderTreeValue,
+                  cellEdit,
+                  startCellEdit,
+                  renderCellEditor,
+                  hasRowActions,
+                  rowActions,
+                  t,
+                }}
                 style={{ height: '100%', width: '100%' }}
               />
             </div>
@@ -2383,12 +2810,26 @@ export const DataGrid: React.FC<DataGridProps> = ({
               className="min-h-0 flex-1 min-w-0 overflow-auto"
               style={{ scrollbarGutter: 'stable' }}
             >
-              <List<{}>
+              <List<TableRowExtra>
                 rowCount={documents.length}
                 listRef={tableListRef}
                 rowHeight={getRowHeight()}
-                rowComponent={Row}
-                rowProps={{}}
+                rowComponent={TableRow}
+                rowProps={{
+                  documents,
+                  columns,
+                  colWidth,
+                  findHighlightClass,
+                  openCtxMenu,
+                  renderCell: renderColoredCell,
+                  cellValue,
+                  cellPath: (col) => columnPaths.get(col) ?? [col],
+                  cellEdit,
+                  startCellEdit,
+                  renderCellEditor,
+                  hasRowActions,
+                  rowActions,
+                }}
                 style={{ height: '100%', width: '100%', minWidth: viewMode === 'table' ? `${columns.reduce((s, c) => s + colWidth(c), 0) + TABLE_ROW_NUMBER_WIDTH_PX + (hasRowActions ? 72 : 0)}px` : '100%' }}
               />
             </div>

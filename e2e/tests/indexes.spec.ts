@@ -1,6 +1,6 @@
 import type { Locator, Page } from '@playwright/test';
 import { test, expect } from '../fixtures';
-import { dismissHoverCards, loadSample, openCollection } from '../helpers';
+import { confirmTypedName, dismissHoverCards, loadSample, openCollection } from '../helpers';
 
 const sidebar = (page: Page) => page.getByRole('complementary');
 const view = (page: Page) => page.locator('[data-testid^="tab-content-"]:not([hidden])');
@@ -55,9 +55,40 @@ test.describe('Indexes', () => {
     await expect(modal).toHaveCount(0);
     const creates = await app.calls('create_index');
     expect(creates).toHaveLength(1);
-    const args = creates[0].args as { indexName: string; keys: unknown; unique: boolean };
-    expect(args).toMatchObject({ database: 'sales_db', collection: 'customers', indexName: 'tier_-1', unique: false });
-    expect(typeof args.keys === 'string' ? JSON.parse(args.keys) : args.keys).toEqual({ tier: -1 });
+    const args = creates[0].args as { spec: string };
+    expect(args).toMatchObject({ database: 'sales_db', collection: 'customers' });
+    expect(JSON.parse(args.spec)).toEqual({ key: { tier: -1 }, name: 'tier_-1' });
+  });
+
+  test('creates a TTL index and changes its expiry in place', async ({ app, page }) => {
+    await sidebar(page).getByText('indexes', { exact: true }).click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Create Index' }).click();
+    const modal = page.getByTestId('index-modal');
+    await setKeyField(modal.getByTestId('index-key-field-0'), 'tier');
+    await modal.getByTestId('index-key-direction-0').selectOption('-1');
+    await expect(modal.getByTestId('index-name-input')).toHaveValue('tier_-1');
+    await modal.getByTestId('ttl-checkbox').check();
+    await modal.getByTestId('ttl-seconds-input').fill('3600');
+    await modal.getByTestId('save-index-btn').click();
+
+    await expect(modal).toHaveCount(0);
+    const [created] = await app.calls('create_index');
+    expect(JSON.parse((created.args as { spec: string }).spec)).toEqual({ key: { tier: -1 }, name: 'tier_-1', expireAfterSeconds: 3600 });
+    // Saving opens the new index.
+    const viewer = view(page).getByTestId('index-viewer');
+    await expect(viewer.getByTestId('index-ttl')).toHaveText('TTL 1 hour (3600 s)');
+
+    await viewer.getByTestId('edit-index-btn').click();
+    await expect(modal.getByTestId('ttl-seconds-input')).toHaveValue('3600');
+    await modal.getByTestId('ttl-seconds-input').fill('86400');
+    await modal.getByTestId('save-index-btn').click();
+
+    await expect(modal).toHaveCount(0);
+    await expect(viewer.getByTestId('index-ttl')).toHaveText('TTL 1 day (86400 s)');
+    const changes = await app.calls('set_index_expiry');
+    expect(changes).toHaveLength(1);
+    expect(changes[0].args).toMatchObject({ collection: 'customers', indexName: 'tier_-1', expireAfterSeconds: 86400 });
+    expect(await app.calls('delete_index')).toHaveLength(0);
   });
 
   test('deletes an index once confirmed', async ({ app, page }) => {
@@ -65,9 +96,10 @@ test.describe('Indexes', () => {
     await expect(view(page).getByTestId('index-viewer')).toBeVisible();
 
     await view(page).getByTestId('delete-index-btn').click();
-    await page.getByTestId('dialog-confirm').click();
+    await confirmTypedName(page, 'email_1');
 
     await expect(sidebar(page).getByText('email_1', { exact: true })).toHaveCount(0);
+    await expect(page.getByTestId('dialog-toast').filter({ hasText: 'Index "email_1" dropped successfully.' })).toBeVisible();
     const deletes = await app.calls('delete_index');
     expect(deletes).toHaveLength(1);
     expect(deletes[0].args).toMatchObject({ database: 'sales_db', collection: 'customers', indexName: 'email_1' });

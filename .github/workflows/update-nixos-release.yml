@@ -1,0 +1,95 @@
+name: Update NixOS package
+
+on:
+  schedule:
+    - cron: '17 19 * * *'
+  release:
+    types: [published]
+  workflow_dispatch:
+
+concurrency:
+  group: update-nixos-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  update:
+    if: ${{ github.event_name != 'release' || github.event.release.prerelease == false }}
+    runs-on: ubuntu-latest
+    # Pushes the bump branch and opens or edits its pull request.
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch || 'dev' }}
+          fetch-depth: 0
+
+      - name: Fetch latest stable Debian package and update its pin
+        id: update
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          release=$(gh api repos/mqlens/mqlens-mongodb/releases/latest)
+          tag=$(jq -r '.tag_name' <<< "$release")
+          if [[ ! "$tag" =~ ^mqlens-v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo "Latest release tag is not a stable semantic version: $tag" >&2
+            exit 1
+          fi
+          version="${BASH_REMATCH[1]}"
+          asset="MQLens_${version}_amd64.deb"
+
+          gh release download "$tag" \
+            --repo mqlens/mqlens-mongodb \
+            --pattern "$asset" \
+            --dir "$RUNNER_TEMP"
+
+          hex_hash=$(sha256sum "$RUNNER_TEMP/$asset" | cut -d ' ' -f 1)
+          sri_hash="sha256-$(python3 -c 'import base64, sys; print(base64.b64encode(bytes.fromhex(sys.argv[1])).decode())' "$hex_hash")"
+
+          jq --arg version "$version" --arg hash "$sri_hash" \
+            '.version = $version | .hash = $hash' nixos/release.json \
+            > "$RUNNER_TEMP/release.json"
+          mv "$RUNNER_TEMP/release.json" nixos/release.json
+
+          if git diff --quiet -- nixos/release.json; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "NixOS pin is already current at MQLens $version."
+            exit 0
+          fi
+
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Open or update the release bump pull request
+        if: steps.update.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch || 'dev' }}
+          VERSION: ${{ steps.update.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          branch="automation/update-nixos-release"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git add nixos/release.json
+          git commit -m "chore(nixos): update MQLens to $VERSION"
+          git push --force origin "HEAD:refs/heads/$branch"
+
+          title="chore(nixos): update MQLens to $VERSION"
+          body="Automated update of the pinned stable MQLens Debian package and its SHA-256 hash."
+          if number=$(gh pr view "$branch" --json number --jq .number 2>/dev/null); then
+            gh pr edit "$number" --title "$title" --body "$body"
+          else
+            gh pr create --base "$DEFAULT_BRANCH" --head "$branch" \
+              --title "$title" --body "$body"
+          fi

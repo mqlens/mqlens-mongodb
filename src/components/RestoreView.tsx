@@ -42,6 +42,8 @@ export interface RestoreOptionsUi {
 interface RestoreViewProps {
   connectionName: string;
   tools: ToolsStatusUi | null;
+  /** On an MQLens Server connection, the server's host: mongorestore runs there. */
+  serverHost?: string;
   onOpenSettings?: () => void;
   onInstallTools?: () => void;
   onPickFolder: () => Promise<string | null>;
@@ -94,6 +96,7 @@ const FLAG_FIELDS: {
 export const RestoreView: React.FC<RestoreViewProps> = ({
   connectionName,
   tools,
+  serverHost,
   onOpenSettings,
   onInstallTools,
   onPickFolder,
@@ -130,7 +133,7 @@ export const RestoreView: React.FC<RestoreViewProps> = ({
   const [previewCmd, setPreviewCmd] = React.useState('');
   const previewGen = React.useRef(0);
 
-  const toolMissing = !tools || !tools.mongorestore;
+  const toolMissing = !serverHost && (!tools || !tools.mongorestore);
 
   const allKeys = React.useMemo(
     () =>
@@ -409,7 +412,9 @@ export const RestoreView: React.FC<RestoreViewProps> = ({
             </div>
           ) : (
             <div className="text-xs text-muted-foreground" data-testid="restore-tools-status">
-              mongorestore {tools!.mongorestore!.version} — {tools!.mongorestore!.path}
+              {serverHost
+                ? t('restoreView.tools.onServer', { host: serverHost })
+                : `mongorestore ${tools!.mongorestore!.version} — ${tools!.mongorestore!.path}`}
             </div>
           )}
         </section>
@@ -605,12 +610,15 @@ export const RestoreView: React.FC<RestoreViewProps> = ({
             </Button>
           </div>
 
-          {previewCmd && (
+          {/* Shown from the moment there is a source, and kept to one line, so
+              a preview that arrives late never pushes the drop confirmation's
+              buttons out from under the pointer. */}
+          {hasSource && onPreviewCommand && (
             <code
               data-testid="restore-preview-cmd"
-              className="block overflow-x-auto rounded-md border border-border bg-muted/30 px-2 py-1.5 text-xs"
+              className="block overflow-x-auto whitespace-pre rounded-md border border-border bg-muted/30 px-2 py-1.5 text-xs"
             >
-              {previewCmd}
+              {previewCmd || ' '}
             </code>
           )}
 
@@ -643,6 +651,7 @@ export const RestoreView: React.FC<RestoreViewProps> = ({
                   size="sm"
                   variant="outline"
                   onClick={() => setShowDropConfirm(false)}
+                  data-testid="restore-drop-cancel-btn"
                 >
                   {t('restoreView.actions.cancel')}
                 </Button>

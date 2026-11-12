@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ReactElement } from 'react';
-import { render as rtlRender, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { render as rtlRender, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
 import {
   ConnectionManager,
   buildUri,
@@ -464,7 +464,7 @@ describe('buildUri TLS handling (C8)', () => {
 
 describe('buildUri timeouts + proxy (M2)', () => {
   it('emits connectTimeoutMS and serverSelectionTimeoutMS from the fields', () => {
-    const uri = buildUri({ ...baseConn, connectTimeout: 8000, serverSelectionTimeout: 12000 });
+    const uri = buildUri({ ...baseConn, connectTimeout: '8000', serverSelectionTimeout: '12000' });
     expect(uri).toContain('connectTimeoutMS=8000');
     expect(uri).toContain('serverSelectionTimeoutMS=12000');
   });
@@ -1120,6 +1120,7 @@ describe('ConnectionManager Component', () => {
     fireEvent.change(screen.getByLabelText(/display name/i), { target: { value: 'Prod' } });
     await pickSelectOption('topology-select', /full uri string only/i);
     fireEvent.change(screen.getByLabelText(/connection uri/i), { target: { value: 'mongodb://prod' } });
+    fireEvent.click(screen.getByRole('button', { name: /^color tag$/i }));
     fireEvent.click(screen.getByTestId('color-swatch-blue'));
     fireEvent.click(screen.getByRole('button', { name: /save/i }));
 
@@ -1158,6 +1159,7 @@ describe('ConnectionManager Component', () => {
     fireEvent.change(screen.getByLabelText(/display name/i), { target: { value: 'Custom' } });
     await pickSelectOption('topology-select', /full uri string only/i);
     fireEvent.change(screen.getByLabelText(/connection uri/i), { target: { value: 'mongodb://custom' } });
+    fireEvent.click(screen.getByRole('button', { name: /^color tag$/i }));
     expect(screen.getByLabelText('Pick a custom color')).toBeInTheDocument();
     fireEvent.change(screen.getByTestId('color-picker-custom'), { target: { value: '#a1b2c3' } });
     fireEvent.click(screen.getByRole('button', { name: /save/i }));
@@ -1225,6 +1227,7 @@ describe('ConnectionManager Component', () => {
     await waitFor(() => expect(screen.getAllByText('Staging')[0]).toBeInTheDocument());
     fireEvent.click(screen.getAllByText('Staging')[0]);
     fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^color tag$/i }));
     fireEvent.click(screen.getByTestId('color-swatch-none'));
     fireEvent.click(screen.getByRole('button', { name: /save/i }));
 
@@ -2491,7 +2494,7 @@ describe('URI import and export', () => {
     fireEvent.click(await screen.findByTestId('import-from-clipboard'));
 
     await waitFor(() => {
-      expect(screen.getByText(/db\.imported\.example/)).toBeInTheDocument();
+      expect(screen.getByTestId('host-list')).toHaveValue('db.imported.example:27017');
     });
   });
 
@@ -2516,7 +2519,7 @@ describe('URI import and export', () => {
     fireEvent.click(await screen.findByTestId('import-from-file'));
 
     await waitFor(() => {
-      expect(screen.getByText(/cluster\.file\.example/)).toBeInTheDocument();
+      expect(screen.getByTestId('host-list')).toHaveValue('cluster.file.example');
     });
   });
 
@@ -2644,6 +2647,58 @@ describe('URI import and export', () => {
     expect(storedFolders.some((folder) => folder.name === 'Team')).toBe(true);
     const profileMap = JSON.parse(localStorage.getItem('mqlens_profile_folders') || '{}') as Record<string, string>;
     expect(Object.keys(profileMap).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('keeps the SSH tunnel an MQLens export carried', async () => {
+    const saved: any[] = [];
+    mockInvoke.mockImplementation((cmd: string, args?: any) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'save_connection_profile') {
+        saved.push(args.profile);
+        return Promise.resolve();
+      }
+      return Promise.resolve([]);
+    });
+    setupClipboard();
+    mockOpenDialog.mockResolvedValue('/tmp/connections.json');
+    const ssh = { host: 'bastion.example', port: 2222, user: 'ops', auth: { type: 'agent' } };
+    mockReadTextFile.mockResolvedValue(JSON.stringify({
+      connections: [{ name: 'Tunnelled', uri: 'mongodb://10.0.0.5:27017', ssh }, { name: 'Direct', uri: 'mongodb://localhost:27017' }],
+    }));
+
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+    await openImportMenu();
+    fireEvent.click(await screen.findByTestId('import-from-file'));
+    fireEvent.click(await screen.findByRole('button', { name: /import all/i }));
+
+    await waitFor(() => expect(saved).toHaveLength(2));
+    expect(saved[0].ssh).toEqual({ enabled: true, ...ssh });
+    expect(saved[1].ssh).toBeNull();
+  });
+
+  it('keeps the SSH tunnel of a single exported connection, which opens in the editor', async () => {
+    let savedProfile: any = null;
+    mockInvoke.mockImplementation((cmd: string, args?: any) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'save_connection_profile') {
+        savedProfile = args.profile;
+        return Promise.resolve();
+      }
+      return Promise.resolve([]);
+    });
+    setupClipboard();
+    mockOpenDialog.mockResolvedValue('/tmp/connections.json');
+    const ssh = { host: 'bastion.example', port: 2222, user: 'ops', auth: { type: 'key', path: '/keys/ops' } };
+    mockReadTextFile.mockResolvedValue(JSON.stringify({ connections: [{ name: 'Tunnelled', uri: 'mongodb://10.0.0.5:27017', ssh }] }));
+
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+    await openImportMenu();
+    fireEvent.click(await screen.findByTestId('import-from-file'));
+
+    await waitFor(() => expect(screen.getByLabelText(/display name/i)).toHaveValue('Tunnelled'));
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    await waitFor(() => expect(savedProfile).not.toBeNull());
+    expect(savedProfile.ssh).toMatchObject({ enabled: true, host: 'bastion.example', port: 2222, user: 'ops', auth: { type: 'key', path: '/keys/ops' } });
   });
 
   it('imports multiple URIs from a Studio 3T-style export file', async () => {
@@ -3548,5 +3603,1002 @@ describe('waiting-for-browser-login UI (#430 Task 15)', () => {
     expect(screen.getAllByTestId('connect-reopen-login')).toHaveLength(1);
 
     releaseConnect?.();
+  });
+});
+
+describe('ConnectionManager: MQLens Server', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  it('opens on the server accounts when asked to', async () => {
+    mockInvoke.mockImplementation((cmd) =>
+      cmd === 'load_connection_profiles' || cmd === 'server_account_list'
+        ? Promise.resolve([])
+        : Promise.reject(new Error(`Unhandled mock: ${cmd}`)),
+    );
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} showServerAccounts />);
+
+    expect(await screen.findByRole('button', { name: 'Add server account' })).toBeInTheDocument();
+  });
+
+  it('connects through a server account as a server profile', async () => {
+    mockInvoke.mockImplementation((cmd) => {
+      switch (cmd) {
+        case 'load_connection_profiles':
+          return Promise.resolve([]);
+        case 'server_account_list':
+          return Promise.resolve([
+            { id: 'a1', name: 'Work', url: 'https://mqlens.example.com', tenant: 'acme', email: 'dev@example.com', allowInsecureHttp: false, signedIn: true },
+          ]);
+        case 'server_list_connections':
+          return Promise.resolve([{ id: 'c1', name: 'Orders', tags: [], deploymentKind: 'replica_set', opClasses: ['read'] }]);
+        case 'server_connect':
+          return Promise.resolve({ id: 'conn-9', mongoVersion: '8.0.0', opClasses: ['read'], mode: 'normal' });
+        default:
+          return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+      }
+    });
+    const onConnect = vi.fn();
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={onConnect} />);
+
+    expect(mockInvoke.mock.calls.some(([c]) => c === 'server_account_list')).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'MQLens Server' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Connect to Orders' }));
+
+    await waitFor(() =>
+      expect(onConnect).toHaveBeenCalledWith('conn-9', 'Orders', '', 'server:a1:c1', undefined, 'normal'),
+    );
+  });
+});
+
+describe('OIDC refresh-token persistence (#439)', () => {
+  it('defaults off and saves only the opt-in setting in the profile', async () => {
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      calls.push({ cmd, args });
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      return Promise.resolve(null);
+    });
+    render(<ConnectionManager isOpen onClose={() => {}} onConnect={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: /new\.\.\./i }));
+    fireEvent.click(screen.getByRole('button', { name: /^authentication$/i }));
+    await pickSelectOption('auth-method-select', /oidc \(browser login\)/i);
+    const toggle = screen.getByRole('checkbox', { name: 'Remember login in encrypted vault' });
+    expect(toggle).not.toBeChecked();
+    fireEvent.click(toggle);
+    fireEvent.change(screen.getByLabelText('Display Name'), { target: { value: 'Remembered OIDC' } });
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    await waitFor(() => {
+      const profile = calls.find(c => c.cmd === 'save_connection_profile')?.args.profile;
+      expect(profile?.oidc).toEqual({ remember_login: true });
+      expect(profile?.uri).not.toContain('remember_login');
+    });
+  });
+
+  it('restores the opt-in and forgets a saved profile login without sending tokens through IPC', async () => {
+    const calls: any[] = [];
+    const profile = { id: 'remembered', name: 'Remembered OIDC', uri: 'mongodb://localhost/?authMechanism=MONGODB-OIDC&authSource=$external', oidc: { remember_login: true } };
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      calls.push({ cmd, args });
+      if (cmd === 'load_connection_profiles') return Promise.resolve([profile]);
+      return Promise.resolve(null);
+    });
+    render(<ConnectionManager isOpen onClose={() => {}} onConnect={() => {}} />);
+    fireEvent.click((await screen.findAllByText('Remembered OIDC'))[0]);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^authentication$/i }));
+    expect(screen.getByRole('checkbox', { name: 'Remember login in encrypted vault' })).toBeChecked();
+    fireEvent.click(screen.getByRole('button', { name: 'Forget saved login' }));
+    await waitFor(() => expect(calls.find(c => c.cmd === 'forget_oidc_login')?.args).toEqual({ profileId: 'remembered' }));
+  });
+});
+
+describe('URI options survive an edit and are editable on the Advanced tab', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  // Options as a sorted multiset, so the test does not depend on the order
+  // buildUri writes them in.
+  const optionsOf = (uri: string) => (uri.split('?')[1] ?? '').split('&').filter(Boolean).sort();
+
+  it('rebuilds every option a saved URI carried, including ones the form does not know', () => {
+    const uri =
+      'mongodb://alice:pw@h1:27017,h2:27017/shop?replicaSet=rs0&authSource=admin&authMechanism=SCRAM-SHA-256' +
+      '&readPreference=secondary&readPreferenceTags=dc:ny,rack:1&readPreferenceTags=' +
+      '&compressors=zlib&appName=reports&connectTimeoutMS=5000&serverSelectionTimeoutMS=8000' +
+      '&socketTimeoutMS=60000&maxIdleTimeMS=120000&maxPoolSize=20&retryWrites=false' +
+      '&w=majority&wtimeoutMS=2500&journal=true' +
+      '&proxyHost=socks.internal&proxyPort=1081&proxyUsername=bob&proxyPassword=pp' +
+      '&zlibCompressionLevel=6&maxConnecting=4';
+    const rebuilt = buildUri({ ...baseConn, ...parseUriIntoFields(uri) });
+    expect(optionsOf(rebuilt)).toEqual(optionsOf(uri));
+  });
+
+  it('reads legacy ssl spellings into the TLS fields, so unchecking them removes them', () => {
+    const f = parseUriIntoFields(
+      'mongodb://h:27017/?ssl=true&sslAllowInvalidCertificates=true&sslAllowInvalidHostnames=true&sslCAFile=%2Fca.pem&sslPEMKeyFile=%2Fc.pem&sslPEMKeyPassword=kp',
+    );
+    expect(f).toMatchObject({
+      tlsMode: 'file', tlsCa: '/ca.pem', tlsClientCert: '/c.pem', tlsKeyPassword: 'kp',
+      tlsAllowInvalidCerts: true, tlsAllowInvalidHosts: true, extraOptions: '',
+    });
+    const saved = buildUri({ ...baseConn, ...f, tlsAllowInvalidCerts: false, tlsAllowInvalidHosts: false });
+    expect(saved).not.toMatch(/allowinvalid/i);
+  });
+
+  it('keeps the client certificate of an SRV connection, which is TLS without saying so', () => {
+    const f = parseUriIntoFields('mongodb+srv://cluster.example.net/?sslPEMKeyFile=%2Fclient.pem&sslPEMKeyPassword=secret');
+    const saved = buildUri({ ...baseConn, ...f });
+    expect(saved).toContain('tlsCertificateKeyFile=%2Fclient.pem');
+    expect(saved).toContain('tlsCertificateKeyFilePassword=secret');
+  });
+
+  it('keeps an explicit tls=false or ssl=false, which an SRV connection needs to stay off', () => {
+    for (const uri of ['mongodb+srv://cluster0.example.net/app?tls=false', 'mongodb://h1:27017/?ssl=false']) {
+      expect(buildUri({ ...baseConn, ...parseUriIntoFields(uri) })).toMatch(/[?&](tls|ssl)=false/);
+    }
+    // Turning TLS on in the form drops the override.
+    const on = buildUri({ ...baseConn, ...parseUriIntoFields('mongodb+srv://cluster0.example.net/app?tls=false'), tlsMode: 'system' });
+    expect(on).not.toMatch(/=false/);
+  });
+
+  it('lets a form control replace a kept option instead of writing it twice', () => {
+    const lb = buildUri({ ...baseConn, ...parseUriIntoFields('mongodb://h1:27017/?loadBalanced=false'), loadBalanced: true });
+    expect(optionsOf(lb).filter((o) => o.startsWith('loadBalanced'))).toEqual(['loadBalanced=true']);
+    const zip = buildUri({ ...baseConn, ...parseUriIntoFields('mongodb://h1:27017/?compressors=zstd'), compression: 'zlib' });
+    expect(optionsOf(zip).filter((o) => o.startsWith('compressors'))).toEqual(['compressors=zlib']);
+    // Left alone, the kept value still rides through.
+    expect(buildUri({ ...baseConn, ...parseUriIntoFields('mongodb://h1:27017/?compressors=zstd') })).toContain('compressors=zstd');
+  });
+
+  it('drops directConnection when load balancing, which the driver refuses together', () => {
+    const uri = buildUri({ ...baseConn, ...parseUriIntoFields('mongodb://lb.example:27017/?directConnection=true'), loadBalanced: true });
+    expect(optionsOf(uri)).toContain('loadBalanced=true');
+    expect(uri).not.toMatch(/directConnection/i);
+  });
+
+  it('keeps authMechanismProperties it has no field for', () => {
+    const uri = 'mongodb://svc%40REALM@kdc.example.com:27017/?authMechanism=GSSAPI&authSource=$external' +
+      '&authMechanismProperties=SERVICE_NAME:mongo,CANONICALIZE_HOST_NAME:true';
+    const rebuilt = buildUri({ ...baseConn, ...parseUriIntoFields(uri) });
+    expect(optionsOf(rebuilt)).toEqual(optionsOf(uri));
+  });
+
+  it('does not add appName or timeouts to a saved URI that had none', () => {
+    const rebuilt = buildUri({ ...baseConn, ...parseUriIntoFields('mongodb://h1:27017/?directConnection=true') });
+    expect(optionsOf(rebuilt)).toEqual(['directConnection=true']);
+  });
+
+  it('keeps the read preference of a saved profile when only its name is edited', async () => {
+    let savedProfile: any = null;
+    const profile = { id: 'p-rp', name: 'Reports', uri: 'mongodb://h1:27017/?readPreference=secondary&retryWrites=false' };
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([profile]);
+      if (cmd === 'save_connection_profile') {
+        savedProfile = args.profile;
+        return Promise.resolve();
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+    await waitFor(() => expect(screen.getAllByText('Reports')[0]).toBeInTheDocument());
+    fireEvent.click(screen.getAllByText('Reports')[0]);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    fireEvent.change(screen.getByLabelText(/display name/i), { target: { value: 'Reports 2' } });
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => expect(savedProfile).not.toBeNull());
+    expect(optionsOf(savedProfile.uri)).toEqual(['readPreference=secondary', 'retryWrites=false']);
+  });
+
+  it('writes the read preference, timeouts, pool and write concern set on the Advanced tab', async () => {
+    let savedProfile: any = null;
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'save_connection_profile') {
+        savedProfile = args.profile;
+        return Promise.resolve();
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: /new\.\.\./i }));
+    fireEvent.click(screen.getByRole('button', { name: /^advanced$/i }));
+
+    await pickSelectOption('read-preference-select', /^nearest$/i);
+    fireEvent.change(screen.getByLabelText(/read preference tags/i), { target: { value: 'dc:ny\n\n' } });
+    fireEvent.change(screen.getByLabelText(/socket timeout/i), { target: { value: '45000' } });
+    fireEvent.change(screen.getByLabelText(/max pool size/i), { target: { value: '50' } });
+    fireEvent.change(screen.getByLabelText(/max idle time/i), { target: { value: '90000' } });
+    await pickSelectOption('retry-writes-select', /^off$/i);
+    fireEvent.change(screen.getByLabelText(/write concern \(w\)/i), { target: { value: 'majority' } });
+    fireEvent.change(screen.getByLabelText(/write timeout/i), { target: { value: '1000' } });
+    await pickSelectOption('journal-select', /^on$/i);
+    fireEvent.click(screen.getByLabelText(/load balanced/i));
+    fireEvent.change(screen.getByLabelText(/additional uri options/i), { target: { value: 'maxConnecting=3' } });
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => expect(savedProfile).not.toBeNull());
+    expect(optionsOf(savedProfile.uri)).toEqual(expect.arrayContaining([
+      'readPreference=nearest',
+      'readPreferenceTags=dc:ny',
+      'socketTimeoutMS=45000',
+      'maxPoolSize=50',
+      'maxIdleTimeMS=90000',
+      'retryWrites=false',
+      'w=majority',
+      'wtimeoutMS=1000',
+      'journal=true',
+      'loadBalanced=true',
+      'maxConnecting=3',
+      'appName=MQLens',
+      'connectTimeoutMS=10000',
+      'serverSelectionTimeoutMS=30000',
+    ]));
+    // Blank lines are skipped; an empty tag set is written as {} instead.
+    expect(optionsOf(savedProfile.uri).filter((o) => o.startsWith('readPreferenceTags'))).toEqual(['readPreferenceTags=dc:ny']);
+  });
+});
+
+describe('replica set and sharded members', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  const openNewEditor = async () => {
+    let savedProfile: any = null;
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'save_connection_profile') {
+        savedProfile = args.profile;
+        return Promise.resolve();
+      }
+      if (cmd === 'discover_replica_set') {
+        return Promise.resolve({ set_name: 'rs-prod', hosts: ['a.example:27017', 'b.example:27018'], arbiters: ['c.example:27019'] });
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: /new\.\.\./i }));
+    return () => savedProfile;
+  };
+
+  it('edits replica set members one row at a time', async () => {
+    const saved = await openNewEditor();
+    await pickSelectOption('topology-select', /^replica set$/i);
+    fireEvent.change(screen.getByTestId('member-host-0'), { target: { value: 'm1.example' } });
+    fireEvent.click(screen.getByRole('button', { name: /add member/i }));
+    fireEvent.change(screen.getByTestId('member-host-1'), { target: { value: 'm2.example' } });
+    fireEvent.change(screen.getByTestId('member-port-1'), { target: { value: '27018' } });
+    fireEvent.click(screen.getByRole('button', { name: /add member/i }));
+    fireEvent.change(screen.getByTestId('member-host-2'), { target: { value: 'gone.example' } });
+    fireEvent.click(screen.getByRole('button', { name: /remove gone\.example/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => expect(saved()).not.toBeNull());
+    expect(saved().uri).toMatch(/^mongodb:\/\/m1\.example:27017,m2\.example:27018[/?]/);
+  });
+
+  it('fills the members and set name from Discover', async () => {
+    await openNewEditor();
+    await pickSelectOption('topology-select', /^replica set$/i);
+    fireEvent.change(screen.getByTestId('member-host-0'), { target: { value: 'seed.example' } });
+    fireEvent.click(screen.getByRole('button', { name: /discover/i }));
+
+    await waitFor(() => expect(screen.getByTestId('member-host-1')).toHaveValue('b.example'));
+    expect(mockInvoke).toHaveBeenCalledWith('discover_replica_set', { uri: expect.stringContaining('seed.example:27017') });
+    expect(screen.getByTestId('member-host-0')).toHaveValue('a.example');
+    expect(screen.getByTestId('member-port-1')).toHaveValue('27018');
+    expect(screen.queryByTestId('member-host-2')).toBeNull();
+    expect(screen.getByLabelText(/replica set name/i)).toHaveValue('rs-prod');
+  });
+
+  it('drops a Discover reply that arrives after its editor closed', async () => {
+    await openNewEditor();
+    let reply: (value: unknown) => void = () => {};
+    mockInvoke.mockImplementation((cmd: string) =>
+      cmd === 'discover_replica_set' ? new Promise((resolve) => { reply = resolve; }) : Promise.resolve([]),
+    );
+    await pickSelectOption('topology-select', /^replica set$/i);
+    fireEvent.change(screen.getByTestId('member-host-0'), { target: { value: 'seed-a.example' } });
+    fireEvent.click(screen.getByRole('button', { name: /discover/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+
+    // Another editor is open by the time connection A's reply comes back.
+    fireEvent.click(await screen.findByRole('button', { name: /new\.\.\./i }));
+    await pickSelectOption('topology-select', /^replica set$/i);
+    fireEvent.change(screen.getByTestId('member-host-0'), { target: { value: 'seed-b.example' } });
+    await act(async () => reply({ set_name: 'rs-a', hosts: ['a.example:27017'], arbiters: [] }));
+
+    expect(screen.getByTestId('member-host-0')).toHaveValue('seed-b.example');
+    expect(screen.getByLabelText(/replica set name/i)).not.toHaveValue('rs-a');
+  });
+
+  it('keeps member edits made while Discover was running', async () => {
+    await openNewEditor();
+    let reply: (value: unknown) => void = () => {};
+    mockInvoke.mockImplementation((cmd: string) =>
+      cmd === 'discover_replica_set' ? new Promise((resolve) => { reply = resolve; }) : Promise.resolve([]),
+    );
+    await pickSelectOption('topology-select', /^replica set$/i);
+    fireEvent.change(screen.getByTestId('member-host-0'), { target: { value: 'seed-a.example' } });
+    fireEvent.click(screen.getByRole('button', { name: /discover/i }));
+    fireEvent.change(screen.getByTestId('member-host-0'), { target: { value: 'seed-b.example' } });
+    await act(async () => reply({ set_name: 'rs-a', hosts: ['a.example:27017'], arbiters: [] }));
+
+    expect(screen.getByTestId('member-host-0')).toHaveValue('seed-b.example');
+    expect(screen.getByLabelText(/replica set name/i)).not.toHaveValue('rs-a');
+  });
+
+  it('says so when Discover finds no replica set', async () => {
+    await openNewEditor();
+    mockInvoke.mockImplementation((cmd: string) =>
+      cmd === 'discover_replica_set' ? Promise.resolve({ set_name: null, hosts: [], arbiters: [] }) : Promise.resolve([]),
+    );
+    await pickSelectOption('topology-select', /^replica set$/i);
+    fireEvent.click(screen.getByRole('button', { name: /discover/i }));
+    expect(await screen.findByText(/not a replica set member/i)).toBeInTheDocument();
+  });
+
+  it('keeps the single host field for a standalone server', async () => {
+    await openNewEditor();
+    expect(screen.getByTestId('host-list')).toBeInTheDocument();
+    expect(screen.queryByTestId('member-host-0')).toBeNull();
+  });
+});
+
+describe('Discover cannot be steered by what a server reports', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  it('encodes the replica set name so it cannot add URI options', () => {
+    const uri = buildUri({ ...baseConn, topology: 'replicaSet', replicaSetName: 'rs0&tlsAllowInvalidCertificates=true' });
+    expect(uri).toContain('replicaSet=rs0%26tlsAllowInvalidCertificates%3Dtrue');
+    expect(uri).not.toContain('&tlsAllowInvalidCertificates=true');
+    expect(parseUriIntoFields(uri).replicaSetName).toBe('rs0&tlsAllowInvalidCertificates=true');
+  });
+
+  it('drops reported members that are not a plain host:port', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'discover_replica_set') {
+        return Promise.resolve({ set_name: 'rs0', hosts: ['ok.example:27017', 'evil.example/?tls=false:1', 'u@x.example:27017', 'noport.example'], arbiters: [] });
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: /new\.\.\./i }));
+    await pickSelectOption('topology-select', /^replica set$/i);
+    fireEvent.click(screen.getByRole('button', { name: /discover/i }));
+
+    await waitFor(() => expect(screen.getByTestId('member-host-0')).toHaveValue('ok.example'));
+    expect(screen.queryByTestId('member-host-1')).toBeNull();
+  });
+
+  it('is unavailable while an SSH tunnel is on, since it would bypass the tunnel', async () => {
+    mockInvoke.mockImplementation((cmd: string) => (cmd === 'load_connection_profiles' ? Promise.resolve([]) : Promise.reject(new Error(cmd))));
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: /new\.\.\./i }));
+    await pickSelectOption('topology-select', /^replica set$/i);
+    fireEvent.click(screen.getByRole('button', { name: /ssh tunnel/i }));
+    fireEvent.click(screen.getByLabelText(/enable ssh tunnel/i));
+    fireEvent.click(screen.getByRole('button', { name: /^server$/i }));
+    expect(screen.getByRole('button', { name: /discover/i })).toBeDisabled();
+  });
+});
+
+describe('a saved connection without its password', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  const profile = { id: 'p-nopw', name: 'Ask me', uri: 'mongodb://alice@db.example:27017/?authMechanism=SCRAM-SHA-256' };
+  const mount = (onConnect = vi.fn()) => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([profile]);
+      if (cmd === 'connect_db') return Promise.resolve('conn-1');
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={onConnect} />);
+    return onConnect;
+  };
+
+  it('asks for the password at connect and does not keep it', async () => {
+    const onConnect = mount();
+    fireEvent.click((await screen.findAllByText('Ask me'))[0]);
+    fireEvent.click(screen.getByRole('button', { name: /^connect$/i }));
+
+    const input = await screen.findByTestId('dialog-input');
+    expect(input).toHaveAttribute('type', 'password');
+    fireEvent.change(input, { target: { value: 'p@ss' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    await waitFor(() => expect(onConnect).toHaveBeenCalled());
+    expect(mockInvoke).toHaveBeenCalledWith('connect_db', expect.objectContaining({ uri: 'mongodb://alice:p%40ss@db.example:27017/?authMechanism=SCRAM-SHA-256' }));
+    // The session is recorded under the saved URI, not one carrying the password.
+    expect(onConnect.mock.calls[0][2]).toBe(profile.uri);
+  });
+
+  it('asks for the password when connecting from the editor, and does not keep it', async () => {
+    const onConnect = mount();
+    fireEvent.click((await screen.findAllByText('Ask me'))[0]);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    fireEvent.click(await screen.findByTestId('editor-connect-btn'));
+
+    const input = await screen.findByTestId('dialog-input');
+    expect(input).toHaveAttribute('type', 'password');
+    fireEvent.change(input, { target: { value: 'p@ss' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    await waitFor(() => expect(onConnect).toHaveBeenCalled());
+    expect(mockInvoke).toHaveBeenCalledWith('connect_db', expect.objectContaining({ uri: 'mongodb://alice:p%40ss@db.example:27017/?authMechanism=SCRAM-SHA-256' }));
+    expect(onConnect.mock.calls[0][2]).toBe(profile.uri);
+  });
+
+  it('does not connect from the editor when the password prompt is cancelled', async () => {
+    const onConnect = mount();
+    fireEvent.click((await screen.findAllByText('Ask me'))[0]);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    fireEvent.click(await screen.findByTestId('editor-connect-btn'));
+    await screen.findByTestId('dialog-input');
+    fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+
+    await waitFor(() => expect(screen.queryByTestId('dialog-input')).toBeNull());
+    expect(mockInvoke).not.toHaveBeenCalledWith('connect_db', expect.anything());
+    expect(onConnect).not.toHaveBeenCalled();
+    expect(screen.getByTestId('editor-connect-btn')).not.toBeDisabled();
+  });
+
+  it('does not connect when the password prompt is cancelled', async () => {
+    const onConnect = mount();
+    fireEvent.click((await screen.findAllByText('Ask me'))[0]);
+    fireEvent.click(screen.getByRole('button', { name: /^connect$/i }));
+    await screen.findByTestId('dialog-input');
+    fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+
+    await waitFor(() => expect(screen.queryByTestId('dialog-input')).toBeNull());
+    expect(mockInvoke).not.toHaveBeenCalledWith('connect_db', expect.anything());
+    expect(onConnect).not.toHaveBeenCalled();
+  });
+});
+
+describe('a client certificate with an encrypted key', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  it('reads the key passphrase, under either name, into its own field', () => {
+    for (const name of ['tlsCertificateKeyFilePassword', 'sslClientCertificateKeyPassword']) {
+      const f = parseUriIntoFields(`mongodb://h:27017/?tls=true&tlsCertificateKeyFile=%2Fc.pem&${name}=k%20p`);
+      expect(f.tlsClientCert).toBe('/c.pem');
+      expect(f.tlsKeyPassword).toBe('k p');
+      expect(f.extraOptions).toBe('');
+    }
+  });
+
+  it('writes the passphrase only beside a client certificate with TLS on', () => {
+    // ' ( ) ! * ~ are left alone by encodeURIComponent but end a URI in
+    // free text, so redaction could stop inside the passphrase.
+    expect(buildUri({ ...baseConn, tlsMode: 'system', tlsClientCert: '/c.pem', tlsKeyPassword: "a'b(c)d!e*f~" }))
+      .toContain('tlsCertificateKeyFilePassword=a%27b%28c%29d%21e%2Af%7E');
+    const withCert = buildUri({ ...baseConn, tlsMode: 'system', tlsClientCert: '/c.pem', tlsKeyPassword: 'k p' });
+    expect(withCert).toContain('tlsCertificateKeyFilePassword=k%20p');
+    expect(buildUri({ ...baseConn, tlsMode: 'system', tlsKeyPassword: 'k p' })).not.toContain('tlsCertificateKeyFilePassword');
+    expect(buildUri({ ...baseConn, tlsMode: 'off', tlsClientCert: '/c.pem', tlsKeyPassword: 'k p' })).not.toContain('tlsCertificateKeyFilePassword');
+  });
+
+  it('sets the client certificate and its passphrase on the TLS tab', async () => {
+    let savedProfile: any = null;
+    const profile = { id: 'p-tls', name: 'Secure', uri: 'mongodb://h1:27017/?tls=true' };
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([profile]);
+      if (cmd === 'save_connection_profile') {
+        savedProfile = args.profile;
+        return Promise.resolve();
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+    fireEvent.click((await screen.findAllByText('Secure'))[0]);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^tls \/ ssl$/i }));
+    fireEvent.change(screen.getByLabelText(/client certificate/i), { target: { value: '/keys/client.pem' } });
+    const passphrase = screen.getByLabelText(/key passphrase/i);
+    expect(passphrase).toHaveAttribute('type', 'password');
+    fireEvent.change(passphrase, { target: { value: 'hunter2' } });
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => expect(savedProfile).not.toBeNull());
+    expect(savedProfile.uri).toContain('tlsCertificateKeyFile=%2Fkeys%2Fclient.pem');
+    expect(savedProfile.uri).toContain('tlsCertificateKeyFilePassword=hunter2');
+  });
+});
+
+describe('the connection table', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  const profiles = [
+    { id: 'p-b', name: 'Billing', uri: 'mongodb://bob:pw@billing.db:27017/?authMechanism=SCRAM-SHA-256' },
+    { id: 'p-a', name: 'Analytics', uri: 'mongodb+srv://an.example.net/' },
+    { id: 'p-c', name: 'Cache', uri: 'mongodb://localhost:27017' },
+  ];
+  const mount = () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve(profiles);
+      if (cmd === 'load_connection_folders') return Promise.resolve([]);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+  };
+  const names = () => within(screen.getByTestId('connection-table')).getAllByTestId('connection-row-name').map(el => el.textContent);
+
+  it('lists every connection with its server and security, never a password', async () => {
+    localStorage.setItem('mqlens.lastConnected', JSON.stringify({ 'p-b': Date.now() - 60_000 }));
+    mount();
+    await screen.findByTestId('connection-table');
+    const table = screen.getByTestId('connection-table');
+    expect(names()).toEqual(['Analytics', 'Billing', 'Cache']);
+    expect(within(table).getByText('billing.db:27017')).toBeInTheDocument();
+    expect(within(table).getByText(/an\.example\.net \(SRV\)/)).toBeInTheDocument();
+    expect(within(table).getByText(/bob · SCRAM-SHA-256/)).toBeInTheDocument();
+    expect(table.textContent).not.toContain('pw@');
+    expect(within(table).getAllByText(/never/i)).toHaveLength(2);
+  });
+
+  it('sorts by a column header and reverses on a second click', async () => {
+    localStorage.setItem('mqlens.lastConnected', JSON.stringify({ 'p-c': 3000, 'p-a': 1000 }));
+    mount();
+    await screen.findByTestId('connection-table');
+    fireEvent.click(screen.getByRole('button', { name: /^name/i }));
+    expect(names()).toEqual(['Cache', 'Billing', 'Analytics']);
+    fireEvent.click(screen.getByRole('button', { name: /last connected/i }));
+    // Most recent first; never-connected last.
+    expect(names()).toEqual(['Cache', 'Analytics', 'Billing']);
+  });
+
+  it('says why a connect from a table row failed', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve(profiles);
+      if (cmd === 'load_connection_folders') return Promise.resolve([]);
+      if (cmd === 'connect_db') return Promise.reject('server selection timed out');
+      return Promise.resolve([]);
+    });
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+    await screen.findByTestId('connection-table');
+    fireEvent.doubleClick(within(screen.getByTestId('connection-table')).getByText('Cache'));
+    expect(await screen.findByTestId('connect-feedback')).toHaveTextContent(/timed out/i);
+  });
+});
+
+describe('connection and folder context menus', () => {
+  const profiles = [
+    { id: 'p-1', name: 'Orders', uri: 'mongodb://ann:pw@orders.db:27017/?authMechanism=SCRAM-SHA-256' },
+    { id: 'p-2', name: 'Logs', uri: 'mongodb://logs.db:27017' },
+  ];
+  const folders = [
+    { id: 'f-prod', name: 'Production', parentId: null },
+    { id: 'f-old', name: 'Old', parentId: null },
+  ];
+  const storedMap = () => JSON.parse(localStorage.getItem('mqlens_profile_folders') ?? '{}');
+  const storedFolders = () => JSON.parse(localStorage.getItem('mqlens_folders') ?? '[]');
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    localStorage.setItem('mqlens_folders', JSON.stringify(folders));
+    localStorage.setItem('mqlens_profile_folders', JSON.stringify({ 'p-2': 'f-old' }));
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve(profiles);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+  });
+
+  const mount = () => render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+  const row = async (name: string) => (await screen.findAllByText(name))[0];
+
+  it('copies a connection URI without its password', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    mount();
+    fireEvent.contextMenu(await row('Orders'));
+    fireEvent.click(await screen.findByRole('menuitem', { name: /copy uri/i }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('mongodb://ann@orders.db:27017/?authMechanism=SCRAM-SHA-256'));
+  });
+
+  it('moves a connection to a folder from its menu', async () => {
+    mount();
+    fireEvent.contextMenu(await row('Orders'));
+    fireEvent.click(await screen.findByRole('menuitem', { name: /move to folder/i }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Production' }));
+    await waitFor(() => expect(storedMap()).toEqual({ 'p-1': 'f-prod', 'p-2': 'f-old' }));
+  });
+
+  it('moves a connection to a folder by dragging it there', async () => {
+    mount();
+    const source = (await row('Orders')).closest('[draggable="true"]')!;
+    fireEvent.dragStart(source);
+    fireEvent.drop(screen.getByText('Production').closest('[data-folder-id]')!);
+    await waitFor(() => expect(storedMap()['p-1']).toBe('f-prod'));
+  });
+
+  it('renames a folder', async () => {
+    mount();
+    fireEvent.contextMenu(await row('Production'));
+    fireEvent.click(await screen.findByRole('menuitem', { name: /rename folder/i }));
+    const input = await screen.findByTestId('dialog-input');
+    fireEvent.change(input, { target: { value: 'Prod EU' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(storedFolders().find((f: any) => f.id === 'f-prod').name).toBe('Prod EU'));
+  });
+
+  it('deletes a folder and keeps its connections at the root', async () => {
+    mount();
+    fireEvent.contextMenu(await row('Old'));
+    fireEvent.click(await screen.findByRole('menuitem', { name: /delete folder/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^delete$/i }));
+    await waitFor(() => expect(storedFolders().map((f: any) => f.id)).toEqual(['f-prod']));
+    expect(storedMap()).toEqual({});
+    expect(await row('Logs')).toBeInTheDocument();
+  });
+});
+
+describe('exporting an SRV connection as a seed list', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  const mount = (profile: { id: string; name: string; uri: string }, resolve: (uri: string) => Promise<string>) => {
+    mockInvoke.mockImplementation((cmd: string, args?: any) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([profile]);
+      if (cmd === 'resolve_srv_seed_list') return resolve(args.uri);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+  };
+  const preview = () => screen.getByTestId('export-uri-preview').textContent;
+
+  it('resolves the SRV record and exports the hosts, still without the password', async () => {
+    mount({ id: 'p-srv', name: 'Atlas', uri: 'mongodb+srv://u:pw@cluster0.x.net/app' }, async () => 'mongodb://u:pw@a.x.net:27017,b.x.net:27017/app?tls=true');
+    fireEvent.click(await screen.findByTestId('export-uri-btn'));
+    expect(preview()).toBe('mongodb+srv://u@cluster0.x.net/app');
+    fireEvent.click(screen.getByTestId('export-seed-list'));
+    await waitFor(() => expect(preview()).toBe('mongodb://u@a.x.net:27017,b.x.net:27017/app?tls=true'));
+    expect(mockInvoke).toHaveBeenCalledWith('resolve_srv_seed_list', { uri: 'mongodb+srv://u:pw@cluster0.x.net/app' });
+  });
+
+  it('says so and keeps the SRV form when the lookup fails', async () => {
+    mount({ id: 'p-srv', name: 'Atlas', uri: 'mongodb+srv://cluster0.x.net/' }, async () => { throw 'no such host'; });
+    fireEvent.click(await screen.findByTestId('export-uri-btn'));
+    fireEvent.click(screen.getByTestId('export-seed-list'));
+    expect(await screen.findByText(/could not resolve.*no such host/i)).toBeInTheDocument();
+    expect(preview()).toBe('mongodb+srv://cluster0.x.net/');
+  });
+
+  it('holds Copy and Save until the seed list is resolved', async () => {
+    let finish: (uri: string) => void = () => {};
+    mount({ id: 'p-srv', name: 'Atlas', uri: 'mongodb+srv://cluster0.x.net/' }, () => new Promise(r => { finish = r; }));
+    fireEvent.click(await screen.findByTestId('export-uri-btn'));
+    fireEvent.click(screen.getByTestId('export-seed-list'));
+    expect(screen.getByTestId('export-copy-btn')).toBeDisabled();
+    expect(screen.getByTestId('export-save-btn')).toBeDisabled();
+    await act(async () => finish('mongodb://a.x.net:27017/?tls=true'));
+    expect(screen.getByTestId('export-copy-btn')).toBeEnabled();
+    expect(screen.getByTestId('export-save-btn')).toBeEnabled();
+  });
+
+  it('offers no conversion for a connection that is not SRV', async () => {
+    mount({ id: 'p-plain', name: 'Plain', uri: 'mongodb://h:27017' }, async () => '');
+    fireEvent.click(await screen.findByTestId('export-uri-btn'));
+    expect(screen.queryByTestId('export-seed-list')).toBeNull();
+  });
+});
+
+describe("reusing another connection's SSH tunnel", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  const bastion = { enabled: true, host: 'bastion.example', port: 2222, user: 'ops', auth: { type: 'key', path: '/keys/ops', passphrase: 'kp' } };
+
+  it('copies the chosen tunnel into a new connection', async () => {
+    let savedProfile: any = null;
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      if (cmd === 'load_connection_profiles') {
+        return Promise.resolve([
+          { id: 'p-a', name: 'Orders', uri: 'mongodb://10.0.0.5:27017', ssh: bastion },
+          { id: 'p-b', name: 'Plain', uri: 'mongodb://localhost:27017' },
+        ]);
+      }
+      if (cmd === 'save_connection_profile') {
+        savedProfile = args.profile;
+        return Promise.resolve();
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: /new\.\.\./i }));
+    fireEvent.click(screen.getByRole('button', { name: /^ssh tunnel$/i }));
+    fireEvent.click(screen.getByLabelText(/enable ssh tunnel/i));
+    await pickSelectOption('ssh-reuse-select', /orders \(ops@bastion\.example:2222\)/i);
+    expect(screen.getByLabelText(/ssh server host/i)).toHaveValue('bastion.example');
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => expect(savedProfile).not.toBeNull());
+    expect(savedProfile.ssh).toEqual(bastion);
+  });
+});
+
+describe('the manager laid out as one filterable connection table', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  const profiles = [
+    { id: 'p-b', name: 'Billing', uri: 'mongodb://bob:pw@billing.db:27017/?authMechanism=SCRAM-SHA-256' },
+    { id: 'p-a', name: 'Analytics', uri: 'mongodb+srv://an.example.net/' },
+    { id: 'p-c', name: 'Cache', uri: 'mongodb://localhost:27017' },
+  ];
+  const mount = (list: any[] = profiles) => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve(list);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+  };
+  const table = () => screen.getByTestId('connection-table');
+
+  it('keeps every toolbar action on screen, greyed out until a connection is picked', async () => {
+    mount([]);
+    await screen.findByTestId('connection-table');
+    for (const name of [/^edit$/i, /^duplicate$/i, /^delete$/i, /^export uri$/i, /^connect$/i]) {
+      expect(screen.getByRole('button', { name })).toBeDisabled();
+    }
+    // Importing needs no selection, so an empty list can still be filled.
+    expect(screen.getByTestId('import-uri-toolbar-btn')).toBeEnabled();
+    expect(screen.getByTestId('export-all-uris-btn')).toBeDisabled();
+  });
+
+  it('sets the red Delete label in the same small type as the other toolbar labels', async () => {
+    mount([]);
+    await screen.findByTestId('connection-table');
+    // The destructive colour must not knock out the label's font size.
+    const sizes = (name: RegExp) =>
+      within(screen.getByRole('button', { name })).getByText(name).className.split(' ').filter((c) => /^text-(ui-|\[)/.test(c));
+    expect(sizes(/^edit$/i)).not.toEqual([]);
+    expect(sizes(/^delete$/i)).toEqual(sizes(/^edit$/i));
+  });
+
+  it('keeps the column headers over an empty list', async () => {
+    mount([]);
+    expect(within(await screen.findByTestId('connection-table')).getByRole('button', { name: /^name/i })).toBeInTheDocument();
+    expect(within(table()).getByText(/no saved connections/i)).toBeInTheDocument();
+  });
+
+  it('counts the connections the filter matches', async () => {
+    mount();
+    expect(await screen.findByTestId('match-count')).toHaveTextContent('3 matches');
+    fireEvent.change(screen.getByPlaceholderText(/filter connections/i), { target: { value: 'cache' } });
+    expect(screen.getByTestId('match-count')).toHaveTextContent('1 match');
+  });
+
+  it('shows folders as rows of the table, with their connections nested under them', async () => {
+    localStorage.setItem('mqlens_folders', JSON.stringify([{ id: 'f-fin', name: 'Finance', parentId: null }]));
+    localStorage.setItem('mqlens_profile_folders', JSON.stringify({ 'p-b': 'f-fin' }));
+    mount();
+    const folderRow = await within(await screen.findByTestId('connection-table')).findByText('Finance');
+    expect(within(table()).queryByText('Billing')).toBeNull();
+    expect(within(table()).getByText('Cache')).toBeInTheDocument();
+    fireEvent.click(folderRow);
+    expect(within(table()).getByText('Billing')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /table view/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /tree view/i })).toBeNull();
+  });
+
+  it('opens the folders that hold a filter’s matches and drops the ones that hold none', async () => {
+    localStorage.setItem('mqlens_folders', JSON.stringify([
+      { id: 'f-fin', name: 'Finance', parentId: null },
+      { id: 'f-ops', name: 'Ops', parentId: null },
+    ]));
+    localStorage.setItem('mqlens_profile_folders', JSON.stringify({ 'p-b': 'f-fin', 'p-c': 'f-ops' }));
+    mount();
+    await within(await screen.findByTestId('connection-table')).findByText('Finance');
+    fireEvent.change(screen.getByPlaceholderText(/filter connections/i), { target: { value: 'bill' } });
+    // The match count must point at a row the user can see, not one in a closed folder.
+    expect(within(table()).getByText('Billing')).toBeInTheDocument();
+    expect(within(table()).queryByText('Ops')).toBeNull();
+    // Clearing the filter puts the folders back as the user left them.
+    fireEvent.change(screen.getByPlaceholderText(/filter connections/i), { target: { value: '' } });
+    expect(within(table()).getByText('Ops')).toBeInTheDocument();
+    expect(within(table()).queryByText('Billing')).toBeNull();
+  });
+
+  it('shows the picked connection’s URI, password hidden, beside Connect', async () => {
+    mount();
+    fireEvent.click(await within(await screen.findByTestId('connection-table')).findByText('Billing'));
+    const uri = screen.getByTestId('selected-uri');
+    expect(uri).toHaveTextContent('billing.db:27017');
+    expect(uri.textContent).not.toContain('pw@');
+    expect(screen.getByRole('button', { name: /^connect$/i })).toBeEnabled();
+  });
+
+  it('exports one connection’s URI from its row menu', async () => {
+    mount();
+    fireEvent.contextMenu(await within(await screen.findByTestId('connection-table')).findByText('Cache'));
+    fireEvent.click(await screen.findByRole('menuitem', { name: /export uri/i }));
+    expect(await screen.findByTestId('export-uri-preview')).toHaveTextContent('mongodb://localhost:27017');
+  });
+});
+
+describe('the connection editor laid out as a tabbed form', () => {
+  let savedProfile: any;
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    savedProfile = null;
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'save_connection_profile') {
+        savedProfile = args.profile;
+        return Promise.resolve();
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+  });
+  const openNew = async () => {
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: /new\.\.\./i }));
+    fireEvent.change(screen.getByLabelText(/display name/i), { target: { value: 'Edited' } });
+  };
+  const save = async () => {
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    await waitFor(() => expect(savedProfile).not.toBeNull());
+  };
+
+  it('offers a DNS seedlist as a connection type, which writes a mongodb+srv URI', async () => {
+    await openNew();
+    expect(screen.queryByTestId('protocol-select')).toBeNull();
+    await pickSelectOption('topology-select', /dns seedlist/i);
+    fireEvent.change(screen.getByTestId('host-list'), { target: { value: 'cluster0.abcd.mongodb.net' } });
+    await save();
+    expect(savedProfile.uri).toMatch(/^mongodb\+srv:\/\/cluster0\.abcd\.mongodb\.net/);
+  });
+
+  it('turns a seedlist back into a plain mongodb URI when another type is picked', async () => {
+    await openNew();
+    await pickSelectOption('topology-select', /dns seedlist/i);
+    await pickSelectOption('topology-select', /^standalone/i);
+    await save();
+    expect(savedProfile.uri).toMatch(/^mongodb:\/\/localhost:27017/);
+  });
+
+  it('keeps the colour swatches in a popover on the colour button', async () => {
+    await openNew();
+    expect(screen.queryByTestId('color-swatch-blue')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /color tag/i }));
+    fireEvent.click(await screen.findByTestId('color-swatch-blue'));
+    await save();
+    expect(savedProfile.color_tag).toBe('#3b82f6');
+  });
+
+  it('closes only the colour popover on Escape, keeping the editor and what was typed', async () => {
+    await openNew();
+    fireEvent.click(screen.getByRole('button', { name: /color tag/i }));
+    const swatch = await screen.findByTestId('color-swatch-blue');
+    fireEvent.keyDown(swatch, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByTestId('color-swatch-blue')).toBeNull());
+    expect(screen.getByLabelText(/display name/i)).toHaveValue('Edited');
+  });
+
+  it('lets Escape close the manager after the editor was cancelled with its colour popover open', async () => {
+    const onClose = vi.fn();
+    render(<ConnectionManager isOpen={true} onClose={onClose} onConnect={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: /new\.\.\./i }));
+    fireEvent.click(screen.getByRole('button', { name: /color tag/i }));
+    await screen.findByTestId('color-swatch-blue');
+    fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+    await waitFor(() => expect(screen.queryByLabelText(/display name/i)).toBeNull());
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it('puts From URI and To URI on the Server tab', async () => {
+    await openNew();
+    expect(screen.getByTestId('import-uri-btn')).toBeInTheDocument();
+    expect(screen.getByTestId('editor-export-uri-btn')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^authentication$/i }));
+    expect(screen.queryByTestId('import-uri-btn')).toBeNull();
+    expect(screen.queryByTestId('editor-export-uri-btn')).toBeNull();
+  });
+
+  it('describes only the connection mode that is picked', async () => {
+    await openNew();
+    expect(screen.getByText('Full read/write')).toBeInTheDocument();
+    expect(screen.queryByText('Blocks all writes')).toBeNull();
+    fireEvent.click(screen.getByTestId('connection-mode-read_only'));
+    expect(screen.getByText('Blocks all writes')).toBeInTheDocument();
+    expect(screen.queryByText('Full read/write')).toBeNull();
+  });
+
+  it('lists the authentication methods in the usual order', async () => {
+    await openNew();
+    fireEvent.click(screen.getByRole('button', { name: /^authentication$/i }));
+    fireEvent.click(screen.getByTestId('auth-method-select'));
+    const options = (await screen.findAllByRole('option')).map(o => o.textContent);
+    expect(options).toEqual([
+      'None (Guest Access)', 'SCRAM-SHA-256 (Default)', 'SCRAM-SHA-1', 'x.509 Client Certificate',
+      'GSSAPI (Kerberos)', 'LDAP (PLAIN)', 'MONGODB-AWS (IAM)', 'OIDC (browser login)',
+    ]);
+  });
+
+  it('stacks user name, password and authentication database, in that order', async () => {
+    await openNew();
+    fireEvent.click(screen.getByRole('button', { name: /^authentication$/i }));
+    await pickSelectOption('auth-method-select', /scram-sha-256/i);
+    const user = screen.getByLabelText(/^username$/i);
+    const pass = screen.getByLabelText(/^password$/i);
+    const db = screen.getByLabelText(/authentication database/i);
+    expect(user.compareDocumentPosition(pass) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(pass.compareDocumentPosition(db) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('turns TLS on with a checkbox and picks the CA source with radio buttons', async () => {
+    await openNew();
+    fireEvent.click(screen.getByRole('button', { name: /^tls \/ ssl$/i }));
+    const useTls = screen.getByLabelText(/use tls/i);
+    expect(useTls).not.toBeChecked();
+    expect(screen.getByLabelText(/client certificate/i)).toBeDisabled();
+    expect(screen.getByRole('radio', { name: /own ca file/i })).toBeDisabled();
+    fireEvent.click(useTls);
+    expect(screen.getByRole('radio', { name: /operating system/i })).toBeChecked();
+    fireEvent.click(screen.getByRole('radio', { name: /own ca file/i }));
+    fireEvent.change(screen.getByLabelText(/ca file path/i), { target: { value: '/ca.pem' } });
+    await save();
+    expect(savedProfile.uri).toContain('tls=true');
+    expect(savedProfile.uri).toContain('tlsCAFile=%2Fca.pem');
+  });
+
+  it('keeps the own CA file choice when TLS is turned off and on again', async () => {
+    await openNew();
+    fireEvent.click(screen.getByRole('button', { name: /^tls \/ ssl$/i }));
+    const useTls = screen.getByLabelText(/use tls/i);
+    fireEvent.click(useTls);
+    fireEvent.click(screen.getByRole('radio', { name: /own ca file/i }));
+    fireEvent.change(screen.getByLabelText(/ca file path/i), { target: { value: '/ca.pem' } });
+    fireEvent.click(useTls);
+    fireEvent.click(useTls);
+    expect(screen.getByRole('radio', { name: /own ca file/i })).toBeChecked();
+    await save();
+    expect(savedProfile.uri).toContain('tlsCAFile=%2Fca.pem');
+  });
+
+  it('keeps SSH and proxy fields on screen, disabled, while they are off', async () => {
+    await openNew();
+    fireEvent.click(screen.getByRole('button', { name: /^ssh tunnel$/i }));
+    expect(screen.getByLabelText(/ssh server host/i)).toBeDisabled();
+    fireEvent.click(screen.getByLabelText(/enable ssh tunnel/i));
+    expect(screen.getByLabelText(/ssh server host/i)).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: /^proxy$/i }));
+    expect(screen.getByLabelText(/^proxy host$/i)).toBeDisabled();
+    fireEvent.click(screen.getByLabelText(/enable socks5/i));
+    expect(screen.getByLabelText(/^proxy host$/i)).toBeEnabled();
   });
 });
