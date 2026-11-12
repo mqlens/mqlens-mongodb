@@ -133,6 +133,8 @@ pub(crate) struct FakeState {
     pub login_delay: Duration,
     /// Held before ListConnections answers, to play a server that stalls.
     pub list_delay: Duration,
+    /// Held before CreateIndex answers, to play a long index build.
+    pub index_build_delay: Duration,
     /// ListConnections calls from this one on (1 is the first) wait at
     /// `list_gate` before checking their token, until a test releases them
     /// with `notify_one`. 0 holds none. `list_held` counts the calls that
@@ -451,6 +453,7 @@ impl Fake {
                 oidc_start_delay: Duration::ZERO,
                 login_delay: Duration::ZERO,
                 list_delay: Duration::ZERO,
+                index_build_delay: Duration::ZERO,
                 list_hold_from: 0,
                 list_gate: Arc::new(tokio::sync::Notify::new()),
                 list_held: 0,
@@ -1076,6 +1079,8 @@ impl MetadataService for Fake {
         &self,
         request: Request<CreateIndexRequest>,
     ) -> Result<Response<MetadataAck>, Status> {
+        let delay = self.with(|s| s.index_build_delay);
+        tokio::time::sleep(delay).await;
         let mut state = self.state.lock().unwrap();
         state.authorize_connection(&request, &request.get_ref().connection_id)?;
         state

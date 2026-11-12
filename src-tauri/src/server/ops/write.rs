@@ -224,9 +224,12 @@ pub(crate) async fn create_index(
         name: spec.get_str("name").unwrap_or_default().to_string(),
         spec_bson: spec_bson.into(),
     };
+    // No deadline: an index build takes as long as the collection is large,
+    // as it may in local mode. The channel's keepalive ends the call if the
+    // server goes away.
     session_for(state, conn)
         .await?
-        .call(request, |channel, request| async move {
+        .call_unbounded(request, |channel, request| async move {
             client!(MetadataServiceClient, channel)
                 .create_index(request)
                 .await
@@ -270,7 +273,9 @@ mod tests {
     use crate::server::ejson;
     use crate::server::fake::{Env, FakeWrite};
     use crate::server::ops::connected;
+    use crate::server::session::CALL_TIMEOUT;
     use mongodb::bson::doc;
+    use std::time::Duration;
 
     fn writes(env: &Env) -> Vec<FakeWrite> {
         env.fake.with(|s| s.writes.clone())
@@ -502,6 +507,37 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    // An index build takes as long as the collection is large, so creating
+    // an index waits for it past the deadline an ordinary call has.
+    #[tokio::test]
+    async fn an_index_build_longer_than_a_call_deadline_succeeds() {
+        let env = Env::new().await;
+        env.fake.with(|s| {
+            s.connections[0].op_classes.push("ddl".to_string());
+            s.index_build_delay = CALL_TIMEOUT + Duration::from_millis(300);
+        });
+        let (state, id) = connected(&env).await;
+
+        create_index_impl(
+            &state,
+            &id,
+            "orders",
+            "customers",
+            "email_1",
+            r#"{"email": 1}"#,
+            true,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(
+            writes(&env).as_slice(),
+            [FakeWrite::CreateIndex(_)]
+        ));
     }
 
     // What local mode refuses is refused before the server hears of it: a
