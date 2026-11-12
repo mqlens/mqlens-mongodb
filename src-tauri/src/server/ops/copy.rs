@@ -378,8 +378,10 @@ impl RemoteSide {
                 .into(),
             ..Default::default()
         };
+        // No deadline, as in `write::create_index`: the build takes as long
+        // as the copied collection is large.
         self.session
-            .call(request, |channel, request| async move {
+            .call_unbounded(request, |channel, request| async move {
                 client!(MetadataServiceClient, channel)
                     .create_index(request)
                     .await
@@ -470,6 +472,7 @@ mod tests {
     use crate::server::fake::{Env, FakeWrite};
     use crate::server::ops::connected;
     use crate::server::pb::mqlens::v1::{CollectionInfo, InsertRefusal};
+    use crate::server::session::CALL_TIMEOUT;
     use crate::{AppState, TaskInfo};
     use mongodb::bson::{doc, Document};
     use std::time::Duration;
@@ -564,6 +567,25 @@ mod tests {
         assert!(specs
             .iter()
             .any(|s| s.get_bool("unique") == Ok(true) && s.get_bool("sparse") == Ok(true)));
+    }
+
+    // Recreating an index on the target is an index build like any other:
+    // the copy waits for it past the deadline an ordinary call has.
+    #[tokio::test]
+    async fn a_copy_waits_for_an_index_build_longer_than_a_call_deadline() {
+        let env = Env::new().await;
+        let (state, id) = copying(&env).await;
+        env.fake.with(|s| {
+            // _id_, which a copy skips, and one index to build.
+            s.indexes.truncate(2);
+            s.index_build_delay = CALL_TIMEOUT + Duration::from_millis(300);
+        });
+
+        let task = copy(&state, &id, "merge", true).await.unwrap();
+        let done = finished(&state, &task).await;
+
+        assert_eq!(done.status, "completed", "{:?}", done.error);
+        assert_eq!(done.summary.unwrap().indexes_created, 1);
     }
 
     // A duplicate key on the target is skipped, as local mode skips it.
