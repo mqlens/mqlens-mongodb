@@ -671,6 +671,9 @@ function Workspace() {
   const tabsRef = useRef<QueryTab[]>(tabs);
   // Which saved edit's Undo still works: only the latest (see undoEditAction).
   const latestUndoRef = useRef(0);
+  // The undo write in flight, if any: a save waits for it, so the save lands
+  // last and the undo cannot overwrite it.
+  const undoWriteRef = useRef<Promise<unknown>>(Promise.resolve());
   const documentEditFlushRef = useRef<(() => boolean) | null>(null);
   useLayoutEffect(() => {
     tabsRef.current = tabs;
@@ -2423,6 +2426,9 @@ function Workspace() {
     oldName: string,
     newName: string
   ) => {
+    // An Undo would write to the old name. ponytail: retires every Undo, not
+    // only those for this collection.
+    latestUndoRef.current++;
     const renameTab = (tab: QueryTab): QueryTab => {
       if (tab.connectionId !== connectionId || tab.db !== dbName || tab.collection !== oldName) {
         return tab;
@@ -2503,6 +2509,7 @@ function Workspace() {
   };
 
   const handleDatabaseRenamed = (connectionId: string, oldName: string, newName: string) => {
+    latestUndoRef.current++; // as in handleCollectionRenamed
     const renameTab = (tab: QueryTab): QueryTab => {
       if (tab.connectionId !== connectionId || tab.db !== oldName) {
         return tab;
@@ -4772,14 +4779,20 @@ function Workspace() {
       return;
     }
 
-    const undoToken = ++latestUndoRef.current;
-    await writeDocumentUpdate(tab, edit.targetDoc, json);
+    const undo = beginUndoableSave();
+    await undoWriteRef.current;
+    try {
+      await writeDocumentUpdate(tab, edit.targetDoc, json);
+    } catch (err) {
+      undo.refused();
+      throw err;
+    }
     const savedIn = tabHoldingEdit(edit.id) ?? tab;
     closeEditById(edit.id);
     await refreshTabResults(savedIn);
     toast(t('toast.documentSavedIn', { collection }), 'success', {
       title: t('toast.savedTitle'),
-      action: undoEditAction(undoToken, tab, savedIn.id, edit.targetDoc, json),
+      action: undoEditAction(undo.token, tab, savedIn.id, edit.targetDoc, json),
     });
   };
 
@@ -4795,18 +4808,20 @@ function Workspace() {
       ...prev,
       { editId, tabId: tab.id, connectionId: tab.connectionId, db: tab.db, collection: tab.collection },
     ]);
-    const undoToken = ++latestUndoRef.current;
+    const undo = beginUndoableSave();
     try {
       try {
+        await undoWriteRef.current;
         await writeDocumentUpdate(tab, doc, shellToEjson(docToShell(edited)));
       } catch (err: any) {
+        undo.refused();
         toast(t('toast.updateFailed', { detail: err?.message || err }), 'error');
         throw err;
       }
       await refreshTabResults(tab);
       toast(t('toast.documentSavedIn', { collection: tab.collection }), 'success', {
         title: t('toast.savedTitle'),
-        action: undoEditAction(undoToken, tab, tab.id, doc, shellToEjson(docToShell(edited))),
+        action: undoEditAction(undo.token, tab, tab.id, doc, shellToEjson(docToShell(edited))),
       });
     } finally {
       setPendingSaves(prev => prev.filter(s => s.editId !== editId));
@@ -4826,6 +4841,20 @@ function Workspace() {
    *    retires every earlier Undo as soon as it is sent, before it lands.
    *    Otherwise an older Undo would write its old values over the newer save.
    *    The undo's own toast has no Undo. */
+  /** Retires every earlier Undo as the save is sent. A save the server
+   *  refuses changed nothing, so it gives the Undo before it back, unless
+   *  another save has started since. */
+  const beginUndoableSave = () => {
+    const previous = latestUndoRef.current;
+    const token = ++latestUndoRef.current;
+    return {
+      token,
+      refused: () => {
+        if (latestUndoRef.current === token) latestUndoRef.current = previous;
+      },
+    };
+  };
+
   const undoEditAction = (
     token: number,
     tab: QueryTab,
@@ -4842,7 +4871,9 @@ function Workspace() {
         }
         latestUndoRef.current++;
         try {
-          await writeDocumentUpdate(tab, undoBaseline(JSON.parse(savedJson), before ?? {}), shellToEjson(docToShell(before)));
+          const write = writeDocumentUpdate(tab, undoBaseline(JSON.parse(savedJson), before ?? {}), shellToEjson(docToShell(before)));
+          undoWriteRef.current = write.catch(() => {});
+          await write;
           const live = tabsRef.current.find((x) => x.id === liveTabId);
           if (live) await refreshTabResults(live);
           toast(t('toast.editUndoneIn', { collection: tab.collection }), 'success', { title: t('toast.undoneTitle') });

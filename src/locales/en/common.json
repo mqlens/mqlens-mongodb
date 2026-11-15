@@ -109,7 +109,7 @@
     "undo": "Undo",
     "undoFailed": "Could not undo the edit: {{detail}}",
     "undoneTitle": "Undone",
-    "undoSuperseded": "Only the latest edit can be undone",
+    "undoSuperseded": "This edit can no longer be undone",
     "updatedTitle": "Updated",
     "updateFailed": "Update failed: {{detail}}",
     "uploadFailed": "Upload failed: {{detail}}",

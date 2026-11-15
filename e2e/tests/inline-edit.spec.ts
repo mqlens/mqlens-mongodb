@@ -129,7 +129,7 @@ test.describe('In-place cell edit', () => {
     const writes = (await app.calls('update_document')).length;
 
     await toast(page, 'Saved').first().getByRole('button', { name: 'Undo' }).click();
-    await expect(toast(page, 'Only the latest edit can be undone')).toBeVisible();
+    await expect(toast(page, 'This edit can no longer be undone')).toBeVisible();
     expect(await app.calls('update_document')).toHaveLength(writes);
     await expect(view(page).getByText('c@example.com', { exact: true })).toBeVisible();
   });
@@ -149,7 +149,7 @@ test.describe('In-place cell edit', () => {
     await expect.poll(async () => (await app.calls('update_document')).length).toBe(2);
 
     await toast(page, 'Saved').getByRole('button', { name: 'Undo' }).click();
-    await expect(toast(page, 'Only the latest edit can be undone')).toBeVisible();
+    await expect(toast(page, 'This edit can no longer be undone')).toBeVisible();
     await release();
     await expect(view(page).getByText('c@example.com', { exact: true })).toBeVisible();
     expect(await app.calls('update_document')).toHaveLength(2);
@@ -175,6 +175,68 @@ test.describe('In-place cell edit', () => {
     await expect(toast(page, 'Edit undone in customers')).toBeVisible();
     const [, undo] = await app.calls('update_document');
     expect(String(undo.args.projection ?? '{}')).not.toContain('name');
+  });
+
+  test('a save the server refuses leaves the Undo before it working', async ({ app, page }) => {
+    await openCustomers(app, page);
+    await view(page).getByRole('button', { name: 'Table', exact: true }).click();
+    await view(page).getByText('alice@example.com', { exact: true }).dblclick();
+    await editor(page).fill('"b@example.com"');
+    await editor(page).press('Enter');
+    await expect(view(page).getByText('b@example.com', { exact: true })).toBeVisible();
+
+    await app.failNext('update_document', 'Document failed validation');
+    await view(page).getByText('b@example.com', { exact: true }).dblclick();
+    await editor(page).fill('"c@example.com"');
+    await editor(page).press('Enter');
+    await expect(page.getByTestId('dialog-toast').filter({ hasText: 'Document failed validation' })).toBeVisible();
+    await editor(page).press('Escape');
+
+    await toast(page, 'Saved').getByRole('button', { name: 'Undo' }).click();
+    await expect(toast(page, 'Edit undone in customers')).toBeVisible();
+    await expect(view(page).getByText('alice@example.com', { exact: true })).toBeVisible();
+  });
+
+  test('a save made while an Undo is still writing waits for it, so the save lands last', async ({ app, page }) => {
+    await openCustomers(app, page);
+    await view(page).getByRole('button', { name: 'Table', exact: true }).click();
+    await view(page).getByText('alice@example.com', { exact: true }).dblclick();
+    await editor(page).fill('"b@example.com"');
+    await editor(page).press('Enter');
+    await expect(view(page).getByText('b@example.com', { exact: true })).toBeVisible();
+
+    const release = await app.hold('update_document');
+    await toast(page, 'Saved').getByRole('button', { name: 'Undo' }).click();
+    await expect.poll(async () => (await app.calls('update_document')).length).toBe(2);
+    await view(page).getByText('b@example.com', { exact: true }).dblclick();
+    await editor(page).fill('"c@example.com"');
+    await editor(page).press('Enter');
+    // The new save is not sent while the undo is out.
+    await page.waitForTimeout(500);
+    expect(await app.calls('update_document')).toHaveLength(2);
+
+    await release();
+    await expect.poll(async () => (await app.calls('update_document')).length).toBe(3);
+    await expect(view(page).getByText('c@example.com', { exact: true })).toBeVisible();
+  });
+
+  test('renaming the collection retires its Undo, which would write to the old name', async ({ app, page }) => {
+    await openCustomers(app, page);
+    await view(page).getByRole('button', { name: 'Table', exact: true }).click();
+    await view(page).getByText('alice@example.com', { exact: true }).dblclick();
+    await editor(page).fill('"b@example.com"');
+    await editor(page).press('Enter');
+    await expect(view(page).getByText('b@example.com', { exact: true })).toBeVisible();
+
+    await page.getByRole('complementary').getByText('customers', { exact: true }).first().click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Rename Collection', exact: true }).click();
+    await page.getByTestId('dialog-input').fill('clients');
+    await callFrom(app, 'rename_collection', () => page.getByTestId('dialog-confirm').click());
+
+    const writes = (await app.calls('update_document')).length;
+    await toast(page, 'Saved').getByRole('button', { name: 'Undo' }).click();
+    await expect(toast(page, 'This edit can no longer be undone')).toBeVisible();
+    expect(await app.calls('update_document')).toHaveLength(writes);
   });
 
   test('undoes the removal of a sub-document the projection showed only part of', async ({ app, page }) => {
