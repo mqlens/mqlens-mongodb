@@ -183,6 +183,39 @@ describe('MonitoringView', () => {
     });
   });
 
+  it('groups profiled operations by query shape, with count and total, average, max and min duration', async () => {
+    const run = (millis: number, tier: string) => ({
+      op: 'query', ns: 'sales_db.customers', millis, tsMs: millis, planSummary: 'COLLSCAN',
+      command: `{ "find": "customers", "filter": { "tier": "${tier}" }, "lsid": { "id": 1 } }`,
+    });
+    const other = { op: 'update', ns: 'sales_db.products', millis: 15, tsMs: 1, planSummary: 'IXSCAN', command: '{ "update": "products" }' };
+    const base = mockInvoke.getMockImplementation()!;
+    mockInvoke.mockImplementation((cmd: string, args: unknown) =>
+      cmd === 'read_profile' ? Promise.resolve([run(120, 'gold'), other, run(40, 'free'), run(200, 'silver')]) : base(cmd, args)
+    );
+    render(<MonitoringView connectionId="conn-1" />);
+    fireEvent.click(await screen.findByTestId('mon-tab-profiler'));
+    expect(await screen.findByTestId('profile-row-3')).toBeInTheDocument();
+
+    const toggle = screen.getByTestId('profiler-group-toggle');
+    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.queryByTestId('profile-table')).toBeNull();
+    const first = await screen.findByTestId('profile-group-0');
+    const cells = Array.from(first.querySelectorAll('td')).map((td) => td.textContent);
+    // count, total, avg, max, min, op, ns, shape
+    expect(cells.slice(0, 5)).toEqual(['3', '360', '120', '200', '40']);
+    expect(cells[6]).toBe('sales_db.customers');
+    expect(cells[7]).toBe('{find: "customers", filter: {tier: ?}}');
+    expect(screen.getByTestId('profile-group-1')).toHaveTextContent('sales_db.products');
+    expect(screen.queryByTestId('profile-group-2')).toBeNull();
+
+    // Opening a group shows its slowest run.
+    fireEvent.click(first);
+    expect(await screen.findByTestId('monitoring-detail')).toHaveTextContent('silver');
+  });
+
   it('does not fetch replica-set status until the Cluster tab is active', async () => {
     render(<MonitoringView connectionId="conn-1" />);
     expect(await screen.findByTestId('current-ops-table')).toBeInTheDocument();

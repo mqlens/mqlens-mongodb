@@ -82,11 +82,17 @@
       "msSuffix": "ms"
     },
     "table": {
-      "secs": "Sek.",
+      "avgMs": "Ø ms",
       "client": "Client",
       "command": "Befehl",
+      "count": "Anzahl",
+      "maxMs": "max. ms",
       "millis": "ms",
-      "plan": "Plan"
+      "minMs": "min. ms",
+      "plan": "Plan",
+      "secs": "Sek.",
+      "shape": "Abfrageform",
+      "totalMs": "Summe ms"
     },
     "empty": {
       "noActiveOps": "Keine aktiven Vorgänge.",
@@ -96,6 +102,7 @@
       "profilingOff": "Profiling ist für diese Datenbank deaktiviert. Stufe 1 (langsame Vorgänge) oder 2 (alle Vorgänge) festlegen, um Einträge zu sammeln."
     },
     "profiler": {
+      "groupByShape": "Nach Abfrageform gruppieren",
       "levelLabel": "Stufe:",
       "slowThreshold": "langsam ≥ {{slowMs}} ms"
     },
