@@ -292,9 +292,9 @@ test.describe('Tasks and activity', () => {
     await panel.getByTestId('activity-row-e2').click();
     await expect(panel.getByTestId('activity-detail-e2')).toContainText('not authorized on sales_db');
 
-    // Export asks to confirm, then reports the count, both as browser dialogs.
-    page.on('dialog', (dialog) => void dialog.accept());
+    // Export asks to confirm in the app's dialog, then reports the count in a toast.
     await panel.getByTestId('activity-export-btn').click();
+    await page.getByTestId('dialog-confirm').click();
     await expect.poll(() => written(page, '/tmp/audit.jsonl')).not.toBeNull();
     expect(((await written(page, '/tmp/audit.jsonl')) ?? '').split('\n')).toHaveLength(2);
   });
@@ -305,8 +305,8 @@ test.describe('Tasks and activity', () => {
     const panel = page.getByTestId('activity-panel');
 
     await expect(panel.getByTestId('activity-integrity-banner')).toBeVisible();
-    page.on('dialog', (dialog) => void dialog.accept());
     await panel.getByTestId('activity-discard-btn').click();
+    await page.getByTestId('dialog-confirm').click();
     await expect.poll(async () => (await app.calls('audit_discard_damaged_log')).length).toBe(1);
   });
 });
