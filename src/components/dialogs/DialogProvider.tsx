@@ -70,7 +70,7 @@ export const DialogProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const toast = useCallback((message: string, kind: ToastKind = 'info', options?: ToastOptions) => {
     const id = nextId.current++;
-    setToasts((prev) => [...prev, { id, message, kind, title: options?.title }]);
+    setToasts((prev) => [...prev, { id, message, kind, title: options?.title, action: options?.action }]);
   }, []);
 
   const openModal = useCallback(

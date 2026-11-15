@@ -4773,7 +4773,10 @@ function Workspace() {
     const savedIn = tabHoldingEdit(edit.id) ?? tab;
     closeEditById(edit.id);
     await refreshTabResults(savedIn);
-    toast(t('toast.documentSavedIn', { collection }), 'success', { title: t('toast.savedTitle') });
+    toast(t('toast.documentSavedIn', { collection }), 'success', {
+      title: t('toast.savedTitle'),
+      action: undoEditAction(savedIn, edit.targetDoc, json),
+    });
   };
 
   /** Saves one value edited in place in the results grid. Rejects, after a
@@ -4796,11 +4799,32 @@ function Workspace() {
         throw err;
       }
       await refreshTabResults(tab);
-      toast(t('toast.documentSavedIn', { collection: tab.collection }), 'success', { title: t('toast.savedTitle') });
+      toast(t('toast.documentSavedIn', { collection: tab.collection }), 'success', {
+        title: t('toast.savedTitle'),
+        action: undoEditAction(tab, doc, shellToEjson(docToShell(edited))),
+      });
     } finally {
       setPendingSaves(prev => prev.filter(s => s.editId !== editId));
     }
   };
+
+  /** The Undo button on a saved edit's toast. It runs the same field-level
+   *  write backwards: what was saved is the original, and the document as it
+   *  was loaded is the edit, so changed fields go back, added ones are removed
+   *  and removed ones return. One step only: the undo's own toast has no Undo.
+   *  The tab is the one captured at save time, so the projection matches. */
+  const undoEditAction = (tab: QueryTab, before: Record<string, any> | null | undefined, savedJson: string) => ({
+    label: t('toast.undo'),
+    onClick: async () => {
+      try {
+        await writeDocumentUpdate(tab, JSON.parse(savedJson), shellToEjson(docToShell(before)));
+        await refreshTabResults(tab);
+        toast(t('toast.editUndoneIn', { collection: tab.collection }), 'success', { title: t('toast.undoneTitle') });
+      } catch (err: any) {
+        toast(t('toast.undoFailed', { detail: err?.message || err }), 'error');
+      }
+    },
+  });
 
   const writeDocumentUpdate = async (tab: QueryTab, target: Record<string, any> | null | undefined, json: string) => {
     if (!target || target._id === undefined) {

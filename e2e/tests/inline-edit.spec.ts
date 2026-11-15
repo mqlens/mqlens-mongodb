@@ -71,4 +71,30 @@ test.describe('In-place cell edit', () => {
     expect(JSON.parse(String(call.edited)).address).toEqual({ city: 'Boston', state: 'NY' });
     await expect(view(page).getByText('"Boston"', { exact: true })).toBeVisible();
   });
+
+  test('Undo on the saved toast writes the old value back, and says so when it cannot', async ({ app, page }) => {
+    await openCustomers(app, page);
+    await view(page).getByRole('button', { name: 'Table', exact: true }).click();
+
+    await view(page).getByText('alice@example.com', { exact: true }).dblclick();
+    await editor(page).fill('"ada@example.com"');
+    await editor(page).press('Enter');
+    await expect(view(page).getByText('ada@example.com', { exact: true })).toBeVisible();
+
+    const undo = await callFrom(app, 'update_document', () => toast(page, 'Saved').getByRole('button', { name: 'Undo' }).click());
+    expect(JSON.parse(String(undo.original)).email).toBe('ada@example.com');
+    expect(JSON.parse(String(undo.edited)).email).toBe('alice@example.com');
+    await expect(toast(page, 'Edit undone in customers')).toBeVisible();
+    await expect(view(page).getByText('alice@example.com', { exact: true })).toBeVisible();
+
+    // A refused undo leaves the saved value and reports why.
+    await view(page).getByText('alice@example.com', { exact: true }).dblclick();
+    await editor(page).fill('"ada@example.com"');
+    await editor(page).press('Enter');
+    await expect(view(page).getByText('ada@example.com', { exact: true })).toBeVisible();
+    await app.failNext('update_document', 'Document failed validation');
+    await toast(page, 'Saved').last().getByRole('button', { name: 'Undo' }).click();
+    await expect(toast(page, /Could not undo the edit: .*Document failed validation/)).toBeVisible();
+    await expect(view(page).getByText('ada@example.com', { exact: true })).toBeVisible();
+  });
 });

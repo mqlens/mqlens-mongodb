@@ -1434,6 +1434,48 @@ describe('App Component', () => {
     });
   });
 
+  it('undoes a saved edit from its toast by writing the old fields back', async () => {
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd, args) => {
+      calls.push({ cmd, args });
+      if (cmd === 'execute_mql_query') {
+        return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe', tier: 'free' })]);
+      }
+      if (cmd === 'update_document') return Promise.resolve(1);
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+    fireEvent.click(screen.getByTestId('select-collection-btn'));
+    expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByTestId('edit-doc-btn')[0]);
+    const input = await screen.findByTestId('document-json-input');
+    // Changes one field, adds one and removes one.
+    fireEvent.change(input, { target: { value: '{"_id":"1","name":"Ada","vip":true}' } });
+    fireEvent.click(screen.getByTestId('document-save-btn'));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Undo' }));
+
+    await waitFor(() => {
+      const updates = calls.filter((c) => c.cmd === 'update_document');
+      expect(updates).toHaveLength(2);
+      const [save, undo] = updates;
+      // The undo is the save run backwards: what was written is now the
+      // original, and the document as loaded is what to write.
+      expect(undo.args.filter).toBe('{"_id":"1"}');
+      expect(JSON.parse(undo.args.original)).toEqual(JSON.parse(save.args.edited));
+      expect(JSON.parse(undo.args.edited)).toEqual({ _id: '1', name: 'John Doe', tier: 'free' });
+      expect(undo.args.projection).toBe(save.args.projection);
+      expect(screen.getByText(/Edit undone in customers/)).toBeInTheDocument();
+    });
+    // One step: the undo itself offers no undo.
+    expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument();
+  });
+
   // #326 review: an edit's failure and its pending save belong to the edit, not
   // to the dialog — the dialog is a view of whichever tab is active, so it
   // unmounts on the way to another tab and remounts on the way back. Kept in
