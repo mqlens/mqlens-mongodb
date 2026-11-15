@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Decimal128, Double as BsonDouble, Long, ObjectId, Timestamp } from 'bson';
+import { Binary, Decimal128, Double as BsonDouble, Long, ObjectId, Timestamp } from 'bson';
 const Double = (n: number) => new BsonDouble(n);
 import { compareBsonValues } from '../tableSort';
 
@@ -67,5 +67,16 @@ describe('compareBsonValues — timestamps', () => {
     const c = new Timestamp({ t: 2, i: 1 });
     const date = new Date('2024-01-01T00:00:00Z');
     expect(sorted([c, b, date, a])).toEqual([date, a, b, c]);
+  });
+});
+
+describe('compareBsonValues — binary', () => {
+  it('orders binary by length, then subtype, then bytes, as MongoDB does', () => {
+    const ff = new Binary(Uint8Array.from([0xff]));
+    const fe = new Binary(Uint8Array.from([0xfe]));
+    const feSub4 = new Binary(Uint8Array.from([0xfe]), 4);
+    const short = new Binary(new Uint8Array(0));
+    const long = new Binary(Uint8Array.from([0x00, 0x00]));
+    expect(sorted([long, feSub4, ff, fe, short])).toEqual([short, fe, ff, feSub4, long]);
   });
 });

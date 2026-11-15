@@ -71,6 +71,15 @@ export function compareBsonValues(a: unknown, b: unknown): number {
     }
     case 4:
       return compareLists(x, y);
+    case 5: {
+      // As MongoDB: length, then subtype, then the bytes.
+      const bx: Uint8Array = x.value();
+      const by: Uint8Array = y.value();
+      if (bx.length !== by.length) return bx.length - by.length;
+      if (x.sub_type !== y.sub_type) return x.sub_type - y.sub_type;
+      for (let i = 0; i < bx.length; i++) if (bx[i] !== by[i]) return bx[i] - by[i];
+      return 0;
+    }
     case 6:
       return x.toHexString().localeCompare(y.toHexString());
     case 7:
