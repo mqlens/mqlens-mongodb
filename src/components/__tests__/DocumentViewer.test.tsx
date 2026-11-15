@@ -1951,4 +1951,27 @@ describe('Visual query builder: date values', () => {
     expect(dateInput(container)).toBeNull();
     expect(textValue(container)).not.toBeNull();
   });
+
+  it('offers a date only for comparisons, and drops it for $in, $nin, $regex and $exists', async () => {
+    const { container } = openWith('{"signupDate": {"$gte": {"$date": "2024-01-01T00:00:00Z"}}}');
+    const operator = () => container.querySelector('select[data-testid^="rule-operator-"]') as HTMLSelectElement;
+
+    for (const op of ['$in', '$nin', '$regex']) {
+      fireEvent.change(operator(), { target: { value: op } });
+      expect(dateInput(container)).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Date value (UTC)' })).toBeNull();
+    }
+    fireEvent.change(operator(), { target: { value: '$exists' } });
+    fireEvent.change(operator(), { target: { value: '$eq' } });
+    // Back on a comparison, the value is text again, not a date made of "true".
+    expect(dateInput(container)).toBeNull();
+    await waitFor(() => expect(filterInput().value).not.toContain('$date'));
+  });
+
+  it('keeps a date the date input cannot show, past year 9999, as text', () => {
+    const { container } = openWith('{"signupDate": {"$gte": {"$date": {"$numberLong": "253402300800000"}}}}');
+
+    expect(dateInput(container)).toBeNull();
+    expect((textValue(container) as HTMLInputElement).value).toBe('{"$date":{"$numberLong":"253402300800000"}}');
+  });
 });

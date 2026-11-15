@@ -84,16 +84,22 @@ interface VisualRule {
   kind?: 'date';
 }
 
+// The operators a single date value works with. $in and $nin take a list,
+// $regex a pattern and $exists a boolean.
+const DATE_OPERATORS = new Set(['$eq', '$ne', '$gt', '$gte', '$lt', '$lte']);
+
 // An EJSON date (`{ $date: … }`, which is also what parseShellJson makes of
 // ISODate()) as a datetime-local input's text in UTC, to the millisecond.
-// Null when the value is not a date.
+// Null when the value is not a date, or is one the input cannot show: a
+// year outside 0001-9999 has a six-digit ISO form.
 const ejsonDateToInput = (v: any): string | null => {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
   const keys = Object.keys(v);
   if (keys.length !== 1 || keys[0] !== '$date') return null;
   const raw = v.$date;
   const d = new Date(raw && typeof raw === 'object' && '$numberLong' in raw ? Number(raw.$numberLong) : raw);
-  return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 23);
+  const year = d.getUTCFullYear();
+  return Number.isNaN(d.getTime()) || year < 1 || year > 9999 ? null : d.toISOString().slice(0, 23);
 };
 
 // A datetime-local input's text (to the minute, second or millisecond) as an
@@ -1137,6 +1143,10 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
         const updated = { ...r, ...updates };
         if (updates.field === '__custom__') {
           updated.field = '';
+        }
+        if (updates.operator && updated.kind === 'date' && !DATE_OPERATORS.has(updates.operator)) {
+          updated.kind = undefined;
+          updated.value = '';
         }
         if (updates.operator === '$exists' && updated.value !== 'true' && updated.value !== 'false') {
           updated.value = 'true';
@@ -2270,20 +2280,22 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                                       data-testid={`rule-value-${rule.id}`}
                                     />
                                   )}
-                                  <button
-                                    type="button"
-                                    onClick={() => updateRule(rule.id, { kind: rule.kind === 'date' ? undefined : 'date', value: '' })}
-                                    className={cn(
-                                      'shrink-0 rounded p-1 transition-colors hover:bg-accent',
-                                      rule.kind === 'date' ? 'text-primary' : 'text-muted-foreground hover:text-foreground'
-                                    )}
-                                    aria-label={td('documentViewer.builder.dateValue')}
-                                    aria-pressed={rule.kind === 'date'}
-                                    title={td('documentViewer.builder.dateValue')}
-                                    data-testid={`rule-date-toggle-${rule.id}`}
-                                  >
-                                    <CalendarDays size={11} />
-                                  </button>
+                                  {DATE_OPERATORS.has(rule.operator) && (
+                                    <button
+                                      type="button"
+                                      onClick={() => updateRule(rule.id, { kind: rule.kind === 'date' ? undefined : 'date', value: '' })}
+                                      className={cn(
+                                        'shrink-0 rounded p-1 transition-colors hover:bg-accent',
+                                        rule.kind === 'date' ? 'text-primary' : 'text-muted-foreground hover:text-foreground'
+                                      )}
+                                      aria-label={td('documentViewer.builder.dateValue')}
+                                      aria-pressed={rule.kind === 'date'}
+                                      title={td('documentViewer.builder.dateValue')}
+                                      data-testid={`rule-date-toggle-${rule.id}`}
+                                    >
+                                      <CalendarDays size={11} />
+                                    </button>
+                                  )}
                                 </>
                               )}
 
