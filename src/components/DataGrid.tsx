@@ -1453,8 +1453,11 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const tableColumns = useMemo(() => {
     const hidden = new Set(columnLayout.hidden);
     const first = (columnLayout.order ?? []).filter((c) => columnPaths.has(c));
-    const rest = columns.filter((c) => !first.includes(c));
-    return [...first, ...rest].filter((c) => !hidden.has(c));
+    const ordered = [...first, ...columns.filter((c) => !first.includes(c))];
+    const visible = ordered.filter((c) => !hidden.has(c));
+    // A page holding only hidden columns shows them all: with no header left,
+    // there would be nothing to right-click to bring them back.
+    return visible.length > 0 ? visible : ordered;
   }, [columns, columnPaths, columnLayout]);
   const sortDirectionOf = (col: string) =>
     columnLayout.sort?.column === col ? columnLayout.sort.direction : undefined;
@@ -2873,6 +2876,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
               <div
                 ref={tableHeaderRef}
                 data-testid="table-header"
+                role="row"
                 // overflow-hidden makes this a scroll container so its scrollLeft
                 // can be driven by the body; scrollbar-gutter keeps its usable
                 // width equal to the body's, so the two stay aligned at the far
@@ -2890,7 +2894,8 @@ export const DataGrid: React.FC<DataGridProps> = ({
                   <div
                     key={col}
                     data-column={col}
-                    aria-sort={sortDirectionOf(col) === 1 ? 'ascending' : sortDirectionOf(col) === -1 ? 'descending' : undefined}
+                    role="columnheader"
+                    aria-sort={sortDirectionOf(col) === 1 ? 'ascending' : sortDirectionOf(col) === -1 ? 'descending' : 'none'}
                     className={cn(
                       'px-3 border-r border-border flex items-center truncate relative',
                       findHighlightClass(TABLE_HEADER_ROW_INDEX, col)

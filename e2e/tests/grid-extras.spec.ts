@@ -353,4 +353,34 @@ test.describe('Table columns', () => {
     await headerMenu(page, 'name', 'Show all columns (1 hidden)');
     await expect.poll(() => columnOrder(page)).toEqual(['_id', 'price', 'name']);
   });
+
+  test('sorts a column of mixed BSON types in MongoDB order, by value within each type', async ({ app, page }) => {
+    // In ascending order; seeded backwards so the sort has work to do.
+    const values: unknown[] = [
+      undefined, null, { $numberDouble: 'NaN' }, { $numberDecimal: '1.5' }, { $numberLong: '3' }, 10,
+      'a', 'b', { n: 2 }, { n: 10 }, [2], [10], { $binary: { base64: 'AQ==', subType: '00' } },
+      { $oid: '64b000000000000000000001' }, { $oid: '64b000000000000000000002' }, false, true,
+      { $date: '2020-01-01T00:00:00Z' }, { $date: '2024-01-01T00:00:00Z' },
+      { $timestamp: { t: 1, i: 1 } }, { $timestamp: { t: 2, i: 1 } },
+    ];
+    const docs = values.map((v, i) => (v === undefined ? { _id: i + 1 } : { _id: i + 1, v })).reverse();
+    await connectStaging(app, page, { servers: { [STAGING_URI]: { databases: { shop: { things: { docs: docs as Doc[] } } } } } });
+    await openCollection(page, 'shop', 'things');
+    await viewButton(page, 'Table').click();
+    await expect.poll(() => columnOrder(page)).toEqual(['_id', 'v']);
+    const ids = async () => {
+      const out: string[] = [];
+      for (let row = 1; row <= values.length; row++) out.push(await tableCellText(page, row, '_id'));
+      return out;
+    };
+
+    await headerMenu(page, 'v', 'Sort ascending');
+    await expect(view(page).locator('[data-column="v"]')).toHaveAttribute('aria-sort', 'ascending');
+    // Missing and null tie, so they keep their loaded order.
+    expect(await ids()).toEqual(['2', '1', ...values.slice(2).map((_, i) => String(i + 3))]);
+
+    await headerMenu(page, 'v', 'Clear sort');
+    await expect(view(page).locator('[data-column="v"]')).toHaveAttribute('aria-sort', 'none');
+    expect(await tableCellText(page, 1, '_id')).toBe(String(values.length));
+  });
 });

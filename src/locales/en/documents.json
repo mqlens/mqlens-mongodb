@@ -76,8 +76,8 @@
       "hide": "Hide column",
       "moveLeft": "Move left",
       "moveRight": "Move right",
-      "showAll_one": "",
-      "showAll_other": "",
+      "showAll_one": "Show all columns ({{count}} hidden)",
+      "showAll_other": "Show all columns ({{count}} hidden)",
       "sortAscending": "Sort ascending",
       "sortDescending": "Sort descending"
     },

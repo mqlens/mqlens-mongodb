@@ -3049,3 +3049,21 @@ describe('DataGrid — table column sort, hide and reorder', () => {
     expect(onEditField.mock.calls[0][0]).toBe(mockDocuments[1]);
   });
 });
+
+describe('DataGrid — table columns, review fixes', () => {
+  it('shows every column rather than none when the page has only hidden ones', () => {
+    // Hidden while other columns showed; this page has nothing else.
+    render(<DataGrid documents={[{ _id: 1 }]} columnLayout={{ hidden: ['_id'] }} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+
+    expect(screen.getByRole('columnheader', { name: /_id/ })).toBeInTheDocument();
+  });
+
+  it('marks headers as column headers, so the sort direction is announced', () => {
+    render(<DataGrid documents={mockDocuments} columnLayout={{ sort: { column: 'price', direction: -1 } }} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+
+    expect(screen.getByRole('columnheader', { name: /price/ })).toHaveAttribute('aria-sort', 'descending');
+    expect(screen.getByRole('columnheader', { name: /name/ })).toHaveAttribute('aria-sort', 'none');
+  });
+});

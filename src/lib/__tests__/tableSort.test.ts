@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { Decimal128, Long, ObjectId } from 'bson';
+import { Decimal128, Double as BsonDouble, Long, ObjectId, Timestamp } from 'bson';
+const Double = (n: number) => new BsonDouble(n);
 import { compareBsonValues } from '../tableSort';
 
 // Boxed, because Array.prototype.sort moves bare `undefined` to the end without
@@ -34,5 +35,37 @@ describe('compareBsonValues', () => {
     const a = new ObjectId('64b000000000000000000001');
     const b = new ObjectId('64b000000000000000000002');
     expect(sorted([b, a])).toEqual([a, b]);
+  });
+});
+
+describe('compareBsonValues — review fixes', () => {
+  it('does not trust a stored _bsontype field', () => {
+    const spoof = { _bsontype: 'ObjectId', value: 1 };
+    expect(() => sorted([spoof, { _bsontype: 'ObjectId', value: 2 }])).not.toThrow();
+    // A plain document, so it ranks with documents, before a real ObjectId.
+    const id = new ObjectId('64b000000000000000000001');
+    expect(sorted([id, spoof])).toEqual([spoof, id]);
+  });
+
+  it('puts NaN before every other number and keeps the rest in order', () => {
+    expect(sorted([3, Double(NaN), 1, 2])).toEqual([Double(NaN), 1, 2, 3]);
+    expect(sorted([3, NaN, 1, 2])).toEqual([NaN, 1, 2, 3]);
+  });
+
+  it('compares documents and arrays by value, not by their JSON text', () => {
+    expect(sorted([{ n: 10 }, { n: 2 }])).toEqual([{ n: 2 }, { n: 10 }]);
+    expect(sorted([[10], [2]])).toEqual([[2], [10]]);
+    expect(sorted([[1, 2], [1]])).toEqual([[1], [1, 2]]);
+    expect(sorted([{ b: 1 }, { a: 5 }])).toEqual([{ a: 5 }, { b: 1 }]);
+  });
+});
+
+describe('compareBsonValues — timestamps', () => {
+  it('orders timestamps by time, then increment, after dates', () => {
+    const a = new Timestamp({ t: 1, i: 1 });
+    const b = new Timestamp({ t: 1, i: 2 });
+    const c = new Timestamp({ t: 2, i: 1 });
+    const date = new Date('2024-01-01T00:00:00Z');
+    expect(sorted([c, b, date, a])).toEqual([date, a, b, c]);
   });
 });

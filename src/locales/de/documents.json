@@ -409,7 +409,8 @@
       "moveLeft": "Nach links",
       "moveRight": "Nach rechts",
       "hide": "Spalte ausblenden",
-      "showAll": "Alle Spalten anzeigen ({{count}} ausgeblendet)"
+      "showAll_one": "Alle Spalten anzeigen ({{count}} ausgeblendet)",
+      "showAll_other": "Alle Spalten anzeigen ({{count}} ausgeblendet)"
     }
   },
   "schemaView": {

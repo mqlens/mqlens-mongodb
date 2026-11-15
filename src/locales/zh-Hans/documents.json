@@ -200,7 +200,7 @@
       "moveLeft": "左移",
       "moveRight": "右移",
       "hide": "隐藏列",
-      "showAll": "显示所有列（已隐藏 {{count}} 列）"
+      "showAll_other": "显示所有列（已隐藏 {{count}} 列）"
     }
   },
   "diffModal": {
