@@ -95,3 +95,18 @@ describe('groupProfileByShape', () => {
     expect(groups).toHaveLength(3);
   });
 });
+
+describe('queryShape — review fixes', () => {
+  it('drops driver fields only from the command, not from the query', () => {
+    expect(queryShape('{ "find": "c", "filter": { "comment": "pending", "cursor": 1 }, "comment": "from the app" }')).toBe(
+      '{find: "c", filter: {comment: ?, cursor: ?}}'
+    );
+  });
+
+  it('keeps every stage of a pipeline, repeats included', () => {
+    const once = queryShape('{ "aggregate": "o", "pipeline": [{ "$unwind": "$items" }] }');
+    const twice = queryShape('{ "aggregate": "o", "pipeline": [{ "$unwind": "$items" }, { "$unwind": "$items" }] }');
+    expect(twice).toBe('{aggregate: "o", pipeline: [{$unwind: "$items"}, {$unwind: "$items"}]}');
+    expect(twice).not.toBe(once);
+  });
+});

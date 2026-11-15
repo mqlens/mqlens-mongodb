@@ -9,7 +9,8 @@
 import type { ProfileEntry } from './monitoringApi';
 
 // Fields a driver or session adds to every command. They differ run to run
-// and say nothing about the query.
+// and say nothing about the query. Dropped from the command only: inside a
+// filter, `comment` is the application's own field.
 const NOISE = new Set([
   '$audit', '$client', '$clusterTime', '$db', '$queryOptions', '$readPreference',
   'apiDeprecationErrors', 'apiStrict', 'apiVersion', 'autocommit', 'batchSize',
@@ -71,11 +72,12 @@ export function queryShape(command: string): string {
   const peek = () => tokens[pos];
   const isPunct = (p: string) => peek()?.kind === 'punct' && peek()?.text === p;
 
-  const value = (keepLiteral = false): string => {
+  const value = (keepLiteral = false, key = ''): string => {
     const tok = peek();
     if (!tok) return '?';
     if (isPunct('{')) return doc(false);
-    if (isPunct('[')) return list();
+    // Every stage of a pipeline counts, repeats included.
+    if (isPunct('[')) return list(key !== 'pipeline');
     pos++;
     if (tok.kind === 'string' && (keepLiteral || tok.text.startsWith('$'))) return JSON.stringify(tok.text);
     return '?';
@@ -92,14 +94,14 @@ export function queryShape(command: string): string {
       const key = tokens[pos++].text;
       if (isPunct(':')) pos++;
       // The first field names the command, and its value is the collection.
-      const shape = value(top && fields.length === 0);
-      if (!NOISE.has(key)) fields.push(`${key}: ${shape}`);
+      const shape = value(top && fields.length === 0, key);
+      if (!(top && NOISE.has(key))) fields.push(`${key}: ${shape}`);
     }
     pos++; // }
     return `{${fields.join(', ')}}`;
   };
 
-  const list = (): string => {
+  const list = (collapse: boolean): string => {
     pos++; // [
     const items: string[] = [];
     while (peek() && !isPunct(']')) {
@@ -109,7 +111,7 @@ export function queryShape(command: string): string {
       }
       const shape = value();
       // Repeats collapse: [1, 2, 3] and [4] are both [?].
-      if (!items.includes(shape)) items.push(shape);
+      if (!collapse || !items.includes(shape)) items.push(shape);
     }
     pos++; // ]
     return `[${items.join(', ')}]`;
