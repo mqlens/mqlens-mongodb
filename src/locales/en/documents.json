@@ -71,6 +71,16 @@
       "updateMany": "Update Many",
       "updateOrDelete": "Update or Delete"
     },
+    "columnMenu": {
+      "clearSort": "Clear sort",
+      "hide": "Hide column",
+      "moveLeft": "Move left",
+      "moveRight": "Move right",
+      "showAll_one": "",
+      "showAll_other": "",
+      "sortAscending": "Sort ascending",
+      "sortDescending": "Sort descending"
+    },
     "dialogs": {
       "bulkAllWarning_one": "\n\n⚠ This affects the only document in the collection.",
       "bulkAllWarning_other": "\n\n⚠ This affects ALL {{count}} documents in the collection.",
@@ -201,15 +211,6 @@
       "table": "Table",
       "tree": "Tree",
       "visualTree": "Visual Tree"
-    },
-    "columnMenu": {
-      "sortAscending": "Sort ascending",
-      "sortDescending": "Sort descending",
-      "clearSort": "Clear sort",
-      "moveLeft": "Move left",
-      "moveRight": "Move right",
-      "hide": "Hide column",
-      "showAll": "Show all columns ({{count}} hidden)"
     }
   },
   "diffModal": {
