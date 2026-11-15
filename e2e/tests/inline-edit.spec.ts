@@ -97,4 +97,59 @@ test.describe('In-place cell edit', () => {
     await expect(toast(page, /Could not undo the edit: .*Document failed validation/)).toBeVisible();
     await expect(view(page).getByText('ada@example.com', { exact: true })).toBeVisible();
   });
+
+  test('Undo refreshes the query now in the tab, not the one the edit was made under', async ({ app, page }) => {
+    await openCustomers(app, page);
+    await view(page).getByRole('button', { name: 'Table', exact: true }).click();
+    await view(page).getByText('alice@example.com', { exact: true }).dblclick();
+    await editor(page).fill('"ada@example.com"');
+    await editor(page).press('Enter');
+    await expect(view(page).getByText('ada@example.com', { exact: true })).toBeVisible();
+
+    await setEditorText(page, view(page).getByTestId('query-filter-input'), '{ tier: "Standard" }');
+    await view(page).getByRole('button', { name: 'Run', exact: true }).click();
+    await expect(view(page).getByText('bob@example.com', { exact: true })).toBeVisible();
+    await expect(view(page).getByText('ada@example.com', { exact: true })).toHaveCount(0);
+
+    const rerun = await callFrom(app, 'execute_mql_query', () => toast(page, 'Saved').getByRole('button', { name: 'Undo' }).click());
+    expect(String(rerun.filter)).toContain('Standard');
+    await expect(toast(page, 'Edit undone in customers')).toBeVisible();
+    await expect(view(page).getByText('alice@example.com', { exact: true })).toHaveCount(0);
+  });
+
+  test('only the latest edit can be undone, so an older Undo cannot overwrite a newer save', async ({ app, page }) => {
+    await openCustomers(app, page);
+    await view(page).getByRole('button', { name: 'Table', exact: true }).click();
+    for (const [from, to] of [['alice@example.com', 'b@example.com'], ['b@example.com', 'c@example.com']]) {
+      await view(page).getByText(from, { exact: true }).dblclick();
+      await editor(page).fill(JSON.stringify(to));
+      await editor(page).press('Enter');
+      await expect(view(page).getByText(to, { exact: true })).toBeVisible();
+    }
+    const writes = (await app.calls('update_document')).length;
+
+    await toast(page, 'Saved').first().getByRole('button', { name: 'Undo' }).click();
+    await expect(toast(page, 'Only the latest edit can be undone')).toBeVisible();
+    expect(await app.calls('update_document')).toHaveLength(writes);
+    await expect(view(page).getByText('c@example.com', { exact: true })).toBeVisible();
+  });
+
+  test('undoes the removal of a sub-document the projection showed only part of', async ({ app, page }) => {
+    await openCustomers(app, page);
+    await view(page).getByTestId('query-options-toggle').click();
+    await setEditorText(page, view(page).getByTestId('projection-query-input'), '{ name: 1, "address.city": 1 }');
+    await view(page).getByRole('button', { name: 'Run', exact: true }).click();
+    await expect(view(page)).not.toContainText('alice@example.com');
+
+    await view(page).getByTestId('edit-doc-btn').first().click();
+    const modal = page.getByTestId('document-edit-modal');
+    await setEditorText(page, modal, '{ "_id": ObjectId("603d779f4f102e3a105c3120"), "name": "Alice Smith" }');
+    await modal.getByTestId('document-save-btn').click();
+    await expect(modal).toHaveCount(0);
+    await expect(toast(page, 'Saved')).toBeVisible();
+
+    await toast(page, 'Saved').getByRole('button', { name: 'Undo' }).click();
+    await expect(toast(page, 'Edit undone in customers')).toBeVisible();
+    await expect(view(page).getByText('New York').first()).toBeVisible();
+  });
 });

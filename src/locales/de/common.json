@@ -114,6 +114,7 @@
     "userUpdated": "Benutzer {{name}} aktualisiert",
     "undo": "Rückgängig",
     "undoneTitle": "Rückgängig gemacht",
+    "undoSuperseded": "Nur die letzte Bearbeitung kann rückgängig gemacht werden",
     "editUndoneIn": "Bearbeitung in {{collection}} rückgängig gemacht",
     "undoFailed": "Bearbeitung konnte nicht rückgängig gemacht werden: {{detail}}"
   },
