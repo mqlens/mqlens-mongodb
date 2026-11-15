@@ -191,7 +191,8 @@
       "expand": "Expand",
       "insert": "Insert a new document",
       "readOnly": "Connection is read-only",
-      "resizeColumn": "Resize {{label}} column"
+      "resizeColumn": "Resize {{label}} column",
+      "sortColumn": "Sort this page by this column (right-click for more)"
     },
     "viewModes": {
       "chart": "Chart",
@@ -200,6 +201,15 @@
       "table": "Table",
       "tree": "Tree",
       "visualTree": "Visual Tree"
+    },
+    "columnMenu": {
+      "sortAscending": "Sort ascending",
+      "sortDescending": "Sort descending",
+      "clearSort": "Clear sort",
+      "moveLeft": "Move left",
+      "moveRight": "Move right",
+      "hide": "Hide column",
+      "showAll": "Show all columns ({{count}} hidden)"
     }
   },
   "diffModal": {
