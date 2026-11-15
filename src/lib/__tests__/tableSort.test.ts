@@ -80,3 +80,14 @@ describe('compareBsonValues — binary', () => {
     expect(sorted([long, feSub4, ff, fe, short])).toEqual([short, fe, ff, feSub4, long]);
   });
 });
+
+describe('compareBsonValues — decimal precision', () => {
+  it('orders Decimal128 values a double cannot tell apart', () => {
+    const one = Decimal128.fromString('1.0000000000000000');
+    const more = Decimal128.fromString('1.0000000000000001');
+    const big = Decimal128.fromString('1E+6000');
+    const bigger = Decimal128.fromString('2E+6000');
+    expect(sorted([bigger, more, big, one])).toEqual([one, more, big, bigger]);
+    expect(compareBsonValues(Decimal128.fromString('-0.00012'), Decimal128.fromString('-0.00011'))).toBeLessThan(0);
+  });
+});

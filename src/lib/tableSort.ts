@@ -28,9 +28,30 @@ const rank = (v: unknown): number => {
   return 10; // RegExp, MinKey/MaxKey, ...
 };
 
-// ponytail: Decimal128 and large Longs compare as doubles, so values that
-// differ past ~15 significant digits can tie.
 const asNumber = (v: any): number => (typeof v === 'number' ? v : Number(v.toString()));
+
+// A decimal string as digits and a power of ten: "-1.5E+3" is [-15n, 2].
+// Null for NaN and Infinity, which the double comparison already orders.
+const decimalParts = (s: string): [bigint, number] | null => {
+  const m = /^([+-]?)(\d*)(?:\.(\d*))?(?:E([+-]?\d+))?$/i.exec(s);
+  if (!m) return null;
+  const fraction = m[3] ?? '';
+  return [BigInt(`${m[1] === '-' ? '-' : ''}${m[2] + fraction || '0'}`), Number(m[4] ?? 0) - fraction.length];
+};
+
+// Exact order of two decimals that compare equal as doubles: Decimal128
+// holds 34 digits and exponents a double cannot reach.
+// ponytail: Longs past 2^53 are already rounded by the grid's relaxed EJSON
+// parse, so they can still tie.
+const compareExact = (x: unknown, y: unknown): number => {
+  const a = decimalParts(String(x));
+  const b = decimalParts(String(y));
+  if (!a || !b) return 0;
+  const e = Math.min(a[1], b[1]);
+  const va = a[0] * 10n ** BigInt(a[1] - e);
+  const vb = b[0] * 10n ** BigInt(b[1] - e);
+  return va < vb ? -1 : va > vb ? 1 : 0;
+};
 
 // Element by element, then the shorter first.
 const compareLists = (a: unknown[], b: unknown[]): number => {
@@ -55,7 +76,7 @@ export function compareBsonValues(a: unknown, b: unknown): number {
       const ny = asNumber(y);
       // NaN sorts before every other number, as in MongoDB.
       if (Number.isNaN(nx) || Number.isNaN(ny)) return Number(!Number.isNaN(nx)) - Number(!Number.isNaN(ny));
-      return nx - ny;
+      return nx - ny || (x instanceof Decimal128 || y instanceof Decimal128 ? compareExact(x, y) : 0);
     }
     case 2:
       return String(x).localeCompare(String(y));
