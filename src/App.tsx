@@ -4772,13 +4772,14 @@ function Workspace() {
       return;
     }
 
+    const undoToken = ++latestUndoRef.current;
     await writeDocumentUpdate(tab, edit.targetDoc, json);
     const savedIn = tabHoldingEdit(edit.id) ?? tab;
     closeEditById(edit.id);
     await refreshTabResults(savedIn);
     toast(t('toast.documentSavedIn', { collection }), 'success', {
       title: t('toast.savedTitle'),
-      action: undoEditAction(savedIn, edit.targetDoc, json),
+      action: undoEditAction(undoToken, tab, savedIn.id, edit.targetDoc, json),
     });
   };
 
@@ -4794,6 +4795,7 @@ function Workspace() {
       ...prev,
       { editId, tabId: tab.id, connectionId: tab.connectionId, db: tab.db, collection: tab.collection },
     ]);
+    const undoToken = ++latestUndoRef.current;
     try {
       try {
         await writeDocumentUpdate(tab, doc, shellToEjson(docToShell(edited)));
@@ -4804,7 +4806,7 @@ function Workspace() {
       await refreshTabResults(tab);
       toast(t('toast.documentSavedIn', { collection: tab.collection }), 'success', {
         title: t('toast.savedTitle'),
-        action: undoEditAction(tab, doc, shellToEjson(docToShell(edited))),
+        action: undoEditAction(undoToken, tab, tab.id, doc, shellToEjson(docToShell(edited))),
       });
     } finally {
       setPendingSaves(prev => prev.filter(s => s.editId !== editId));
@@ -4816,14 +4818,21 @@ function Workspace() {
    *  was loaded is the edit, so changed fields go back, added ones are removed
    *  and removed ones return.
    *
-   *  - The write uses the tab captured at save time, so its projection is the
-   *    one the edit was made under. The refresh uses the tab as it is now, so
-   *    a query run since then is the one re-run.
-   *  - One step only: a later save retires every earlier Undo, which would
-   *    otherwise write its old values over the newer save. The undo's own toast
-   *    has no Undo. */
-  const undoEditAction = (tab: QueryTab, before: Record<string, any> | null | undefined, savedJson: string) => {
-    const token = ++latestUndoRef.current;
+   *  - The write uses `tab`, the one the save itself was written with, so its
+   *    projection is the one the edit was made under. The refresh uses the tab
+   *    with `liveTabId` as it is now, so a query run since then is the one
+   *    re-run.
+   *  - One step only: `token` is taken when a save starts, so a later save
+   *    retires every earlier Undo as soon as it is sent, before it lands.
+   *    Otherwise an older Undo would write its old values over the newer save.
+   *    The undo's own toast has no Undo. */
+  const undoEditAction = (
+    token: number,
+    tab: QueryTab,
+    liveTabId: string,
+    before: Record<string, any> | null | undefined,
+    savedJson: string
+  ) => {
     return {
       label: t('toast.undo'),
       onClick: async () => {
@@ -4834,7 +4843,7 @@ function Workspace() {
         latestUndoRef.current++;
         try {
           await writeDocumentUpdate(tab, undoBaseline(JSON.parse(savedJson), before ?? {}), shellToEjson(docToShell(before)));
-          const live = tabsRef.current.find((x) => x.id === tab.id);
+          const live = tabsRef.current.find((x) => x.id === liveTabId);
           if (live) await refreshTabResults(live);
           toast(t('toast.editUndoneIn', { collection: tab.collection }), 'success', { title: t('toast.undoneTitle') });
         } catch (err: any) {

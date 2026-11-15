@@ -134,6 +134,49 @@ test.describe('In-place cell edit', () => {
     await expect(view(page).getByText('c@example.com', { exact: true })).toBeVisible();
   });
 
+  test('a save still being written already retires the Undo before it', async ({ app, page }) => {
+    await openCustomers(app, page);
+    await view(page).getByRole('button', { name: 'Table', exact: true }).click();
+    await view(page).getByText('alice@example.com', { exact: true }).dblclick();
+    await editor(page).fill('"b@example.com"');
+    await editor(page).press('Enter');
+    await expect(view(page).getByText('b@example.com', { exact: true })).toBeVisible();
+
+    const release = await app.hold('update_document');
+    await view(page).getByText('b@example.com', { exact: true }).dblclick();
+    await editor(page).fill('"c@example.com"');
+    await editor(page).press('Enter');
+    await expect.poll(async () => (await app.calls('update_document')).length).toBe(2);
+
+    await toast(page, 'Saved').getByRole('button', { name: 'Undo' }).click();
+    await expect(toast(page, 'Only the latest edit can be undone')).toBeVisible();
+    await release();
+    await expect(view(page).getByText('c@example.com', { exact: true })).toBeVisible();
+    expect(await app.calls('update_document')).toHaveLength(2);
+  });
+
+  test('Undo writes under the projection the save was made under, not one run while it was out', async ({ app, page }) => {
+    await openCustomers(app, page);
+    await view(page).getByTestId('edit-doc-btn').first().click();
+    const modal = page.getByTestId('document-edit-modal');
+    await setEditorText(page, modal, '{ "_id": ObjectId("603d779f4f102e3a105c3120"), "name": "Alice Smith" }');
+    const release = await app.hold('update_document');
+    await modal.getByTestId('document-save-btn').click();
+    await expect.poll(async () => (await app.calls('update_document')).length).toBe(1);
+
+    await view(page).getByTestId('query-options-toggle').click();
+    await setEditorText(page, view(page).getByTestId('projection-query-input'), '{ name: 1 }');
+    const run = await callFrom(app, 'execute_mql_query', () => view(page).getByRole('button', { name: 'Run', exact: true }).click());
+    expect(String(run.projection)).toContain('name');
+    await release();
+    await expect(toast(page, 'Saved')).toBeVisible();
+
+    await toast(page, 'Saved').getByRole('button', { name: 'Undo' }).click();
+    await expect(toast(page, 'Edit undone in customers')).toBeVisible();
+    const [, undo] = await app.calls('update_document');
+    expect(String(undo.args.projection ?? '{}')).not.toContain('name');
+  });
+
   test('undoes the removal of a sub-document the projection showed only part of', async ({ app, page }) => {
     await openCustomers(app, page);
     await view(page).getByTestId('query-options-toggle').click();
