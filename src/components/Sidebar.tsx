@@ -123,6 +123,7 @@ import {
   DatabaseZap,
   ShieldCheck,
   Wand2,
+  ChartColumn,
 } from 'lucide-react';
 
 const REPO_URL = 'https://github.com/mqlens/mqlens-mongodb';
@@ -1742,6 +1743,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <ContextMenuItem className={ctxItemClass} onClick={() => onAnalyzeSchema?.(connId, dbName, collName)} {...gate(connId, 'analyze_schema')}>
               <Table2 />
               <span>{t('ctx.analyzeSchema')}</span>
+            </ContextMenuItem>
+            {onOpenIndexes && (
+              <ContextMenuItem className={ctxItemClass} onClick={() => onOpenIndexes(connId, dbName, collName)}>
+                <KeyRound />
+                <span>{t('ctx.indexes')}</span>
+              </ContextMenuItem>
+            )}
+            {/* The same card the row shows on hover, opened where the row was
+                last pointed at. */}
+            <ContextMenuItem
+              className={ctxItemClass}
+              onClick={() => {
+                cancelStatsTimers();
+                setStatsPopover({ kind: 'collection', connId, db: dbName, coll: collName });
+              }}
+            >
+              <ChartColumn />
+              <span>{t('ctx.statistics')}</span>
             </ContextMenuItem>
             {collType !== 'view' && collType !== 'timeseries' && !collName.startsWith('system.') && !/\.(files|chunks)$/.test(collName) && (
               <ContextMenuItem className={ctxItemClass} onClick={() => onEditValidation?.(connId, dbName, collName)} {...gate(connId, 'set_validator')}>
