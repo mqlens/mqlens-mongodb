@@ -53,7 +53,9 @@
     "lockedTitle": "Vault is locked",
     "retentionNote": "Old events are removed automatically by the retention setting. An intact log cannot be erased.",
     "statusError": "Failed",
-    "statusOk": "OK"
+    "statusOk": "OK",
+    "exportPlaintextTitle": "Export the log unencrypted?",
+    "discardTitle": "Discard the damaged log?"
   },
   "aiChatPanel": {
     "actions": {
@@ -604,7 +606,8 @@
     "titles": {
       "setup": "Create a master password",
       "unlock": "Unlock MQLens"
-    }
+    },
+    "resetTitle": "Reset the vault?"
   },
   "watch": {
     "actions": {

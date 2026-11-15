@@ -302,7 +302,8 @@
       "youBadge": "（当前）"
     },
     "confirm": {
-      "killOperation": "要终止 {{ns}} 上的操作 {{opid}} 吗？"
+      "killOperation": "要终止 {{ns}} 上的操作 {{opid}} 吗？",
+      "killOperationTitle": "终止操作 {{opid}}？"
     },
     "detail": {
       "opTitle": "操作详情",

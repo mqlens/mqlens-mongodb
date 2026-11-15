@@ -69,13 +69,13 @@ test.describe('Monitoring', () => {
     await openMonitoring(page);
     const view = monitor(page);
 
-    page.once('dialog', (dialog) => void dialog.dismiss());
     await view.getByTestId('kill-op-102').click();
+    await page.getByTestId('dialog-cancel').click();
     await expect(view.getByTestId('op-row-102')).toBeVisible();
     expect(await app.calls('kill_op')).toHaveLength(0);
 
-    page.once('dialog', (dialog) => void dialog.accept());
     await view.getByTestId('kill-op-101').click();
+    await page.getByTestId('dialog-confirm').click();
     await expect(view.getByTestId('op-row-101')).toHaveCount(0);
     const kills = await app.calls('kill_op');
     expect(kills).toHaveLength(1);

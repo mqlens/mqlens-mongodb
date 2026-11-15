@@ -125,22 +125,23 @@ test.describe('Exporting the log', () => {
     await page.evaluate(() => {
       window.__MQLENS_E2E__!.state.dialog.save = '/tmp/audit.jsonl';
     });
-    page.on('dialog', (dialog) => void dialog.dismiss());
     await panel(page).getByTestId('activity-export-btn').click();
+    await page.getByTestId('dialog-cancel').click();
     await expect(panel(page).getByTestId('activity-export-btn')).toBeEnabled();
     expect(await app.calls('audit_export')).toHaveLength(0);
   });
 
   test('says why an export failed, and locks when the vault does', async ({ app, page }) => {
     await openActivity(app, page, { dialog: { save: '/tmp/audit.jsonl' } });
-    page.on('dialog', (dialog) => void dialog.accept());
 
     await app.failNext('audit_export', 'no space left on device');
     await panel(page).getByTestId('activity-export-btn').click();
+    await page.getByTestId('dialog-confirm').click();
     await expect(panel(page)).toContainText('no space left on device');
 
     await app.failNext('audit_export', 'vault is locked');
     await panel(page).getByTestId('activity-export-btn').click();
+    await page.getByTestId('dialog-confirm').click();
     await expect(page.getByTestId('activity-locked')).toBeVisible();
   });
 });
@@ -150,23 +151,24 @@ test.describe('Discarding a damaged log', () => {
 
   test('keeps the log when the confirmation is declined', async ({ app, page }) => {
     await openActivity(app, page, { audit: DAMAGED });
-    page.on('dialog', (dialog) => void dialog.dismiss());
 
     await panel(page).getByTestId('activity-discard-btn').click();
+    await page.getByTestId('dialog-cancel').click();
     expect(await app.calls('audit_discard_damaged_log')).toHaveLength(0);
     await expect(panel(page).getByTestId('activity-row-e1')).toBeVisible();
   });
 
   test('says why a discard failed, and locks when the vault does', async ({ app, page }) => {
     await openActivity(app, page, { audit: DAMAGED });
-    page.on('dialog', (dialog) => void dialog.accept());
 
     await app.failNext('audit_discard_damaged_log', 'the audit store is read-only');
     await panel(page).getByTestId('activity-discard-btn').click();
+    await page.getByTestId('dialog-confirm').click();
     await expect(panel(page)).toContainText('the audit store is read-only');
 
     await app.failNext('audit_discard_damaged_log', 'vault is locked');
     await panel(page).getByTestId('activity-discard-btn').click();
+    await page.getByTestId('dialog-confirm').click();
     await expect(page.getByTestId('activity-locked')).toBeVisible();
   });
 });

@@ -142,12 +142,12 @@ test.describe('Settings', () => {
     await openSettings(page, 'security');
     const reset = settings(page).getByTestId('sec-reset-btn');
 
-    page.once('dialog', (dialog) => void dialog.dismiss());
     await reset.click();
+    await page.getByTestId('dialog-cancel').click();
     expect(await app.calls('vault_reset')).toHaveLength(0);
 
-    page.once('dialog', (dialog) => void dialog.accept());
     await reset.click();
+    await page.getByTestId('dialog-confirm').click();
     await expect.poll(async () => (await app.calls('vault_reset')).length).toBe(1);
   });
 

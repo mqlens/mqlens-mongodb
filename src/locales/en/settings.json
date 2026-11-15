@@ -208,7 +208,8 @@
     "resetVaultSuccess": "Vault reset — please restart the app.",
     "tabDescription": "Master password, biometrics, and vault recovery.",
     "tabLabel": "Security",
-    "unlockWith": "Unlock with {{type}}"
+    "unlockWith": "Unlock with {{type}}",
+    "resetVaultTitle": "Reset the vault?"
   },
   "shortcuts": {
     "tabDescription": "Keyboard shortcuts reference for the workspace.",

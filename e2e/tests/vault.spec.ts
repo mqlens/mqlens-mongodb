@@ -62,8 +62,8 @@ test.describe('Vault: locked', () => {
   test('reset, once confirmed, returns to first-run setup', async ({ app, page }) => {
     await app.open(seed);
 
-    page.once('dialog', (dialog) => dialog.accept());
     await page.getByTestId('vault-reset-btn').click();
+    await page.getByTestId('dialog-confirm').click();
 
     await expect(page.getByTestId('vault-setup')).toBeVisible();
     expect(await app.calls('vault_reset')).toHaveLength(1);
@@ -72,8 +72,8 @@ test.describe('Vault: locked', () => {
   test('dismissing the reset confirmation keeps the vault', async ({ app, page }) => {
     await app.open(seed);
 
-    page.once('dialog', (dialog) => dialog.dismiss());
     await page.getByTestId('vault-reset-btn').click();
+    await page.getByTestId('dialog-cancel').click();
 
     await expect(page.getByTestId('vault-unlock')).toBeVisible();
     expect(await app.calls('vault_reset')).toHaveLength(0);

@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { SettingsView, MONGO_TOOLS_DIR_KEY } from '../SettingsModal';
 import { writeUpdateCheckSnapshot } from '../../lib/updateCheckState';
+import { DialogProvider } from '../dialogs/DialogProvider';
 
 const mockInvoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({
@@ -38,7 +39,7 @@ vi.mock('../../lib/vault', () => ({
 }));
 
 function renderSettings(props: Partial<ComponentProps<typeof SettingsView>> = {}) {
-  return render(<SettingsView {...props} />);
+  return render(<SettingsView {...props} />, { wrapper: DialogProvider });
 }
 
 async function openTab(tabId: string) {
@@ -194,6 +195,21 @@ describe('SettingsView Component', () => {
       expect(mockChangeVaultPassword).toHaveBeenCalledWith('oldpass', 'newpass');
     });
     expect(await screen.findByTestId('sec-msg')).toHaveTextContent('Master password changed');
+  });
+
+  it('resets the vault only after the in-app confirmation', async () => {
+    mockResetVault.mockResolvedValue(undefined);
+    const nativeConfirm = vi.spyOn(window, 'confirm').mockImplementation(() => { throw new Error('native window dialog used'); });
+    renderSettings();
+
+    await openTab('settings-tab-security');
+    fireEvent.click(await screen.findByTestId('sec-reset-btn'));
+    expect(await screen.findByTestId('dialog-title')).toHaveTextContent('Reset the vault?');
+    expect(mockResetVault).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId('dialog-confirm'));
+
+    await waitFor(() => expect(mockResetVault).toHaveBeenCalled());
+    nativeConfirm.mockRestore();
   });
 
   it('shows error when new passwords do not match (H7)', async () => {
@@ -368,7 +384,7 @@ describe('SettingsView Component', () => {
   });
 
   it('opens the shortcuts tab when initialTab is shortcuts', async () => {
-    render(<SettingsView initialTab="shortcuts" />);
+    render(<SettingsView initialTab="shortcuts" />, { wrapper: DialogProvider });
     expect(await screen.findByTestId('shortcuts-group-zoom')).toBeInTheDocument();
   });
 

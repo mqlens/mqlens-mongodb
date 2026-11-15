@@ -4,6 +4,7 @@ import { SettingsView } from '../SettingsModal';
 import { TabVisibleContext } from '../../workspace/tabVisibility';
 import type { McpStatusUi } from '../../lib/mcpApi';
 import type { ConnectionProfile } from '../../lib/connection';
+import { DialogProvider } from '../dialogs/DialogProvider';
 
 const mockInvoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({
@@ -94,7 +95,7 @@ describe('SettingsView MCP panel', () => {
         <SettingsView />
       </TabVisibleContext.Provider>
     );
-    const { rerender } = render(view(false));
+    const { rerender } = render(view(false), { wrapper: DialogProvider });
     await openMcpTab();
     const afterOpen = statusCalls();
 
@@ -107,7 +108,7 @@ describe('SettingsView MCP panel', () => {
 
   it('toggling on invokes mcp_set_enabled with the configured port', async () => {
     setupInvoke({ status: disabledStatus() });
-    render(<SettingsView />);
+    render(<SettingsView />, { wrapper: DialogProvider });
     await openMcpTab();
 
     fireEvent.click(screen.getByTestId('mcp-enable-toggle'));
@@ -119,7 +120,7 @@ describe('SettingsView MCP panel', () => {
 
   it('rejects an out-of-range port with a friendly message and never calls mcp_set_enabled (final fix wave)', async () => {
     setupInvoke({ status: disabledStatus() });
-    render(<SettingsView />);
+    render(<SettingsView />, { wrapper: DialogProvider });
     await openMcpTab();
 
     fireEvent.change(screen.getByTestId('mcp-port-input'), { target: { value: '80' } });
@@ -142,7 +143,7 @@ describe('SettingsView MCP panel', () => {
       return Promise.resolve();
     });
 
-    render(<SettingsView />);
+    render(<SettingsView />, { wrapper: DialogProvider });
     await openMcpTab();
 
     fireEvent.click(screen.getByTestId('mcp-enable-toggle'));
@@ -152,7 +153,7 @@ describe('SettingsView MCP panel', () => {
 
   it('masks the token by default and reveals it on demand', async () => {
     setupInvoke({ status: enabledStatus({ token: 'super-secret-token' }) });
-    render(<SettingsView />);
+    render(<SettingsView />, { wrapper: DialogProvider });
     await openMcpTab();
 
     const display = await screen.findByTestId('mcp-token-display');
@@ -165,7 +166,7 @@ describe('SettingsView MCP panel', () => {
 
   it('copies the exact Claude Code config snippet', async () => {
     setupInvoke({ status: enabledStatus({ port: 9001, token: 'tok-abc' }) });
-    render(<SettingsView />);
+    render(<SettingsView />, { wrapper: DialogProvider });
     await openMcpTab();
 
     const copyBtn = await screen.findByTestId('mcp-claude-copy');
@@ -181,7 +182,7 @@ describe('SettingsView MCP panel', () => {
       status: enabledStatus({ token: 'old-token' }),
       regenerate: () => enabledStatus({ token: 'brand-new-token' }),
     });
-    render(<SettingsView />);
+    render(<SettingsView />, { wrapper: DialogProvider });
     await openMcpTab();
 
     fireEvent.click(await screen.findByTestId('mcp-token-reveal'));
@@ -204,7 +205,7 @@ describe('SettingsView MCP panel', () => {
         { id: 'p3', name: 'Staging', uri: 'mongodb://mock3', mcp_enabled: true },
       ],
     });
-    render(<SettingsView />);
+    render(<SettingsView />, { wrapper: DialogProvider });
     await openMcpTab();
 
     expect(await screen.findByTestId('mcp-profile-p1')).toHaveTextContent('Prod Cluster');
@@ -215,7 +216,7 @@ describe('SettingsView MCP panel', () => {
 
   it('shows the empty-state hint when no profiles are opted in', async () => {
     setupInvoke({ status: disabledStatus(), profiles: [] });
-    render(<SettingsView />);
+    render(<SettingsView />, { wrapper: DialogProvider });
     await openMcpTab();
 
     expect(await screen.findByTestId('mcp-profiles-empty')).toHaveTextContent(
@@ -233,7 +234,7 @@ describe('SettingsView MCP panel', () => {
         ],
       }),
     });
-    render(<SettingsView />);
+    render(<SettingsView />, { wrapper: DialogProvider });
     await openMcpTab();
 
     const rows = await screen.findAllByTestId('mcp-log-row');
@@ -247,7 +248,7 @@ describe('SettingsView MCP panel', () => {
 
   it('shows the empty call-log state when there are no entries yet', async () => {
     setupInvoke({ status: disabledStatus() });
-    render(<SettingsView />);
+    render(<SettingsView />, { wrapper: DialogProvider });
     await openMcpTab();
 
     expect(await screen.findByTestId('mcp-log-empty')).toHaveTextContent('No tool calls yet.');
