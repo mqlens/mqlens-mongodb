@@ -5,7 +5,7 @@
 //
 // BSON types are recognised with instanceof, never by a `_bsontype` field: a
 // stored sub-document can have a field of that name.
-import { Binary, BSONSymbol, Decimal128, Double, Int32, Long, ObjectId, Timestamp } from 'bson';
+import { Binary, BSONSymbol, Decimal128, Double, Int32, Long, MaxKey, MinKey, ObjectId, Timestamp } from 'bson';
 
 const isNumber = (v: unknown) =>
   typeof v === 'number' || v instanceof Int32 || v instanceof Double || v instanceof Long || v instanceof Decimal128;
@@ -14,6 +14,8 @@ const isDocument = (v: unknown): v is Record<string, unknown> =>
   v !== null && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype;
 
 const rank = (v: unknown): number => {
+  if (v instanceof MinKey) return -1;
+  if (v instanceof MaxKey) return 11;
   if (v === undefined || v === null) return 0;
   // Before the number check: Timestamp extends Long.
   if (v instanceof Timestamp) return 9;
@@ -25,7 +27,7 @@ const rank = (v: unknown): number => {
   if (v instanceof ObjectId) return 6;
   if (typeof v === 'boolean') return 7;
   if (v instanceof Date) return 8;
-  return 10; // RegExp, MinKey/MaxKey, ...
+  return 10; // RegExp, ...
 };
 
 const asNumber = (v: any): number => (typeof v === 'number' ? v : Number(v.toString()));
@@ -39,13 +41,32 @@ const decimalParts = (s: string): [bigint, number] | null => {
   return [BigInt(`${m[1] === '-' ? '-' : ''}${m[2] + fraction || '0'}`), Number(m[4] ?? 0) - fraction.length];
 };
 
-// Exact order of two decimals that compare equal as doubles: Decimal128
-// holds 34 digits and exponents a double cannot reach.
+// A double's exact value in the same form: its mantissa times a power of
+// two, which is the mantissa times 5^n over 10^n. Its printed text is only
+// the shortest text that reads back as it ("0.1" for 0.1000000000000000055…).
+const doubleParts = (x: number): [bigint, number] | null => {
+  if (!Number.isFinite(x)) return null;
+  const view = new DataView(new ArrayBuffer(8));
+  view.setFloat64(0, x);
+  const hi = view.getUint32(0);
+  const biased = (hi >>> 20) & 0x7ff;
+  let mantissa = (BigInt(hi & 0xfffff) << 32n) | BigInt(view.getUint32(4));
+  if (biased !== 0) mantissa |= 1n << 52n;
+  const exp = (biased || 1) - 1075;
+  const signed = hi >>> 31 ? -mantissa : mantissa;
+  return exp >= 0 ? [signed << BigInt(exp), 0] : [signed * 5n ** BigInt(-exp), exp];
+};
+
+const exactParts = (v: unknown): [bigint, number] | null =>
+  typeof v === 'number' ? doubleParts(v) : v instanceof Double ? doubleParts(v.value) : decimalParts(String(v));
+
+// Exact order of two numbers that compare equal as doubles, when one is a
+// Decimal128: it holds 34 digits and exponents a double cannot reach.
 // ponytail: Longs past 2^53 are already rounded by the grid's relaxed EJSON
 // parse, so they can still tie.
 const compareExact = (x: unknown, y: unknown): number => {
-  const a = decimalParts(String(x));
-  const b = decimalParts(String(y));
+  const a = exactParts(x);
+  const b = exactParts(y);
   if (!a || !b) return 0;
   const e = Math.min(a[1], b[1]);
   const va = a[0] * 10n ** BigInt(a[1] - e);

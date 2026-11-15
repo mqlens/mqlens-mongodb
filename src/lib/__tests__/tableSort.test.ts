@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Binary, Decimal128, Double as BsonDouble, Long, ObjectId, Timestamp } from 'bson';
+import { Binary, BSONRegExp, Decimal128, Double as BsonDouble, Long, MaxKey, MinKey, ObjectId, Timestamp } from 'bson';
 const Double = (n: number) => new BsonDouble(n);
 import { compareBsonValues } from '../tableSort';
 
@@ -89,5 +89,25 @@ describe('compareBsonValues — decimal precision', () => {
     const bigger = Decimal128.fromString('2E+6000');
     expect(sorted([bigger, more, big, one])).toEqual([one, more, big, bigger]);
     expect(compareBsonValues(Decimal128.fromString('-0.00012'), Decimal128.fromString('-0.00011'))).toBeLessThan(0);
+  });
+});
+
+describe('compareBsonValues — MinKey and MaxKey', () => {
+  it('puts MinKey before null and MaxKey after everything, regexes just before it', () => {
+    const min = new MinKey();
+    const max = new MaxKey();
+    const re = new BSONRegExp('a', 'i');
+    const date = new Date('2024-01-01T00:00:00Z');
+    expect(sorted([max, 1, re, null, date, min])).toEqual([min, null, 1, date, re, max]);
+  });
+});
+
+describe('compareBsonValues — doubles against decimals', () => {
+  it('orders a double against a Decimal128 by the exact value of the double, not its text', () => {
+    // The double 0.1 is 0.1000000000000000055511151231257827…
+    const d = Decimal128.fromString('0.100000000000000001');
+    expect(sorted([0.1, d])).toEqual([d, 0.1]);
+    expect(compareBsonValues(0.1, Decimal128.fromString('0.1000000000000000055511151231257828'))).toBeLessThan(0);
+    expect(compareBsonValues(Decimal128.fromString('0.5'), 0.5)).toBe(0);
   });
 });
