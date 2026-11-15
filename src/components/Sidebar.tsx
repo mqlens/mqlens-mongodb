@@ -454,7 +454,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
     statsOpenTimer.current = null;
     statsCloseTimer.current = null;
   };
+  // A card opened from a menu stays until dismissed: hovering neither
+  // replaces nor closes it.
+  const statsPinnedRef = React.useRef(false);
   const scheduleStatsOpen = (target: StatsPopoverTarget) => {
+    if (statsPinnedRef.current) return;
     cancelStatsTimers();
     // Moving to a different row: close the previous popover immediately
     // instead of letting it linger for the open delay.
@@ -462,6 +466,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     statsOpenTimer.current = setTimeout(() => setStatsPopover(target), clusterHoverDelayMs);
   };
   const scheduleStatsClose = () => {
+    if (statsPinnedRef.current) return;
     if (statsOpenTimer.current) clearTimeout(statsOpenTimer.current);
     statsCloseTimer.current = setTimeout(() => setStatsPopover(null), 150);
   };
@@ -1751,11 +1756,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </ContextMenuItem>
             )}
             {/* The same card the row shows on hover, opened where the row was
-                last pointed at. */}
+                last pointed at, and kept up until dismissed. */}
             <ContextMenuItem
               className={ctxItemClass}
               onClick={() => {
                 cancelStatsTimers();
+                statsPinnedRef.current = true;
                 setStatsPopover({ kind: 'collection', connId, db: dbName, coll: collName });
               }}
             >
@@ -2970,6 +2976,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         open={statsPopover !== null}
         onOpenChange={(open) => {
           if (!open) {
+            statsPinnedRef.current = false;
             cancelStatsTimers();
             setStatsPopover(null);
           }

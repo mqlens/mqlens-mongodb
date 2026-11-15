@@ -1296,6 +1296,16 @@ describe('Sidebar Component', () => {
     const card = await screen.findByTestId('coll-stats-card');
     await waitFor(() => expect(card.textContent).toContain('sales_db.customers'));
     expect(mockInvoke).toHaveBeenCalledWith('coll_stats', { id: 'conn-1', db: 'sales_db', collection: 'customers' });
+
+    // Opened on purpose, it stays when the pointer passes through it or over
+    // other rows, until dismissed.
+    fireEvent.mouseEnter(card);
+    fireEvent.mouseLeave(card);
+    fireEvent.mouseEnter(screen.getByText('sales_db'));
+    await new Promise((r) => setTimeout(r, 1000));
+    expect(screen.getByTestId('coll-stats-card')).toHaveTextContent('sales_db.customers');
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByTestId('coll-stats-card')).toBeNull());
   });
 
   it('hides Validation Rules for time-series collections but shows it for regular collections (#93)', async () => {

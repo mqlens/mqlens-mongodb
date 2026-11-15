@@ -65,8 +65,11 @@ test.describe('Collection menu', () => {
     await page.getByRole('menuitem', { name: 'Statistics' }).click();
     await expect(page.getByTestId('coll-stats-card')).toContainText('sales_db.customers');
     await expect(page.getByTestId('coll-stats-card')).toContainText('Documents');
-    // Opened on purpose, it stays when the pointer moves away, until dismissed.
+    // Opened on purpose, it stays when the pointer passes through it and
+    // moves away, until dismissed.
+    await page.getByTestId('coll-stats-card').hover();
     await page.mouse.move(5, 5);
+    await page.waitForTimeout(500);
     await expect(page.getByTestId('coll-stats-card')).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(page.getByTestId('coll-stats-card')).toHaveCount(0);
