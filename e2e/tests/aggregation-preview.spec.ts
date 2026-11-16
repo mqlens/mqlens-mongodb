@@ -52,6 +52,21 @@ test.describe('Aggregation stage preview', () => {
       .toContain('https://www.mongodb.com/docs/manual/reference/operator/aggregation/group/');
   });
 
+  test('says when a side has no documents, and when a stage body does not parse', async ({ app, page }) => {
+    await connectStaging(app, page);
+    await openCollection(page, 'sales_db', 'customers');
+    await expect(view(page).getByText('Alice Smith').first()).toBeVisible();
+    await view(page).getByTestId('mode-aggregate-tab').click();
+    await setEditorText(page, stage(page, 0), '{ tier: "Nobody" }');
+
+    await view(page).getByRole('button', { name: 'Preview stage 1' }).click();
+    await expect(view(page).getByTestId('stage-preview-output-0')).toContainText('No documents');
+
+    await setEditorText(page, stage(page, 0), '{ tier }');
+    await view(page).getByRole('button', { name: 'Refresh preview' }).click();
+    await expect(view(page).getByTestId('stage-preview-0').getByRole('alert')).toHaveText('Invalid query');
+  });
+
   test("closes the old pipeline's previews when a saved pipeline replaces it (#555 review)", async ({ app, page }) => {
     await openPipeline(app, page);
     await view(page).getByRole('button', { name: 'Save query', exact: true }).click();
