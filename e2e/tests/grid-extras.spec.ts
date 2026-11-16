@@ -461,3 +461,24 @@ test.describe('Table columns', () => {
     expect(await tableCellText(page, 1, '_id')).toBe(String(values.length));
   });
 });
+
+test.describe('Date display', () => {
+  test('switching dates to local time carries to every open result, and back', async ({ app, page }) => {
+    const docs = [{ _id: 1, when: { $date: '2025-05-01T12:00:00Z' } }];
+    await connectStaging(app, page, { servers: { [STAGING_URI]: { databases: { shop: { things: { docs }, other: { docs } } } } } });
+    await openCollection(page, 'shop', 'things');
+    await openInNewTab(page, 'other');
+    const toggle = () => view(page).getByTestId('date-timezone-toggle');
+    await expect(toggle()).toHaveText('UTC');
+
+    await toggle().click();
+    await expect(toggle()).toHaveText('Local');
+    // The other tab's grid stays mounted, and hears of the change.
+    await switchTab(page, 'things');
+    await expect(toggle()).toHaveText('Local');
+
+    await toggle().click();
+    await switchTab(page, 'other');
+    await expect(toggle()).toHaveText('UTC');
+  });
+});
