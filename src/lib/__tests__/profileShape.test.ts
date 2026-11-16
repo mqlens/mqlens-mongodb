@@ -216,3 +216,12 @@ describe('queryShape — arrays in a query are values', () => {
     );
   });
 });
+
+describe('queryShape — arrayFilters are queries', () => {
+  it('collapses an array an array filter compares with, and keeps $expr arguments there', () => {
+    const update = (filter: string) =>
+      `{ "update": "c", "updates": [{ "q": {}, "u": { "$set": { "es.$[e].ok": true } }, "arrayFilters": [${filter}] }] }`;
+    expect(queryShape(update('{ "e.tags": { "$eq": [1] } }'))).toBe(queryShape(update('{ "e.tags": { "$eq": [2, 3] } }')));
+    expect(queryShape(update('{ "$expr": { "$eq": ["$e.a", "$e.a"] } }'))).toContain('$eq: ["$e.a", "$e.a"]');
+  });
+});

@@ -30,7 +30,7 @@ const WRITE_STATEMENTS = new Set(['updates', 'deletes']);
 // Options whose value is a query. In a query, an array is a value to compare
 // with, whatever operator holds it, so every list there collapses; under
 // $expr, operators take expressions again.
-const QUERY_OPTIONS = new Set(['filter', 'q', 'query']);
+const QUERY_OPTIONS = new Set(['filter', 'q', 'query', 'arrayFilters']);
 const OPERATOR_STRUCTURAL = new Set(['$sort', '$project']);
 // Lists whose elements are a set, the values an update adds ($each), or a
 // literal ($literal, $const), so how many there are is data. The arguments
