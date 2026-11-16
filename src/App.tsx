@@ -691,6 +691,12 @@ function Workspace() {
   // row as it was before the undo, so its own Undo would put back the wrong
   // values: it gets none.
   const undoInFlightRef = useRef(0);
+  // How many undo writes have started, and that count when each document
+  // dialog opened (-1 if one was out then). A dialog opened before an undo
+  // holds the row as it was before it, so its save gets no Undo either.
+  // ponytail: one entry per opened edit for the window's lifetime.
+  const undoStartsRef = useRef(0);
+  const undoStartsAtOpenRef = useRef(new Map<string, number>());
   const documentEditFlushRef = useRef<(() => boolean) | null>(null);
   useLayoutEffect(() => {
     tabsRef.current = tabs;
@@ -4303,6 +4309,7 @@ function Workspace() {
       error: null,
       saving: false,
     };
+    undoStartsAtOpenRef.current.set(opened.id, undoInFlightRef.current > 0 ? -1 : undoStartsRef.current);
     setTabs(prev => prev.map(t => (t.id === tab.id ? { ...t, documentEdit: opened } : t)));
   };
   /** Ends whatever edit this tab has open — the user's own Cancel, where what
@@ -4809,7 +4816,8 @@ function Workspace() {
     }
 
     const undo = beginUndoableSave(tab.id);
-    const racedUndo = undoInFlightRef.current > 0;
+    const startsAtOpen = undoStartsAtOpenRef.current.get(edit.id);
+    const racedUndo = undoInFlightRef.current > 0 || (startsAtOpen !== undefined && startsAtOpen !== undoStartsRef.current);
     await undoWriteRef.current;
     try {
       await writeDocumentUpdate(tab, edit.targetDoc, json);
@@ -4910,6 +4918,7 @@ function Workspace() {
           { editId, tabId: liveTabId, connectionId: tab.connectionId, db: tab.db, collection: tab.collection },
         ]);
         undoInFlightRef.current++;
+        undoStartsRef.current++;
         try {
           const write = writeDocumentUpdate(tab, undoBaseline(JSON.parse(savedJson), before ?? {}), shellToEjson(docToShell(before)));
           undoWriteRef.current = write.catch(() => {});

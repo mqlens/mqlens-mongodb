@@ -225,6 +225,37 @@ test.describe('In-place cell edit', () => {
     expect(await toast(page, 'Saved').getByRole('button', { name: 'Undo' }).count()).toBe(0);
   });
 
+  test('a document dialog opened before an Undo landed saves with no Undo of its own', async ({ app, page }) => {
+    await openCustomers(app, page);
+    await view(page).getByRole('button', { name: 'Table', exact: true }).click();
+    await view(page).getByText('alice@example.com', { exact: true }).dblclick();
+    await editor(page).fill('"b@example.com"');
+    await editor(page).press('Enter');
+    await expect(view(page).getByText('b@example.com', { exact: true })).toBeVisible();
+
+    // The dialog is opened on the row as saved, with b@.
+    await view(page).getByRole('button', { name: 'Tree', exact: true }).click();
+    await view(page).getByTestId('edit-doc-btn').first().click();
+    const modal = page.getByTestId('document-edit-modal');
+    await expect(modal).toContainText('b@example.com');
+    await setEditorText(
+      page,
+      modal,
+      '{ "_id": ObjectId("603d779f4f102e3a105c3120"), "name": "Alice Smith", "email": "c@example.com", "tier": "Premium", "joined": "2024-01-10", "address": { "city": "New York", "state": "NY" } }',
+    );
+
+    // The Undo finishes before the dialog is saved: alice@ is back underneath it.
+    await toast(page, 'Saved').getByRole('button', { name: 'Undo' }).click();
+    await expect(toast(page, 'Edit undone in customers')).toBeVisible();
+    await modal.getByTestId('document-save-btn').click();
+    await expect(modal).toHaveCount(0);
+
+    // Its Undo would put back the b@ the dialog was opened on, which was undone.
+    const saved = toast(page, 'Saved').last();
+    await expect(saved).toBeVisible();
+    expect(await saved.getByRole('button', { name: 'Undo' }).count()).toBe(0);
+  });
+
   test('a collection is not renamed while an Undo is writing to it', async ({ app, page }) => {
     await openCustomers(app, page);
     await view(page).getByRole('button', { name: 'Table', exact: true }).click();
