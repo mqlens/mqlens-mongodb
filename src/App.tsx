@@ -714,6 +714,9 @@ function Workspace() {
     bump(writeCountsRef.current, key, 1);
     bump(pendingWritesRef.current, key, -1);
   };
+  /** A tab whose rows failed to load again, after a write or otherwise, shows
+   *  them as they were: an edit made from them gets no Undo until they load. */
+  const rowsMayBeStale = (tabId: string) => Boolean(tabsRef.current.find((t) => t.id === tabId)?.error);
   /** null while a write to the document is out: the row shown may be about to change. */
   const writeStamp = (tab: QueryTab, target: Record<string, any> | null | undefined) => {
     const keys = [docKey(tab, target), bulkKey(tab)];
@@ -4850,7 +4853,8 @@ function Workspace() {
 
     const undo = beginUndoableSave(tab.id);
     const writesAtOpen = writesAtOpenRef.current.get(edit.id);
-    const racedUndo = undoInFlightRef.current > 0 || writesAtOpen == null || writesAtOpen !== writeStamp(tab, edit.targetDoc);
+    const racedUndo =
+      undoInFlightRef.current > 0 || rowsMayBeStale(tab.id) || writesAtOpen == null || writesAtOpen !== writeStamp(tab, edit.targetDoc);
     await undoWriteRef.current;
     let savedIn = tab;
     const written = docKey(tab, edit.targetDoc);
@@ -4888,7 +4892,7 @@ function Workspace() {
     ]);
     const undo = beginUndoableSave(tab.id);
     // Or while another write to it is out: the row shown is from before it.
-    const racedUndo = undoInFlightRef.current > 0 || writeStamp(tab, doc) === null;
+    const racedUndo = undoInFlightRef.current > 0 || rowsMayBeStale(tab.id) || writeStamp(tab, doc) === null;
     const written = docKey(tab, doc);
     beginWrite(written);
     try {

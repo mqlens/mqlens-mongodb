@@ -457,6 +457,25 @@ test.describe('In-place cell edit', () => {
     expect(await saved.getByRole('button', { name: 'Undo' }).count()).toBe(0);
   });
 
+  test('a value saved in place on a row left stale by a failed refresh has no Undo', async ({ app, page }) => {
+    await openCustomers(app, page);
+    await view(page).getByRole('button', { name: 'Table', exact: true }).click();
+    // b@ is written, but the refresh after it fails: the grid keeps alice@.
+    await app.failNext('execute_mql_query', 'connection reset');
+    await view(page).getByText('alice@example.com', { exact: true }).dblclick();
+    await editor(page).fill('"b@example.com"');
+    await callFrom(app, 'update_document', () => editor(page).press('Enter'));
+    await expect(toast(page, 'Saved')).toBeVisible();
+
+    await view(page).getByText('alice@example.com', { exact: true }).dblclick();
+    await editor(page).fill('"c@example.com"');
+    await callFrom(app, 'update_document', () => editor(page).press('Enter'));
+    // Its Undo would put back the alice@ it was edited from, erasing the b@ save.
+    const saved = toast(page, 'Saved').last();
+    await expect(saved).toBeVisible();
+    expect(await saved.getByRole('button', { name: 'Undo' }).count()).toBe(0);
+  });
+
   test('a collection is not renamed while an Undo is writing to it', async ({ app, page }) => {
     await openCustomers(app, page);
     await view(page).getByRole('button', { name: 'Table', exact: true }).click();
