@@ -2475,9 +2475,12 @@ function Workspace() {
     oldName: string,
     newName: string
   ) => {
-    // An Undo would write to the old name. ponytail: retires every Undo, not
-    // only those for this collection.
+    // An Undo would write to the old name. The new name has no write counts
+    // yet, so an open dialog's stamp could match again: dialogs lose theirs.
+    // ponytail: retires every Undo and every dialog's stamp, not only those
+    // for this collection.
     latestUndoRef.current++;
+    writesAtOpenRef.current.clear();
     const renameTab = (tab: QueryTab): QueryTab => {
       if (tab.connectionId !== connectionId || tab.db !== dbName || tab.collection !== oldName) {
         return tab;
@@ -2559,6 +2562,7 @@ function Workspace() {
 
   const handleDatabaseRenamed = (connectionId: string, oldName: string, newName: string) => {
     latestUndoRef.current++; // as in handleCollectionRenamed
+    writesAtOpenRef.current.clear();
     const renameTab = (tab: QueryTab): QueryTab => {
       if (tab.connectionId !== connectionId || tab.db !== oldName) {
         return tab;
@@ -4883,7 +4887,8 @@ function Workspace() {
       { editId, tabId: tab.id, connectionId: tab.connectionId, db: tab.db, collection: tab.collection },
     ]);
     const undo = beginUndoableSave(tab.id);
-    const racedUndo = undoInFlightRef.current > 0;
+    // Or while another write to it is out: the row shown is from before it.
+    const racedUndo = undoInFlightRef.current > 0 || writeStamp(tab, doc) === null;
     const written = docKey(tab, doc);
     beginWrite(written);
     try {
