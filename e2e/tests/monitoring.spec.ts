@@ -119,6 +119,49 @@ test.describe('Monitoring', () => {
     await expect(page.getByTestId('monitoring-detail')).toContainText('Premium');
   });
 
+  test('profiler: groups by sort, projection and hint values and operator arguments, not by query values', async ({ app, page }) => {
+    const entry = (millis: number, ns: string, command: string) => ({ op: 'query', ns, millis, tsMs: 1_747_000_000_000 + millis, planSummary: 'COLLSCAN', command });
+    const find = (millis: number, sort: string, id: string, ks: string, natural: number) =>
+      entry(
+        millis,
+        'sales_db.customers',
+        '{"find":"customers","filter":{"sort":"' + sort + '","_id":ObjectId("' + id + '"),"k":{"$in":[' + ks + ']}},' +
+          '"sort":{"t":-1},"projection":{"a":1,"x":{"$ifNull":["$a","none"]}},"hint":{"$natural":' + natural + '}}'
+      );
+    const profile = [
+      // A field named sort in the filter, an ObjectId and the $in values are data: these two group.
+      find(100, 'new', '64b7f0c2a1b2c3d4e5f60718', '1, 2', 1),
+      find(50, 'old', '64b7f0c2a1b2c3d4e5f60719', '3', 1),
+      // The opposite scan direction does not.
+      find(30, 'new', '64b7f0c2a1b2c3d4e5f60718', '1', -1),
+      entry(
+        120,
+        'sales_db.orders',
+        '{"aggregate":"orders","pipeline":[{"$lookup":{"from":"customers","localField":"cid","foreignField":"_id","as":"c"}},' +
+          '{"$set":{"v":{"$concat":["$a","$a"]}}},{"$sort":{"t":1}},{"$sort":{"t":1}}],"cursor":{}}'
+      ),
+      // Cut short by the backend's 2000-character limit.
+      entry(10, 'sales_db.customers', '{"find":"customers","filter":{"t":Timestamp(1700000000, 3),"k":'),
+      entry(5, 'sales_db.customers', 'not a command'),
+    ];
+    await connectStaging(app, page, { monitoring: { profile } });
+    await openMonitoring(page);
+    const view = monitor(page);
+    await view.getByTestId('mon-tab-profiler').click();
+    await view.getByTestId('profiler-group-toggle').click();
+
+    const shapes = [
+      '{find: "customers", filter: {sort: ?, _id: ?, k: {$in: [?]}}, sort: {t: -1}, projection: {a: 1, x: {$ifNull: ["$a", ?]}}, hint: {$natural: 1}}',
+      '{aggregate: "orders", pipeline: [{$lookup: {from: "customers", localField: "cid", foreignField: "_id", as: "c"}}, {$set: {v: {$concat: ["$a", "$a"]}}}, {$sort: {t: 1}}, {$sort: {t: 1}}]}',
+      '{find: "customers", filter: {sort: ?, _id: ?, k: {$in: [?]}}, sort: {t: -1}, projection: {a: 1, x: {$ifNull: ["$a", ?]}}, hint: {$natural: -1}}',
+      '{find: "customers", filter: {t: ?, k: ?}}',
+      'not a command',
+    ];
+    for (const [i, shape] of shapes.entries()) await expect(view.getByTestId(`profile-group-${i}`).locator('td').nth(7)).toHaveText(shape);
+    await expect(view.getByTestId('profile-group-0').locator('td').first()).toHaveText('2');
+    await expect(view.getByTestId('profile-group-5')).toHaveCount(0);
+  });
+
   test('profiler: lists a database\'s slow operations and sets the level', async ({ app, page }) => {
     await connectStaging(app, page);
     await openMonitoring(page);
