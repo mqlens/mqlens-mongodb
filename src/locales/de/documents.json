@@ -85,7 +85,8 @@
     },
     "pipeline": {
       "preview": {
-        "caption": "Die ersten {{count}} Dokumente vor und nach der Stufe",
+        "caption_one": "Das erste Dokument vor und nach der Stufe",
+        "caption_other": "Die ersten {{count}} Dokumente vor und nach der Stufe",
         "docCount_one": "{{count}} Dok.",
         "docCount_other": "{{count}} Dok.",
         "empty": "Keine Dokumente",

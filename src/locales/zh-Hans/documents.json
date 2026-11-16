@@ -309,7 +309,7 @@
     },
     "pipeline": {
       "preview": {
-        "caption": "阶段输入和输出的前 {{count}} 个文档",
+        "caption_other": "阶段输入和输出的前 {{count}} 个文档",
         "docCount_other": "{{count}} 个文档",
         "empty": "没有文档",
         "input": "输入",
