@@ -28,6 +28,9 @@ const OPERATOR_STRUCTURAL = new Set(['$sort', '$project']);
 // Lists whose elements are a set, so how many there are is data. The
 // arguments of any other operator are positional: [$a, $a] is not [$a].
 const VALUE_SETS = new Set(['$in', '$nin', '$all', '$or', '$and', '$nor']);
+// Operators inside a sort, projection or hint whose value is structural too:
+// a scan direction, or the metadata asked for.
+const STRUCTURAL_OPERATORS = new Set(['$natural', '$meta']);
 // What a $lookup joins on, by name.
 const LOOKUPS = new Set(['$lookup', '$graphLookup']);
 const JOIN_FIELDS = new Set(['from', 'localField', 'foreignField', 'as', 'connectFromField', 'connectToField']);
@@ -112,9 +115,9 @@ export function queryShape(command: string): string {
       // The first field names the command, and its value is the collection.
       const keepLiteral = (top && fields.length === 0) || (LOOKUPS.has(parent) && JOIN_FIELDS.has(key));
       // Inside a sort or projection, an operator such as $ifNull computes a
-      // value, and its constants are data again.
+      // value, and its constants are data again; $natural and $meta don't.
       const keepValues =
-        (top && COMMAND_STRUCTURAL.has(key)) || OPERATOR_STRUCTURAL.has(key) || (keepAll && !key.startsWith('$'));
+        (top && COMMAND_STRUCTURAL.has(key)) || OPERATOR_STRUCTURAL.has(key) || (keepAll && (!key.startsWith('$') || STRUCTURAL_OPERATORS.has(key)));
       const shape = value(keepLiteral, keepValues, key);
       if (!(top && NOISE.has(key))) fields.push(`${key}: ${shape}`);
     }

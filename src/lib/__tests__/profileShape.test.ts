@@ -161,3 +161,16 @@ describe('queryShape — values kept only where they shape the query', () => {
     );
   });
 });
+
+describe('queryShape — operators that are part of a sort or hint', () => {
+  it('keeps the direction of a $natural hint or sort', () => {
+    expect(queryShape('{ "find": "c", "filter": {}, "hint": { "$natural": 1 } }')).toBe('{find: "c", filter: {}, hint: {$natural: 1}}');
+    expect(queryShape('{ "find": "c", "filter": {}, "sort": { "$natural": -1 } }')).toBe('{find: "c", filter: {}, sort: {$natural: -1}}');
+  });
+
+  it('keeps what a $meta sort or projection asks for', () => {
+    expect(queryShape('{ "find": "c", "filter": {}, "sort": { "s": { "$meta": "textScore" } } }')).toBe(
+      '{find: "c", filter: {}, sort: {s: {$meta: "textScore"}}}'
+    );
+  });
+});
