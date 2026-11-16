@@ -671,6 +671,12 @@ function Workspace() {
   const tabsRef = useRef<QueryTab[]>(tabs);
   // Which saved edit's Undo still works: only the latest (see undoEditAction).
   const latestUndoRef = useRef(0);
+  // The tab the latest Undo was offered for. When that tab goes to another
+  // window, its edits go with it, so the Undo here retires.
+  const undoTabRef = useRef<string | null>(null);
+  const retireUndoForTab = (tabId: string) => {
+    if (undoTabRef.current === tabId) latestUndoRef.current++;
+  };
   // The undo write in flight, if any: a save waits for it, so the save lands
   // last and the undo cannot overwrite it.
   const undoWriteRef = useRef<Promise<unknown>>(Promise.resolve());
@@ -3165,12 +3171,14 @@ function Workspace() {
   const handleDetachTab = async (tabId: string) => {
     if (!(await readyForWindowChange(tabId))) return;
     lockTabForWindowChange(tabId);
+    retireUndoForTab(tabId);
     detachTabToNewWindow(toProfileSpaceId(tabId, activeConnections));
   };
 
   const handleMoveTab = async (tabId: string, targetWindowId: string) => {
     if (!(await readyForWindowChange(tabId))) return;
     lockTabForWindowChange(tabId);
+    retireUndoForTab(tabId);
     moveTabToWindow(toProfileSpaceId(tabId, activeConnections), targetWindowId);
     // Final whole-branch review, Fix 4(b): the "Move to <window>" list is
     // built from `lastWorkspaceRef` (the last-known cross-window document),
@@ -3956,6 +3964,7 @@ function Workspace() {
               .map((id) => toLiveSpaceId(id, connections))
           );
           leavingIds.forEach((id) => {
+            retireUndoForTab(id);
             tabBuilderStateCache.current.delete(id);
             parkPendingReply(id);
             tabChatCache.current.delete(id);
@@ -4711,6 +4720,10 @@ function Workspace() {
         if (!ok) return;
         confirmed = true;
       }
+      // An update can change what an Undo would write back by `_id`, so it
+      // retires the Undo, and lands after an undo still being written.
+      const undo = beginUndoableSave();
+      await undoWriteRef.current;
       const modified = await invoke<number>('update_many', {
         id: tab.connectionId,
         database: tab.db,
@@ -4718,6 +4731,9 @@ function Workspace() {
         filter,
         update,
         confirmed,
+      }).catch((err) => {
+        undo.refused();
+        throw err;
       });
       await refreshTabResults(tab);
       toast(t('toast.modifiedDocuments', { count: modified }), 'success', { title: t('toast.updatedTitle') });
@@ -4783,7 +4799,7 @@ function Workspace() {
       return;
     }
 
-    const undo = beginUndoableSave();
+    const undo = beginUndoableSave(tab.id);
     const racedUndo = undoInFlightRef.current > 0;
     await undoWriteRef.current;
     try {
@@ -4813,7 +4829,7 @@ function Workspace() {
       ...prev,
       { editId, tabId: tab.id, connectionId: tab.connectionId, db: tab.db, collection: tab.collection },
     ]);
-    const undo = beginUndoableSave();
+    const undo = beginUndoableSave(tab.id);
     const racedUndo = undoInFlightRef.current > 0;
     try {
       try {
@@ -4850,13 +4866,17 @@ function Workspace() {
   /** Retires every earlier Undo as the save is sent. A save the server
    *  refuses changed nothing, so it gives the Undo before it back, unless
    *  another save has started since. */
-  const beginUndoableSave = () => {
+  const beginUndoableSave = (tabId: string | null = null) => {
     const previous = latestUndoRef.current;
+    const previousTab = undoTabRef.current;
     const token = ++latestUndoRef.current;
+    undoTabRef.current = tabId;
     return {
       token,
       refused: () => {
-        if (latestUndoRef.current === token) latestUndoRef.current = previous;
+        if (latestUndoRef.current !== token) return;
+        latestUndoRef.current = previous;
+        undoTabRef.current = previousTab;
       },
     };
   };

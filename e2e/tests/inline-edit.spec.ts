@@ -264,6 +264,60 @@ test.describe('In-place cell edit', () => {
     expect(await app.calls('update_document')).toHaveLength(writes);
   });
 
+  const editThenUpdateMany = async (app: App, page: Page) => {
+    await openCustomers(app, page);
+    await view(page).getByRole('button', { name: 'Table', exact: true }).click();
+    await view(page).getByText('alice@example.com', { exact: true }).dblclick();
+    await editor(page).fill('"b@example.com"');
+    await editor(page).press('Enter');
+    await expect(view(page).getByText('b@example.com', { exact: true })).toBeVisible();
+    await view(page).getByTestId('bulk-write-menu-btn').click();
+    await page.getByTestId('update-many-btn').click();
+    await setEditorText(page, page.getByTestId('update-many-editor'), '{ $set: { email: "z@example.com" } }');
+  };
+
+  test('an Update Many after the edit retires its Undo, which would write over the update', async ({ app, page }) => {
+    await editThenUpdateMany(app, page);
+    await callFrom(app, 'update_many', () => page.getByTestId('update-many-submit').click());
+
+    const writes = (await app.calls('update_document')).length;
+    await toast(page, 'Saved').getByRole('button', { name: 'Undo' }).click();
+    await expect(toast(page, 'This edit can no longer be undone')).toBeVisible();
+    expect(await app.calls('update_document')).toHaveLength(writes);
+  });
+
+  test('an Update Many the server refuses leaves the Undo working', async ({ app, page }) => {
+    await editThenUpdateMany(app, page);
+    await app.failNext('update_many', 'write conflict');
+    await page.getByTestId('update-many-submit').click();
+    await expect(page.getByTestId('dialog-toast').filter({ hasText: 'write conflict' })).toBeVisible();
+
+    await toast(page, 'Saved').getByRole('button', { name: 'Undo' }).click();
+    await expect(toast(page, 'Edit undone in customers')).toBeVisible();
+  });
+
+  test('an Update Many waits for an Undo still writing, so the update lands last', async ({ app, page }) => {
+    await openCustomers(app, page);
+    await view(page).getByRole('button', { name: 'Table', exact: true }).click();
+    await view(page).getByText('alice@example.com', { exact: true }).dblclick();
+    await editor(page).fill('"b@example.com"');
+    await editor(page).press('Enter');
+    await expect(view(page).getByText('b@example.com', { exact: true })).toBeVisible();
+
+    const release = await app.hold('update_document');
+    await toast(page, 'Saved').getByRole('button', { name: 'Undo' }).click();
+    await expect.poll(async () => (await app.calls('update_document')).length).toBe(2);
+    await view(page).getByTestId('bulk-write-menu-btn').click();
+    await page.getByTestId('update-many-btn').click();
+    await setEditorText(page, page.getByTestId('update-many-editor'), '{ $set: { email: "z@example.com" } }');
+    await page.getByTestId('update-many-submit').click();
+    await page.waitForTimeout(500);
+    expect(await app.calls('update_many')).toHaveLength(0);
+
+    await release();
+    await expect.poll(async () => (await app.calls('update_many')).length).toBe(1);
+  });
+
   test('undoes the removal of a sub-document the projection showed only part of', async ({ app, page }) => {
     await openCustomers(app, page);
     await view(page).getByTestId('query-options-toggle').click();

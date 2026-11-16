@@ -214,3 +214,44 @@ test.describe('Tabs another window holds', () => {
     await expect(sidebar(page).getByRole('button', { name: 'Connection Staging' })).toBeVisible();
   });
 });
+
+test.describe('Undo of an edit in a tab that changes windows', () => {
+  /** Staging's customers in the table, a second window, and an edit saved in place. */
+  async function savedEdit(app: App, page: Page): Promise<void> {
+    await connectStaging(app, page);
+    await openCollection(page, 'sales_db', 'customers');
+    await expect(view(page).getByText('Alice Smith').first()).toBeVisible();
+    await announceSecondWindow(app, 70, [stagingTab('transactions')]);
+    await view(page).getByRole('button', { name: 'Table', exact: true }).click();
+    await view(page).getByText('alice@example.com', { exact: true }).dblclick();
+    await view(page).getByTestId('cell-editor').fill('"ada@example.com"');
+    await view(page).getByTestId('cell-editor').press('Enter');
+    await expect(view(page).getByText('ada@example.com', { exact: true })).toBeVisible();
+  }
+
+  test('moving the tab to another window retires its Undo, which would write over a save made there', async ({ app, page }) => {
+    await savedEdit(app, page);
+    await openTabMenu(page, 'customers');
+    await page.getByTestId('context-menu').getByRole('menuitem', { name: /^Move to win-2/ }).click();
+    await expect.poll(async () => (await ops(app)).some((op) => op.type === 'move_tab_to_window')).toBe(true);
+
+    await toast(page, 'Saved').getByRole('button', { name: 'Undo' }).click();
+    await expect(toast(page, 'This edit can no longer be undone')).toBeVisible();
+    expect(await app.calls('update_document')).toHaveLength(1);
+  });
+
+  test('another window taking the tab retires its Undo too', async ({ app, page }) => {
+    await savedEdit(app, page);
+    await app.emit('workspace-changed', {
+      revision: 80,
+      origin: 'win-2',
+      crossWindow: true,
+      workspace: workspace(80, [stagingTab('products')], [stagingTab('transactions'), stagingTab('customers')]),
+    });
+    await expect(strip(page).getByText('customers', { exact: true })).toHaveCount(0);
+
+    await toast(page, 'Saved').getByRole('button', { name: 'Undo' }).click();
+    await expect(toast(page, 'This edit can no longer be undone')).toBeVisible();
+    expect(await app.calls('update_document')).toHaveLength(1);
+  });
+});
