@@ -15,7 +15,9 @@ import {
   ArrowDownUp,
   Search,
   X,
+  Layers,
 } from 'lucide-react';
+import { groupProfileByShape, type ProfileGroup } from '../lib/profileShape';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -401,6 +403,29 @@ const ProfileRow = React.memo<{
 ));
 ProfileRow.displayName = 'ProfileRow';
 
+const ProfileGroupRow: React.FC<{
+  group: ProfileGroup;
+  index: number;
+  onSelect: (entry: ProfileEntry) => void;
+}> = ({ group, index, onSelect }) => (
+  <tr
+    className="cursor-pointer border-t border-border hover:bg-accent/50"
+    data-testid={`profile-group-${index}`}
+    onClick={() => onSelect(group.slowest)}
+  >
+    <td className="px-3 py-1.5 tabular-nums">{group.count}</td>
+    <td className="px-3 py-1.5 tabular-nums">{group.totalMs}</td>
+    <td className={cn('px-3 py-1.5 tabular-nums', group.avgMs >= 100 && 'text-warning')}>{group.avgMs}</td>
+    <td className="px-3 py-1.5 tabular-nums">{group.maxMs}</td>
+    <td className="px-3 py-1.5 tabular-nums">{group.minMs}</td>
+    <td className="px-3 py-1.5"><OpBadge op={group.op} /></td>
+    <td className="max-w-[140px] truncate px-3 py-1.5 font-mono">{group.ns}</td>
+    <td className="max-w-[320px] truncate px-3 py-1.5 font-mono text-muted-foreground" title={group.shape}>
+      {group.shape}
+    </td>
+  </tr>
+);
+
 const FILTER_ALL = '__all__';
 
 const filterBarSelectClass =
@@ -590,6 +615,7 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId, bl
   const [profSearch, setProfSearch] = useState('');
   const [profMinMs, setProfMinMs] = useState(0);
   const [profOp, setProfOp] = useState('');
+  const [profGrouped, setProfGrouped] = useState(false);
 
   const [dbs, setDbs] = useState<string[]>([]);
   const [profilerDb, setProfilerDb] = useState('');
@@ -788,6 +814,10 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId, bl
         (!q || `${p.ns} ${p.op} ${p.planSummary} ${p.command}`.toLowerCase().includes(q)),
     );
   }, [profile, profSearch, profMinMs, profOp]);
+  const profileGroups = useMemo(
+    () => (profGrouped ? groupProfileByShape(filteredProfile) : []),
+    [profGrouped, filteredProfile],
+  );
 
   const latestOpsPerSec = series.opsPerSec.length ? series.opsPerSec[series.opsPerSec.length - 1] : 0;
   const latestNetPerSec = series.netPerSec.length ? series.netPerSec[series.netPerSec.length - 1] : 0;
@@ -1025,6 +1055,18 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId, bl
                 ))}
               </span>
               {profiling && <span className="text-xs text-muted-foreground">{t('monitoringView.profiler.slowThreshold', { slowMs: profiling.slowMs })}</span>}
+              <Button
+                type="button"
+                variant={profGrouped ? 'default' : 'outline'}
+                size="sm"
+                className="h-7 gap-1 px-2 text-xs"
+                aria-pressed={profGrouped}
+                data-testid="profiler-group-toggle"
+                onClick={() => setProfGrouped((g) => !g)}
+              >
+                <Layers size={12} />
+                {t('monitoringView.profiler.groupByShape')}
+              </Button>
               <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={() => void refreshProfiler()} title={t('monitoringView.actions.profilerRefresh')}>
                 <RefreshCw size={12} className={profileLoading ? 'animate-spin' : ''} />
               </Button>
@@ -1054,6 +1096,33 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId, bl
                 />
                 {filteredProfile.length === 0 ? (
                   <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">{t('monitoringView.empty.noEntriesMatchFilter')}</div>
+                ) : profGrouped ? (
+                  <ScrollArea className="min-h-0 flex-1 rounded-md border border-border">
+                    <table className="w-full border-collapse text-xs" data-testid="profile-groups-table">
+                      <thead className="sticky top-0 bg-muted/80 backdrop-blur-sm">
+                        <tr className="text-left text-muted-foreground">
+                          <th className="px-3 py-2 font-medium">{t('monitoringView.table.count')}</th>
+                          <th className="px-3 py-2 font-medium">{t('monitoringView.table.totalMs')}</th>
+                          <th className="px-3 py-2 font-medium">{t('monitoringView.table.avgMs')}</th>
+                          <th className="px-3 py-2 font-medium">{t('monitoringView.table.maxMs')}</th>
+                          <th className="px-3 py-2 font-medium">{t('monitoringView.table.minMs')}</th>
+                          <th className="px-3 py-2 font-medium">op</th>
+                          <th className="px-3 py-2 font-medium">ns</th>
+                          <th className="px-3 py-2 font-medium">{t('monitoringView.table.shape')}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {profileGroups.map((g, i) => (
+                          <ProfileGroupRow
+                            key={g.key}
+                            group={g}
+                            index={i}
+                            onSelect={(entry) => setDetail({ kind: 'profile', data: entry })}
+                          />
+                        ))}
+                      </tbody>
+                    </table>
+                  </ScrollArea>
                 ) : (
                   <ScrollArea className="min-h-0 flex-1 rounded-md border border-border">
                     <table className="w-full border-collapse text-xs" data-testid="profile-table">
