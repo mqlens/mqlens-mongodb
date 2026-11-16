@@ -1466,7 +1466,8 @@ describe('App Component', () => {
       const [save, undo] = updates;
       // The undo is the save run backwards: what was written is now the
       // original, and the document as loaded is what to write.
-      expect(undo.args.filter).toBe('{"_id":"1"}');
+      // Only while what the save wrote is still there.
+      expect(JSON.parse(undo.args.filter)).toEqual({ _id: '1', name: 'Ada', vip: true, tier: { $exists: false } });
       expect(JSON.parse(undo.args.original)).toEqual(JSON.parse(save.args.edited));
       expect(JSON.parse(undo.args.edited)).toEqual({ _id: '1', name: 'John Doe', tier: 'free' });
       expect(undo.args.projection).toBe(save.args.projection);

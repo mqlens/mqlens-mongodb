@@ -577,7 +577,7 @@ test.describe('In-place cell edit', () => {
     expect(await app.calls('update_document')).toHaveLength(writes);
   });
 
-  test('deleting the document retires its Undo, which would restore nothing', async ({ app, page }) => {
+  test('an Undo after its document was deleted writes nothing and says so', async ({ app, page }) => {
     await openCustomers(app, page);
     await view(page).getByRole('button', { name: 'Table', exact: true }).click();
     await view(page).getByText('alice@example.com', { exact: true }).dblclick();
@@ -589,10 +589,11 @@ test.describe('In-place cell edit', () => {
     await callFrom(app, 'delete_document', () => page.getByTestId('dialog-confirm').click());
     await toast(page, 'Saved').getByRole('button', { name: 'Undo' }).click();
     await expect(toast(page, 'This edit can no longer be undone')).toBeVisible();
-    expect(await app.calls('update_document')).toHaveLength(1);
+    // The undo was sent, conditioned on the saved value, and matched nothing.
+    expect(await app.calls('update_document')).toHaveLength(2);
   });
 
-  test('a Delete Many retires the Undo too', async ({ app, page }) => {
+  test('an Undo after a Delete Many removed its document says so too', async ({ app, page }) => {
     await openCustomers(app, page);
     await view(page).getByRole('button', { name: 'Table', exact: true }).click();
     await view(page).getByText('alice@example.com', { exact: true }).dblclick();
@@ -605,7 +606,8 @@ test.describe('In-place cell edit', () => {
     await callFrom(app, 'delete_many', () => page.getByTestId('dialog-confirm').click());
     await toast(page, 'Saved').getByRole('button', { name: 'Undo' }).click();
     await expect(toast(page, 'This edit can no longer be undone')).toBeVisible();
-    expect(await app.calls('update_document')).toHaveLength(1);
+    // The undo was sent, conditioned on the saved value, and matched nothing.
+    expect(await app.calls('update_document')).toHaveLength(2);
   });
 
   const saveB = async (app: App, page: Page) => {
@@ -628,7 +630,7 @@ test.describe('In-place cell edit', () => {
     await expect(toast(page, 'Edit undone in customers')).toBeVisible();
   });
 
-  test('dropping the database retires the Undo, which would restore nothing', async ({ app, page }) => {
+  test('an Undo after its database was dropped says so', async ({ app, page }) => {
     await saveB(app, page);
     await page.getByRole('complementary').getByRole('button', { name: 'Database sales_db' }).click({ button: 'right' });
     // Drops sit in the Manage submenu.
@@ -638,10 +640,11 @@ test.describe('In-place cell edit', () => {
 
     await toast(page, 'Saved').getByRole('button', { name: 'Undo' }).click();
     await expect(toast(page, 'This edit can no longer be undone')).toBeVisible();
-    expect(await app.calls('update_document')).toHaveLength(1);
+    // The undo was sent, conditioned on the saved value, and matched nothing.
+    expect(await app.calls('update_document')).toHaveLength(2);
   });
 
-  test('dropping the collection retires the Undo too', async ({ app, page }) => {
+  test('an Undo after its collection was dropped says so', async ({ app, page }) => {
     await saveB(app, page);
     await page.getByRole('complementary').getByText('customers', { exact: true }).first().click({ button: 'right' });
     // Drops sit in the Manage submenu.
@@ -651,7 +654,42 @@ test.describe('In-place cell edit', () => {
 
     await toast(page, 'Saved').getByRole('button', { name: 'Undo' }).click();
     await expect(toast(page, 'This edit can no longer be undone')).toBeVisible();
-    expect(await app.calls('update_document')).toHaveLength(1);
+    // The undo was sent, conditioned on the saved value, and matched nothing.
+    expect(await app.calls('update_document')).toHaveLength(2);
+  });
+
+  test('an Undo after another window changed the value writes nothing and says so', async ({ app, page }) => {
+    await saveB(app, page);
+    const [save] = await app.calls('update_document');
+    // Another window, whose writes this one does not see, saves c@ over b@.
+    await page.evaluate((connection) => {
+      const _id = { $oid: '603d779f4f102e3a105c3120' };
+      return window.__MQLENS_E2E__!.handle('update_document', {
+        id: connection,
+        database: 'sales_db',
+        collection: 'customers',
+        filter: JSON.stringify({ _id }),
+        original: JSON.stringify({ _id, email: 'b@example.com' }),
+        edited: JSON.stringify({ _id, email: 'c@example.com' }),
+        projection: '{}',
+      });
+    }, String(save.args.id));
+
+    await toast(page, 'Saved').getByRole('button', { name: 'Undo' }).click();
+    await expect(toast(page, 'This edit can no longer be undone')).toBeVisible();
+    await view(page).getByRole('button', { name: 'Run', exact: true }).click();
+    await expect(view(page).getByText('c@example.com', { exact: true })).toBeVisible();
+  });
+
+  test('dropping another collection leaves the Undo working', async ({ app, page }) => {
+    await saveB(app, page);
+    await page.getByRole('complementary').getByText('products', { exact: true }).first().click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Manage', exact: true }).press('ArrowRight');
+    await page.getByRole('menuitem', { name: 'Drop Collection', exact: true }).click();
+    await callFrom(app, 'drop_collection', () => confirmTypedName(page, 'products'));
+
+    await toast(page, 'Saved').getByRole('button', { name: 'Undo' }).click();
+    await expect(toast(page, 'Edit undone in customers')).toBeVisible();
   });
 
   const editThenUpdateMany = async (app: App, page: Page) => {

@@ -27,3 +27,32 @@ export function undoBaseline(saved: Doc, before: Doc): Doc {
   }
   return out;
 }
+
+/**
+ * The filter an undo adds to `_id`: every value the save wrote must still be
+ * there, so an undo after anything else changed them (another window, another
+ * client, a delete or a drop) matches nothing instead of writing old values
+ * over the newer ones. Sub-documents are compared by path, so fields a
+ * projection hid are not; typed values and arrays are compared whole. Both
+ * sides must come through the same EJSON conversion, so unchanged values
+ * read the same.
+ */
+export function undoCondition(saved: Doc, before: Doc, prefix = ''): Doc {
+  const out: Doc = {};
+  for (const key of new Set([...Object.keys(saved), ...Object.keys(before)])) {
+    // `_id` is the filter already; a dotted or `$` name cannot be addressed.
+    if ((!prefix && key === '_id') || key.includes('.') || key.startsWith('$')) continue;
+    const path = prefix + key;
+    if (!(key in saved)) {
+      // A removed sub-document is checked field by field: under a projection
+      // that showed part of it, only those fields were removed.
+      if (isParent(before[key])) Object.assign(out, undoCondition({}, before[key] as Doc, `${path}.`));
+      else out[path] = { $exists: false };
+    } else if (key in before && isDocument(saved[key]) && isDocument(before[key])) {
+      Object.assign(out, undoCondition(saved[key] as Doc, before[key] as Doc, `${path}.`));
+    } else if (!(key in before) || JSON.stringify(saved[key]) !== JSON.stringify(before[key])) {
+      out[path] = saved[key];
+    }
+  }
+  return out;
+}

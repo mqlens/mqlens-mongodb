@@ -130,7 +130,7 @@ import { formatBytes } from './lib/format';
 import type { QueryCodeSpec } from './lib/queryCodeGen';
 import type { IndexSuggestion } from './lib/indexSuggestions';
 import { docToShell, shellToEjson } from './lib/shellDoc';
-import { undoBaseline } from './lib/undoEdit';
+import { undoBaseline, undoCondition } from './lib/undoEdit';
 import { recordHistory, loadCollectionQueries, type SavedQueryBody } from './lib/queryStore';
 import { clearNamespaceIndex, loadNamespaceIndex, matchesNamespaceScope } from './lib/paletteIndex';
 import { CHECK_UPDATE_EVENT } from './components/UpdatePrompt';
@@ -2561,7 +2561,6 @@ function Workspace() {
   };
 
   const handleDatabaseDropped = (connectionId: string, dbName: string) => {
-    latestUndoRef.current++; // an Undo there would restore nothing
     invalidatePaletteNamespaceIndex(connectionId);
     const removed = tabs
       .filter(t => t.connectionId === connectionId && t.db === dbName)
@@ -4652,23 +4651,12 @@ function Workspace() {
     )
       return;
     try {
-      // An Undo of an edit to a deleted document would restore nothing and
-      // report success: deleting retires it, as Update Many does. A delete the
-      // server refuses removed nothing, so it gives the Undo back, unless
-      // something else has retired it since.
-      const previous = latestUndoRef.current;
-      const retired = ++latestUndoRef.current;
-      try {
-        await invoke('delete_document', {
-          id: tab.connectionId,
-          database: tab.db,
-          collection: tab.collection,
-          filter: JSON.stringify({ _id: doc._id }),
-        });
-      } catch (err) {
-        if (latestUndoRef.current === retired) latestUndoRef.current = previous;
-        throw err;
-      }
+      await invoke('delete_document', {
+        id: tab.connectionId,
+        database: tab.db,
+        collection: tab.collection,
+        filter: JSON.stringify({ _id: doc._id }),
+      });
       await refreshTabResults(tab);
       toast(t('toast.documentDeletedFrom', { collection: tab.collection }), 'success', { title: t('toast.deletedTitle') });
     } catch (err: any) {
@@ -4739,9 +4727,6 @@ function Workspace() {
       ) {
         return;
       }
-      // As in handleDeleteDocument, but not given back if it fails: like
-      // Update Many, it may have deleted some documents before it stopped.
-      latestUndoRef.current++;
       const deleted = await invoke<number>('delete_many', {
         id: tab.connectionId,
         database: tab.db,
@@ -5000,14 +4985,21 @@ function Workspace() {
         const written = docKey(tab, before);
         beginWrite(written);
         try {
-          const write = writeDocumentUpdate(tab, undoBaseline(JSON.parse(savedJson), before ?? {}), shellToEjson(docToShell(before))).finally(
+          const restored = shellToEjson(docToShell(before));
+          // Only while the saved values are still there: anything else that
+          // changed them since, which this window may not have seen (another
+          // window or client, a delete, a drop), leaves the write matching
+          // nothing, rather than old values written over newer ones.
+          const saved = JSON.parse(savedJson);
+          const write = writeDocumentUpdate(tab, undoBaseline(saved, before ?? {}), restored, undoCondition(saved, JSON.parse(restored))).finally(
             () => writeLanded(written)
           );
           undoWriteRef.current = write.catch(() => {});
-          await write;
+          const modified = await write;
           const live = tabsRef.current.find((x) => x.id === liveTabId);
           if (live) await refreshTabResults(live);
-          toast(t('toast.editUndoneIn', { collection: tab.collection }), 'success', { title: t('toast.undoneTitle') });
+          if (modified === 0) toast(t('toast.undoSuperseded'), 'info');
+          else toast(t('toast.editUndoneIn', { collection: tab.collection }), 'success', { title: t('toast.undoneTitle') });
         } catch (err: any) {
           toast(t('toast.undoFailed', { detail: err?.message || err }), 'error');
         } finally {
@@ -5019,7 +5011,13 @@ function Workspace() {
     };
   };
 
-  const writeDocumentUpdate = async (tab: QueryTab, target: Record<string, any> | null | undefined, json: string) => {
+  /** Resolves to how many documents changed. `condition` narrows the `_id` filter. */
+  const writeDocumentUpdate = async (
+    tab: QueryTab,
+    target: Record<string, any> | null | undefined,
+    json: string,
+    condition: Record<string, unknown> = {}
+  ): Promise<number> => {
     if (!target || target._id === undefined) {
       // A row shown without its `_id` would update by an empty filter. The
       // message is user-facing: the document dialog shows it in its error
@@ -5030,11 +5028,11 @@ function Workspace() {
     // the fields that changed. The grid may be showing a projection, and saving
     // that partial view as a replacement deleted everything else (#275).
     // `docToShell` on both sides means they go through the identical parse path.
-    await invoke('update_document', {
+    return invoke<number>('update_document', {
       id: tab.connectionId,
       database: tab.db,
       collection: tab.collection,
-      filter: JSON.stringify({ _id: target._id }),
+      filter: JSON.stringify({ _id: target._id, ...condition }),
       // Must be EJSON, not shell text: the backend parses both sides with strict
       // `serde_json`, and DocumentEditModal already converts the editor contents
       // with `shellToEjson` before calling onSave — so sending shell here failed
@@ -5643,9 +5641,6 @@ function Workspace() {
           collectionMutationTrigger={collectionMutationTrigger}
           onCollectionRenamed={handleCollectionRenamed}
           onDatabaseDropped={handleDatabaseDropped}
-          onCollectionDropped={() => {
-            latestUndoRef.current++; // as in handleDatabaseDropped
-          }}
           onDatabaseRenamed={handleDatabaseRenamed}
           onNamespaceMutated={invalidatePaletteNamespaceIndex}
           onFilterQueryChange={setSidebarFilterQuery}
