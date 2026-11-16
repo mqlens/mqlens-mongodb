@@ -674,6 +674,10 @@ function Workspace() {
   // The undo write in flight, if any: a save waits for it, so the save lands
   // last and the undo cannot overwrite it.
   const undoWriteRef = useRef<Promise<unknown>>(Promise.resolve());
+  // How many undo writes are out. A save made meanwhile was edited from the
+  // row as it was before the undo, so its own Undo would put back the wrong
+  // values: it gets none.
+  const undoInFlightRef = useRef(0);
   const documentEditFlushRef = useRef<(() => boolean) | null>(null);
   useLayoutEffect(() => {
     tabsRef.current = tabs;
@@ -4780,6 +4784,7 @@ function Workspace() {
     }
 
     const undo = beginUndoableSave();
+    const racedUndo = undoInFlightRef.current > 0;
     await undoWriteRef.current;
     try {
       await writeDocumentUpdate(tab, edit.targetDoc, json);
@@ -4792,7 +4797,7 @@ function Workspace() {
     await refreshTabResults(savedIn);
     toast(t('toast.documentSavedIn', { collection }), 'success', {
       title: t('toast.savedTitle'),
-      action: undoEditAction(undo.token, tab, savedIn.id, edit.targetDoc, json),
+      action: racedUndo ? undefined : undoEditAction(undo.token, tab, savedIn.id, edit.targetDoc, json),
     });
   };
 
@@ -4809,6 +4814,7 @@ function Workspace() {
       { editId, tabId: tab.id, connectionId: tab.connectionId, db: tab.db, collection: tab.collection },
     ]);
     const undo = beginUndoableSave();
+    const racedUndo = undoInFlightRef.current > 0;
     try {
       try {
         await undoWriteRef.current;
@@ -4821,7 +4827,7 @@ function Workspace() {
       await refreshTabResults(tab);
       toast(t('toast.documentSavedIn', { collection: tab.collection }), 'success', {
         title: t('toast.savedTitle'),
-        action: undoEditAction(undo.token, tab, tab.id, doc, shellToEjson(docToShell(edited))),
+        action: racedUndo ? undefined : undoEditAction(undo.token, tab, tab.id, doc, shellToEjson(docToShell(edited))),
       });
     } finally {
       setPendingSaves(prev => prev.filter(s => s.editId !== editId));
@@ -4870,6 +4876,14 @@ function Workspace() {
           return;
         }
         latestUndoRef.current++;
+        // Registered like a save, through the refresh, so the namespace is
+        // not renamed or dropped while the write is out.
+        const editId = `undo:${crypto.randomUUID()}`;
+        setPendingSaves(prev => [
+          ...prev,
+          { editId, tabId: liveTabId, connectionId: tab.connectionId, db: tab.db, collection: tab.collection },
+        ]);
+        undoInFlightRef.current++;
         try {
           const write = writeDocumentUpdate(tab, undoBaseline(JSON.parse(savedJson), before ?? {}), shellToEjson(docToShell(before)));
           undoWriteRef.current = write.catch(() => {});
@@ -4879,6 +4893,9 @@ function Workspace() {
           toast(t('toast.editUndoneIn', { collection: tab.collection }), 'success', { title: t('toast.undoneTitle') });
         } catch (err: any) {
           toast(t('toast.undoFailed', { detail: err?.message || err }), 'error');
+        } finally {
+          undoInFlightRef.current--;
+          setPendingSaves(prev => prev.filter(p => p.editId !== editId));
         }
       },
     };

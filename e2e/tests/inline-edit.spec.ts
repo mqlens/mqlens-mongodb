@@ -218,6 +218,31 @@ test.describe('In-place cell edit', () => {
     await release();
     await expect.poll(async () => (await app.calls('update_document')).length).toBe(3);
     await expect(view(page).getByText('c@example.com', { exact: true })).toBeVisible();
+    // Its Undo would put back the b@ it was edited from, but the undo had
+    // already restored alice@ underneath it, so it offers none.
+    await expect(toast(page, 'Saved')).toBeVisible();
+    // Checked at once: a toast with an action goes away by itself after 10 s.
+    expect(await toast(page, 'Saved').getByRole('button', { name: 'Undo' }).count()).toBe(0);
+  });
+
+  test('a collection is not renamed while an Undo is writing to it', async ({ app, page }) => {
+    await openCustomers(app, page);
+    await view(page).getByRole('button', { name: 'Table', exact: true }).click();
+    await view(page).getByText('alice@example.com', { exact: true }).dblclick();
+    await editor(page).fill('"b@example.com"');
+    await editor(page).press('Enter');
+    await expect(view(page).getByText('b@example.com', { exact: true })).toBeVisible();
+
+    const release = await app.hold('update_document');
+    await toast(page, 'Saved').getByRole('button', { name: 'Undo' }).click();
+    await expect.poll(async () => (await app.calls('update_document')).length).toBe(2);
+    await page.getByRole('complementary').getByText('customers', { exact: true }).first().click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Rename Collection', exact: true }).click();
+    await expect(page.getByTestId('dialog-toast').filter({ hasText: 'A document is being saved here' })).toBeVisible();
+    expect(await app.calls('rename_collection')).toHaveLength(0);
+
+    await release();
+    await expect(toast(page, 'Edit undone in customers')).toBeVisible();
   });
 
   test('renaming the collection retires its Undo, which would write to the old name', async ({ app, page }) => {
