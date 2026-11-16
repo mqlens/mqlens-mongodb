@@ -1,6 +1,6 @@
 import type { Locator, Page } from '@playwright/test';
 import { test, expect, type App } from '../fixtures';
-import { callFrom, connectStaging, openCollection, setEditorText, view } from '../helpers';
+import { callFrom, connectStaging, openCollection, openInNewTab, setEditorText, switchTab, view } from '../helpers';
 
 // Editing one value in place in the Table and Tree views: double-click, type in
 // shell syntax, Enter. Only the changed field is written, through the same
@@ -474,6 +474,68 @@ test.describe('In-place cell edit', () => {
     const saved = toast(page, 'Saved').last();
     await expect(saved).toBeVisible();
     expect(await saved.getByRole('button', { name: 'Undo' }).count()).toBe(0);
+  });
+
+  test('a value saved in place in a second tab, not refreshed after a save in the first, has no Undo', async ({ app, page }) => {
+    await openCustomers(app, page);
+    await view(page).getByRole('button', { name: 'Table', exact: true }).click();
+    await openInNewTab(page, 'customers');
+    await view(page).getByRole('button', { name: 'Table', exact: true }).click();
+    await view(page).getByText('alice@example.com', { exact: true }).dblclick();
+    await editor(page).fill('"b@example.com"');
+    await callFrom(app, 'update_document', () => editor(page).press('Enter'));
+    await expect(view(page).getByText('b@example.com', { exact: true })).toBeVisible();
+
+    // The first tab still shows alice@.
+    await switchTab(page, 'customers');
+    await view(page).getByText('alice@example.com', { exact: true }).dblclick();
+    await editor(page).fill('"c@example.com"');
+    await callFrom(app, 'update_document', () => editor(page).press('Enter'));
+    // Its Undo would put back alice@, erasing the b@ save.
+    const saved = toast(page, 'Saved').last();
+    await expect(saved).toBeVisible();
+    expect(await saved.getByRole('button', { name: 'Undo' }).count()).toBe(0);
+  });
+
+  test('a value saved in place after an Update Many failed has no Undo, as the rows may be stale', async ({ app, page }) => {
+    await openCustomers(app, page);
+    await view(page).getByRole('button', { name: 'Table', exact: true }).click();
+    await view(page).getByTestId('bulk-write-menu-btn').click();
+    await page.getByTestId('update-many-btn').click();
+    await setEditorText(page, page.getByTestId('update-many-editor'), '{ $set: { email: "z@example.com" } }');
+    await app.failNext('update_many', 'write conflict');
+    await page.getByTestId('update-many-submit').click();
+    await expect(page.getByTestId('dialog-toast').filter({ hasText: 'write conflict' })).toBeVisible();
+
+    await view(page).getByText('alice@example.com', { exact: true }).dblclick();
+    await editor(page).fill('"c@example.com"');
+    await callFrom(app, 'update_document', () => editor(page).press('Enter'));
+    const saved = toast(page, 'Saved');
+    await expect(saved).toBeVisible();
+    expect(await saved.getByRole('button', { name: 'Undo' }).count()).toBe(0);
+  });
+
+  test('rows loaded again after a failed refresh give edits their Undo back', async ({ app, page }) => {
+    await openCustomers(app, page);
+    await view(page).getByRole('button', { name: 'Table', exact: true }).click();
+    await app.failNext('execute_mql_query', 'connection reset');
+    await view(page).getByText('alice@example.com', { exact: true }).dblclick();
+    await editor(page).fill('"b@example.com"');
+    await callFrom(app, 'update_document', () => editor(page).press('Enter'));
+    await expect(toast(page, 'Saved')).toBeVisible();
+
+    // This save's own refresh succeeds, so the grid is current again.
+    await view(page).getByText('alice@example.com', { exact: true }).dblclick();
+    await editor(page).fill('"c@example.com"');
+    await callFrom(app, 'update_document', () => editor(page).press('Enter'));
+    await expect(view(page).getByText('c@example.com', { exact: true })).toBeVisible();
+
+    await view(page).getByText('c@example.com', { exact: true }).dblclick();
+    await editor(page).fill('"d@example.com"');
+    await callFrom(app, 'update_document', () => editor(page).press('Enter'));
+    const saved = toast(page, 'Saved').last();
+    await expect(saved).toBeVisible();
+    expect(await saved.getByRole('button', { name: 'Undo' }).count()).toBe(1);
   });
 
   test('a collection is not renamed while an Undo is writing to it', async ({ app, page }) => {

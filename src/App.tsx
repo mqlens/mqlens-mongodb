@@ -691,37 +691,39 @@ function Workspace() {
   // row as it was before the undo, so its own Undo would put back the wrong
   // values: it gets none.
   const undoInFlightRef = useRef(0);
-  // Writes to each document, and Update Manys on each collection: counted
-  // when one starts and again once the grid has been refreshed after it, and
-  // how many are out. Each document dialog keeps its document's stamp from
-  // when it opened. A dialog whose document was written since, or that opened
-  // while a write to it was out, holds it as it was before, so its Undo would
-  // put back stale values, or erase the other write: its save gets none. So
-  // does a dialog that came from another window, which has no stamp here.
+  // Each document write, and each Update Many on a collection, takes the next
+  // number in a sequence when it lands on the server, failed or not (a failed
+  // bulk update may have written part of it), and counts as out from when it
+  // is sent until the grid is refreshed after it. Each tab keeps the number
+  // current when its rows were last requested and arrived; each document
+  // dialog, the number when it opened. A row written after that, or while a
+  // write to it is out, may be from before that write, and an Undo made from
+  // it would put back stale values or erase the other write: the save gets
+  // none. Neither does one from a tab whose rows have not loaded since, or a
+  // dialog with no number here (from another window, or open across a rename).
   // ponytail: entries for the window's lifetime; prune if it matters.
-  const writeCountsRef = useRef(new Map<string, number>());
+  const writeSeqRef = useRef(0);
+  const lastWriteRef = useRef(new Map<string, number>());
   const pendingWritesRef = useRef(new Map<string, number>());
-  const writesAtOpenRef = useRef(new Map<string, string | null>());
+  const rowsLoadedAtRef = useRef(new Map<string, number>());
+  const writesAtOpenRef = useRef(new Map<string, number | null>());
   const bulkKey = (tab: QueryTab) => `${tab.connectionId}\u0000${tab.db}\u0000${tab.collection}`;
   const docKey = (tab: QueryTab, target: Record<string, any> | null | undefined) =>
     `${bulkKey(tab)}\u0000${JSON.stringify(target?._id)}`;
   const bump = (counts: Map<string, number>, key: string, by: number) => counts.set(key, (counts.get(key) ?? 0) + by);
-  const beginWrite = (key: string) => {
-    bump(writeCountsRef.current, key, 1);
-    bump(pendingWritesRef.current, key, 1);
-  };
-  const endWrite = (key: string) => {
-    bump(writeCountsRef.current, key, 1);
-    bump(pendingWritesRef.current, key, -1);
-  };
-  /** A tab whose rows failed to load again, after a write or otherwise, shows
-   *  them as they were: an edit made from them gets no Undo until they load. */
-  const rowsMayBeStale = (tabId: string) => Boolean(tabsRef.current.find((t) => t.id === tabId)?.error);
-  /** null while a write to the document is out: the row shown may be about to change. */
-  const writeStamp = (tab: QueryTab, target: Record<string, any> | null | undefined) => {
-    const keys = [docKey(tab, target), bulkKey(tab)];
-    if (keys.some((key) => (pendingWritesRef.current.get(key) ?? 0) > 0)) return null;
-    return keys.map((key) => writeCountsRef.current.get(key) ?? 0).join('/');
+  const beginWrite = (key: string) => bump(pendingWritesRef.current, key, 1);
+  const writeLanded = (key: string) => lastWriteRef.current.set(key, ++writeSeqRef.current);
+  const endWrite = (key: string) => bump(pendingWritesRef.current, key, -1);
+  /** Whether `target` may have been written since `since`, or is being written. */
+  const writtenSince = (tab: QueryTab, target: Record<string, any> | null | undefined, since: number | null | undefined) =>
+    since == null ||
+    [docKey(tab, target), bulkKey(tab)].some(
+      (key) => (pendingWritesRef.current.get(key) ?? 0) > 0 || (lastWriteRef.current.get(key) ?? 0) > since
+    );
+  /** Taken as a tab's rows are requested; call what it returns once they arrive. */
+  const rowsRequested = (tabId: string) => {
+    const at = writeSeqRef.current;
+    return () => rowsLoadedAtRef.current.set(tabId, at);
   };
   const documentEditFlushRef = useRef<(() => boolean) | null>(null);
   useLayoutEffect(() => {
@@ -1651,6 +1653,7 @@ function Workspace() {
     try {
       if (def && def.queryType === 'aggregate') {
         const pipeline = (def.pipeline ?? []) as Record<string, unknown>[];
+        const loaded = rowsRequested(tabId);
         const resultStrs = await invoke<string[]>('execute_aggregate', {
           id: connectionId,
           database: dbName,
@@ -1659,6 +1662,7 @@ function Workspace() {
         });
         const parsedResults = resultStrs.map(s => JSON.parse(s));
         setTabs(prev => prev.map(t => t.id === tabId ? { ...t, results: parsedResults, loading: false, lastAggregate: pipeline } : t));
+        loaded();
         // History is best-effort: never surface an error after a successful run.
         recordHistory(connectionQueryKeyFor(connectionId), dbName, collName, {
           queryType: 'aggregate',
@@ -1674,6 +1678,7 @@ function Workspace() {
               skip: def.skip ?? 0,
             }
           : { filter: '{}', sort: '{}', projection: '{}', limit: 50, skip: 0 };
+        const loaded = rowsRequested(tabId);
         const resultStrs = await invoke<string[]>('execute_mql_query', {
           id: connectionId,
           database: dbName,
@@ -1682,6 +1687,7 @@ function Workspace() {
         });
         const parsedResults = resultStrs.map(s => JSON.parse(s));
         setTabs(prev => prev.map(t => t.id === tabId ? { ...t, results: parsedResults, loading: false, lastQuery: q } : t));
+        loaded();
         // History is best-effort: never surface an error after a successful run.
         recordHistory(connectionQueryKeyFor(connectionId), dbName, collName, {
           queryType: 'find',
@@ -3651,6 +3657,7 @@ function Workspace() {
     setTabs(prev => prev.map(t => t.id === tab.id ? { ...t, loading: true, error: null, resultsTab: 'results' } : t));
 
     try {
+      const loaded = rowsRequested(tab.id);
       const resultStrs = await invoke<string[]>('execute_mql_query', {
         id: tab.connectionId,
         database: tab.db,
@@ -3664,6 +3671,7 @@ function Workspace() {
 
       const parsedResults = resultStrs.map(s => JSON.parse(s));
       setTabs(prev => prev.map(t => t.id === tab.id ? { ...t, results: parsedResults, loading: false, lastQuery: query, lastAggregate: undefined } : t));
+      loaded();
       // `lastAggregate: null` (not omitted) explicitly clears any
       // previously-mirrored aggregate on the backend tab, matching the
       // local `lastAggregate: undefined` above.
@@ -3763,6 +3771,7 @@ function Workspace() {
     setTabs(prev => prev.map(t => t.id === tab.id ? { ...t, loading: true, error: null, resultsTab: 'results' } : t));
 
     try {
+      const loaded = rowsRequested(tab.id);
       const resultStrs = await invoke<string[]>('execute_aggregate', {
         id: tab.connectionId,
         database: tab.db,
@@ -3773,6 +3782,7 @@ function Workspace() {
 
       const parsedResults = resultStrs.map(s => JSON.parse(s));
       setTabs(prev => prev.map(t => t.id === tab.id ? { ...t, results: parsedResults, loading: false, lastAggregate: pipeline } : t));
+      loaded();
       mirrorUpdateTabState(tab.id, activeConnections, { lastAggregate: pipeline });
       recordHistory(connectionQueryKeyFor(tab.connectionId), tab.db, tab.collection, {
         queryType: 'aggregate',
@@ -3788,6 +3798,7 @@ function Workspace() {
     try {
       // An aggregate view refreshes by re-running its pipeline; otherwise re-run the find.
       if (tab.lastAggregate) {
+        const loaded = rowsRequested(tab.id);
         const resultStrs = await invoke<string[]>('execute_aggregate', {
           id: tab.connectionId,
           database: tab.db,
@@ -3796,9 +3807,11 @@ function Workspace() {
         });
         const parsedResults = resultStrs.map(s => JSON.parse(s));
         setTabs(prev => prev.map(t => t.id === tab.id ? { ...t, results: parsedResults } : t));
+        loaded();
         return;
       }
       const query = tab.lastQuery || DEFAULT_QUERY;
+      const loaded = rowsRequested(tab.id);
       const resultStrs = await invoke<string[]>('execute_mql_query', {
         id: tab.connectionId,
         database: tab.db,
@@ -3811,6 +3824,7 @@ function Workspace() {
       });
       const parsedResults = resultStrs.map(s => JSON.parse(s));
       setTabs(prev => prev.map(t => t.id === tab.id ? { ...t, results: parsedResults } : t));
+      loaded();
     } catch (err: any) {
       setTabs(prev => prev.map(t => t.id === tab.id ? { ...t, error: String(err) } : t));
     }
@@ -4339,7 +4353,10 @@ function Workspace() {
       error: null,
       saving: false,
     };
-    writesAtOpenRef.current.set(opened.id, writeStamp(tab, edit.targetDoc));
+    writesAtOpenRef.current.set(
+      opened.id,
+      writtenSince(tab, edit.targetDoc, rowsLoadedAtRef.current.get(tab.id)) ? null : writeSeqRef.current
+    );
     setTabs(prev => prev.map(t => (t.id === tab.id ? { ...t, documentEdit: opened } : t)));
   };
   /** Ends whatever edit this tab has open — the user's own Cancel, where what
@@ -4783,7 +4800,7 @@ function Workspace() {
           filter,
           update,
           confirmed,
-        });
+        }).finally(() => writeLanded(written));
         await refreshTabResults(tab);
         toast(t('toast.modifiedDocuments', { count: modified }), 'success', { title: t('toast.updatedTitle') });
       } finally {
@@ -4853,15 +4870,14 @@ function Workspace() {
 
     const undo = beginUndoableSave(tab.id);
     const writesAtOpen = writesAtOpenRef.current.get(edit.id);
-    const racedUndo =
-      undoInFlightRef.current > 0 || rowsMayBeStale(tab.id) || writesAtOpen == null || writesAtOpen !== writeStamp(tab, edit.targetDoc);
+    const racedUndo = undoInFlightRef.current > 0 || writtenSince(tab, edit.targetDoc, writesAtOpen);
     await undoWriteRef.current;
     let savedIn = tab;
     const written = docKey(tab, edit.targetDoc);
     beginWrite(written);
     try {
       try {
-        await writeDocumentUpdate(tab, edit.targetDoc, json);
+        await writeDocumentUpdate(tab, edit.targetDoc, json).finally(() => writeLanded(written));
       } catch (err) {
         undo.refused();
         throw err;
@@ -4892,13 +4908,13 @@ function Workspace() {
     ]);
     const undo = beginUndoableSave(tab.id);
     // Or while another write to it is out: the row shown is from before it.
-    const racedUndo = undoInFlightRef.current > 0 || rowsMayBeStale(tab.id) || writeStamp(tab, doc) === null;
+    const racedUndo = undoInFlightRef.current > 0 || writtenSince(tab, doc, rowsLoadedAtRef.current.get(tab.id));
     const written = docKey(tab, doc);
     beginWrite(written);
     try {
       try {
         await undoWriteRef.current;
-        await writeDocumentUpdate(tab, doc, shellToEjson(docToShell(edited)));
+        await writeDocumentUpdate(tab, doc, shellToEjson(docToShell(edited))).finally(() => writeLanded(written));
       } catch (err: any) {
         undo.refused();
         toast(t('toast.updateFailed', { detail: err?.message || err }), 'error');
@@ -4969,7 +4985,9 @@ function Workspace() {
         const written = docKey(tab, before);
         beginWrite(written);
         try {
-          const write = writeDocumentUpdate(tab, undoBaseline(JSON.parse(savedJson), before ?? {}), shellToEjson(docToShell(before)));
+          const write = writeDocumentUpdate(tab, undoBaseline(JSON.parse(savedJson), before ?? {}), shellToEjson(docToShell(before))).finally(
+            () => writeLanded(written)
+          );
           undoWriteRef.current = write.catch(() => {});
           await write;
           const live = tabsRef.current.find((x) => x.id === liveTabId);
