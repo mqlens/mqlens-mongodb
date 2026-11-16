@@ -198,3 +198,21 @@ describe('queryShape — options of each statement in a write', () => {
     expect(queryShape(literal('$const', '1'))).toBe(queryShape(literal('$const', '2, 3')));
   });
 });
+
+describe('queryShape — arrays in a query are values', () => {
+  it('collapses an array a query compares with, whatever its length', () => {
+    const find = (op: string, items: string) => `{ "find": "c", "filter": { "tags": { "${op}": [${items}] } } }`;
+    expect(queryShape(find('$eq', '1'))).toBe(queryShape(find('$eq', '2, 3')));
+    expect(queryShape(find('$ne', '1'))).toBe(queryShape(find('$ne', '2, 3')));
+    const match = (items: string) => `{ "aggregate": "o", "pipeline": [{ "$match": { "tags": { "$eq": [${items}] } } }] }`;
+    expect(queryShape(match('1'))).toBe(queryShape(match('2, 3')));
+    const del = (items: string) => `{ "delete": "c", "deletes": [{ "q": { "tags": { "$eq": [${items}] } }, "limit": 0 }] }`;
+    expect(queryShape(del('1'))).toBe(queryShape(del('2, 3')));
+  });
+
+  it('keeps the positional arguments of an expression inside a query', () => {
+    expect(queryShape('{ "find": "c", "filter": { "$expr": { "$eq": ["$a", "$a"] } } }')).toBe(
+      '{find: "c", filter: {$expr: {$eq: ["$a", "$a"]}}}'
+    );
+  });
+});

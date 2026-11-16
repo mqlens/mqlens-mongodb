@@ -27,6 +27,10 @@ const NOISE = new Set([
 const COMMAND_STRUCTURAL = new Set(['sort', 'projection', 'hint']);
 // The lists of statements in an update or delete, each with its own options.
 const WRITE_STATEMENTS = new Set(['updates', 'deletes']);
+// Options whose value is a query. In a query, an array is a value to compare
+// with, whatever operator holds it, so every list there collapses; under
+// $expr, operators take expressions again.
+const QUERY_OPTIONS = new Set(['filter', 'q', 'query']);
 const OPERATOR_STRUCTURAL = new Set(['$sort', '$project']);
 // Lists whose elements are a set, the values an update adds ($each), or a
 // literal ($literal, $const), so how many there are is data. The arguments
@@ -97,18 +101,19 @@ export function queryShape(command: string): string {
   // keepAll: inside a sort, projection or hint, whose values are the shape.
   // statements: a document here, or in the list here, is one statement of a
   // write, whose own sort or hint is an option.
-  const value = (keepLiteral = false, keepAll = false, key = '', statements = false): string => {
+  // query: inside a filter or $match, outside $expr.
+  const value = (keepLiteral = false, keepAll = false, key = '', statements = false, query = false): string => {
     const tok = peek();
     if (!tok) return '?';
-    if (isPunct('{')) return doc(false, keepAll, key, statements);
-    if (isPunct('[')) return list(keepAll, key, statements);
+    if (isPunct('{')) return doc(false, keepAll, key, statements, query);
+    if (isPunct('[')) return list(keepAll, key, statements, query);
     pos++;
     if (keepAll) return tok.kind === 'string' ? JSON.stringify(tok.text) : tok.text;
     if (tok.kind === 'string' && (keepLiteral || tok.text.startsWith('$'))) return JSON.stringify(tok.text);
     return '?';
   };
 
-  const doc = (top: boolean, keepAll = false, parent = '', options = top): string => {
+  const doc = (top: boolean, keepAll = false, parent = '', options = top, query = false): string => {
     pos++; // {
     const fields: string[] = [];
     while (peek() && !isPunct('}')) {
@@ -124,27 +129,28 @@ export function queryShape(command: string): string {
       // value, and its constants are data again; $natural and $meta don't.
       const keepValues =
         (options && COMMAND_STRUCTURAL.has(key)) || OPERATOR_STRUCTURAL.has(key) || (keepAll && (!key.startsWith('$') || STRUCTURAL_OPERATORS.has(key)));
-      const shape = value(keepLiteral, keepValues, key, top && WRITE_STATEMENTS.has(key));
+      const inQuery = key !== '$expr' && (query || key === '$match' || (options && QUERY_OPTIONS.has(key)));
+      const shape = value(keepLiteral, keepValues, key, top && WRITE_STATEMENTS.has(key), inQuery);
       if (!(top && NOISE.has(key))) fields.push(`${key}: ${shape}`);
     }
     pos++; // }
     return `{${fields.join(', ')}}`;
   };
 
-  const list = (keepAll: boolean, key: string, statements = false): string => {
+  const list = (keepAll: boolean, key: string, statements = false, query = false): string => {
     pos++; // [
     const items: string[] = [];
-    // Repeats collapse in data and value sets: [1, 2, 3] and [4] are both
-    // [?]. Not in an operator's arguments, and not pipeline stages: a stage
-    // run twice is a different pipeline.
-    const collapse = !keepAll && (!key.startsWith('$') || VALUE_SETS.has(key));
+    // Repeats collapse in data, value sets and queries: [1, 2, 3] and [4] are
+    // both [?]. Not in an operator's arguments, and not pipeline stages: a
+    // stage run twice is a different pipeline.
+    const collapse = !keepAll && (query || !key.startsWith('$') || VALUE_SETS.has(key));
     while (peek() && !isPunct(']')) {
       if (isPunct(',')) {
         pos++;
         continue;
       }
-      const shape = value(false, keepAll, '', statements);
-      if (!collapse || STAGE.test(shape) || !items.includes(shape)) items.push(shape);
+      const shape = value(false, keepAll, '', statements, query);
+      if (!collapse || (!query && STAGE.test(shape)) || !items.includes(shape)) items.push(shape);
     }
     pos++; // ]
     return `[${items.join(', ')}]`;
