@@ -134,3 +134,30 @@ describe('queryShape — structural values', () => {
     expect(queryShape('{ "find": "c", "filter": { "pipeline": [1, 2] } }')).toBe(queryShape('{ "find": "c", "filter": { "pipeline": [3] } }'));
   });
 });
+
+describe('queryShape — values kept only where they shape the query', () => {
+  it('replaces the values of application fields named sort, projection or hint', () => {
+    const a = queryShape('{ "find": "c", "filter": { "sort": "new", "hint": 1, "projection": { "a": 1 } } }');
+    const b = queryShape('{ "find": "c", "filter": { "sort": "old", "hint": 2, "projection": { "a": 0 } } }');
+    expect(a).toBe(b);
+    expect(a).toBe('{find: "c", filter: {sort: ?, hint: ?, projection: {a: ?}}}');
+  });
+
+  it('replaces constants inside a computed projection, and keeps its flags', () => {
+    expect(queryShape('{ "aggregate": "o", "pipeline": [{ "$project": { "t": 1, "x": { "$ifNull": ["$a", "none"] } } }] }')).toBe(
+      '{aggregate: "o", pipeline: [{$project: {t: 1, x: {$ifNull: ["$a", ?]}}}]}'
+    );
+  });
+
+  it('keeps repeated arguments of an expression, which change what it computes', () => {
+    expect(queryShape('{ "aggregate": "o", "pipeline": [{ "$set": { "v": { "$concat": ["$a", "$a"] } } }] }')).toBe(
+      '{aggregate: "o", pipeline: [{$set: {v: {$concat: ["$a", "$a"]}}}]}'
+    );
+  });
+
+  it('still collapses the clauses of an $or, like the values of an $in', () => {
+    expect(queryShape('{ "find": "c", "filter": { "$or": [{ "a": 1 }, { "a": 2 }] } }')).toBe(
+      queryShape('{ "find": "c", "filter": { "$or": [{ "a": 3 }] } }')
+    );
+  });
+});
