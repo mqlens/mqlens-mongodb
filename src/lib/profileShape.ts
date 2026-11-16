@@ -19,6 +19,15 @@ const NOISE = new Set([
   'singleBatch', 'startTransaction', 'txnNumber', 'writeConcern',
 ]);
 
+// Values that are part of the shape, not query data: sort directions,
+// projection flags and index hints change the plan.
+const STRUCTURAL = new Set(['sort', '$sort', 'projection', '$project', 'hint']);
+// What a $lookup joins on, by name.
+const LOOKUPS = new Set(['$lookup', '$graphLookup']);
+const JOIN_FIELDS = new Set(['from', 'localField', 'foreignField', 'as', 'connectFromField', 'connectToField']);
+// A pipeline stage: a document whose one field is a $ operator.
+const STAGE = /^\{\$[^:]+: /;
+
 type Token = { kind: 'punct' | 'string' | 'other'; text: string };
 
 function tokenize(src: string): Token[] {
@@ -72,18 +81,19 @@ export function queryShape(command: string): string {
   const peek = () => tokens[pos];
   const isPunct = (p: string) => peek()?.kind === 'punct' && peek()?.text === p;
 
-  const value = (keepLiteral = false, key = ''): string => {
+  // keepAll: inside a sort, projection or hint, whose values are the shape.
+  const value = (keepLiteral = false, keepAll = false, key = ''): string => {
     const tok = peek();
     if (!tok) return '?';
-    if (isPunct('{')) return doc(false);
-    // Every stage of a pipeline counts, repeats included.
-    if (isPunct('[')) return list(key !== 'pipeline');
+    if (isPunct('{')) return doc(false, keepAll, key);
+    if (isPunct('[')) return list(keepAll);
     pos++;
+    if (keepAll) return tok.kind === 'string' ? JSON.stringify(tok.text) : tok.text;
     if (tok.kind === 'string' && (keepLiteral || tok.text.startsWith('$'))) return JSON.stringify(tok.text);
     return '?';
   };
 
-  const doc = (top: boolean): string => {
+  const doc = (top: boolean, keepAll = false, parent = ''): string => {
     pos++; // {
     const fields: string[] = [];
     while (peek() && !isPunct('}')) {
@@ -94,14 +104,15 @@ export function queryShape(command: string): string {
       const key = tokens[pos++].text;
       if (isPunct(':')) pos++;
       // The first field names the command, and its value is the collection.
-      const shape = value(top && fields.length === 0, key);
+      const keepLiteral = (top && fields.length === 0) || (LOOKUPS.has(parent) && JOIN_FIELDS.has(key));
+      const shape = value(keepLiteral, keepAll || STRUCTURAL.has(key), key);
       if (!(top && NOISE.has(key))) fields.push(`${key}: ${shape}`);
     }
     pos++; // }
     return `{${fields.join(', ')}}`;
   };
 
-  const list = (collapse: boolean): string => {
+  const list = (keepAll: boolean): string => {
     pos++; // [
     const items: string[] = [];
     while (peek() && !isPunct(']')) {
@@ -109,9 +120,10 @@ export function queryShape(command: string): string {
         pos++;
         continue;
       }
-      const shape = value();
-      // Repeats collapse: [1, 2, 3] and [4] are both [?].
-      if (!collapse || !items.includes(shape)) items.push(shape);
+      const shape = value(false, keepAll);
+      // Repeats collapse: [1, 2, 3] and [4] are both [?]. Pipeline stages
+      // don't: a stage run twice is a different pipeline.
+      if (keepAll || STAGE.test(shape) || !items.includes(shape)) items.push(shape);
     }
     pos++; // ]
     return `[${items.join(', ')}]`;

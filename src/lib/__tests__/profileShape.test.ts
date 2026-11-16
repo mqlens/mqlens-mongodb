@@ -110,3 +110,27 @@ describe('queryShape — review fixes', () => {
     expect(twice).not.toBe(once);
   });
 });
+
+describe('queryShape — structural values', () => {
+  it('keeps sort directions and projection flags, which change the plan', () => {
+    expect(queryShape('{ "find": "c", "filter": { "a": 5 }, "sort": { "a": 1, "b": -1 }, "projection": { "a": 1, "_id": 0 } }')).toBe(
+      '{find: "c", filter: {a: ?}, sort: {a: 1, b: -1}, projection: {a: 1, _id: 0}}'
+    );
+    expect(queryShape('{ "aggregate": "o", "pipeline": [{ "$sort": { "t": -1 } }, { "$project": { "t": 1 } }] }')).toBe(
+      '{aggregate: "o", pipeline: [{$sort: {t: -1}}, {$project: {t: 1}}]}'
+    );
+  });
+
+  it('keeps what a $lookup joins on', () => {
+    expect(
+      queryShape('{ "aggregate": "o", "pipeline": [{ "$lookup": { "from": "users", "localField": "uid", "foreignField": "_id", "as": "u" } }] }')
+    ).toBe('{aggregate: "o", pipeline: [{$lookup: {from: "users", localField: "uid", foreignField: "_id", as: "u"}}]}');
+  });
+
+  it('collapses a list of values named pipeline in a filter, like any other list', () => {
+    expect(queryShape('{ "find": "c", "filter": { "pipeline": { "$in": [1, 2] } } }')).toBe(
+      queryShape('{ "find": "c", "filter": { "pipeline": { "$in": [3] } } }')
+    );
+    expect(queryShape('{ "find": "c", "filter": { "pipeline": [1, 2] } }')).toBe(queryShape('{ "find": "c", "filter": { "pipeline": [3] } }'));
+  });
+});
