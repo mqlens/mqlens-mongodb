@@ -286,14 +286,16 @@ test.describe('In-place cell edit', () => {
     expect(await app.calls('update_document')).toHaveLength(writes);
   });
 
-  test('an Update Many the server refuses leaves the Undo working', async ({ app, page }) => {
+  test('an Update Many that fails keeps the Undo retired, as it may have written some documents first', async ({ app, page }) => {
     await editThenUpdateMany(app, page);
     await app.failNext('update_many', 'write conflict');
     await page.getByTestId('update-many-submit').click();
     await expect(page.getByTestId('dialog-toast').filter({ hasText: 'write conflict' })).toBeVisible();
 
+    const writes = (await app.calls('update_document')).length;
     await toast(page, 'Saved').getByRole('button', { name: 'Undo' }).click();
-    await expect(toast(page, 'Edit undone in customers')).toBeVisible();
+    await expect(toast(page, 'This edit can no longer be undone')).toBeVisible();
+    expect(await app.calls('update_document')).toHaveLength(writes);
   });
 
   test('an Update Many waits for an Undo still writing, so the update lands last', async ({ app, page }) => {

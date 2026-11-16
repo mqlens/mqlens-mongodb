@@ -240,6 +240,30 @@ test.describe('Undo of an edit in a tab that changes windows', () => {
     expect(await app.calls('update_document')).toHaveLength(1);
   });
 
+  test('a save refused after the move does not bring the Undo of the tab that moved', async ({ app, page }) => {
+    await savedEdit(app, page);
+    // A second tab on the same collection, with a save on its way.
+    await openInNewTab(page, 'customers');
+    await view(page).getByRole('button', { name: 'Table', exact: true }).click();
+    const release = await app.hold('update_document');
+    await view(page).getByText('bob@example.com', { exact: true }).dblclick();
+    await view(page).getByTestId('cell-editor').fill('"bo@example.com"');
+    await view(page).getByTestId('cell-editor').press('Enter');
+    await expect.poll(async () => (await app.calls('update_document')).length).toBe(2);
+    await app.failNext('update_document', 'Document failed validation');
+
+    // The first tab, whose edit the Saved toast can undo, goes to win-2.
+    await openTabMenu(page, 'Staging / sales_db:customers');
+    await page.getByTestId('context-menu').getByRole('menuitem', { name: /^Move to win-2/ }).click();
+    await expect.poll(async () => (await ops(app)).some((op) => op.type === 'move_tab_to_window')).toBe(true);
+    await release();
+    await expect(toast(page, 'Document failed validation')).toBeVisible();
+
+    await toast(page, 'Saved').getByRole('button', { name: 'Undo' }).click();
+    await expect(toast(page, 'This edit can no longer be undone')).toBeVisible();
+    expect(await app.calls('update_document')).toHaveLength(2);
+  });
+
   test('another window taking the tab retires its Undo too', async ({ app, page }) => {
     await savedEdit(app, page);
     await app.emit('workspace-changed', {

@@ -671,11 +671,13 @@ function Workspace() {
   const tabsRef = useRef<QueryTab[]>(tabs);
   // Which saved edit's Undo still works: only the latest (see undoEditAction).
   const latestUndoRef = useRef(0);
-  // The tab the latest Undo was offered for. When that tab goes to another
-  // window, its edits go with it, so the Undo here retires.
-  const undoTabRef = useRef<string | null>(null);
+  // The tab of each Undo that is current or could come back (a refused save
+  // gives the one before it back). When a tab goes to another window, its
+  // edits go with it, so all of its Undos here retire for good.
+  // ponytail: one entry per save for the window's lifetime; prune if it matters.
+  const undoTabsRef = useRef(new Map<number, string>());
   const retireUndoForTab = (tabId: string) => {
-    if (undoTabRef.current === tabId) latestUndoRef.current++;
+    for (const [token, id] of undoTabsRef.current) if (id === tabId) undoTabsRef.current.delete(token);
   };
   // The undo write in flight, if any: a save waits for it, so the save lands
   // last and the undo cannot overwrite it.
@@ -4722,7 +4724,9 @@ function Workspace() {
       }
       // An update can change what an Undo would write back by `_id`, so it
       // retires the Undo, and lands after an undo still being written.
-      const undo = beginUndoableSave();
+      // Not given back if the update fails: a bulk update is not atomic, and
+      // may have written some documents before it stopped.
+      latestUndoRef.current++;
       await undoWriteRef.current;
       const modified = await invoke<number>('update_many', {
         id: tab.connectionId,
@@ -4731,9 +4735,6 @@ function Workspace() {
         filter,
         update,
         confirmed,
-      }).catch((err) => {
-        undo.refused();
-        throw err;
       });
       await refreshTabResults(tab);
       toast(t('toast.modifiedDocuments', { count: modified }), 'success', { title: t('toast.updatedTitle') });
@@ -4866,17 +4867,14 @@ function Workspace() {
   /** Retires every earlier Undo as the save is sent. A save the server
    *  refuses changed nothing, so it gives the Undo before it back, unless
    *  another save has started since. */
-  const beginUndoableSave = (tabId: string | null = null) => {
+  const beginUndoableSave = (tabId: string) => {
     const previous = latestUndoRef.current;
-    const previousTab = undoTabRef.current;
     const token = ++latestUndoRef.current;
-    undoTabRef.current = tabId;
+    undoTabsRef.current.set(token, tabId);
     return {
       token,
       refused: () => {
-        if (latestUndoRef.current !== token) return;
-        latestUndoRef.current = previous;
-        undoTabRef.current = previousTab;
+        if (latestUndoRef.current === token) latestUndoRef.current = previous;
       },
     };
   };
@@ -4891,7 +4889,7 @@ function Workspace() {
     return {
       label: t('toast.undo'),
       onClick: async () => {
-        if (token !== latestUndoRef.current) {
+        if (token !== latestUndoRef.current || !undoTabsRef.current.has(token)) {
           toast(t('toast.undoSuperseded'), 'info');
           return;
         }
