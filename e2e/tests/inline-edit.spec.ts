@@ -1,6 +1,6 @@
 import type { Locator, Page } from '@playwright/test';
 import { test, expect, type App } from '../fixtures';
-import { callFrom, connectStaging, openCollection, openInNewTab, setEditorText, switchTab, view } from '../helpers';
+import { callFrom, confirmTypedName, connectStaging, openCollection, openInNewTab, setEditorText, switchTab, view } from '../helpers';
 
 // Editing one value in place in the Table and Tree views: double-click, type in
 // shell syntax, Enter. Only the changed field is written, through the same
@@ -603,6 +603,52 @@ test.describe('In-place cell edit', () => {
     await view(page).getByTestId('bulk-write-menu-btn').click();
     await page.getByTestId('delete-many-btn').click();
     await callFrom(app, 'delete_many', () => page.getByTestId('dialog-confirm').click());
+    await toast(page, 'Saved').getByRole('button', { name: 'Undo' }).click();
+    await expect(toast(page, 'This edit can no longer be undone')).toBeVisible();
+    expect(await app.calls('update_document')).toHaveLength(1);
+  });
+
+  const saveB = async (app: App, page: Page) => {
+    await openCustomers(app, page);
+    await view(page).getByRole('button', { name: 'Table', exact: true }).click();
+    await view(page).getByText('alice@example.com', { exact: true }).dblclick();
+    await editor(page).fill('"b@example.com"');
+    await editor(page).press('Enter');
+    await expect(view(page).getByText('b@example.com', { exact: true })).toBeVisible();
+  };
+
+  test('a delete the server refuses gives the Undo back, as nothing was deleted', async ({ app, page }) => {
+    await saveB(app, page);
+    await view(page).getByTestId('delete-doc-btn').first().click();
+    await app.failNext('delete_document', 'not authorized');
+    await page.getByTestId('dialog-confirm').click();
+    await expect(page.getByTestId('dialog-toast').filter({ hasText: 'not authorized' })).toBeVisible();
+
+    await toast(page, 'Saved').getByRole('button', { name: 'Undo' }).click();
+    await expect(toast(page, 'Edit undone in customers')).toBeVisible();
+  });
+
+  test('dropping the database retires the Undo, which would restore nothing', async ({ app, page }) => {
+    await saveB(app, page);
+    await page.getByRole('complementary').getByRole('button', { name: 'Database sales_db' }).click({ button: 'right' });
+    // Drops sit in the Manage submenu.
+    await page.getByRole('menuitem', { name: 'Manage', exact: true }).press('ArrowRight');
+    await page.getByRole('menuitem', { name: 'Drop Database', exact: true }).click();
+    await callFrom(app, 'drop_database', () => confirmTypedName(page, 'sales_db'));
+
+    await toast(page, 'Saved').getByRole('button', { name: 'Undo' }).click();
+    await expect(toast(page, 'This edit can no longer be undone')).toBeVisible();
+    expect(await app.calls('update_document')).toHaveLength(1);
+  });
+
+  test('dropping the collection retires the Undo too', async ({ app, page }) => {
+    await saveB(app, page);
+    await page.getByRole('complementary').getByText('customers', { exact: true }).first().click({ button: 'right' });
+    // Drops sit in the Manage submenu.
+    await page.getByRole('menuitem', { name: 'Manage', exact: true }).press('ArrowRight');
+    await page.getByRole('menuitem', { name: 'Drop Collection', exact: true }).click();
+    await callFrom(app, 'drop_collection', () => confirmTypedName(page, 'customers'));
+
     await toast(page, 'Saved').getByRole('button', { name: 'Undo' }).click();
     await expect(toast(page, 'This edit can no longer be undone')).toBeVisible();
     expect(await app.calls('update_document')).toHaveLength(1);

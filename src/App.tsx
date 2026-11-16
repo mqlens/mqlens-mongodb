@@ -2561,6 +2561,7 @@ function Workspace() {
   };
 
   const handleDatabaseDropped = (connectionId: string, dbName: string) => {
+    latestUndoRef.current++; // an Undo there would restore nothing
     invalidatePaletteNamespaceIndex(connectionId);
     const removed = tabs
       .filter(t => t.connectionId === connectionId && t.db === dbName)
@@ -4652,14 +4653,22 @@ function Workspace() {
       return;
     try {
       // An Undo of an edit to a deleted document would restore nothing and
-      // report success: deleting retires it, as Update Many does.
-      latestUndoRef.current++;
-      await invoke('delete_document', {
-        id: tab.connectionId,
-        database: tab.db,
-        collection: tab.collection,
-        filter: JSON.stringify({ _id: doc._id }),
-      });
+      // report success: deleting retires it, as Update Many does. A delete the
+      // server refuses removed nothing, so it gives the Undo back, unless
+      // something else has retired it since.
+      const previous = latestUndoRef.current;
+      const retired = ++latestUndoRef.current;
+      try {
+        await invoke('delete_document', {
+          id: tab.connectionId,
+          database: tab.db,
+          collection: tab.collection,
+          filter: JSON.stringify({ _id: doc._id }),
+        });
+      } catch (err) {
+        if (latestUndoRef.current === retired) latestUndoRef.current = previous;
+        throw err;
+      }
       await refreshTabResults(tab);
       toast(t('toast.documentDeletedFrom', { collection: tab.collection }), 'success', { title: t('toast.deletedTitle') });
     } catch (err: any) {
@@ -4730,7 +4739,9 @@ function Workspace() {
       ) {
         return;
       }
-      latestUndoRef.current++; // as in handleDeleteDocument
+      // As in handleDeleteDocument, but not given back if it fails: like
+      // Update Many, it may have deleted some documents before it stopped.
+      latestUndoRef.current++;
       const deleted = await invoke<number>('delete_many', {
         id: tab.connectionId,
         database: tab.db,
@@ -5632,6 +5643,9 @@ function Workspace() {
           collectionMutationTrigger={collectionMutationTrigger}
           onCollectionRenamed={handleCollectionRenamed}
           onDatabaseDropped={handleDatabaseDropped}
+          onCollectionDropped={() => {
+            latestUndoRef.current++; // as in handleDatabaseDropped
+          }}
           onDatabaseRenamed={handleDatabaseRenamed}
           onNamespaceMutated={invalidatePaletteNamespaceIndex}
           onFilterQueryChange={setSidebarFilterQuery}

@@ -229,6 +229,7 @@ interface SidebarProps {
   onOpenGenerate?: (connectionId: string, dbName: string, collName?: string) => void;
   onCollectionRenamed?: (connectionId: string, dbName: string, oldName: string, newName: string) => void;
   onDatabaseDropped?: (connectionId: string, dbName: string) => void;
+  onCollectionDropped?: (connectionId: string, dbName: string, collName: string) => void;
   onDatabaseRenamed?: (connectionId: string, oldName: string, newName: string) => void;
   onNamespaceMutated?: (connectionId?: string) => void;
   /** Document writes this window has sent and not yet seen answered, so a
@@ -368,6 +369,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenGenerate,
   onCollectionRenamed,
   onDatabaseDropped,
+  onCollectionDropped,
   onDatabaseRenamed,
   onNamespaceMutated,
   pendingSaves,
@@ -1148,6 +1150,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     } else {
       await invoke('drop_collection', { id: connectionId, database: dbName, collection: collName, confirmed });
     }
+    onCollectionDropped?.(connectionId, dbName, collName);
     if (
       activeCollection?.connectionId === connectionId &&
       activeCollection?.db === dbName &&
