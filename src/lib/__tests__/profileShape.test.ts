@@ -181,3 +181,20 @@ describe('queryShape — values pushed with $each', () => {
     expect(queryShape(update('1'))).toBe(queryShape(update('2, 3')));
   });
 });
+
+describe('queryShape — options of each statement in a write', () => {
+  it('keeps the hint of an update or delete statement, and not a filter field named hint', () => {
+    expect(queryShape('{ "update": "c", "updates": [{ "q": { "a": 1, "hint": "x" }, "u": { "$set": { "b": 1 } }, "hint": "a_1" }] }')).toBe(
+      '{update: "c", updates: [{q: {a: ?, hint: ?}, u: {$set: {b: ?}}, hint: "a_1"}]}'
+    );
+    expect(queryShape('{ "delete": "c", "deletes": [{ "q": { "a": 1 }, "limit": 1, "hint": { "a": 1 } }] }')).toBe(
+      '{delete: "c", deletes: [{q: {a: ?}, limit: ?, hint: {a: 1}}]}'
+    );
+  });
+
+  it('collapses the array a $literal or $const holds, which is data', () => {
+    const literal = (op: string, items: string) => `{ "aggregate": "o", "pipeline": [{ "$set": { "v": { "${op}": [${items}] } } }] }`;
+    expect(queryShape(literal('$literal', '1'))).toBe(queryShape(literal('$literal', '2, 3')));
+    expect(queryShape(literal('$const', '1'))).toBe(queryShape(literal('$const', '2, 3')));
+  });
+});

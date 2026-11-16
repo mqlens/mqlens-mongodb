@@ -21,14 +21,17 @@ const NOISE = new Set([
 
 // Values that are part of the shape, not query data: sort directions,
 // projection flags and index hints change the plan. As options of the
-// command itself, or as the $sort and $project stages and operators; a
-// field of the same name inside a filter is data.
+// command itself or of one statement of a write, or as the $sort and
+// $project stages and operators; a field of the same name inside a filter
+// is data.
 const COMMAND_STRUCTURAL = new Set(['sort', 'projection', 'hint']);
+// The lists of statements in an update or delete, each with its own options.
+const WRITE_STATEMENTS = new Set(['updates', 'deletes']);
 const OPERATOR_STRUCTURAL = new Set(['$sort', '$project']);
-// Lists whose elements are a set, or the values an update adds ($each), so
-// how many there are is data. The arguments of any other operator are
-// positional: [$a, $a] is not [$a].
-const VALUE_SETS = new Set(['$in', '$nin', '$all', '$or', '$and', '$nor', '$each']);
+// Lists whose elements are a set, the values an update adds ($each), or a
+// literal ($literal, $const), so how many there are is data. The arguments
+// of any other operator are positional: [$a, $a] is not [$a].
+const VALUE_SETS = new Set(['$in', '$nin', '$all', '$or', '$and', '$nor', '$each', '$literal', '$const']);
 // Operators inside a sort, projection or hint whose value is structural too:
 // a scan direction, or the metadata asked for.
 const STRUCTURAL_OPERATORS = new Set(['$natural', '$meta']);
@@ -92,18 +95,20 @@ export function queryShape(command: string): string {
   const isPunct = (p: string) => peek()?.kind === 'punct' && peek()?.text === p;
 
   // keepAll: inside a sort, projection or hint, whose values are the shape.
-  const value = (keepLiteral = false, keepAll = false, key = ''): string => {
+  // statements: a document here, or in the list here, is one statement of a
+  // write, whose own sort or hint is an option.
+  const value = (keepLiteral = false, keepAll = false, key = '', statements = false): string => {
     const tok = peek();
     if (!tok) return '?';
-    if (isPunct('{')) return doc(false, keepAll, key);
-    if (isPunct('[')) return list(keepAll, key);
+    if (isPunct('{')) return doc(false, keepAll, key, statements);
+    if (isPunct('[')) return list(keepAll, key, statements);
     pos++;
     if (keepAll) return tok.kind === 'string' ? JSON.stringify(tok.text) : tok.text;
     if (tok.kind === 'string' && (keepLiteral || tok.text.startsWith('$'))) return JSON.stringify(tok.text);
     return '?';
   };
 
-  const doc = (top: boolean, keepAll = false, parent = ''): string => {
+  const doc = (top: boolean, keepAll = false, parent = '', options = top): string => {
     pos++; // {
     const fields: string[] = [];
     while (peek() && !isPunct('}')) {
@@ -118,15 +123,15 @@ export function queryShape(command: string): string {
       // Inside a sort or projection, an operator such as $ifNull computes a
       // value, and its constants are data again; $natural and $meta don't.
       const keepValues =
-        (top && COMMAND_STRUCTURAL.has(key)) || OPERATOR_STRUCTURAL.has(key) || (keepAll && (!key.startsWith('$') || STRUCTURAL_OPERATORS.has(key)));
-      const shape = value(keepLiteral, keepValues, key);
+        (options && COMMAND_STRUCTURAL.has(key)) || OPERATOR_STRUCTURAL.has(key) || (keepAll && (!key.startsWith('$') || STRUCTURAL_OPERATORS.has(key)));
+      const shape = value(keepLiteral, keepValues, key, top && WRITE_STATEMENTS.has(key));
       if (!(top && NOISE.has(key))) fields.push(`${key}: ${shape}`);
     }
     pos++; // }
     return `{${fields.join(', ')}}`;
   };
 
-  const list = (keepAll: boolean, key: string): string => {
+  const list = (keepAll: boolean, key: string, statements = false): string => {
     pos++; // [
     const items: string[] = [];
     // Repeats collapse in data and value sets: [1, 2, 3] and [4] are both
@@ -138,7 +143,7 @@ export function queryShape(command: string): string {
         pos++;
         continue;
       }
-      const shape = value(false, keepAll);
+      const shape = value(false, keepAll, '', statements);
       if (!collapse || STAGE.test(shape) || !items.includes(shape)) items.push(shape);
     }
     pos++; // ]
