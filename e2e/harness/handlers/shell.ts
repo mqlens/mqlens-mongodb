@@ -58,6 +58,10 @@ export function registerShellHandlers(backend: Backend, state: E2EState): void {
   const evaluate = (session: Session, statement: string): Output | Promise<Output> => {
     const text = statement.trim().replace(/;$/, '');
     if (text === '') return printed();
+    // A value the app wrapped to print in a script (echoValues): mongosh runs
+    // what is inside and prints it.
+    const echoed = text.match(/^\{ const (\w+) = \(([\s\S]*)\); if \(\1 !== undefined\) print\(\1\); \}$/);
+    if (echoed) return evaluate(session, echoed[2]);
     if (/\bsleep\(/.test(text)) return new Promise<Output>((_, reject) => session.pending.push(reject));
 
     const databases = databasesOf(session.connectionId);
