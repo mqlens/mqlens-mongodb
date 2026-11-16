@@ -197,7 +197,7 @@ describe('MonitoringView', () => {
     mockInvoke.mockImplementation((cmd: string, args: unknown) =>
       cmd === 'read_profile' ? Promise.resolve([run(120, 'gold'), other, run(40, 'free'), run(200, 'silver')]) : base(cmd, args)
     );
-    render(<MonitoringView connectionId="conn-1" />);
+    render(<MonitoringView connectionId="conn-1" />, { wrapper: DialogProvider });
     fireEvent.click(await screen.findByTestId('mon-tab-profiler'));
     expect(await screen.findByTestId('profile-row-3')).toBeInTheDocument();
 
