@@ -10,6 +10,7 @@ import {
 import { TabVisibleContext } from '../../workspace/tabVisibility';
 import { resetResultsFindShortcutForTests } from '../../lib/resultsFindShortcut';
 import { createFakeMonaco } from '../../test/fakeMonaco';
+import { echoValues } from '../../lib/shellStatement';
 
 const mockInvoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({
@@ -774,6 +775,32 @@ describe('MongoShell Component', () => {
     expect(await screen.findByText('script result')).toBeInTheDocument();
   });
 
+  it('prints the value of each bare expression in a multi-line run, as the REPL and Studio 3T do', async () => {
+    // `mongosh --file` and `load()` print nothing for a bare expression, so
+    // running two counts showed neither. The script is sent with each one
+    // wrapped to print its value.
+    render(
+      <MongoShell
+        connectionId="conn-1"
+        connectionName="mock"
+        connectionUri="mongodb://prod-replica-set"
+        databaseName="sales_db"
+      />
+    );
+    await screen.findByText(/mongosh session attached/);
+
+    const script = 'db.a.countDocuments({})\ndb.b.countDocuments({})';
+    fireEvent.change(screen.getByLabelText('mongosh editor'), { target: { value: script } });
+    fireEvent.click(screen.getByRole('button', { name: /^run$/i }));
+
+    await waitFor(() => {
+      expect(mockInvoke.mock.calls.some((c) => c[0] === 'run_mongosh_script')).toBe(true);
+    });
+    const sent = String(mockInvoke.mock.calls.find((c) => c[0] === 'run_mongosh_script')?.[1]?.script);
+    expect(sent).toBe(echoValues(script));
+    expect(sent).not.toBe(script);
+  });
+
   it('runs a multi-line script as a script on an MQLens Server connection, in its live session', async () => {
     // A server shell has no local mongosh or URI for a one-shot run. The script
     // runs in the tab's session on the server, so it names that session: Stop,
@@ -816,10 +843,12 @@ describe('MongoShell Component', () => {
     fireEvent.change(screen.getByLabelText('mongosh editor'), { target: { value: script } });
     fireEvent.click(screen.getByRole('button', { name: /^run$/i }));
 
+    // The session runs it with load(), which prints a bare value no more than
+    // --file does, so it goes with its value printed.
     await waitFor(() =>
       expect(mockInvoke).toHaveBeenCalledWith('run_mongosh_command', expect.objectContaining({
         sessionId: 'shell-session-1',
-        command: script,
+        command: echoValues(script),
       }))
     );
     expect(mockInvoke.mock.calls.some((c) => c[0] === 'run_mongosh_script')).toBe(false);

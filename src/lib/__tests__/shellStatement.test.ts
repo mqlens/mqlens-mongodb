@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { statementAt } from '../shellStatement';
+import { echoValues, statementAt } from '../shellStatement';
 
 // `|` marks the cursor.
 const at = (withCursor: string): string => {
@@ -278,5 +278,46 @@ describe('statementAt', () => {
     expect(at('print("safe") /* explanation\n*/ db.orders.dele|teMany({})')).toBe('db.orders.deleteMany({})');
     // A comment on one line still does not end it.
     expect(at('db.a.find() /* x */ .lim|it(1)')).toBe('db.a.find() /* x */ .limit(1)');
+  });
+});
+
+// Runs a rewritten script with `print` collecting what it is given.
+const printed = (script: string): unknown[] => {
+  const out: unknown[] = [];
+  new Function('print', echoValues(script))((value: unknown) => out.push(value));
+  return out;
+};
+
+describe('echoValues', () => {
+  it('prints the value of each top-level expression, as the REPL would', () => {
+    expect(printed('1 + 1\nconst x = 3\nx * 2')).toEqual([2, 6]);
+  });
+
+  it('prints nothing for an expression whose value is undefined', () => {
+    expect(printed('void 0;\n[].forEach(() => {})')).toEqual([]);
+  });
+
+  it('leaves calls that print or exit as they are, so nothing prints twice', () => {
+    const script = 'print("one")\nprintjson({ a: 1 })\nconsole.log(2)\nquit(0)';
+    expect(echoValues(script)).toBe(script);
+  });
+
+  it('keeps every statement on its own line, so error line numbers still match', () => {
+    const script = 'db.a.find({\n  x: 1\n})\nconst y = 2\ndb.b.countDocuments()';
+    const lines = echoValues(script).split('\n');
+    expect(lines).toHaveLength(5);
+    expect(lines[3]).toBe('const y = 2');
+    expect(lines[4]).toContain('db.b.countDocuments()');
+  });
+
+  it('keeps mongosh helper lines and still prints the JavaScript around them', () => {
+    const lines = echoValues('db.a.countDocuments()\nuse sales\ndb.b.countDocuments()').split('\n');
+    expect(lines[1]).toBe('use sales');
+    expect(lines[0]).not.toBe('db.a.countDocuments()');
+    expect(lines[2]).not.toBe('db.b.countDocuments()');
+  });
+
+  it('returns a script it cannot parse unchanged, for mongosh to report', () => {
+    expect(echoValues('db.a.find({')).toBe('db.a.find({');
   });
 });
