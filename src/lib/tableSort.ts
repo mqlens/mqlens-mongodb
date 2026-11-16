@@ -5,7 +5,7 @@
 //
 // BSON types are recognised with instanceof, never by a `_bsontype` field: a
 // stored sub-document can have a field of that name.
-import { Binary, BSONSymbol, Decimal128, Double, Int32, Long, MaxKey, MinKey, ObjectId, Timestamp } from 'bson';
+import { Binary, BSONRegExp, BSONSymbol, Decimal128, Double, Int32, Long, MaxKey, MinKey, ObjectId, Timestamp } from 'bson';
 
 const isNumber = (v: unknown) =>
   typeof v === 'number' || v instanceof Int32 || v instanceof Double || v instanceof Long || v instanceof Decimal128;
@@ -148,6 +148,16 @@ export function compareBsonValues(a: unknown, b: unknown): number {
       return x.getTime() - y.getTime();
     case 9:
       return x.compare(y);
+    case 10:
+      // As MongoDB: the pattern, then the options. A BSONRegExp has no
+      // string form of its own, a RegExp keeps them as source and flags.
+      if ((x instanceof RegExp || x instanceof BSONRegExp) && (y instanceof RegExp || y instanceof BSONRegExp)) {
+        const parts = (r: RegExp | BSONRegExp) => (r instanceof RegExp ? [r.source, r.flags] : [r.pattern, r.options]);
+        const [px, ox] = parts(x);
+        const [py, oy] = parts(y);
+        return compareStrings(px, py) || compareStrings(ox, oy);
+      }
+      return compareStrings(String(x), String(y));
     default:
       return compareStrings(String(x), String(y));
   }

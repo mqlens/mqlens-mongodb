@@ -354,7 +354,7 @@ test.describe('Table columns', () => {
     await expect.poll(() => columnOrder(page)).toEqual(['_id', 'price', 'name']);
   });
 
-  test('sorts the edges of the BSON order: MinKey and MaxKey, exact decimals, code points, field types, binary', async ({ app, page }) => {
+  test('sorts the edges of the BSON order: MinKey and MaxKey, exact decimals, code points, field types, binary, regexes', async ({ app, page }) => {
     // In ascending order; seeded backwards so the sort has work to do.
     const values: unknown[] = [
       { $minKey: 1 }, null,
@@ -368,7 +368,9 @@ test.describe('Table columns', () => {
       // Binary by length, then subtype.
       { $binary: { base64: 'AQ==', subType: '00' } }, { $binary: { base64: 'AQ==', subType: '80' } },
       { $binary: { base64: 'AQI=', subType: '00' } },
-      { $regularExpression: { pattern: 'a', options: '' } }, { $maxKey: 1 },
+      // Regexes by pattern, then options.
+      { $regularExpression: { pattern: 'a', options: '' } }, { $regularExpression: { pattern: 'a', options: 'i' } },
+      { $regularExpression: { pattern: 'z', options: '' } }, { $maxKey: 1 },
     ];
     const docs = values.map((v, i) => ({ _id: i + 1, v })).reverse();
     await connectStaging(app, page, { servers: { [STAGING_URI]: { databases: { shop: { things: { docs: docs as Doc[] } } } } } });

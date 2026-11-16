@@ -124,3 +124,13 @@ describe('compareBsonValues — MongoDB string and document rules', () => {
     expect(sorted([{ b: 1 }, { a: 2 }])).toEqual([{ a: 2 }, { b: 1 }]);
   });
 });
+
+describe('compareBsonValues — regular expressions', () => {
+  it('orders regexes by pattern, then by options', () => {
+    const z = new BSONRegExp('z', '');
+    const ai = new BSONRegExp('a', 'i');
+    const a = new BSONRegExp('a', '');
+    expect(sorted([z, ai, a])).toEqual([a, ai, z]);
+    expect(sorted([/z/, /a/i, /a/])).toEqual([/a/, /a/i, /z/]);
+  });
+});
