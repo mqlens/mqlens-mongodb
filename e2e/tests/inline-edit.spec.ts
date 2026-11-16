@@ -577,6 +577,37 @@ test.describe('In-place cell edit', () => {
     expect(await app.calls('update_document')).toHaveLength(writes);
   });
 
+  test('deleting the document retires its Undo, which would restore nothing', async ({ app, page }) => {
+    await openCustomers(app, page);
+    await view(page).getByRole('button', { name: 'Table', exact: true }).click();
+    await view(page).getByText('alice@example.com', { exact: true }).dblclick();
+    await editor(page).fill('"b@example.com"');
+    await editor(page).press('Enter');
+    await expect(view(page).getByText('b@example.com', { exact: true })).toBeVisible();
+
+    await view(page).getByTestId('delete-doc-btn').first().click();
+    await callFrom(app, 'delete_document', () => page.getByTestId('dialog-confirm').click());
+    await toast(page, 'Saved').getByRole('button', { name: 'Undo' }).click();
+    await expect(toast(page, 'This edit can no longer be undone')).toBeVisible();
+    expect(await app.calls('update_document')).toHaveLength(1);
+  });
+
+  test('a Delete Many retires the Undo too', async ({ app, page }) => {
+    await openCustomers(app, page);
+    await view(page).getByRole('button', { name: 'Table', exact: true }).click();
+    await view(page).getByText('alice@example.com', { exact: true }).dblclick();
+    await editor(page).fill('"b@example.com"');
+    await editor(page).press('Enter');
+    await expect(view(page).getByText('b@example.com', { exact: true })).toBeVisible();
+
+    await view(page).getByTestId('bulk-write-menu-btn').click();
+    await page.getByTestId('delete-many-btn').click();
+    await callFrom(app, 'delete_many', () => page.getByTestId('dialog-confirm').click());
+    await toast(page, 'Saved').getByRole('button', { name: 'Undo' }).click();
+    await expect(toast(page, 'This edit can no longer be undone')).toBeVisible();
+    expect(await app.calls('update_document')).toHaveLength(1);
+  });
+
   const editThenUpdateMany = async (app: App, page: Page) => {
     await openCustomers(app, page);
     await view(page).getByRole('button', { name: 'Table', exact: true }).click();

@@ -4651,6 +4651,9 @@ function Workspace() {
     )
       return;
     try {
+      // An Undo of an edit to a deleted document would restore nothing and
+      // report success: deleting retires it, as Update Many does.
+      latestUndoRef.current++;
       await invoke('delete_document', {
         id: tab.connectionId,
         database: tab.db,
@@ -4727,6 +4730,7 @@ function Workspace() {
       ) {
         return;
       }
+      latestUndoRef.current++; // as in handleDeleteDocument
       const deleted = await invoke<number>('delete_many', {
         id: tab.connectionId,
         database: tab.db,
