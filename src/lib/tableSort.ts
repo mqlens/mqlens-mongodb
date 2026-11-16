@@ -74,6 +74,21 @@ const compareExact = (x: unknown, y: unknown): number => {
   return va < vb ? -1 : va > vb ? 1 : 0;
 };
 
+// MongoDB's default string order: by UTF-8 bytes, which is code point order,
+// whatever the locale. UTF-16 units follow it except where a surrogate (half
+// of a character past U+FFFF) meets a character from U+E000 up.
+const compareStrings = (a: string, b: string): number => {
+  for (let i = 0; i < Math.min(a.length, b.length); i++) {
+    const x = a.charCodeAt(i);
+    const y = b.charCodeAt(i);
+    if (x === y) continue;
+    const sx = x >= 0xd800 && x <= 0xdfff;
+    const sy = y >= 0xd800 && y <= 0xdfff;
+    return sx === sy ? x - y : sx ? 1 : -1;
+  }
+  return a.length - b.length;
+};
+
 // Element by element, then the shorter first.
 const compareLists = (a: unknown[], b: unknown[]): number => {
   for (let i = 0; i < Math.min(a.length, b.length); i++) {
@@ -100,13 +115,16 @@ export function compareBsonValues(a: unknown, b: unknown): number {
       return nx - ny || (x instanceof Decimal128 || y instanceof Decimal128 ? compareExact(x, y) : 0);
     }
     case 2:
-      return String(x).localeCompare(String(y));
+      return compareStrings(String(x), String(y));
     case 3: {
-      // Field by field: the name first, then the value.
+      // Field by field, as MongoDB: the value's type, then the name, then the value.
       const ex = Object.entries(x);
       const ey = Object.entries(y);
       for (let i = 0; i < Math.min(ex.length, ey.length); i++) {
-        const c = ex[i][0].localeCompare(ey[i][0]) || compareBsonValues(ex[i][1], ey[i][1]);
+        const c =
+          rank(ex[i][1]) - rank(ey[i][1]) ||
+          compareStrings(ex[i][0], ey[i][0]) ||
+          compareBsonValues(ex[i][1], ey[i][1]);
         if (c !== 0) return c;
       }
       return ex.length - ey.length;
@@ -123,7 +141,7 @@ export function compareBsonValues(a: unknown, b: unknown): number {
       return 0;
     }
     case 6:
-      return x.toHexString().localeCompare(y.toHexString());
+      return compareStrings(x.toHexString(), y.toHexString());
     case 7:
       return Number(x) - Number(y);
     case 8:
@@ -131,6 +149,6 @@ export function compareBsonValues(a: unknown, b: unknown): number {
     case 9:
       return x.compare(y);
     default:
-      return String(x).localeCompare(String(y));
+      return compareStrings(String(x), String(y));
   }
 }

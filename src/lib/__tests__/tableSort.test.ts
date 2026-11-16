@@ -111,3 +111,16 @@ describe('compareBsonValues — doubles against decimals', () => {
     expect(compareBsonValues(Decimal128.fromString('0.5'), 0.5)).toBe(0);
   });
 });
+
+describe('compareBsonValues — MongoDB string and document rules', () => {
+  it('orders strings by their bytes, not by the locale', () => {
+    expect(sorted(['a', 'B', 'é', 'e'])).toEqual(['B', 'a', 'e', 'é']);
+    // A character past U+FFFF is two UTF-16 units but still sorts last by code point.
+    expect(sorted(['😀', '～'])).toEqual(['～', '😀']);
+  });
+
+  it('compares a field by the type of its value before its name', () => {
+    expect(sorted([{ a: 'text' }, { z: 1 }])).toEqual([{ z: 1 }, { a: 'text' }]);
+    expect(sorted([{ b: 1 }, { a: 2 }])).toEqual([{ a: 2 }, { b: 1 }]);
+  });
+});
