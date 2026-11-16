@@ -20,8 +20,14 @@ const NOISE = new Set([
 ]);
 
 // Values that are part of the shape, not query data: sort directions,
-// projection flags and index hints change the plan.
-const STRUCTURAL = new Set(['sort', '$sort', 'projection', '$project', 'hint']);
+// projection flags and index hints change the plan. As options of the
+// command itself, or as the $sort and $project stages and operators; a
+// field of the same name inside a filter is data.
+const COMMAND_STRUCTURAL = new Set(['sort', 'projection', 'hint']);
+const OPERATOR_STRUCTURAL = new Set(['$sort', '$project']);
+// Lists whose elements are a set, so how many there are is data. The
+// arguments of any other operator are positional: [$a, $a] is not [$a].
+const VALUE_SETS = new Set(['$in', '$nin', '$all', '$or', '$and', '$nor']);
 // What a $lookup joins on, by name.
 const LOOKUPS = new Set(['$lookup', '$graphLookup']);
 const JOIN_FIELDS = new Set(['from', 'localField', 'foreignField', 'as', 'connectFromField', 'connectToField']);
@@ -86,7 +92,7 @@ export function queryShape(command: string): string {
     const tok = peek();
     if (!tok) return '?';
     if (isPunct('{')) return doc(false, keepAll, key);
-    if (isPunct('[')) return list(keepAll);
+    if (isPunct('[')) return list(keepAll, key);
     pos++;
     if (keepAll) return tok.kind === 'string' ? JSON.stringify(tok.text) : tok.text;
     if (tok.kind === 'string' && (keepLiteral || tok.text.startsWith('$'))) return JSON.stringify(tok.text);
@@ -105,25 +111,31 @@ export function queryShape(command: string): string {
       if (isPunct(':')) pos++;
       // The first field names the command, and its value is the collection.
       const keepLiteral = (top && fields.length === 0) || (LOOKUPS.has(parent) && JOIN_FIELDS.has(key));
-      const shape = value(keepLiteral, keepAll || STRUCTURAL.has(key), key);
+      // Inside a sort or projection, an operator such as $ifNull computes a
+      // value, and its constants are data again.
+      const keepValues =
+        (top && COMMAND_STRUCTURAL.has(key)) || OPERATOR_STRUCTURAL.has(key) || (keepAll && !key.startsWith('$'));
+      const shape = value(keepLiteral, keepValues, key);
       if (!(top && NOISE.has(key))) fields.push(`${key}: ${shape}`);
     }
     pos++; // }
     return `{${fields.join(', ')}}`;
   };
 
-  const list = (keepAll: boolean): string => {
+  const list = (keepAll: boolean, key: string): string => {
     pos++; // [
     const items: string[] = [];
+    // Repeats collapse in data and value sets: [1, 2, 3] and [4] are both
+    // [?]. Not in an operator's arguments, and not pipeline stages: a stage
+    // run twice is a different pipeline.
+    const collapse = !keepAll && (!key.startsWith('$') || VALUE_SETS.has(key));
     while (peek() && !isPunct(']')) {
       if (isPunct(',')) {
         pos++;
         continue;
       }
       const shape = value(false, keepAll);
-      // Repeats collapse: [1, 2, 3] and [4] are both [?]. Pipeline stages
-      // don't: a stage run twice is a different pipeline.
-      if (keepAll || STAGE.test(shape) || !items.includes(shape)) items.push(shape);
+      if (!collapse || STAGE.test(shape) || !items.includes(shape)) items.push(shape);
     }
     pos++; // ]
     return `[${items.join(', ')}]`;
