@@ -691,25 +691,35 @@ function Workspace() {
   // row as it was before the undo, so its own Undo would put back the wrong
   // values: it gets none.
   const undoInFlightRef = useRef(0);
-  // Writes to each document, and Update Manys, counted when one starts and
-  // again once the grid has been refreshed after it; and those counts when
-  // each document dialog opened. A dialog whose document was written since,
-  // or that opened on rows not yet refreshed, holds it as it was before, so
-  // its Undo would put back stale values, or erase the other write: its save
-  // gets none. So does a dialog that came from another window, whose counts
-  // are not known here.
+  // Writes to each document, and Update Manys on each collection: counted
+  // when one starts and again once the grid has been refreshed after it, and
+  // how many are out. Each document dialog keeps its document's stamp from
+  // when it opened. A dialog whose document was written since, or that opened
+  // while a write to it was out, holds it as it was before, so its Undo would
+  // put back stale values, or erase the other write: its save gets none. So
+  // does a dialog that came from another window, which has no stamp here.
   // ponytail: entries for the window's lifetime; prune if it matters.
-  const docWritesRef = useRef(new Map<string, number>());
-  const bulkWritesRef = useRef(0);
-  const writesAtOpenRef = useRef(new Map<string, string>());
+  const writeCountsRef = useRef(new Map<string, number>());
+  const pendingWritesRef = useRef(new Map<string, number>());
+  const writesAtOpenRef = useRef(new Map<string, string | null>());
+  const bulkKey = (tab: QueryTab) => `${tab.connectionId}\u0000${tab.db}\u0000${tab.collection}`;
   const docKey = (tab: QueryTab, target: Record<string, any> | null | undefined) =>
-    `${tab.connectionId}\u0000${tab.db}\u0000${tab.collection}\u0000${JSON.stringify(target?._id)}`;
-  const docWrites = (tab: QueryTab, target: Record<string, any> | null | undefined) =>
-    docWritesRef.current.get(docKey(tab, target)) ?? 0;
-  const countDocWrite = (tab: QueryTab, target: Record<string, any> | null | undefined) =>
-    docWritesRef.current.set(docKey(tab, target), docWrites(tab, target) + 1);
-  const writeStamp = (tab: QueryTab, target: Record<string, any> | null | undefined) =>
-    `${docWrites(tab, target)}/${bulkWritesRef.current}`;
+    `${bulkKey(tab)}\u0000${JSON.stringify(target?._id)}`;
+  const bump = (counts: Map<string, number>, key: string, by: number) => counts.set(key, (counts.get(key) ?? 0) + by);
+  const beginWrite = (key: string) => {
+    bump(writeCountsRef.current, key, 1);
+    bump(pendingWritesRef.current, key, 1);
+  };
+  const endWrite = (key: string) => {
+    bump(writeCountsRef.current, key, 1);
+    bump(pendingWritesRef.current, key, -1);
+  };
+  /** null while a write to the document is out: the row shown may be about to change. */
+  const writeStamp = (tab: QueryTab, target: Record<string, any> | null | undefined) => {
+    const keys = [docKey(tab, target), bulkKey(tab)];
+    if (keys.some((key) => (pendingWritesRef.current.get(key) ?? 0) > 0)) return null;
+    return keys.map((key) => writeCountsRef.current.get(key) ?? 0).join('/');
+  };
   const documentEditFlushRef = useRef<(() => boolean) | null>(null);
   useLayoutEffect(() => {
     tabsRef.current = tabs;
@@ -4755,22 +4765,25 @@ function Workspace() {
       // Not given back if the update fails: a bulk update is not atomic, and
       // may have written some documents before it stopped.
       latestUndoRef.current++;
-      bulkWritesRef.current++;
-      await undoWriteRef.current;
-      const modified = await invoke<number>('update_many', {
-        id: tab.connectionId,
-        database: tab.db,
-        collection: tab.collection,
-        filter,
-        update,
-        confirmed,
-      });
-      await refreshTabResults(tab);
-      toast(t('toast.modifiedDocuments', { count: modified }), 'success', { title: t('toast.updatedTitle') });
+      const written = bulkKey(tab);
+      beginWrite(written);
+      try {
+        await undoWriteRef.current;
+        const modified = await invoke<number>('update_many', {
+          id: tab.connectionId,
+          database: tab.db,
+          collection: tab.collection,
+          filter,
+          update,
+          confirmed,
+        });
+        await refreshTabResults(tab);
+        toast(t('toast.modifiedDocuments', { count: modified }), 'success', { title: t('toast.updatedTitle') });
+      } finally {
+        endWrite(written);
+      }
     } catch (err: any) {
       toast(t('toast.updateFailed', { detail: err?.message || err }), 'error');
-    } finally {
-      bulkWritesRef.current++;
     }
   };
 
@@ -4833,9 +4846,11 @@ function Workspace() {
 
     const undo = beginUndoableSave(tab.id);
     const writesAtOpen = writesAtOpenRef.current.get(edit.id);
-    const racedUndo = undoInFlightRef.current > 0 || writesAtOpen !== writeStamp(tab, edit.targetDoc);
+    const racedUndo = undoInFlightRef.current > 0 || writesAtOpen == null || writesAtOpen !== writeStamp(tab, edit.targetDoc);
     await undoWriteRef.current;
     let savedIn = tab;
+    const written = docKey(tab, edit.targetDoc);
+    beginWrite(written);
     try {
       try {
         await writeDocumentUpdate(tab, edit.targetDoc, json);
@@ -4847,7 +4862,7 @@ function Workspace() {
       closeEditById(edit.id);
       await refreshTabResults(savedIn);
     } finally {
-      countDocWrite(tab, edit.targetDoc);
+      endWrite(written);
     }
     toast(t('toast.documentSavedIn', { collection }), 'success', {
       title: t('toast.savedTitle'),
@@ -4869,6 +4884,8 @@ function Workspace() {
     ]);
     const undo = beginUndoableSave(tab.id);
     const racedUndo = undoInFlightRef.current > 0;
+    const written = docKey(tab, doc);
+    beginWrite(written);
     try {
       try {
         await undoWriteRef.current;
@@ -4884,7 +4901,7 @@ function Workspace() {
         action: racedUndo ? undefined : undoEditAction(undo.token, tab, tab.id, doc, shellToEjson(docToShell(edited))),
       });
     } finally {
-      countDocWrite(tab, doc);
+      endWrite(written);
       setPendingSaves(prev => prev.filter(s => s.editId !== editId));
     }
   };
@@ -4940,9 +4957,10 @@ function Workspace() {
           { editId, tabId: liveTabId, connectionId: tab.connectionId, db: tab.db, collection: tab.collection },
         ]);
         undoInFlightRef.current++;
-        const target = undoBaseline(JSON.parse(savedJson), before ?? {});
+        const written = docKey(tab, before);
+        beginWrite(written);
         try {
-          const write = writeDocumentUpdate(tab, target, shellToEjson(docToShell(before)));
+          const write = writeDocumentUpdate(tab, undoBaseline(JSON.parse(savedJson), before ?? {}), shellToEjson(docToShell(before)));
           undoWriteRef.current = write.catch(() => {});
           await write;
           const live = tabsRef.current.find((x) => x.id === liveTabId);
@@ -4951,7 +4969,7 @@ function Workspace() {
         } catch (err: any) {
           toast(t('toast.undoFailed', { detail: err?.message || err }), 'error');
         } finally {
-          countDocWrite(tab, target);
+          endWrite(written);
           undoInFlightRef.current--;
           setPendingSaves(prev => prev.filter(p => p.editId !== editId));
         }
@@ -4970,8 +4988,6 @@ function Workspace() {
     // the fields that changed. The grid may be showing a projection, and saving
     // that partial view as a replacement deleted everything else (#275).
     // `docToShell` on both sides means they go through the identical parse path.
-    // Counted again by the caller, once the grid is refreshed.
-    countDocWrite(tab, target);
     await invoke('update_document', {
       id: tab.connectionId,
       database: tab.db,
