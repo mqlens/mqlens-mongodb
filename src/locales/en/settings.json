@@ -206,6 +206,7 @@
     "resetVaultBtn": "Reset vault",
     "resetVaultConfirm": "Reset deletes ALL saved connections and API keys. Continue?",
     "resetVaultSuccess": "Vault reset — please restart the app.",
+    "resetVaultTitle": "Reset the vault?",
     "tabDescription": "Master password, biometrics, and vault recovery.",
     "tabLabel": "Security",
     "unlockWith": "Unlock with {{type}}"

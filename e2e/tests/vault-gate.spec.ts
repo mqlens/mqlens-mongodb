@@ -30,10 +30,10 @@ test.describe('The unlock screen', () => {
 
   test('says why a reset it offered could not be done', async ({ app, page }) => {
     await app.open({ vault: 'locked', vaultPassword: 's3cret' });
-    page.once('dialog', (dialog) => void dialog.accept());
     await app.failNext('vault_reset', 'the vault file is in use');
 
     await page.getByTestId('vault-reset-btn').click();
+    await page.getByTestId('dialog-confirm').click();
 
     await expect(page.getByTestId('vault-error')).toContainText('the vault file is in use');
     await expect(page.getByTestId('vault-unlock')).toBeVisible();

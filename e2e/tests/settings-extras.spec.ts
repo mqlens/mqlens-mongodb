@@ -26,9 +26,9 @@ test.describe('The security tab', () => {
     await expect(message).toHaveText('New password is required');
     expect(await app.calls('vault_change_password')).toHaveLength(0);
 
-    page.once('dialog', (dialog) => void dialog.accept());
     await app.failNext('vault_reset', 'the vault file is read-only');
     await settings(page).getByTestId('sec-reset-btn').click();
+    await page.getByTestId('dialog-confirm').click();
     await expect(message).toContainText('the vault file is read-only');
   });
 

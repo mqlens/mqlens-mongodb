@@ -25,6 +25,7 @@
     "discardConfirm": "Discard this damaged activity log? Its unverifiable events cannot be recovered. A permanent record that the log was discarded will be kept.",
     "discardDone_one": "1 unverifiable event discarded. Recording has resumed, and a record of the discard is kept in the log.",
     "discardDone_other": "{{count}} unverifiable events discarded. Recording has resumed, and a record of the discard is kept in the log.",
+    "discardTitle": "Discard the damaged log?",
     "droppedBanner_one": "{{count}} event was dropped this session (storage or encryption failures).",
     "droppedBanner_other": "{{count}} events were dropped this session (storage or encryption failures).",
     "empty": "No activity recorded yet for the current filters.",
@@ -32,6 +33,7 @@
     "exportDone_one": "Exported {{count}} event.",
     "exportDone_other": "Exported {{count}} events.",
     "exportFileType": "JSONL",
+    "exportPlaintextTitle": "Export the log unencrypted?",
     "exportPlaintextWarning": "Export writes a plaintext JSONL file outside the vault. Continue?",
     "filters": {
       "op": "Operation",
@@ -601,6 +603,7 @@
       "confirmPassword": "Confirm password",
       "masterPassword": "Master password"
     },
+    "resetTitle": "Reset the vault?",
     "titles": {
       "setup": "Create a master password",
       "unlock": "Unlock MQLens"

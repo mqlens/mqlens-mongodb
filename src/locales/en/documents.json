@@ -71,6 +71,16 @@
       "updateMany": "Update Many",
       "updateOrDelete": "Update or Delete"
     },
+    "columnMenu": {
+      "clearSort": "Clear sort",
+      "hide": "Hide column",
+      "moveLeft": "Move left",
+      "moveRight": "Move right",
+      "showAll_one": "Show all columns ({{count}} hidden)",
+      "showAll_other": "Show all columns ({{count}} hidden)",
+      "sortAscending": "Sort ascending",
+      "sortDescending": "Sort descending"
+    },
     "dialogs": {
       "bulkAllWarning_one": "\n\n⚠ This affects the only document in the collection.",
       "bulkAllWarning_other": "\n\n⚠ This affects ALL {{count}} documents in the collection.",
@@ -191,7 +201,8 @@
       "expand": "Expand",
       "insert": "Insert a new document",
       "readOnly": "Connection is read-only",
-      "resizeColumn": "Resize {{label}} column"
+      "resizeColumn": "Resize {{label}} column",
+      "sortColumn": "Sort this page by this column (right-click for more)"
     },
     "viewModes": {
       "chart": "Chart",
@@ -262,6 +273,7 @@
       "clickToAddQueryRules": "+ Click to add query rules",
       "clickToAddSort": "+ Click to add sort criteria",
       "customField": "Custom field...",
+      "dateValue": "Date value (UTC)",
       "descOption": "Desc ({{n}})",
       "excludeOption": "Exclude ({{n}})",
       "fieldPathPlaceholder": "field.path",

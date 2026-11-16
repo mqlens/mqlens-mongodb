@@ -208,7 +208,8 @@
     "resetVaultSuccess": "Tresor zurückgesetzt — bitte starte die App neu.",
     "tabDescription": "Master-Passwort, Biometrie und Wiederherstellung des Tresors.",
     "tabLabel": "Sicherheit",
-    "unlockWith": "Entsperren mit {{type}}"
+    "unlockWith": "Entsperren mit {{type}}",
+    "resetVaultTitle": "Tresor zurücksetzen?"
   },
   "shortcuts": {
     "tabDescription": "Referenz der Tastenkürzel für den Arbeitsbereich.",

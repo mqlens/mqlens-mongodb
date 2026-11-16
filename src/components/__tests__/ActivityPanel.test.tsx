@@ -1,15 +1,24 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { ActivityPanel } from '../ActivityPanel';
+import { DialogProvider } from '../dialogs/DialogProvider';
 
 const mockInvoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: (...args: unknown[]) => mockInvoke(...args),
 }));
 
+const mockSave = vi.fn();
 vi.mock('@tauri-apps/plugin-dialog', () => ({
-  save: vi.fn(),
+  save: (...args: unknown[]) => mockSave(...args),
 }));
+
+// The app's own dialogs only: a native confirm/alert is a failure here.
+const nativeDialog = () => { throw new Error('native window dialog used'); };
+beforeEach(() => {
+  vi.spyOn(window, 'confirm').mockImplementation(nativeDialog);
+  vi.spyOn(window, 'alert').mockImplementation(nativeDialog);
+});
 
 const sampleEvent = {
   id: 'ev-1',
@@ -43,7 +52,7 @@ describe('ActivityPanel', () => {
       return Promise.resolve(undefined);
     });
 
-    render(<ActivityPanel />);
+    render(<ActivityPanel />, { wrapper: DialogProvider });
 
     expect(await screen.findByTestId('activity-locked')).toBeInTheDocument();
     expect(screen.getByTestId('activity-locked')).toHaveTextContent(/locked/i);
@@ -56,7 +65,7 @@ describe('ActivityPanel', () => {
       return Promise.resolve(undefined);
     });
 
-    render(<ActivityPanel />);
+    render(<ActivityPanel />, { wrapper: DialogProvider });
 
     expect(await screen.findByTestId('activity-row-ev-1')).toBeInTheDocument();
     expect(screen.getByText('dropCollection')).toBeInTheDocument();
@@ -90,7 +99,7 @@ describe('ActivityPanel', () => {
       return Promise.resolve(undefined);
     });
 
-    render(<ActivityPanel />);
+    render(<ActivityPanel />, { wrapper: DialogProvider });
 
     const banner = await screen.findByTestId('activity-degraded-banner');
     expect(banner).toHaveTextContent(/unrecognized header/i);
@@ -104,7 +113,7 @@ describe('ActivityPanel', () => {
       return Promise.resolve(undefined);
     });
 
-    render(<ActivityPanel />);
+    render(<ActivityPanel />, { wrapper: DialogProvider });
 
     expect(await screen.findByTestId('activity-locked')).toBeInTheDocument();
     expect(screen.queryByTestId('activity-degraded-banner')).not.toBeInTheDocument();
@@ -118,7 +127,7 @@ describe('ActivityPanel', () => {
       return Promise.resolve(undefined);
     });
 
-    render(<ActivityPanel />);
+    render(<ActivityPanel />, { wrapper: DialogProvider });
 
     expect(await screen.findByTestId('activity-dropped-banner')).toHaveTextContent('3');
   });
@@ -137,7 +146,7 @@ describe('ActivityPanel', () => {
       return Promise.resolve(undefined);
     });
 
-    render(<ActivityPanel />);
+    render(<ActivityPanel />, { wrapper: DialogProvider });
 
     const banner = await screen.findByTestId('activity-integrity-banner');
     expect(banner).toHaveTextContent(/hash chain broken/i);
@@ -157,7 +166,7 @@ describe('ActivityPanel', () => {
       return Promise.resolve(undefined);
     });
 
-    render(<ActivityPanel />);
+    render(<ActivityPanel />, { wrapper: DialogProvider });
 
     const row = await screen.findByTestId('activity-row-ev-1');
     // The row cell carries the full text as a tooltip even while truncated.
@@ -177,7 +186,7 @@ describe('ActivityPanel', () => {
       return Promise.resolve(undefined);
     });
 
-    render(<ActivityPanel />);
+    render(<ActivityPanel />, { wrapper: DialogProvider });
     await screen.findByTestId('activity-row-ev-1');
 
     // Retention is the only thing that removes events from a healthy log.
@@ -199,18 +208,51 @@ describe('ActivityPanel', () => {
       if (cmd === 'audit_discard_damaged_log') return Promise.resolve(7);
       return Promise.resolve(undefined);
     });
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
-    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => undefined);
+    render(<ActivityPanel />, { wrapper: DialogProvider });
+    fireEvent.click(await screen.findByTestId('activity-discard-btn'));
 
-    render(<ActivityPanel />);
-    const btn = await screen.findByTestId('activity-discard-btn');
-    fireEvent.click(btn);
+    // Nothing is removed until the in-app dialog is confirmed.
+    expect(await screen.findByTestId('dialog-title')).toHaveTextContent('Discard the damaged log?');
+    expect(invoked).not.toContain('audit_discard_damaged_log');
+    fireEvent.click(screen.getByTestId('dialog-confirm'));
 
     await waitFor(() => expect(invoked).toContain('audit_discard_damaged_log'));
-    expect(confirmSpy).toHaveBeenCalled();
-    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith(expect.stringContaining('7')));
+    expect(await screen.findByTestId('dialog-toast')).toHaveTextContent('7');
+  });
 
-    confirmSpy.mockRestore();
-    alertSpy.mockRestore();
+  it('asks in-app before exporting the log as plaintext, and reports the count', async () => {
+    mockSave.mockResolvedValue('C:/tmp/audit.jsonl');
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'audit_list') return Promise.resolve([sampleEvent]);
+      if (cmd === 'audit_status') return Promise.resolve(activeStatus);
+      if (cmd === 'audit_export') return Promise.resolve(12);
+      return Promise.resolve(undefined);
+    });
+
+    render(<ActivityPanel />, { wrapper: DialogProvider });
+    fireEvent.click(await screen.findByTestId('activity-export-btn'));
+
+    expect(await screen.findByTestId('dialog-title')).toHaveTextContent('Export the log unencrypted?');
+    expect(mockInvoke).not.toHaveBeenCalledWith('audit_export', expect.anything());
+    fireEvent.click(screen.getByTestId('dialog-confirm'));
+
+    await waitFor(() => expect(mockInvoke).toHaveBeenCalledWith('audit_export', expect.objectContaining({ path: 'C:/tmp/audit.jsonl' })));
+    expect(await screen.findByTestId('dialog-toast')).toHaveTextContent('12');
+  });
+
+  it('exports nothing when the plaintext warning is cancelled', async () => {
+    mockSave.mockResolvedValue('C:/tmp/audit.jsonl');
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'audit_list') return Promise.resolve([sampleEvent]);
+      if (cmd === 'audit_status') return Promise.resolve(activeStatus);
+      return Promise.resolve(undefined);
+    });
+
+    render(<ActivityPanel />, { wrapper: DialogProvider });
+    fireEvent.click(await screen.findByTestId('activity-export-btn'));
+    fireEvent.click(await screen.findByTestId('dialog-cancel'));
+
+    await waitFor(() => expect(screen.queryByTestId('dialog-title')).not.toBeInTheDocument());
+    expect(mockInvoke).not.toHaveBeenCalledWith('audit_export', expect.anything());
   });
 });

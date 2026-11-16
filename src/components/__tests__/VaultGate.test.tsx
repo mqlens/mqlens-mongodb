@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { VaultGate } from '../VaultGate';
+import { DialogProvider } from '../dialogs/DialogProvider';
 
 vi.mock('../../lib/vault', () => ({
   getVaultStatus: vi.fn(),
@@ -26,21 +27,21 @@ describe('VaultGate', () => {
 
   it('shows the setup form when uninitialized', async () => {
     (vault.getVaultStatus as any).mockResolvedValue('uninitialized');
-    render(<VaultGate><div>WORKSPACE</div></VaultGate>);
+    render(<VaultGate><div>WORKSPACE</div></VaultGate>, { wrapper: DialogProvider });
     expect(await screen.findByTestId('vault-setup')).toBeInTheDocument();
     expect(screen.queryByText('WORKSPACE')).not.toBeInTheDocument();
   });
 
   it('renders children once unlocked', async () => {
     (vault.getVaultStatus as any).mockResolvedValue('unlocked');
-    render(<VaultGate><div>WORKSPACE</div></VaultGate>);
+    render(<VaultGate><div>WORKSPACE</div></VaultGate>, { wrapper: DialogProvider });
     expect(await screen.findByText('WORKSPACE')).toBeInTheDocument();
   });
 
   it('shows an inline error on wrong password', async () => {
     (vault.getVaultStatus as any).mockResolvedValue('locked');
     (vault.unlockVault as any).mockRejectedValue('incorrect master password');
-    render(<VaultGate><div>WORKSPACE</div></VaultGate>);
+    render(<VaultGate><div>WORKSPACE</div></VaultGate>, { wrapper: DialogProvider });
     fireEvent.change(await screen.findByTestId('vault-password'), {
       target: { value: 'nope' },
     });
@@ -58,7 +59,7 @@ describe('VaultGate', () => {
       enrolled: true,
     });
     (vault.biometricUnlock as any).mockResolvedValue('unlocked');
-    render(<VaultGate><div>WORKSPACE</div></VaultGate>);
+    render(<VaultGate><div>WORKSPACE</div></VaultGate>, { wrapper: DialogProvider });
     expect(await screen.findByText('WORKSPACE')).toBeInTheDocument();
     expect(vault.biometricUnlock).toHaveBeenCalledTimes(1);
   });
@@ -71,14 +72,14 @@ describe('VaultGate', () => {
       enrolled: true,
     });
     (vault.biometricUnlock as any).mockRejectedValue('User cancelled');
-    render(<VaultGate><div>WORKSPACE</div></VaultGate>);
+    render(<VaultGate><div>WORKSPACE</div></VaultGate>, { wrapper: DialogProvider });
     expect(await screen.findByTestId('vault-unlock')).toBeInTheDocument();
     expect(screen.getByTestId('vault-biometric-btn')).toBeInTheDocument();
   });
 
   it('hides the biometric button when unavailable', async () => {
     (vault.getVaultStatus as any).mockResolvedValue('locked');
-    render(<VaultGate><div>WORKSPACE</div></VaultGate>);
+    render(<VaultGate><div>WORKSPACE</div></VaultGate>, { wrapper: DialogProvider });
     await screen.findByTestId('vault-unlock');
     expect(screen.queryByTestId('vault-biometric-btn')).not.toBeInTheDocument();
   });
@@ -86,13 +87,16 @@ describe('VaultGate', () => {
   it('requires confirmation before allowing a locked recovery reset', async () => {
     (vault.getVaultStatus as any).mockResolvedValue('locked');
     (vault.resetVault as any).mockResolvedValue(undefined);
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
-    render(<VaultGate><div>WORKSPACE</div></VaultGate>);
+    vi.spyOn(window, 'confirm').mockImplementation(() => { throw new Error('native window dialog used'); });
+    render(<VaultGate><div>WORKSPACE</div></VaultGate>, { wrapper: DialogProvider });
 
     fireEvent.click(await screen.findByTestId('vault-reset-btn'));
+    expect(await screen.findByTestId('dialog-title')).toHaveTextContent('Reset the vault?');
+    expect(vault.resetVault).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId('dialog-confirm'));
 
     await waitFor(() => expect(vault.resetVault).toHaveBeenCalledWith(true));
-    confirm.mockRestore();
+    vi.mocked(window.confirm).mockRestore();
   });
 
   it('shows the reset warning and moves to setup when a session may remain active', async () => {
@@ -100,16 +104,19 @@ describe('VaultGate', () => {
     (vault.resetVault as any).mockResolvedValue(
       'Vault reset completed, but one MQLens Server session may still be active.',
     );
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
-    render(<VaultGate><div>WORKSPACE</div></VaultGate>);
+    vi.spyOn(window, 'confirm').mockImplementation(() => { throw new Error('native window dialog used'); });
+    render(<VaultGate><div>WORKSPACE</div></VaultGate>, { wrapper: DialogProvider });
 
     fireEvent.click(await screen.findByTestId('vault-reset-btn'));
+    expect(await screen.findByTestId('dialog-title')).toHaveTextContent('Reset the vault?');
+    expect(vault.resetVault).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId('dialog-confirm'));
 
     expect(await screen.findByTestId('vault-setup')).toBeInTheDocument();
     expect(await screen.findByTestId('vault-error')).toHaveTextContent(
       'one MQLens Server session may still be active',
     );
-    confirm.mockRestore();
+    vi.mocked(window.confirm).mockRestore();
   });
 
   it('unlocks when the biometric retry button is clicked', async () => {
@@ -123,7 +130,7 @@ describe('VaultGate', () => {
     (vault.biometricUnlock as any)
       .mockRejectedValueOnce('User cancelled')
       .mockResolvedValueOnce('unlocked');
-    render(<VaultGate><div>WORKSPACE</div></VaultGate>);
+    render(<VaultGate><div>WORKSPACE</div></VaultGate>, { wrapper: DialogProvider });
     const btn = await screen.findByTestId('vault-biometric-btn');
     fireEvent.click(btn);
     expect(await screen.findByText('WORKSPACE')).toBeInTheDocument();
@@ -133,7 +140,7 @@ describe('VaultGate', () => {
   it('submits the setup form when Enter is pressed in either field', async () => {
     (vault.getVaultStatus as any).mockResolvedValue('uninitialized');
     (vault.initializeVault as any).mockResolvedValue(undefined);
-    render(<VaultGate><div>WORKSPACE</div></VaultGate>);
+    render(<VaultGate><div>WORKSPACE</div></VaultGate>, { wrapper: DialogProvider });
     fireEvent.change(await screen.findByTestId('vault-password'), { target: { value: 'pw' } });
     fireEvent.change(screen.getByTestId('vault-confirm'), { target: { value: 'pw' } });
     fireEvent.keyDown(screen.getByTestId('vault-confirm'), { key: 'Enter' });
@@ -143,7 +150,7 @@ describe('VaultGate', () => {
 
   it('focuses the master password field', async () => {
     (vault.getVaultStatus as any).mockResolvedValue('uninitialized');
-    render(<VaultGate><div>WORKSPACE</div></VaultGate>);
+    render(<VaultGate><div>WORKSPACE</div></VaultGate>, { wrapper: DialogProvider });
     await waitFor(() => expect(screen.getByTestId('vault-password')).toHaveFocus());
   });
 
@@ -151,7 +158,7 @@ describe('VaultGate', () => {
     const setUp = async () => {
       (vault.getVaultStatus as any).mockResolvedValue('uninitialized');
       (vault.initializeVault as any).mockResolvedValue(undefined);
-      render(<VaultGate><div>WORKSPACE</div></VaultGate>);
+      render(<VaultGate><div>WORKSPACE</div></VaultGate>, { wrapper: DialogProvider });
       fireEvent.change(await screen.findByTestId('vault-password'), { target: { value: 'pw' } });
       fireEvent.change(screen.getByTestId('vault-confirm'), { target: { value: 'pw' } });
       fireEvent.click(screen.getByTestId('vault-setup-btn'));

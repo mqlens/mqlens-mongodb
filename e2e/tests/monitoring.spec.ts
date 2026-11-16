@@ -69,17 +69,54 @@ test.describe('Monitoring', () => {
     await openMonitoring(page);
     const view = monitor(page);
 
-    page.once('dialog', (dialog) => void dialog.dismiss());
     await view.getByTestId('kill-op-102').click();
+    await page.getByTestId('dialog-cancel').click();
     await expect(view.getByTestId('op-row-102')).toBeVisible();
     expect(await app.calls('kill_op')).toHaveLength(0);
 
-    page.once('dialog', (dialog) => void dialog.accept());
     await view.getByTestId('kill-op-101').click();
+    await page.getByTestId('dialog-confirm').click();
     await expect(view.getByTestId('op-row-101')).toHaveCount(0);
     const kills = await app.calls('kill_op');
     expect(kills).toHaveLength(1);
     expect(kills[0].args).toMatchObject({ opid: 101 });
+  });
+
+  test('profiler: groups slow operations by query shape, with their count and durations', async ({ app, page }) => {
+    const find = (millis: number, tier: string) => ({
+      op: 'query',
+      ns: 'sales_db.customers',
+      millis,
+      tsMs: 1_747_000_000_000 + millis,
+      planSummary: 'COLLSCAN',
+      command: `{ "find": "customers", "filter": { "tier": "${tier}" }, "$db": "sales_db" }`,
+    });
+    const profile = [
+      find(120, 'Gold'),
+      find(40, 'Standard'),
+      { op: 'update', ns: 'sales_db.products', millis: 300, tsMs: 1, planSummary: 'IXSCAN { _id: 1 }', command: '{"update":"products","updates":[{"q":{"_id":1}}]}' },
+      find(200, 'Premium'),
+    ];
+    await connectStaging(app, page, { monitoring: { profile } });
+    await openMonitoring(page);
+    const view = monitor(page);
+    await view.getByTestId('mon-tab-profiler').click();
+    await expect(view.getByTestId('profile-row-3')).toBeVisible();
+
+    await view.getByTestId('profiler-group-toggle').click();
+    await expect(view.getByTestId('profile-table')).toHaveCount(0);
+    // Most total time first: the three finds (360 ms) before the one update (300 ms).
+    const first = view.getByTestId('profile-group-0');
+    await expect(first.locator('td')).toHaveText(['3', '360', '120', '200', '40', /query/i, 'sales_db.customers', '{find: "customers", filter: {tier: ?}}']);
+    await expect(view.getByTestId('profile-group-1')).toContainText('sales_db.products');
+    await expect(view.getByTestId('profile-group-2')).toHaveCount(0);
+
+    // Filters still apply: at 100 ms and over, two finds are left.
+    await view.getByTestId('profiler-min-ms').fill('100');
+    await expect(first.locator('td').first()).toHaveText('2');
+
+    await first.click();
+    await expect(page.getByTestId('monitoring-detail')).toContainText('Premium');
   });
 
   test('profiler: lists a database\'s slow operations and sets the level', async ({ app, page }) => {
