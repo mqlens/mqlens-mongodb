@@ -1,7 +1,7 @@
 import type { Locator, Page } from '@playwright/test';
 import { test, expect, type App } from '../fixtures';
 import type { Doc } from '../harness/seed';
-import { callFrom, connectStaging, openCollection, setEditorText, STAGING_URI, view } from '../helpers';
+import { callFrom, connectStaging, openCollection, openInNewTab, setEditorText, STAGING_URI, switchTab, view } from '../helpers';
 
 // The results grid past its everyday use (#396): plans of every shape, copying
 // values and long results, typed values in each view, and where Ctrl+F goes.
@@ -304,5 +304,114 @@ test.describe('Typed values and find', () => {
     await view(page).getByTestId('explain-plan-tab').click();
     await page.keyboard.press('ControlOrMeta+f');
     await expect(findInput(page)).not.toBeVisible();
+  });
+});
+
+test.describe('Table columns', () => {
+  const columnOrder = (page: Page) =>
+    view(page).getByTestId('table-header').locator('[data-column]').evaluateAll((els) => els.map((e) => e.getAttribute('data-column')));
+  async function headerMenu(page: Page, column: string, item: string): Promise<void> {
+    await view(page).locator(`[data-testid="table-header"] [data-column="${column}"]`).dispatchEvent('contextmenu');
+    await page.getByTestId('context-menu').getByRole('menuitem', { name: item }).dispatchEvent('click');
+  }
+
+  test('sorts the page by a header, hides and moves columns, and keeps that when the tab is unmounted', async ({ app, page }) => {
+    const others = ['c1', 'c2', 'c3', 'c4', 'c5', 'c6'];
+    await connectStaging(app, page, {
+      servers: {
+        [STAGING_URI]: {
+          databases: {
+            shop: {
+              things: { docs: [{ _id: 1, name: 'b', price: 30 }, { _id: 2, name: 'a', price: 10 }, { _id: 3, name: 'c', price: 20 }] },
+              ...Object.fromEntries(others.map((c) => [c, { docs: [{ _id: 1 }] }])),
+            },
+          },
+        },
+      },
+    });
+    await openCollection(page, 'shop', 'things');
+    await viewButton(page, 'Table').click();
+    await expect.poll(() => columnOrder(page)).toEqual(['_id', 'name', 'price']);
+
+    await view(page).getByTestId('table-header').getByRole('button', { name: 'price' }).click();
+    expect(await tableCellText(page, 1, 'name')).toBe('a');
+    await view(page).getByTestId('table-header').getByRole('button', { name: 'price' }).click();
+    expect(await tableCellText(page, 1, 'name')).toBe('b');
+
+    await headerMenu(page, 'price', 'Move left');
+    await expect.poll(() => columnOrder(page)).toEqual(['_id', 'price', 'name']);
+    await headerMenu(page, '_id', 'Hide column');
+    await expect.poll(() => columnOrder(page)).toEqual(['price', 'name']);
+
+    // Six more tabs push this one out of the pane's keep-alive budget (#345),
+    // which unmounts its grid; the layout has to come back from the tab.
+    for (const c of others) await openInNewTab(page, c);
+    await switchTab(page, 'things');
+    await expect.poll(() => columnOrder(page)).toEqual(['price', 'name']);
+    expect(await tableCellText(page, 1, 'name')).toBe('b');
+
+    await headerMenu(page, 'name', 'Show all columns (1 hidden)');
+    await expect.poll(() => columnOrder(page)).toEqual(['_id', 'price', 'name']);
+  });
+
+  test('sorts the edges of the BSON order: MinKey and MaxKey, exact decimals, code points, field types, binary, regexes', async ({ app, page }) => {
+    // In ascending order; seeded backwards so the sort has work to do.
+    const values: unknown[] = [
+      { $minKey: 1 }, null,
+      // Equal as doubles: ordered exactly, the double 0.1 by its binary value.
+      { $numberDecimal: '0.100000000000000001' }, 0.1,
+      { $numberDecimal: '1.0000000000000000' }, { $numberDecimal: '1.0000000000000001' },
+      // By code point, not by locale: capitals first, U+1F600 after U+FF5E.
+      'B', 'a', '～', '😀',
+      // A field's value type before its name.
+      { z: 1 }, { a: 'x' },
+      // Binary by length, then subtype.
+      { $binary: { base64: 'AQ==', subType: '00' } }, { $binary: { base64: 'AQ==', subType: '80' } },
+      { $binary: { base64: 'AQI=', subType: '00' } },
+      // Regexes by pattern, then options.
+      { $regularExpression: { pattern: 'a', options: '' } }, { $regularExpression: { pattern: 'a', options: 'i' } },
+      { $regularExpression: { pattern: 'z', options: '' } }, { $maxKey: 1 },
+    ];
+    const docs = values.map((v, i) => ({ _id: i + 1, v })).reverse();
+    await connectStaging(app, page, { servers: { [STAGING_URI]: { databases: { shop: { things: { docs: docs as Doc[] } } } } } });
+    await openCollection(page, 'shop', 'things');
+    await viewButton(page, 'Table').click();
+    await expect.poll(() => columnOrder(page)).toEqual(['_id', 'v']);
+
+    await headerMenu(page, 'v', 'Sort ascending');
+    await expect(view(page).locator('[data-column="v"]')).toHaveAttribute('aria-sort', 'ascending');
+    const out: string[] = [];
+    for (let row = 1; row <= values.length; row++) out.push(await tableCellText(page, row, '_id'));
+    expect(out).toEqual(values.map((_, i) => String(i + 1)));
+  });
+
+  test('sorts a column of mixed BSON types in MongoDB order, by value within each type', async ({ app, page }) => {
+    // In ascending order; seeded backwards so the sort has work to do.
+    const values: unknown[] = [
+      undefined, null, { $numberDouble: 'NaN' }, { $numberDecimal: '1.5' }, { $numberLong: '3' }, 10,
+      'a', 'b', { n: 2 }, { n: 10 }, [2], [10], { $binary: { base64: 'AQ==', subType: '00' } },
+      { $oid: '64b000000000000000000001' }, { $oid: '64b000000000000000000002' }, false, true,
+      { $date: '2020-01-01T00:00:00Z' }, { $date: '2024-01-01T00:00:00Z' },
+      { $timestamp: { t: 1, i: 1 } }, { $timestamp: { t: 2, i: 1 } },
+    ];
+    const docs = values.map((v, i) => (v === undefined ? { _id: i + 1 } : { _id: i + 1, v })).reverse();
+    await connectStaging(app, page, { servers: { [STAGING_URI]: { databases: { shop: { things: { docs: docs as Doc[] } } } } } });
+    await openCollection(page, 'shop', 'things');
+    await viewButton(page, 'Table').click();
+    await expect.poll(() => columnOrder(page)).toEqual(['_id', 'v']);
+    const ids = async () => {
+      const out: string[] = [];
+      for (let row = 1; row <= values.length; row++) out.push(await tableCellText(page, row, '_id'));
+      return out;
+    };
+
+    await headerMenu(page, 'v', 'Sort ascending');
+    await expect(view(page).locator('[data-column="v"]')).toHaveAttribute('aria-sort', 'ascending');
+    // Missing and null tie, so they keep their loaded order.
+    expect(await ids()).toEqual(['2', '1', ...values.slice(2).map((_, i) => String(i + 3))]);
+
+    await headerMenu(page, 'v', 'Clear sort');
+    await expect(view(page).locator('[data-column="v"]')).toHaveAttribute('aria-sort', 'none');
+    expect(await tableCellText(page, 1, '_id')).toBe(String(values.length));
   });
 });

@@ -34,7 +34,7 @@ import {
   renameShellSession,
   retargetShellSessionDatabase,
 } from './lib/mongoshSession';
-import { DataGrid, type ViewMode, type ResultsTab } from './components/DataGrid';
+import { DataGrid, type ViewMode, type ResultsTab, type ColumnLayout } from './components/DataGrid';
 import { ConnectionManager } from './components/ConnectionManager';
 import { WatchPanel } from './components/WatchPanel';
 import { SettingsView, type SettingsTabId, MONGO_TOOLS_DIR_KEY } from './components/SettingsModal';
@@ -213,6 +213,10 @@ export interface QueryTab {
   // every run (#268). Keyed by column name, which is why this belongs to a tab
   // — a tab is one collection, and its columns are that collection's.
   columnWidths?: Record<string, number>;
+  // The table's column order, hidden columns and sort: kept on the tab for the
+  // same reason as the widths, since a tab that falls out of the keep-alive
+  // budget (#345) unmounts its grid.
+  columnLayout?: ColumnLayout;
   // An in-progress document edit belongs to the tab it was opened from, so it
   // survives a look at another tab and dies with this one (#277).
   documentEdit?: DocumentEdit;
@@ -286,6 +290,7 @@ function rowsAreStoredDocuments(tab: {
 }
 
 const EMPTY_COLUMN_WIDTHS: Record<string, number> = {};
+const EMPTY_COLUMN_LAYOUT: ColumnLayout = {};
 
 const DEFAULT_QUERY = { filter: '{}', sort: '{}', projection: '{}', limit: 50, skip: 0 };
 
@@ -834,6 +839,9 @@ function Workspace() {
     },
     []
   );
+  const handleColumnLayoutChange = useCallback((tabId: string, columnLayout: ColumnLayout) => {
+    setTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, columnLayout } : t)));
+  }, []);
   const handleChatMessagesChange = useCallback((tabId: string, messages: ChatMessage[]) => {
     const prev = tabChatCache.current.get(tabId);
     tabChatCache.current.set(tabId, { ...prev, messages, isOpen: prev?.isOpen ?? false });
@@ -5047,6 +5055,8 @@ function Workspace() {
                     onActiveTabChange={(t) => handleResultsTabChange(tab.id, t)}
                     columnWidths={tab.columnWidths ?? EMPTY_COLUMN_WIDTHS}
                     onColumnWidthsChange={(w) => handleColumnWidthsChange(tab.id, w)}
+                    columnLayout={tab.columnLayout ?? EMPTY_COLUMN_LAYOUT}
+                    onColumnLayoutChange={(l) => handleColumnLayoutChange(tab.id, l)}
                     onCreateSuggestedIndex={s => handleCreateSuggestedIndex(tab, s)}
                     {...(!tab.lastAggregate ? {
                       onPageChange: (newSkip: number) => handlePageChange(tab, newSkip),
