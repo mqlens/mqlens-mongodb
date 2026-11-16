@@ -25,9 +25,10 @@ const NOISE = new Set([
 // field of the same name inside a filter is data.
 const COMMAND_STRUCTURAL = new Set(['sort', 'projection', 'hint']);
 const OPERATOR_STRUCTURAL = new Set(['$sort', '$project']);
-// Lists whose elements are a set, so how many there are is data. The
-// arguments of any other operator are positional: [$a, $a] is not [$a].
-const VALUE_SETS = new Set(['$in', '$nin', '$all', '$or', '$and', '$nor']);
+// Lists whose elements are a set, or the values an update adds ($each), so
+// how many there are is data. The arguments of any other operator are
+// positional: [$a, $a] is not [$a].
+const VALUE_SETS = new Set(['$in', '$nin', '$all', '$or', '$and', '$nor', '$each']);
 // Operators inside a sort, projection or hint whose value is structural too:
 // a scan direction, or the metadata asked for.
 const STRUCTURAL_OPERATORS = new Set(['$natural', '$meta']);

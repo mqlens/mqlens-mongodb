@@ -174,3 +174,10 @@ describe('queryShape — operators that are part of a sort or hint', () => {
     );
   });
 });
+
+describe('queryShape — values pushed with $each', () => {
+  it('collapses the values of $each, which are data, whatever their number', () => {
+    const update = (each: string) => `{ "update": "c", "updates": [{ "q": { "_id": 1 }, "u": { "$push": { "tags": { "$each": [${each}] } } } }] }`;
+    expect(queryShape(update('1'))).toBe(queryShape(update('2, 3')));
+  });
+});
