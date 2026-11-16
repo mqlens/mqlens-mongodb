@@ -249,6 +249,7 @@
       "clickToAddQueryRules": "+ 点击添加查询规则",
       "clickToAddSort": "+ 点击添加排序条件",
       "customField": "自定义字段…",
+      "dateValue": "日期值（UTC）",
       "descOption": "降序（{{n}}）",
       "excludeOption": "排除（{{n}}）",
       "fieldPathPlaceholder": "field.path",

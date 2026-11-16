@@ -262,6 +262,7 @@
       "clickToAddQueryRules": "+ Click to add query rules",
       "clickToAddSort": "+ Click to add sort criteria",
       "customField": "Custom field...",
+      "dateValue": "Date value (UTC)",
       "descOption": "Desc ({{n}})",
       "excludeOption": "Exclude ({{n}})",
       "fieldPathPlaceholder": "field.path",
