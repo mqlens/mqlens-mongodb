@@ -822,6 +822,8 @@ interface TableRowExtra {
   renderCellEditor: () => React.ReactNode;
   hasRowActions: boolean;
   rowActions: RowActionsContext;
+  /** Every column side by side, so a row's border and hover span them all. */
+  rowWidthPx: number;
 }
 
 // Virtualized row for the table view. Module scope for the same reason as
@@ -843,6 +845,7 @@ const TableRow = ({
   renderCellEditor,
   hasRowActions,
   rowActions,
+  rowWidthPx,
 }: { index: number; style: React.CSSProperties } & TableRowExtra) => {
   // `index` is the row's place on screen; edits address the document itself.
   const docIndex = rowOrder[index] ?? index;
@@ -856,7 +859,7 @@ const TableRow = ({
 
   return (
     <div
-      style={style}
+      style={{ ...style, minWidth: `${rowWidthPx}px` }}
       className="flex items-center border-b border-border font-mono text-xs hover:bg-accent"
       onContextMenu={(e) => openCtxMenu(e, rawDoc)}
     >
@@ -1183,11 +1186,9 @@ export const DataGrid: React.FC<DataGridProps> = ({
     const body = tableBodyRef.current;
     if (!body) return;
     // Scroll events don't bubble, but they DO propagate during the capture
-    // phase — and the virtualized List renders its own overflow:auto scroller,
-    // so the element that actually scrolls sideways may be this wrapper or that
-    // inner div. Listening in capture catches either. Only the box that can
-    // actually scroll horizontally drives the header, so the vertical scroller
-    // doesn't reset it to 0.
+    // phase, so listening here in capture catches the virtualized List, which
+    // is the box that scrolls. Only a box that can actually scroll
+    // horizontally drives the header, so nothing narrower resets it to 0.
     const onScroll = (e: Event) => {
       const target = e.target as HTMLElement | null;
       const header = tableHeaderRef.current;
@@ -1737,12 +1738,11 @@ export const DataGrid: React.FC<DataGridProps> = ({
     for (const list of [jsonListRef, treeListRef, tableListRef]) {
       if (documents.length > 0) list.current?.scrollToRow({ index: 0, align: 'start' });
     }
-    // The horizontal offset lives on the overflow-auto wrappers, not the List
-    // elements: the JSON list is widened to `jsonMaxWidthPx` and the table body
-    // to its total column width, so those wrappers carry scrollLeft. The table
+    // The JSON list is widened to `jsonMaxWidthPx`, so its overflow-auto wrapper
+    // carries scrollLeft; the table's List scrolls both ways itself. The table
     // header mirrors the body and is reset with it. (The tree view is
     // full-width with no horizontal scroll.)
-    for (const scroller of [jsonScrollRef.current, tableBodyRef.current, tableHeaderRef.current]) {
+    for (const scroller of [jsonScrollRef.current, tableListRef.current?.element, tableHeaderRef.current]) {
       if (scroller) scroller.scrollLeft = 0;
     }
   }, [resultShape]);
@@ -2395,16 +2395,10 @@ export const DataGrid: React.FC<DataGridProps> = ({
   // scrolls in both directions once resized columns overflow, so a vertical jump
   // alone can leave the highlighted cell off the side of the viewport while the
   // counter says it is active.
-  //
-  // Which box actually scrolls sideways is not fixed — it is this wrapper or the
-  // virtualized List's own scroller, depending on overflow — so the one that can
-  // is found rather than assumed, the same way the header-sync listener does it.
+  // The virtualized List is the one box that scrolls, both ways.
   const scrollTableColumnIntoView = React.useCallback(
     (columnKey: string) => {
-      const wrapper = tableBodyRef.current;
-      if (!wrapper) return;
-      const candidates = [wrapper, ...Array.from(wrapper.querySelectorAll<HTMLElement>('*'))];
-      const scroller = candidates.find((el) => el.scrollWidth > el.clientWidth);
+      const scroller = tableListRef.current?.element;
       if (!scroller) return;
 
       const columnIndex = tableColumns.indexOf(columnKey);
@@ -2930,12 +2924,14 @@ export const DataGrid: React.FC<DataGridProps> = ({
               </div>
             )}
 
-            {/* Virtualized list */}
+            {/* Virtualized list: the List itself is the one box that scrolls,
+                both ways, so its vertical bar sits at the visible right edge.
+                Its stable gutter matches the header's, keeping the two the
+                same usable width. */}
             <div
               ref={tableBodyRef}
               data-testid="table-body-scroll"
-              className="min-h-0 flex-1 min-w-0 overflow-auto"
-              style={{ scrollbarGutter: 'stable' }}
+              className="min-h-0 flex-1 min-w-0 overflow-hidden"
             >
               <List<TableRowExtra>
                 rowCount={documents.length}
@@ -2957,8 +2953,9 @@ export const DataGrid: React.FC<DataGridProps> = ({
                   renderCellEditor,
                   hasRowActions,
                   rowActions,
+                  rowWidthPx: tableColumns.reduce((s, c) => s + colWidth(c), 0) + TABLE_ROW_NUMBER_WIDTH_PX + (hasRowActions ? 72 : 0),
                 }}
-                style={{ height: '100%', width: '100%', minWidth: viewMode === 'table' ? `${tableColumns.reduce((s, c) => s + colWidth(c), 0) + TABLE_ROW_NUMBER_WIDTH_PX + (hasRowActions ? 72 : 0)}px` : '100%' }}
+                style={{ height: '100%', width: '100%', overflowX: 'auto', scrollbarGutter: 'stable' }}
               />
             </div>
           </div>
