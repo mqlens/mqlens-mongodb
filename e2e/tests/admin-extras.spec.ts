@@ -56,8 +56,8 @@ test.describe('Monitoring details', () => {
     await expect(view.getByTestId('op-row-101')).toBeVisible();
 
     await app.failNext('kill_op', 'operation 101 already finished');
-    page.once('dialog', (dialog) => void dialog.accept());
     await view.getByTestId('kill-op-101').click();
+    await page.getByTestId('dialog-confirm').click();
     await expect(page.getByText('operation 101 already finished').first()).toBeVisible();
 
     await app.failNext('repl_set_status', 'not running with --replSet');

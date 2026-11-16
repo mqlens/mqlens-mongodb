@@ -305,7 +305,8 @@
       "youBadge": "(you)"
     },
     "confirm": {
-      "killOperation": "Kill operation {{opid}} on {{ns}}?"
+      "killOperation": "Kill operation {{opid}} on {{ns}}?",
+      "killOperationTitle": "Kill operation {{opid}}?"
     },
     "detail": {
       "opTitle": "Operation details",
@@ -357,6 +358,7 @@
       "residentVirt": "{{mb}} MB virt"
     },
     "profiler": {
+      "groupByShape": "Group by query shape",
       "levelLabel": "Level:",
       "slowThreshold": "slow ≥ {{slowMs}}ms"
     },
@@ -373,11 +375,17 @@
       "uptimeClause": " · up {{hours}}h"
     },
     "table": {
+      "avgMs": "avg ms",
       "client": "client",
       "command": "command",
+      "count": "count",
+      "maxMs": "max ms",
       "millis": "millis",
+      "minMs": "min ms",
       "plan": "plan",
-      "secs": "secs"
+      "secs": "secs",
+      "shape": "query shape",
+      "totalMs": "total ms"
     },
     "tabs": {
       "cluster": "Cluster",

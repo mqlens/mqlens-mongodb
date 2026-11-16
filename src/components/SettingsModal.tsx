@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef} from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useTranslation } from 'react-i18next';
+import { useDialogs } from './dialogs/DialogProvider';
 import {
   LayoutGrid,
   Save,
@@ -616,6 +617,7 @@ export interface SettingsViewProps {
 
 export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstallTools, toolStatusRefreshNonce }) => {
   const { t } = useTranslation('settings');
+  const dialogs = useDialogs();
   const { localeSetting, setLocale } = useLocale();
   const [tab, setTab] = useState<SettingsTabId>(initialTab ?? 'appearance');
   const [mongoshPath, setMongoshPath] = useState('');
@@ -855,7 +857,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
   };
 
   const onResetVault = async () => {
-    if (!window.confirm(t('security.resetVaultConfirm'))) return;
+    if (!(await dialogs.confirm({ title: t('security.resetVaultTitle'), message: t('security.resetVaultConfirm'), destructive: true }))) return;
     setSecMsg('');
     try {
       const warning = await resetVault();

@@ -60,6 +60,7 @@ import {
   Sparkles, 
   DatabaseZap,
   Trash2,
+  CalendarDays,
   Check,
   ChevronDown,
   Plus,
@@ -79,7 +80,35 @@ interface VisualRule {
   field: string;
   operator: string;
   value: string;
+  /** The value is a date: `value` is then a datetime-local input's text, in UTC. */
+  kind?: 'date';
 }
+
+// The operators a single date value works with. $in and $nin take a list,
+// $regex a pattern and $exists a boolean.
+const DATE_OPERATORS = new Set(['$eq', '$ne', '$gt', '$gte', '$lt', '$lte']);
+
+// An EJSON date (`{ $date: … }`, which is also what parseShellJson makes of
+// ISODate()) as a datetime-local input's text in UTC, to the millisecond.
+// Null when the value is not a date, or is one the input cannot show: a
+// year outside 0001-9999 has a six-digit ISO form.
+const ejsonDateToInput = (v: any): string | null => {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  const keys = Object.keys(v);
+  if (keys.length !== 1 || keys[0] !== '$date') return null;
+  const raw = v.$date;
+  const d = new Date(raw && typeof raw === 'object' && '$numberLong' in raw ? Number(raw.$numberLong) : raw);
+  const year = d.getUTCFullYear();
+  return Number.isNaN(d.getTime()) || year < 1 || year > 9999 ? null : d.toISOString().slice(0, 23);
+};
+
+// A datetime-local input's text (to the minute, second or millisecond) as an
+// EJSON date, read as UTC. An empty input is an empty value, as for text.
+const inputToEjsonDate = (value: string): any => {
+  if (!value) return '';
+  const d = new Date(`${value}Z`);
+  return { $date: Number.isNaN(d.getTime()) ? value : d.toISOString() };
+};
 
 interface ProjectionRule {
   id: string;
@@ -388,7 +417,7 @@ const compileRulesToQuery = (rules: VisualRule[], matchType: 'and' | 'or'): stri
   
   const ruleObjects = rules.map(rule => {
     if (!rule.field || rule.field === '__custom__') return null;
-    let parsedValue = parseValue(rule.value);
+    let parsedValue = rule.kind === 'date' ? inputToEjsonDate(rule.value) : parseValue(rule.value);
     
     const ruleObj: Record<string, any> = {};
     if (rule.operator === '$eq') {
@@ -450,6 +479,12 @@ const compileSortRules = (rules: SortRule[]): string => {
 
 const parseFieldQuery = (field: string, value: any): VisualRule[] => {
   const rules: VisualRule[] = [];
+  // A date compared for equality: `$date` is the value's type, not an operator.
+  const equalDate = ejsonDateToInput(value);
+  if (equalDate !== null) {
+    rules.push({ id: Math.random().toString(36).substr(2, 9), field, operator: '$eq', value: equalDate, kind: 'date' });
+    return rules;
+  }
   if (value && typeof value === 'object' && !Array.isArray(value)) {
     const keys = Object.keys(value);
     const hasOperators = keys.every(k => k.startsWith('$'));
@@ -457,11 +492,13 @@ const parseFieldQuery = (field: string, value: any): VisualRule[] => {
     if (hasOperators && keys.length > 0) {
       keys.forEach(op => {
         const opVal = value[op];
+        const date = ejsonDateToInput(opVal);
         rules.push({
           id: Math.random().toString(36).substr(2, 9),
           field,
           operator: op,
-          value: typeof opVal === 'object' ? JSON.stringify(opVal) : String(opVal)
+          value: date ?? (typeof opVal === 'object' ? JSON.stringify(opVal) : String(opVal)),
+          ...(date !== null ? { kind: 'date' as const } : {}),
         });
       });
     } else {
@@ -1106,6 +1143,10 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
         const updated = { ...r, ...updates };
         if (updates.field === '__custom__') {
           updated.field = '';
+        }
+        if (updates.operator && updated.kind === 'date' && !DATE_OPERATORS.has(updates.operator)) {
+          updated.kind = undefined;
+          updated.value = '';
         }
         if (updates.operator === '$exists' && updated.value !== 'true' && updated.value !== 'false') {
           updated.value = 'true';
@@ -2219,14 +2260,43 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                                   <option value="false">false</option>
                                 </select>
                               ) : (
-                                <input 
-                                  type="text"
-                                  value={rule.value}
-                                  onChange={(e) => updateRule(rule.id, { value: e.target.value })}
-                                  placeholder={td('documentViewer.builder.valuePlaceholder')}
-                                  className="h-7 min-w-0 flex-1 font-mono text-[11px]"
-                                  data-testid={`rule-value-${rule.id}`}
-                                />
+                                <>
+                                  {rule.kind === 'date' ? (
+                                    <input
+                                      type="datetime-local"
+                                      step="0.001"
+                                      value={rule.value}
+                                      onChange={(e) => updateRule(rule.id, { value: e.target.value })}
+                                      className="h-7 min-w-0 flex-1 font-mono text-[11px]"
+                                      data-testid={`rule-date-${rule.id}`}
+                                    />
+                                  ) : (
+                                    <input
+                                      type="text"
+                                      value={rule.value}
+                                      onChange={(e) => updateRule(rule.id, { value: e.target.value })}
+                                      placeholder={td('documentViewer.builder.valuePlaceholder')}
+                                      className="h-7 min-w-0 flex-1 font-mono text-[11px]"
+                                      data-testid={`rule-value-${rule.id}`}
+                                    />
+                                  )}
+                                  {DATE_OPERATORS.has(rule.operator) && (
+                                    <button
+                                      type="button"
+                                      onClick={() => updateRule(rule.id, { kind: rule.kind === 'date' ? undefined : 'date', value: '' })}
+                                      className={cn(
+                                        'shrink-0 rounded p-1 transition-colors hover:bg-accent',
+                                        rule.kind === 'date' ? 'text-primary' : 'text-muted-foreground hover:text-foreground'
+                                      )}
+                                      aria-label={td('documentViewer.builder.dateValue')}
+                                      aria-pressed={rule.kind === 'date'}
+                                      title={td('documentViewer.builder.dateValue')}
+                                      data-testid={`rule-date-toggle-${rule.id}`}
+                                    >
+                                      <CalendarDays size={11} />
+                                    </button>
+                                  )}
+                                </>
                               )}
 
                               {/* Delete button */}

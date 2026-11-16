@@ -1257,6 +1257,57 @@ describe('Sidebar Component', () => {
     expect(screen.getByText('Validation Rules')).toBeInTheDocument();
   });
 
+  it('offers Indexes and Statistics in the collection menu', async () => {
+    mockInvoke.mockImplementation((cmd, args) => {
+      if (cmd === 'list_databases' && args.id === 'conn-1') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections' && args.id === 'conn-1' && args.db === 'sales_db') {
+        return Promise.resolve([{ name: 'customers', type: 'collection' }]);
+      }
+      if (cmd === 'coll_stats') {
+        return Promise.resolve({ count: 1234, size: 1000, avgObjSize: 100, storageSize: 4096, nindexes: 2, totalIndexSize: 8192 });
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+    const onOpenIndexes = vi.fn();
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Prod DB Server', uri: 'mongodb://localhost:27017' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+        onOpenIndexes={onOpenIndexes}
+      />
+    );
+
+    fireEvent.click(await screen.findByText('sales_db'));
+    fireEvent.click(await screen.findByText('Collections'));
+    const collectionNode = await screen.findByText('customers');
+
+    fireEvent.contextMenu(collectionNode);
+    fireEvent.click(screen.getByText('Indexes'));
+    expect(onOpenIndexes).toHaveBeenCalledWith('conn-1', 'sales_db', 'customers');
+
+    fireEvent.contextMenu(collectionNode);
+    fireEvent.click(screen.getByText('Statistics'));
+    const card = await screen.findByTestId('coll-stats-card');
+    await waitFor(() => expect(card.textContent).toContain('sales_db.customers'));
+    expect(mockInvoke).toHaveBeenCalledWith('coll_stats', { id: 'conn-1', db: 'sales_db', collection: 'customers' });
+
+    // Opened on purpose, it stays when the pointer passes through it or over
+    // other rows, until dismissed.
+    fireEvent.mouseEnter(card);
+    fireEvent.mouseLeave(card);
+    fireEvent.mouseEnter(screen.getByText('sales_db'));
+    await new Promise((r) => setTimeout(r, 1000));
+    expect(screen.getByTestId('coll-stats-card')).toHaveTextContent('sales_db.customers');
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByTestId('coll-stats-card')).toBeNull());
+  });
+
   it('hides Validation Rules for time-series collections but shows it for regular collections (#93)', async () => {
     mockInvoke.mockImplementation((cmd, args) => {
       if (cmd === 'list_databases' && args.id === 'conn-1') {

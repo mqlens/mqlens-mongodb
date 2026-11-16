@@ -35,6 +35,29 @@ const shellInput = async (app: App) => {
 };
 
 test.describe('Visual query builder rules', () => {
+  test('shows a date as a date input in UTC, and runs the date picked there', async ({ app, page }) => {
+    await openSales(app, page, 'transactions', 'staging');
+    const filter = view(page).getByTestId('query-filter-input');
+    const dateInput = byPrefix(page, 'rule-date-', ['rule-date-toggle-']);
+
+    await setEditorText(page, filter, '{ timestamp: { $gte: ISODate("2025-05-12T00:00:00Z") } }');
+    await view(page).getByTestId('toggle-query-builder').click();
+    await expect(ruleOperators(page).first()).toHaveValue('$gte');
+    // Chromium shortens the text to the minute; WebKit keeps it as set.
+    await expect(dateInput).toHaveValue(/^2025-05-12T00:00(:00(\.000)?)?$/);
+    // No raw EJSON text box for it.
+    await expect(ruleValues(page)).toHaveCount(0);
+
+    await dateInput.fill('2025-05-20T00:00');
+    const run = await callFrom(app, 'execute_mql_query', () => runButton(page).click());
+    expect(JSON.parse(String(run.filter))).toEqual({ timestamp: { $gte: { $date: '2025-05-20T00:00:00.000Z' } } });
+
+    // The calendar toggle turns a value back into text.
+    await byPrefix(page, 'rule-date-toggle-').first().click();
+    await expect(dateInput).toHaveCount(0);
+    await expect(ruleValues(page)).toHaveCount(1);
+  });
+
   test('reads an operator, an embedded document, plain values and unreadable text into rules', async ({ app, page }) => {
     await openSales(app, page, 'transactions');
     const filter = view(page).getByTestId('query-filter-input');

@@ -182,7 +182,8 @@
       "insert": "插入新文档",
       "readOnly": "该连接为只读",
       "resizeColumn": "调整“{{label}}”列宽",
-      "dateTimezone": "切换日期显示时区"
+      "dateTimezone": "切换日期显示时区",
+      "sortColumn": "按此列排序本页（右键查看更多）"
     },
     "viewModes": {
       "chart": "图表",
@@ -191,6 +192,15 @@
       "table": "表格",
       "tree": "树形",
       "visualTree": "可视化树"
+    },
+    "columnMenu": {
+      "sortAscending": "升序排序",
+      "sortDescending": "降序排序",
+      "clearSort": "取消排序",
+      "moveLeft": "左移",
+      "moveRight": "右移",
+      "hide": "隐藏列",
+      "showAll_other": "显示所有列（已隐藏 {{count}} 列）"
     }
   },
   "diffModal": {
@@ -249,6 +259,7 @@
       "clickToAddQueryRules": "+ 点击添加查询规则",
       "clickToAddSort": "+ 点击添加排序条件",
       "customField": "自定义字段…",
+      "dateValue": "日期值（UTC）",
       "descOption": "降序（{{n}}）",
       "excludeOption": "排除（{{n}}）",
       "fieldPathPlaceholder": "field.path",

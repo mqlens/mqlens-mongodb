@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useContext } from 'react';
 import { useTranslation, Trans } from 'react-i18next';
 import { DocumentViewerContext } from './DocumentViewer';
 import { List } from 'react-window';
-import { Table, Braces, ChevronRight, ChevronDown, ListFilter, Copy, Check, Edit, Trash2, Plus, Table2, BarChart3, Lightbulb, GitCompareArrows, AlertTriangle } from 'lucide-react';
+import { Table, Braces, ChevronRight, ChevronDown, ListFilter, Copy, Check, Edit, Trash2, Plus, Table2, BarChart3, Lightbulb, GitCompareArrows, AlertTriangle, ArrowUp, ArrowDown, EyeOff, Eye, ArrowLeft, ArrowRight } from 'lucide-react';
 import { ChartView } from './ChartView';
 import { ContextMenu, type ContextMenuItem } from './ContextMenu';
 import { DocumentDiffModal } from './DocumentDiffModal';
@@ -21,6 +21,7 @@ import {
   resultsPaneElementForEvent,
 } from '../lib/resultsFindShortcut';
 import { findMatches, isMatchAt, stepMatch, type FindCell } from '../lib/resultsFind';
+import { compareBsonValues } from '../lib/tableSort';
 import {
   bsonCallOf,
   bsonInstanceTypeLabel,
@@ -54,6 +55,15 @@ function stableDocId(doc: Record<string, any>): string {
   } catch {
     return '';
   }
+}
+
+/** The table view's column arrangement. `order` lists columns to put first,
+ *  in that order; columns it does not name follow in first-seen order. The sort
+ *  orders the loaded page only. */
+export interface ColumnLayout {
+  order?: string[];
+  hidden?: string[];
+  sort?: { column: string; direction: 1 | -1 };
 }
 
 interface DataGridProps {
@@ -105,6 +115,10 @@ interface DataGridProps {
    *  self-manage. */
   columnWidths?: Record<string, number>;
   onColumnWidthsChange?: (widths: Record<string, number>) => void;
+  /** Table column order, hidden columns and sort, owned by the caller for the
+   *  same reason as the widths. Omit both to self-manage. */
+  columnLayout?: ColumnLayout;
+  onColumnLayoutChange?: (layout: ColumnLayout) => void;
   /**
    * Drop the control bar — the Results/Explain tabs, the view-mode switcher and
    * the row actions — and render the documents alone.
@@ -791,6 +805,8 @@ const InlineCellEditor = ({
 // Extra (per-render) data handed to the table view's virtualized rows.
 interface TableRowExtra {
   documents: Array<Record<string, any>>;
+  /** Row position -> index into `documents`; differs from identity when sorted. */
+  rowOrder: number[];
   columns: string[];
   colWidth: (col: string) => number;
   findHighlightClass: (rowId: number, columnKey?: string) => string | undefined;
@@ -814,6 +830,7 @@ const TableRow = ({
   index,
   style,
   documents,
+  rowOrder,
   columns,
   colWidth,
   findHighlightClass,
@@ -827,7 +844,9 @@ const TableRow = ({
   hasRowActions,
   rowActions,
 }: { index: number; style: React.CSSProperties } & TableRowExtra) => {
-  const rawDoc = documents[index];
+  // `index` is the row's place on screen; edits address the document itself.
+  const docIndex = rowOrder[index] ?? index;
+  const rawDoc = documents[docIndex];
   if (!rawDoc) return null;
   // One stored value: a sub-document or an array goes through the document editor.
   const editable = (col: string) => {
@@ -856,9 +875,9 @@ const TableRow = ({
           )}
           style={{ width: `${colWidth(col)}px`, flexShrink: 0 }}
           onContextMenu={(e) => openCtxMenu(e, rawDoc, col, cellValue(rawDoc, col))}
-          onDoubleClick={startCellEdit && editable(col) ? () => startCellEdit({ docIndex: index, path: cellPath(col) }) : undefined}
+          onDoubleClick={startCellEdit && editable(col) ? () => startCellEdit({ docIndex, path: cellPath(col) }) : undefined}
         >
-          {isCellEditing(cellEdit, index, cellPath(col)) ? renderCellEditor() : renderCell(cellValue(rawDoc, col))}
+          {isCellEditing(cellEdit, docIndex, cellPath(col)) ? renderCellEditor() : renderCell(cellValue(rawDoc, col))}
         </div>
       ))}
       {hasRowActions && (
@@ -983,6 +1002,8 @@ export const DataGrid: React.FC<DataGridProps> = ({
   onActiveTabChange,
   columnWidths: controlledColWidths,
   onColumnWidthsChange,
+  columnLayout: controlledColumnLayout,
+  onColumnLayoutChange,
   onViewModeChange,
   onCreateSuggestedIndex,
   connectionMode,
@@ -1419,6 +1440,77 @@ export const DataGrid: React.FC<DataGridProps> = ({
     return paths;
   }, [documents, flattenEmbedded]);
   const columns = useMemo(() => Array.from(columnPaths.keys()), [columnPaths]);
+
+  // Table column order, hidden columns and sort. Lifted like the widths.
+  const [uncontrolledColumnLayout, setUncontrolledColumnLayout] = useState<ColumnLayout>({});
+  const columnLayout = controlledColumnLayout ?? uncontrolledColumnLayout;
+  const setColumnLayout = (next: ColumnLayout) => {
+    setUncontrolledColumnLayout(next);
+    onColumnLayoutChange?.(next);
+  };
+  const [headerMenu, setHeaderMenu] = useState<{ x: number; y: number; col: string } | null>(null);
+  // The columns the table shows, in the order it shows them.
+  const tableColumns = useMemo(() => {
+    const hidden = new Set(columnLayout.hidden);
+    const first = (columnLayout.order ?? []).filter((c) => columnPaths.has(c));
+    const ordered = [...first, ...columns.filter((c) => !first.includes(c))];
+    const visible = ordered.filter((c) => !hidden.has(c));
+    // A page holding only hidden columns shows them all: with no header left,
+    // there would be nothing to right-click to bring them back.
+    return visible.length > 0 ? visible : ordered;
+  }, [columns, columnPaths, columnLayout]);
+  const sortDirectionOf = (col: string) =>
+    columnLayout.sort?.column === col ? columnLayout.sort.direction : undefined;
+  const setSort = (column: string, direction?: 1 | -1) =>
+    setColumnLayout({ ...columnLayout, sort: direction ? { column, direction } : undefined });
+  // Header click: ascending, then descending, then unsorted.
+  const cycleSort = (col: string) => {
+    const dir = sortDirectionOf(col);
+    setSort(col, dir === undefined ? 1 : dir === 1 ? -1 : undefined);
+  };
+  // Swap a column with its visible neighbour. The whole visible order is kept,
+  // so a later column found on another page goes after it.
+  const moveColumn = (col: string, step: -1 | 1) => {
+    const order = [...tableColumns];
+    const i = order.indexOf(col);
+    const j = i + step;
+    if (i < 0 || j < 0 || j >= order.length) return;
+    [order[i], order[j]] = [order[j], order[i]];
+    setColumnLayout({ ...columnLayout, order });
+  };
+  const buildHeaderMenuItems = (col: string): ContextMenuItem[] => {
+    const position = tableColumns.indexOf(col);
+    const hiddenCount = columnLayout.hidden?.filter((c) => columnPaths.has(c)).length ?? 0;
+    return [
+      { label: t('dataGrid.columnMenu.sortAscending'), icon: <ArrowUp size={12} />, onClick: () => setSort(col, 1) },
+      { label: t('dataGrid.columnMenu.sortDescending'), icon: <ArrowDown size={12} />, onClick: () => setSort(col, -1) },
+      ...(sortDirectionOf(col)
+        ? [{ label: t('dataGrid.columnMenu.clearSort'), onClick: () => setSort(col) }]
+        : []),
+      { label: t('dataGrid.columnMenu.moveLeft'), icon: <ArrowLeft size={12} />, separatorBefore: true, disabled: position <= 0, onClick: () => moveColumn(col, -1) },
+      { label: t('dataGrid.columnMenu.moveRight'), icon: <ArrowRight size={12} />, disabled: position >= tableColumns.length - 1, onClick: () => moveColumn(col, 1) },
+      {
+        label: t('dataGrid.columnMenu.hide'),
+        icon: <EyeOff size={12} />,
+        separatorBefore: true,
+        // The last column stays: with none left there is no header to bring them back from.
+        disabled: tableColumns.length <= 1,
+        onClick: () =>
+          setColumnLayout({
+            ...columnLayout,
+            hidden: [...(columnLayout.hidden ?? []), col],
+            sort: sortDirectionOf(col) ? undefined : columnLayout.sort,
+          }),
+      },
+      ...(hiddenCount > 0
+        ? [{
+            label: t('dataGrid.columnMenu.showAll', { count: hiddenCount }),
+            icon: <Eye size={12} />,
+            onClick: () => setColumnLayout({ ...columnLayout, hidden: [] }),
+          }]
+        : []),
+    ];
+  };
   // undefined when the document has no such field, which the table leaves blank.
   // Own fields only: a missing `constructor` is not a stored value. The row is
   // read directly (it is always a document, and checking it would enumerate
@@ -1430,6 +1522,19 @@ export const DataGrid: React.FC<DataGridProps> = ({
     for (const k of rest) v = isEmbeddedDoc(v) && Object.hasOwn(v, k) ? v[k] : undefined;
     return v;
   };
+
+  // The table's rows as indices into `documents`, sorted when a column sort is
+  // set. Compared on the parsed documents so dates, ObjectIds and BSON numbers
+  // sort by value rather than by their EJSON text.
+  const tableSort = viewMode === 'table' ? columnLayout.sort : undefined;
+  const rowOrder = useMemo(() => {
+    const order = documents.map((_, i) => i);
+    if (!tableSort || !columnPaths.has(tableSort.column)) return order;
+    const { column, direction } = tableSort;
+    return order.sort((a, b) => direction * compareBsonValues(cellValue(parsedDocs[a], column), cellValue(parsedDocs[b], column)));
+    // cellValue reads only columnPaths.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [documents, parsedDocs, columnPaths, tableSort?.column, tableSort?.direction]);
 
   // A value the grid gives a constructor call to. Delegates so this list cannot
   // fall behind bsonDisplay's.
@@ -2157,17 +2262,19 @@ export const DataGrid: React.FC<DataGridProps> = ({
       // The tree view's "Key"/"Value"/"Type" headings are deliberately not
       // indexed: those are fixed chrome, whereas a table heading is a field name
       // from the documents themselves.
-      const headers: FindCell[] = columns.map((col) => ({
+      // Rows in the order the table shows them, so a match's row is the row
+      // on screen after a column sort.
+      const headers: FindCell[] = tableColumns.map((col) => ({
         rowIndex: TABLE_HEADER_ROW_INDEX,
         columnKey: col,
         text: col,
       }));
       return headers.concat(
-        documents.flatMap((doc, index) =>
-          columns.map((col) => ({
+        rowOrder.flatMap((docIndex, index) =>
+          tableColumns.map((col) => ({
             rowIndex: index,
             columnKey: col,
-            text: tableValueText(cellValue(doc, col), bsonDisplayOptions),
+            text: tableValueText(cellValue(documents[docIndex], col), bsonDisplayOptions),
           }))
         )
       );
@@ -2177,7 +2284,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
     // jsonLineText/treeRowText are recreated each render but read only the rows
     // and the translator, both of which are already dependencies.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [findOpen, viewMode, jsonLines, treeRows, documents, columns, t, dateTimezone]);
+  }, [findOpen, viewMode, jsonLines, treeRows, documents, tableColumns, rowOrder, t, dateTimezone]);
 
   const findMatchList = useMemo(() => findMatches(findCells, findQuery), [findCells, findQuery]);
 
@@ -2300,12 +2407,12 @@ export const DataGrid: React.FC<DataGridProps> = ({
       const scroller = candidates.find((el) => el.scrollWidth > el.clientWidth);
       if (!scroller) return;
 
-      const columnIndex = columns.indexOf(columnKey);
+      const columnIndex = tableColumns.indexOf(columnKey);
       if (columnIndex < 0) return;
       // The row-number gutter is `w-12`, ahead of the first column.
       const left =
         TABLE_ROW_NUMBER_WIDTH_PX +
-        columns.slice(0, columnIndex).reduce((sum, col) => sum + colWidth(col), 0);
+        tableColumns.slice(0, columnIndex).reduce((sum, col) => sum + colWidth(col), 0);
       const right = left + colWidth(columnKey);
 
       // Only move when the cell is actually outside the visible band, so
@@ -2315,7 +2422,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
         scroller.scrollLeft = right - scroller.clientWidth;
       }
     },
-    [columns, colWidths]
+    [tableColumns, colWidths]
   );
 
   // Scroll after the visible lists recompute, so revealing a fold and jumping to
@@ -2769,6 +2876,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
               <div
                 ref={tableHeaderRef}
                 data-testid="table-header"
+                role="row"
                 // overflow-hidden makes this a scroll container so its scrollLeft
                 // can be driven by the body; scrollbar-gutter keeps its usable
                 // width equal to the body's, so the two stay aligned at the far
@@ -2782,16 +2890,35 @@ export const DataGrid: React.FC<DataGridProps> = ({
                 >
                   #
                 </div>
-                {columns.map((col) => (
+                {tableColumns.map((col) => (
                   <div
                     key={col}
+                    data-column={col}
+                    role="columnheader"
+                    aria-sort={sortDirectionOf(col) === 1 ? 'ascending' : sortDirectionOf(col) === -1 ? 'descending' : 'none'}
                     className={cn(
                       'px-3 border-r border-border flex items-center truncate relative',
                       findHighlightClass(TABLE_HEADER_ROW_INDEX, col)
                     )}
                     style={{ width: `${colWidth(col)}px`, flexShrink: 0 }}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setHeaderMenu({ x: e.clientX, y: e.clientY, col });
+                    }}
                   >
-                    {col}
+                    {/* A button rather than a click on the cell: a resize drag
+                        that ends over the label then cannot read as a click. */}
+                    <button
+                      type="button"
+                      className="flex min-w-0 cursor-pointer items-center gap-1 truncate uppercase hover:text-foreground"
+                      title={t('dataGrid.tooltips.sortColumn')}
+                      onClick={() => cycleSort(col)}
+                    >
+                      <span className="truncate">{col}</span>
+                      {sortDirectionOf(col) === 1 && <ArrowUp size={10} className="shrink-0" aria-hidden />}
+                      {sortDirectionOf(col) === -1 && <ArrowDown size={10} className="shrink-0" aria-hidden />}
+                    </button>
                     {renderColResizer(col, colWidth(col), (w) => setColWidths((p) => ({ ...p, [col]: w })))}
                   </div>
                 ))}
@@ -2817,7 +2944,8 @@ export const DataGrid: React.FC<DataGridProps> = ({
                 rowComponent={TableRow}
                 rowProps={{
                   documents,
-                  columns,
+                  rowOrder,
+                  columns: tableColumns,
                   colWidth,
                   findHighlightClass,
                   openCtxMenu,
@@ -2830,7 +2958,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
                   hasRowActions,
                   rowActions,
                 }}
-                style={{ height: '100%', width: '100%', minWidth: viewMode === 'table' ? `${columns.reduce((s, c) => s + colWidth(c), 0) + TABLE_ROW_NUMBER_WIDTH_PX + (hasRowActions ? 72 : 0)}px` : '100%' }}
+                style={{ height: '100%', width: '100%', minWidth: viewMode === 'table' ? `${tableColumns.reduce((s, c) => s + colWidth(c), 0) + TABLE_ROW_NUMBER_WIDTH_PX + (hasRowActions ? 72 : 0)}px` : '100%' }}
               />
             </div>
           </div>
@@ -3029,6 +3157,14 @@ export const DataGrid: React.FC<DataGridProps> = ({
           left={diffPair.a}
           right={diffPair.b}
           onClose={() => setDiffPair(null)}
+        />
+      )}
+      {headerMenu && (
+        <ContextMenu
+          x={headerMenu.x}
+          y={headerMenu.y}
+          items={buildHeaderMenuItems(headerMenu.col)}
+          onClose={() => setHeaderMenu(null)}
         />
       )}
       {ctxMenu && (

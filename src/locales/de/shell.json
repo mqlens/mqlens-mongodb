@@ -547,7 +547,8 @@
     "titles": {
       "setup": "Master-Passwort erstellen",
       "unlock": "MQLens entsperren"
-    }
+    },
+    "resetTitle": "Tresor zurücksetzen?"
   },
   "watch": {
     "actions": {
@@ -675,7 +676,9 @@
     "lockedTitle": "Tresor ist gesperrt",
     "retentionNote": "Alte Ereignisse werden automatisch durch die Aufbewahrungseinstellung entfernt. Ein intaktes Protokoll kann nicht gelöscht werden.",
     "statusError": "Fehlgeschlagen",
-    "statusOk": "Erfolgreich"
+    "statusOk": "Erfolgreich",
+    "exportPlaintextTitle": "Protokoll unverschlüsselt exportieren?",
+    "discardTitle": "Beschädigtes Protokoll verwerfen?"
   },
   "shellNotOnServer": "Die Shell ist auf MQLens Server noch nicht verfügbar."
 }

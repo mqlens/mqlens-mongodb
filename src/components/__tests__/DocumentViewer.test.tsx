@@ -1879,3 +1879,99 @@ describe('query favorites on a connection that was never saved (#369 review)', (
     );
   });
 });
+
+describe('Visual query builder: date values', () => {
+  const props = {
+    connectionName: 'test-conn',
+    databaseName: 'test-db',
+    collectionName: 'test-coll',
+    onExecute: vi.fn(),
+    onExplain: vi.fn(),
+    loading: false,
+    availableFields: ['_id', 'signupDate', 'name'],
+  };
+  const filterInput = () => screen.getByTestId('query-filter-input') as HTMLInputElement;
+  const openWith = (filter: string) => {
+    const utils = render(<DocumentViewer {...props} />);
+    fireEvent.change(filterInput(), { target: { value: filter } });
+    fireEvent.click(screen.getByTestId('toggle-query-builder'));
+    return utils;
+  };
+  const dateInput = (container: HTMLElement) =>
+    container.querySelector('input[data-testid^="rule-date-"]') as HTMLInputElement | null;
+  const textValue = (container: HTMLElement) => container.querySelector('input[data-testid^="rule-value-"]');
+  // The instant a datetime-local input holds, read as UTC. Browsers shorten its
+  // text (`00:00:00.000` shows as `00:00`), so the text itself is not compared.
+  const shown = (container: HTMLElement) => new Date(`${dateInput(container)?.value}Z`).toISOString();
+
+  it('shows an EJSON date under an operator as a date input, in UTC', () => {
+    const { container } = openWith('{"signupDate": {"$gte": {"$date": "2024-01-01T00:00:00Z"}}}');
+
+    expect((container.querySelector('select[data-testid^="rule-operator-"]') as HTMLSelectElement).value).toBe('$gte');
+    expect(dateInput(container)?.type).toBe('datetime-local');
+    expect(shown(container)).toBe('2024-01-01T00:00:00.000Z');
+    expect(textValue(container)).toBeNull();
+  });
+
+  it('reads a date compared for equality as $eq, not as a "$date" operator', () => {
+    const { container } = openWith('{"signupDate": {"$date": "2024-01-01T10:30:00.250Z"}}');
+
+    expect((container.querySelector('select[data-testid^="rule-operator-"]') as HTMLSelectElement).value).toBe('$eq');
+    expect(shown(container)).toBe('2024-01-01T10:30:00.250Z');
+  });
+
+  it('reads ISODate() from the query bar as a date', () => {
+    const { container } = openWith('{ signupDate: { $lt: ISODate("2024-06-01") } }');
+
+    expect(shown(container)).toBe('2024-06-01T00:00:00.000Z');
+  });
+
+  it('writes a picked date back to the query as an EJSON date', async () => {
+    const { container } = openWith('{"signupDate": {"$gte": {"$date": "2024-01-01T00:00:00Z"}}}');
+
+    fireEvent.change(dateInput(container)!, { target: { value: '2024-02-03T04:05:06.000' } });
+
+    await waitFor(() =>
+      expect(JSON.parse(filterInput().value)).toEqual({ signupDate: { $gte: { $date: '2024-02-03T04:05:06.000Z' } } }),
+    );
+  });
+
+  it('turns a rule\'s value into a date with the calendar toggle, and back', async () => {
+    const { container } = render(<DocumentViewer {...props} />);
+    fireEvent.click(screen.getByTestId('toggle-query-builder'));
+    fireEvent.change(container.querySelector('select[data-testid^="rule-field-"]')!, { target: { value: 'signupDate' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Date value (UTC)' }));
+    fireEvent.change(dateInput(container)!, { target: { value: '2024-05-06T07:08' } });
+    await waitFor(() =>
+      expect(JSON.parse(filterInput().value)).toEqual({ signupDate: { $date: '2024-05-06T07:08:00.000Z' } }),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Date value (UTC)' }));
+    expect(dateInput(container)).toBeNull();
+    expect(textValue(container)).not.toBeNull();
+  });
+
+  it('offers a date only for comparisons, and drops it for $in, $nin, $regex and $exists', async () => {
+    const { container } = openWith('{"signupDate": {"$gte": {"$date": "2024-01-01T00:00:00Z"}}}');
+    const operator = () => container.querySelector('select[data-testid^="rule-operator-"]') as HTMLSelectElement;
+
+    for (const op of ['$in', '$nin', '$regex']) {
+      fireEvent.change(operator(), { target: { value: op } });
+      expect(dateInput(container)).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Date value (UTC)' })).toBeNull();
+    }
+    fireEvent.change(operator(), { target: { value: '$exists' } });
+    fireEvent.change(operator(), { target: { value: '$eq' } });
+    // Back on a comparison, the value is text again, not a date made of "true".
+    expect(dateInput(container)).toBeNull();
+    await waitFor(() => expect(filterInput().value).not.toContain('$date'));
+  });
+
+  it('keeps a date the date input cannot show, past year 9999, as text', () => {
+    const { container } = openWith('{"signupDate": {"$gte": {"$date": {"$numberLong": "253402300800000"}}}}');
+
+    expect(dateInput(container)).toBeNull();
+    expect((textValue(container) as HTMLInputElement).value).toBe('{"$date":{"$numberLong":"253402300800000"}}');
+  });
+});
