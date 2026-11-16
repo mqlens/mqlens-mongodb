@@ -292,18 +292,26 @@ export function echoValues(text: string): string {
   } catch {
     return text;
   }
+  // acorn files every leading string as a directive. Only "use strict" means
+  // anything, and wrapping the strings before it would end its prologue, so a
+  // strict prologue stays as written; other leading strings are values.
+  const strict = body.some((s) => s.type === 'ExpressionStatement' && s.directive === 'use strict');
+  // A name the script does not use, so the wrapper cannot shadow one of its own.
+  let name = '__mqlensValue';
+  while (text.includes(name)) name += '_';
   let out = text;
   for (const statement of [...body].reverse()) {
-    if (statement.type !== 'ExpressionStatement' || statement.directive) continue;
+    if (statement.type !== 'ExpressionStatement' || (strict && statement.directive)) continue;
     const value = statement.expression;
     if (value.type === 'CallExpression') {
       const callee = value.callee;
       if (callee.type === 'Identifier' && QUIET_CALL.test(callee.name)) continue;
       if (callee.type === 'MemberExpression' && callee.object.type === 'Identifier' && callee.object.name === 'console') continue;
     }
-    const wrapped =
-      `{ const __mqlensValue = (${text.slice(value.start, value.end)}); ` +
-      'if (__mqlensValue !== undefined) print(__mqlensValue); }';
+    // The whole statement, not just the expression: parentheses around it, and
+    // the newlines inside them, stay where they were. Only its `;` goes.
+    const source = text.slice(statement.start, statement.end).replace(/;$/, '');
+    const wrapped = `{ const ${name} = (${source}); if (${name} !== undefined) print(${name}); }`;
     out = out.slice(0, statement.start) + wrapped + out.slice(statement.end);
   }
   return out;

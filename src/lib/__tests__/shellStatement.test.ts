@@ -317,6 +317,27 @@ describe('echoValues', () => {
     expect(lines[2]).not.toBe('db.b.countDocuments()');
   });
 
+  it('prints leading string values, which the parser files as directives', () => {
+    expect(printed('"one";\n"two";')).toEqual(['one', 'two']);
+  });
+
+  it('leaves a "use strict" prologue alone and still prints after it', () => {
+    const rewritten = echoValues('"use strict";\n1 + 1');
+    expect(rewritten.startsWith('"use strict";\n')).toBe(true);
+    expect(printed('"use strict";\n1 + 1')).toEqual([2]);
+  });
+
+  it('keeps the newlines around a parenthesised expression, so later lines keep their numbers', () => {
+    const lines = echoValues('(\n  1 + 1\n);\nthrow new Error("failure");').split('\n');
+    expect(lines).toHaveLength(4);
+    expect(lines[3]).toBe('throw new Error("failure");');
+    expect(printed('(\n  1 + 1\n);')).toEqual([2]);
+  });
+
+  it('uses a temporary name the script does not already use', () => {
+    expect(printed('const __mqlensValue = 2;\n__mqlensValue + 1')).toEqual([3]);
+  });
+
   it('returns a script it cannot parse unchanged, for mongosh to report', () => {
     expect(echoValues('db.a.find({')).toBe('db.a.find({');
   });
