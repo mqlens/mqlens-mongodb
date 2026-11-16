@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useDialogs } from './dialogs/DialogProvider';
 import { PasswordInput } from './PasswordInput';
 import { Button } from '@/components/ui/button';
 import {
@@ -36,6 +37,7 @@ interface VaultGateProps {
 
 export const VaultGate: React.FC<VaultGateProps> = ({ children }) => {
   const { t } = useTranslation('shell');
+  const dialogs = useDialogs();
   const [status, setStatus] = useState<VaultStatus | 'loading'>('loading');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -151,7 +153,7 @@ export const VaultGate: React.FC<VaultGateProps> = ({ children }) => {
   };
 
   const doReset = async () => {
-    if (!window.confirm(t('vaultGate.confirmReset'))) return;
+    if (!(await dialogs.confirm({ title: t('vaultGate.resetTitle'), message: t('vaultGate.confirmReset'), destructive: true }))) return;
     setError('');
     try {
       // This is the forgotten-password recovery route. The vault key is

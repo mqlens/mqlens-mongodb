@@ -305,7 +305,8 @@
       "youBadge": "(you)"
     },
     "confirm": {
-      "killOperation": "Kill operation {{opid}} on {{ns}}?"
+      "killOperation": "Kill operation {{opid}} on {{ns}}?",
+      "killOperationTitle": "Kill operation {{opid}}?"
     },
     "detail": {
       "opTitle": "Operation details",

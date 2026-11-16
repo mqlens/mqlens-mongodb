@@ -20,7 +20,8 @@
       "profilerRefresh": "Aktualisieren"
     },
     "confirm": {
-      "killOperation": "Vorgang {{opid}} auf {{ns}} beenden?"
+      "killOperation": "Vorgang {{opid}} auf {{ns}} beenden?",
+      "killOperationTitle": "Operation {{opid}} beenden?"
     },
     "labels": {
       "serverFallback": "Server",

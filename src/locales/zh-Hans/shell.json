@@ -537,7 +537,8 @@
     "titles": {
       "setup": "创建主密码",
       "unlock": "解锁 MQLens"
-    }
+    },
+    "resetTitle": "重置保管库？"
   },
   "watch": {
     "actions": {
@@ -659,7 +660,9 @@
     "lockedTitle": "密钥库已锁定",
     "retentionNote": "旧事件会按保留期设置自动移除。完好的日志无法被清除。",
     "statusError": "失败",
-    "statusOk": "成功"
+    "statusOk": "成功",
+    "exportPlaintextTitle": "以未加密形式导出日志？",
+    "discardTitle": "丢弃已损坏的日志？"
   },
   "shellNotOnServer": "MQLens Server 暂不支持 Shell。"
 }

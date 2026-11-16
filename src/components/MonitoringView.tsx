@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useTranslation } from 'react-i18next';
+import { useDialogs } from './dialogs/DialogProvider';
 import { useTabVisible } from '../workspace/tabVisibility';
 import {
   Activity,
@@ -558,6 +559,7 @@ const ProfileFilterBar: React.FC<{
 
 export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId, blockedCommands, roleBlockedCommands }) => {
   const { t } = useTranslation('admin');
+  const dialogs = useDialogs();
   // Read through a ref so the poll and profiler callbacks keep their identity.
   const blockedRef = useRef(blockedCommands);
   blockedRef.current = blockedCommands;
@@ -723,14 +725,19 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId, bl
   }, [section, profilerDb, refreshProfiler]);
 
   const handleKill = useCallback(async (op: CurrentOp) => {
-    if (!window.confirm(t('monitoringView.confirm.killOperation', { opid: op.opid, ns: op.ns || t('monitoringView.labels.serverFallback') }))) return;
+    const ok = await dialogs.confirm({
+      title: t('monitoringView.confirm.killOperationTitle', { opid: op.opid }),
+      message: t('monitoringView.confirm.killOperation', { opid: op.opid, ns: op.ns || t('monitoringView.labels.serverFallback') }),
+      destructive: true,
+    });
+    if (!ok) return;
     try {
       await killOp(connectionId, op.opid);
       setOps(await currentOps(connectionId));
     } catch (e: unknown) {
       setOpsErr(String((e as Error)?.message || e));
     }
-  }, [connectionId, t]);
+  }, [connectionId, t, dialogs]);
 
   const handleSetLevel = async (level: number) => {
     try {
