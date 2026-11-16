@@ -264,6 +264,31 @@ test.describe('Undo of an edit in a tab that changes windows', () => {
     expect(await app.calls('update_document')).toHaveLength(2);
   });
 
+  test('a document dialog that arrives from another window saves with no Undo', async ({ app, page }) => {
+    await connectStaging(app, page);
+    await openCollection(page, 'sales_db', 'products');
+    // Opened over there, on a row this window never saw written: what it was
+    // opened on, and what was written since, are not known here.
+    const doc = { _id: { $oid: '603d779f4f102e3a105c3120' }, name: 'Alice Smith', email: 'alice@example.com' };
+    const customers = {
+      ...stagingTab('customers'),
+      documentEdit: { id: 'edit-from-win-2', mode: 'edit', initialJson: JSON.stringify(doc), targetDoc: doc, draft: JSON.stringify({ ...doc, email: 'c@example.com' }) },
+    };
+    await app.emit('workspace-changed', {
+      revision: 90,
+      origin: 'win-2',
+      crossWindow: true,
+      workspace: workspace(90, [customers, stagingTab('products')], [stagingTab('transactions')]),
+    });
+    const modal = page.getByTestId('document-edit-modal');
+    await expect(modal).toBeVisible();
+
+    await callFrom(app, 'update_document', () => modal.getByTestId('document-save-btn').click());
+    const saved = toast(page, 'Saved');
+    await expect(saved).toBeVisible();
+    expect(await saved.getByRole('button', { name: 'Undo' }).count()).toBe(0);
+  });
+
   test('another window taking the tab retires its Undo too', async ({ app, page }) => {
     await savedEdit(app, page);
     await app.emit('workspace-changed', {

@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 import { test, expect, type App } from '../fixtures';
 import { callFrom, connectStaging, openCollection, setEditorText, view } from '../helpers';
 
@@ -8,6 +8,15 @@ import { callFrom, connectStaging, openCollection, setEditorText, view } from '.
 
 const toast = (page: Page, text: string | RegExp) => page.getByTestId('dialog-toast').filter({ hasText: text });
 const editor = (page: Page) => view(page).getByTestId('cell-editor');
+
+/** Drags the non-modal document dialog down by its title, off the top rows. */
+async function dragAside(page: Page, modal: Locator): Promise<void> {
+  const box = (await modal.getByText('Edit Document', { exact: true }).boundingBox())!;
+  await page.mouse.move(box.x + 10, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 10, box.y + 600, { steps: 5 });
+  await page.mouse.up();
+}
 
 async function openCustomers(app: App, page: Page): Promise<void> {
   await connectStaging(app, page);
@@ -265,12 +274,7 @@ test.describe('In-place cell edit', () => {
     await setEditorText(page, modal, '{ "_id": ObjectId("603d779f4f102e3a105c3120"), "name": "Alice Smith", "email": "c@example.com", "tier": "Premium", "joined": "2024-01-10", "address": { "city": "New York", "state": "NY" } }');
 
     // With the dialog dragged aside, the same field is saved in place as d@.
-    const title = modal.getByText('Edit Document', { exact: true });
-    const box = (await title.boundingBox())!;
-    await page.mouse.move(box.x + 10, box.y + box.height / 2);
-    await page.mouse.down();
-    await page.mouse.move(box.x + 10, box.y + 600, { steps: 5 });
-    await page.mouse.up();
+    await dragAside(page, modal);
     await view(page).getByText('"alice@example.com"', { exact: true }).dblclick();
     await editor(page).fill('"d@example.com"');
     await editor(page).press('Enter');
@@ -308,6 +312,55 @@ test.describe('In-place cell edit', () => {
     const saved = toast(page, 'Saved').last();
     await expect(saved).toBeVisible();
     expect(await saved.getByRole('button', { name: 'Undo' }).count()).toBe(1);
+  });
+
+  test('a document dialog saved after an Update Many has no Undo, which would write over the update', async ({ app, page }) => {
+    await openCustomers(app, page);
+    await view(page).getByRole('button', { name: 'Tree', exact: true }).click();
+    await view(page).getByTestId('edit-doc-btn').first().click();
+    const modal = page.getByTestId('document-edit-modal');
+    await expect(modal).toContainText('alice@example.com');
+    await setEditorText(page, modal, '{ "_id": ObjectId("603d779f4f102e3a105c3120"), "name": "Alice Smith", "email": "c@example.com", "tier": "Premium", "joined": "2024-01-10", "address": { "city": "New York", "state": "NY" } }');
+    await dragAside(page, modal);
+
+    await view(page).getByTestId('bulk-write-menu-btn').click();
+    await page.getByTestId('update-many-btn').click();
+    await setEditorText(page, page.getByTestId('update-many-editor'), '{ $set: { tier: "Gold" } }');
+    await callFrom(app, 'update_many', () => page.getByTestId('update-many-submit').click());
+
+    await modal.getByTestId('document-save-btn').click();
+    await expect(modal).toHaveCount(0);
+    const saved = toast(page, 'Saved').last();
+    await expect(saved).toBeVisible();
+    expect(await saved.getByRole('button', { name: 'Undo' }).count()).toBe(0);
+  });
+
+  test('a document dialog opened while an Undo refreshes the grid has no Undo', async ({ app, page }) => {
+    await openCustomers(app, page);
+    await view(page).getByRole('button', { name: 'Table', exact: true }).click();
+    await view(page).getByText('alice@example.com', { exact: true }).dblclick();
+    await editor(page).fill('"b@example.com"');
+    await editor(page).press('Enter');
+    await expect(view(page).getByText('b@example.com', { exact: true })).toBeVisible();
+
+    // The undo is written, and the grid, still showing b@, is being refreshed.
+    const release = await app.hold('execute_mql_query');
+    await toast(page, 'Saved').getByRole('button', { name: 'Undo' }).click();
+    await expect.poll(async () => (await app.calls('update_document')).length).toBe(2);
+    await view(page).getByRole('button', { name: 'Tree', exact: true }).click();
+    await view(page).getByTestId('edit-doc-btn').first().click();
+    const modal = page.getByTestId('document-edit-modal');
+    await expect(modal).toContainText('b@example.com');
+    await release();
+    await expect(toast(page, 'Edit undone in customers')).toBeVisible();
+
+    await setEditorText(page, modal, '{ "_id": ObjectId("603d779f4f102e3a105c3120"), "name": "Alice Smith", "email": "c@example.com", "tier": "Premium", "joined": "2024-01-10", "address": { "city": "New York", "state": "NY" } }');
+    await modal.getByTestId('document-save-btn').click();
+    await expect(modal).toHaveCount(0);
+    // Its Undo would put back the b@ the dialog was opened on, which was undone.
+    const saved = toast(page, 'Saved').last();
+    await expect(saved).toBeVisible();
+    expect(await saved.getByRole('button', { name: 'Undo' }).count()).toBe(0);
   });
 
   test('a collection is not renamed while an Undo is writing to it', async ({ app, page }) => {

@@ -691,19 +691,25 @@ function Workspace() {
   // row as it was before the undo, so its own Undo would put back the wrong
   // values: it gets none.
   const undoInFlightRef = useRef(0);
-  // Writes to each document, counted when one starts and again when it ends,
-  // and that count when each document dialog opened. A dialog whose document
-  // was written since holds it as it was before, so its Undo would put back
-  // stale values, or erase the other write: its save gets none.
+  // Writes to each document, and Update Manys, counted when one starts and
+  // again once the grid has been refreshed after it; and those counts when
+  // each document dialog opened. A dialog whose document was written since,
+  // or that opened on rows not yet refreshed, holds it as it was before, so
+  // its Undo would put back stale values, or erase the other write: its save
+  // gets none. So does a dialog that came from another window, whose counts
+  // are not known here.
   // ponytail: entries for the window's lifetime; prune if it matters.
   const docWritesRef = useRef(new Map<string, number>());
-  const writesAtOpenRef = useRef(new Map<string, number>());
+  const bulkWritesRef = useRef(0);
+  const writesAtOpenRef = useRef(new Map<string, string>());
   const docKey = (tab: QueryTab, target: Record<string, any> | null | undefined) =>
     `${tab.connectionId}\u0000${tab.db}\u0000${tab.collection}\u0000${JSON.stringify(target?._id)}`;
   const docWrites = (tab: QueryTab, target: Record<string, any> | null | undefined) =>
     docWritesRef.current.get(docKey(tab, target)) ?? 0;
   const countDocWrite = (tab: QueryTab, target: Record<string, any> | null | undefined) =>
     docWritesRef.current.set(docKey(tab, target), docWrites(tab, target) + 1);
+  const writeStamp = (tab: QueryTab, target: Record<string, any> | null | undefined) =>
+    `${docWrites(tab, target)}/${bulkWritesRef.current}`;
   const documentEditFlushRef = useRef<(() => boolean) | null>(null);
   useLayoutEffect(() => {
     tabsRef.current = tabs;
@@ -4316,7 +4322,7 @@ function Workspace() {
       error: null,
       saving: false,
     };
-    writesAtOpenRef.current.set(opened.id, docWrites(tab, edit.targetDoc));
+    writesAtOpenRef.current.set(opened.id, writeStamp(tab, edit.targetDoc));
     setTabs(prev => prev.map(t => (t.id === tab.id ? { ...t, documentEdit: opened } : t)));
   };
   /** Ends whatever edit this tab has open — the user's own Cancel, where what
@@ -4749,6 +4755,7 @@ function Workspace() {
       // Not given back if the update fails: a bulk update is not atomic, and
       // may have written some documents before it stopped.
       latestUndoRef.current++;
+      bulkWritesRef.current++;
       await undoWriteRef.current;
       const modified = await invoke<number>('update_many', {
         id: tab.connectionId,
@@ -4762,6 +4769,8 @@ function Workspace() {
       toast(t('toast.modifiedDocuments', { count: modified }), 'success', { title: t('toast.updatedTitle') });
     } catch (err: any) {
       toast(t('toast.updateFailed', { detail: err?.message || err }), 'error');
+    } finally {
+      bulkWritesRef.current++;
     }
   };
 
@@ -4824,17 +4833,22 @@ function Workspace() {
 
     const undo = beginUndoableSave(tab.id);
     const writesAtOpen = writesAtOpenRef.current.get(edit.id);
-    const racedUndo = undoInFlightRef.current > 0 || (writesAtOpen !== undefined && writesAtOpen !== docWrites(tab, edit.targetDoc));
+    const racedUndo = undoInFlightRef.current > 0 || writesAtOpen !== writeStamp(tab, edit.targetDoc);
     await undoWriteRef.current;
+    let savedIn = tab;
     try {
-      await writeDocumentUpdate(tab, edit.targetDoc, json);
-    } catch (err) {
-      undo.refused();
-      throw err;
+      try {
+        await writeDocumentUpdate(tab, edit.targetDoc, json);
+      } catch (err) {
+        undo.refused();
+        throw err;
+      }
+      savedIn = tabHoldingEdit(edit.id) ?? tab;
+      closeEditById(edit.id);
+      await refreshTabResults(savedIn);
+    } finally {
+      countDocWrite(tab, edit.targetDoc);
     }
-    const savedIn = tabHoldingEdit(edit.id) ?? tab;
-    closeEditById(edit.id);
-    await refreshTabResults(savedIn);
     toast(t('toast.documentSavedIn', { collection }), 'success', {
       title: t('toast.savedTitle'),
       action: racedUndo ? undefined : undoEditAction(undo.token, tab, savedIn.id, edit.targetDoc, json),
@@ -4870,6 +4884,7 @@ function Workspace() {
         action: racedUndo ? undefined : undoEditAction(undo.token, tab, tab.id, doc, shellToEjson(docToShell(edited))),
       });
     } finally {
+      countDocWrite(tab, doc);
       setPendingSaves(prev => prev.filter(s => s.editId !== editId));
     }
   };
@@ -4925,8 +4940,9 @@ function Workspace() {
           { editId, tabId: liveTabId, connectionId: tab.connectionId, db: tab.db, collection: tab.collection },
         ]);
         undoInFlightRef.current++;
+        const target = undoBaseline(JSON.parse(savedJson), before ?? {});
         try {
-          const write = writeDocumentUpdate(tab, undoBaseline(JSON.parse(savedJson), before ?? {}), shellToEjson(docToShell(before)));
+          const write = writeDocumentUpdate(tab, target, shellToEjson(docToShell(before)));
           undoWriteRef.current = write.catch(() => {});
           await write;
           const live = tabsRef.current.find((x) => x.id === liveTabId);
@@ -4935,6 +4951,7 @@ function Workspace() {
         } catch (err: any) {
           toast(t('toast.undoFailed', { detail: err?.message || err }), 'error');
         } finally {
+          countDocWrite(tab, target);
           undoInFlightRef.current--;
           setPendingSaves(prev => prev.filter(p => p.editId !== editId));
         }
@@ -4953,38 +4970,35 @@ function Workspace() {
     // the fields that changed. The grid may be showing a projection, and saving
     // that partial view as a replacement deleted everything else (#275).
     // `docToShell` on both sides means they go through the identical parse path.
+    // Counted again by the caller, once the grid is refreshed.
     countDocWrite(tab, target);
-    try {
-      await invoke('update_document', {
-        id: tab.connectionId,
-        database: tab.db,
-        collection: tab.collection,
-        filter: JSON.stringify({ _id: target._id }),
-        // Must be EJSON, not shell text: the backend parses both sides with strict
-        // `serde_json`, and DocumentEditModal already converts the editor contents
-        // with `shellToEjson` before calling onSave — so sending shell here failed
-        // on any document with an ObjectId `_id`. Running the original through the
-        // same docToShell → shellToEjson pipeline also makes an unedited save
-        // produce byte-identical sides, so the diff cannot report a change that came
-        // from serialization rather than from the user.
-        original: shellToEjson(docToShell(target)),
-        edited: json,
-        // The projection the row came back under, so the backend knows which parts
-        // of `original` are complete: `{"address": 1}` includes the whole
-        // sub-document, `{"address.city": 1}` does not (see ProjectionShape).
-        //
-        // `null` when the rows came from a pipeline that reshapes them: `lastQuery`
-        // is left intact by handleExecuteAggregate and would be stale, and a row's
-        // `_id` may be a group key rather than a document id. The backend refuses
-        // to write in that case. A pipeline of only $match/$sort/$limit/$skip
-        // passes documents through untouched, so those rows are whole documents.
-        projection: tab.lastAggregate
-          ? (pipelineYieldsWholeDocuments(tab.lastAggregate) ? '{}' : null)
-          : (tab.lastQuery?.projection ?? '{}'),
-      });
-    } finally {
-      countDocWrite(tab, target);
-    }
+    await invoke('update_document', {
+      id: tab.connectionId,
+      database: tab.db,
+      collection: tab.collection,
+      filter: JSON.stringify({ _id: target._id }),
+      // Must be EJSON, not shell text: the backend parses both sides with strict
+      // `serde_json`, and DocumentEditModal already converts the editor contents
+      // with `shellToEjson` before calling onSave — so sending shell here failed
+      // on any document with an ObjectId `_id`. Running the original through the
+      // same docToShell → shellToEjson pipeline also makes an unedited save
+      // produce byte-identical sides, so the diff cannot report a change that came
+      // from serialization rather than from the user.
+      original: shellToEjson(docToShell(target)),
+      edited: json,
+      // The projection the row came back under, so the backend knows which parts
+      // of `original` are complete: `{"address": 1}` includes the whole
+      // sub-document, `{"address.city": 1}` does not (see ProjectionShape).
+      //
+      // `null` when the rows came from a pipeline that reshapes them: `lastQuery`
+      // is left intact by handleExecuteAggregate and would be stale, and a row's
+      // `_id` may be a group key rather than a document id. The backend refuses
+      // to write in that case. A pipeline of only $match/$sort/$limit/$skip
+      // passes documents through untouched, so those rows are whole documents.
+      projection: tab.lastAggregate
+        ? (pipelineYieldsWholeDocuments(tab.lastAggregate) ? '{}' : null)
+        : (tab.lastQuery?.projection ?? '{}'),
+    });
   };
 
   const handleExplainQuery = async (tab: QueryTab, filter: string): Promise<string> => {
