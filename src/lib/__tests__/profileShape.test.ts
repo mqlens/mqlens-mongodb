@@ -134,3 +134,94 @@ describe('queryShape — structural values', () => {
     expect(queryShape('{ "find": "c", "filter": { "pipeline": [1, 2] } }')).toBe(queryShape('{ "find": "c", "filter": { "pipeline": [3] } }'));
   });
 });
+
+describe('queryShape — values kept only where they shape the query', () => {
+  it('replaces the values of application fields named sort, projection or hint', () => {
+    const a = queryShape('{ "find": "c", "filter": { "sort": "new", "hint": 1, "projection": { "a": 1 } } }');
+    const b = queryShape('{ "find": "c", "filter": { "sort": "old", "hint": 2, "projection": { "a": 0 } } }');
+    expect(a).toBe(b);
+    expect(a).toBe('{find: "c", filter: {sort: ?, hint: ?, projection: {a: ?}}}');
+  });
+
+  it('replaces constants inside a computed projection, and keeps its flags', () => {
+    expect(queryShape('{ "aggregate": "o", "pipeline": [{ "$project": { "t": 1, "x": { "$ifNull": ["$a", "none"] } } }] }')).toBe(
+      '{aggregate: "o", pipeline: [{$project: {t: 1, x: {$ifNull: ["$a", ?]}}}]}'
+    );
+  });
+
+  it('keeps repeated arguments of an expression, which change what it computes', () => {
+    expect(queryShape('{ "aggregate": "o", "pipeline": [{ "$set": { "v": { "$concat": ["$a", "$a"] } } }] }')).toBe(
+      '{aggregate: "o", pipeline: [{$set: {v: {$concat: ["$a", "$a"]}}}]}'
+    );
+  });
+
+  it('still collapses the clauses of an $or, like the values of an $in', () => {
+    expect(queryShape('{ "find": "c", "filter": { "$or": [{ "a": 1 }, { "a": 2 }] } }')).toBe(
+      queryShape('{ "find": "c", "filter": { "$or": [{ "a": 3 }] } }')
+    );
+  });
+});
+
+describe('queryShape — operators that are part of a sort or hint', () => {
+  it('keeps the direction of a $natural hint or sort', () => {
+    expect(queryShape('{ "find": "c", "filter": {}, "hint": { "$natural": 1 } }')).toBe('{find: "c", filter: {}, hint: {$natural: 1}}');
+    expect(queryShape('{ "find": "c", "filter": {}, "sort": { "$natural": -1 } }')).toBe('{find: "c", filter: {}, sort: {$natural: -1}}');
+  });
+
+  it('keeps what a $meta sort or projection asks for', () => {
+    expect(queryShape('{ "find": "c", "filter": {}, "sort": { "s": { "$meta": "textScore" } } }')).toBe(
+      '{find: "c", filter: {}, sort: {s: {$meta: "textScore"}}}'
+    );
+  });
+});
+
+describe('queryShape — values pushed with $each', () => {
+  it('collapses the values of $each, which are data, whatever their number', () => {
+    const update = (each: string) => `{ "update": "c", "updates": [{ "q": { "_id": 1 }, "u": { "$push": { "tags": { "$each": [${each}] } } } }] }`;
+    expect(queryShape(update('1'))).toBe(queryShape(update('2, 3')));
+  });
+});
+
+describe('queryShape — options of each statement in a write', () => {
+  it('keeps the hint of an update or delete statement, and not a filter field named hint', () => {
+    expect(queryShape('{ "update": "c", "updates": [{ "q": { "a": 1, "hint": "x" }, "u": { "$set": { "b": 1 } }, "hint": "a_1" }] }')).toBe(
+      '{update: "c", updates: [{q: {a: ?, hint: ?}, u: {$set: {b: ?}}, hint: "a_1"}]}'
+    );
+    expect(queryShape('{ "delete": "c", "deletes": [{ "q": { "a": 1 }, "limit": 1, "hint": { "a": 1 } }] }')).toBe(
+      '{delete: "c", deletes: [{q: {a: ?}, limit: ?, hint: {a: 1}}]}'
+    );
+  });
+
+  it('collapses the array a $literal or $const holds, which is data', () => {
+    const literal = (op: string, items: string) => `{ "aggregate": "o", "pipeline": [{ "$set": { "v": { "${op}": [${items}] } } }] }`;
+    expect(queryShape(literal('$literal', '1'))).toBe(queryShape(literal('$literal', '2, 3')));
+    expect(queryShape(literal('$const', '1'))).toBe(queryShape(literal('$const', '2, 3')));
+  });
+});
+
+describe('queryShape — arrays in a query are values', () => {
+  it('collapses an array a query compares with, whatever its length', () => {
+    const find = (op: string, items: string) => `{ "find": "c", "filter": { "tags": { "${op}": [${items}] } } }`;
+    expect(queryShape(find('$eq', '1'))).toBe(queryShape(find('$eq', '2, 3')));
+    expect(queryShape(find('$ne', '1'))).toBe(queryShape(find('$ne', '2, 3')));
+    const match = (items: string) => `{ "aggregate": "o", "pipeline": [{ "$match": { "tags": { "$eq": [${items}] } } }] }`;
+    expect(queryShape(match('1'))).toBe(queryShape(match('2, 3')));
+    const del = (items: string) => `{ "delete": "c", "deletes": [{ "q": { "tags": { "$eq": [${items}] } }, "limit": 0 }] }`;
+    expect(queryShape(del('1'))).toBe(queryShape(del('2, 3')));
+  });
+
+  it('keeps the positional arguments of an expression inside a query', () => {
+    expect(queryShape('{ "find": "c", "filter": { "$expr": { "$eq": ["$a", "$a"] } } }')).toBe(
+      '{find: "c", filter: {$expr: {$eq: ["$a", "$a"]}}}'
+    );
+  });
+});
+
+describe('queryShape — arrayFilters are queries', () => {
+  it('collapses an array an array filter compares with, and keeps $expr arguments there', () => {
+    const update = (filter: string) =>
+      `{ "update": "c", "updates": [{ "q": {}, "u": { "$set": { "es.$[e].ok": true } }, "arrayFilters": [${filter}] }] }`;
+    expect(queryShape(update('{ "e.tags": { "$eq": [1] } }'))).toBe(queryShape(update('{ "e.tags": { "$eq": [2, 3] } }')));
+    expect(queryShape(update('{ "$expr": { "$eq": ["$e.a", "$e.a"] } }'))).toContain('$eq: ["$e.a", "$e.a"]');
+  });
+});
