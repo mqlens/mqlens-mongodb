@@ -331,7 +331,8 @@
         "empty": "No documents",
         "input": "Input",
         "output": "Output",
-        "refresh": "Refresh preview"
+        "refresh": "Refresh preview",
+        "sampled": "An earlier $sample picks new documents on each run, so input and output come from different samples."
       },
       "stageCount_one": "{{count}} stage",
       "stageCount_other": "{{count}} stages",

@@ -1955,6 +1955,24 @@ describe('Aggregation stage input/output preview', () => {
     expect(onPreviewAggregate).not.toHaveBeenCalled();
   });
 
+  it('warns that the sides are different samples when an earlier stage is $sample (#578 review)', async () => {
+    renderAgg();
+    const first = screen.getByTestId('pipeline-stage-0');
+    fireEvent.change(first.querySelector('select')!, { target: { value: '$sample' } });
+    fireEvent.change(first.querySelector('textarea')!, { target: { value: '{ size: 10 }' } });
+    addStage(1, '$project', '{ name: 1 }');
+
+    fireEvent.click(screen.getByLabelText('Preview stage 2'));
+    await waitFor(() => expect(screen.getByTestId('stage-preview-1')).toHaveTextContent(
+      'An earlier $sample picks new documents on each run, so input and output come from different samples.',
+    ));
+
+    // The $sample stage's own preview compares fine: its input is the collection.
+    fireEvent.click(screen.getByLabelText('Preview stage 1'));
+    await waitFor(() => expect(screen.getByTestId('stage-preview-0')).toBeInTheDocument());
+    expect(screen.getByTestId('stage-preview-0')).not.toHaveTextContent('$sample');
+  });
+
   it("links each stage to its operator's documentation", () => {
     renderAgg();
     addStage(1, '$group', '{ _id: null }');

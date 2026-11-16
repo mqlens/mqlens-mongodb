@@ -369,6 +369,8 @@ interface StagePreview {
   loading: boolean;
   input?: Record<string, any>[];
   output?: Record<string, any>[];
+  // An earlier enabled $sample: each side ran it apart, so they hold different samples.
+  sampled?: boolean;
   error?: string;
 }
 
@@ -401,6 +403,9 @@ const StagePreviewPanel = ({ index, preview, onRefresh }: { index: number; previ
           <RefreshCw size={10} className={cn(preview.loading && 'animate-spin')} />
         </Button>
       </div>
+      {preview.sampled && !preview.error && (
+        <div className="px-2 pt-1 text-[10px] text-amber-600 dark:text-amber-400" role="note">{td('documentViewer.pipeline.preview.sampled')}</div>
+      )}
       {preview.error ? (
         <div className="px-2 pb-2 font-mono text-[11px] text-destructive" role="alert">{preview.error}</div>
       ) : (
@@ -973,7 +978,9 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
         onPreviewAggregate(upTo(index)),
         onPreviewAggregate(upTo(index + 1)),
       ]);
-      next = { loading: false, input, output };
+      // ponytail: only $sample is flagged; $rand in an expression also differs per run.
+      const sampled = stages.slice(0, index).some(s => !s.disabled && s.operator === '$sample');
+      next = { loading: false, input, output, sampled };
     } catch (e: any) {
       next = {
         loading: false,

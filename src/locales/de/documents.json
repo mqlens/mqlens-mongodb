@@ -92,7 +92,8 @@
         "empty": "Keine Dokumente",
         "input": "Eingabe",
         "output": "Ausgabe",
-        "refresh": "Vorschau aktualisieren"
+        "refresh": "Vorschau aktualisieren",
+        "sampled": "Ein früheres $sample wählt bei jedem Lauf neue Dokumente, daher stammen Eingabe und Ausgabe aus verschiedenen Stichproben."
       },
       "stageCount_one": "{{count}} Stufe",
       "stageCount_other": "{{count}} Stufen",
