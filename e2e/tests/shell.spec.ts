@@ -79,6 +79,15 @@ test.describe('mongosh shell', () => {
     await expect(transcript(page)).toContainText('second line');
     expect(await app.calls('run_mongosh_script')).toHaveLength(1);
 
+    // A script prints nothing for a bare value, so each is sent wrapped to
+    // print it, as the REPL would.
+    await run(page, 'db.customers.countDocuments()\ndb.transactions.countDocuments()');
+    const scripts = await app.calls('run_mongosh_script');
+    const sent = (scripts[scripts.length - 1].args as { script: string }).script.split('\n');
+    expect(sent).toHaveLength(2);
+    for (const line of sent) expect(line).toMatch(/^\{ const __mqlensValue = \(db\.\w+\.countDocuments\(\)\); .*print\(__mqlensValue\); \}$/);
+    // The fake runs each wrapped line as mongosh would, printing the value.
+    await expect(transcript(page)).not.toContainText('ReferenceError: {');
   });
 
   test('cls clears the console', async ({ app, page }) => {

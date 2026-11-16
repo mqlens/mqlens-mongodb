@@ -205,7 +205,8 @@
     "resetVaultSuccess": "密钥库已重置 —— 请重启应用。",
     "tabDescription": "主密码、生物识别和密钥库恢复。",
     "tabLabel": "安全",
-    "unlockWith": "使用{{type}}解锁"
+    "unlockWith": "使用{{type}}解锁",
+    "resetVaultTitle": "重置保管库？"
   },
   "shortcuts": {
     "tabDescription": "工作区的键盘快捷键参考。",

@@ -5,6 +5,7 @@ const mockInvoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: any[]) => mockInvoke(...a) }));
 
 import { MonitoringView } from '../MonitoringView';
+import { DialogProvider } from '../dialogs/DialogProvider';
 import type { CurrentOp } from '../../lib/monitoringApi';
 import { TabVisibleContext } from '../../workspace/tabVisibility';
 
@@ -58,7 +59,7 @@ describe('MonitoringView', () => {
         <MonitoringView connectionId="c1" />
       </TabVisibleContext.Provider>
     );
-    const { rerender } = render(view(false));
+    const { rerender } = render(view(false), { wrapper: DialogProvider });
     await new Promise((r) => setTimeout(r, 50));
     expect(statusCalls()).toBe(0);
 
@@ -72,7 +73,7 @@ describe('MonitoringView', () => {
   });
 
   it('renders server metrics and current operations', async () => {
-    render(<MonitoringView connectionId="conn-1" />);
+    render(<MonitoringView connectionId="conn-1" />, { wrapper: DialogProvider });
     expect(await screen.findByTestId('monitoring-view')).toBeInTheDocument();
     expect(await screen.findByText('Connections')).toBeInTheDocument();
     // Connection count from server_status.
@@ -83,10 +84,13 @@ describe('MonitoringView', () => {
   });
 
   it('kills an operation after confirmation', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
-    render(<MonitoringView connectionId="conn-1" />);
+    render(<MonitoringView connectionId="conn-1" />, { wrapper: DialogProvider });
     const killBtn = await screen.findByTestId('kill-op-42');
     fireEvent.click(killBtn);
+    expect(await screen.findByTestId('dialog-title')).toHaveTextContent('Kill operation 42?');
+    expect(mockInvoke).not.toHaveBeenCalledWith('kill_op', expect.anything());
+    vi.spyOn(window, 'confirm').mockImplementation(() => { throw new Error('native window dialog used'); });
+    fireEvent.click(screen.getByTestId('dialog-confirm'));
     await waitFor(() => {
       expect(mockInvoke).toHaveBeenCalledWith('kill_op', { id: 'conn-1', opid: 42 });
     });
@@ -94,12 +98,12 @@ describe('MonitoringView', () => {
 
   // Through mongos an operation id is "shard:number"; it is shown and killed as it came.
   it('kills an operation whose id is a string', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
     const sharded: CurrentOp = { opid: 'shard01:77', op: 'query', ns: 'sales_db.orders', secsRunning: 9, client: '', desc: '', command: '{}' };
     const base = mockInvoke.getMockImplementation()!;
     mockInvoke.mockImplementation((cmd: string, args?: unknown) => (cmd === 'current_ops' ? Promise.resolve([sharded]) : base(cmd, args)));
-    render(<MonitoringView connectionId="conn-1" />);
+    render(<MonitoringView connectionId="conn-1" />, { wrapper: DialogProvider });
     fireEvent.click(await screen.findByTestId('kill-op-shard01:77'));
+    fireEvent.click(await screen.findByTestId('dialog-confirm'));
     await waitFor(() => {
       expect(mockInvoke).toHaveBeenCalledWith('kill_op', { id: 'conn-1', opid: 'shard01:77' });
     });
@@ -116,7 +120,7 @@ describe('MonitoringView', () => {
       if (cmd === 'read_profile') return Promise.resolve([]);
       return Promise.resolve(null);
     });
-    render(<MonitoringView connectionId="conn-1" />);
+    render(<MonitoringView connectionId="conn-1" />, { wrapper: DialogProvider });
     expect(await screen.findByTestId('access-required')).toBeInTheDocument();
     // Metric cards are hidden behind the access notice.
     expect(screen.queryByText('Connections')).toBeNull();
@@ -136,7 +140,7 @@ describe('MonitoringView', () => {
       if (cmd === 'read_profile') return Promise.resolve([]);
       return Promise.resolve(null);
     });
-    render(<MonitoringView connectionId="conn-1" />);
+    render(<MonitoringView connectionId="conn-1" />, { wrapper: DialogProvider });
     expect(await screen.findByText('sales_db.orders')).toBeInTheDocument();
     expect(screen.getByText('admin.$cmd')).toBeInTheDocument();
     fireEvent.change(screen.getByTestId('ops-search'), { target: { value: 'orders' } });
@@ -145,7 +149,7 @@ describe('MonitoringView', () => {
   });
 
   it('filters current ops by minimum duration (secs)', async () => {
-    render(<MonitoringView connectionId="conn-1" />);
+    render(<MonitoringView connectionId="conn-1" />, { wrapper: DialogProvider });
     expect(await screen.findByTestId('current-ops-table')).toBeInTheDocument();
     // The seeded op runs for 3s; require ≥ 5s and it drops out.
     fireEvent.change(screen.getByTestId('ops-min-secs'), { target: { value: '5' } });
@@ -154,7 +158,7 @@ describe('MonitoringView', () => {
   });
 
   it('opens a detail modal when an operation row is clicked', async () => {
-    render(<MonitoringView connectionId="conn-1" />);
+    render(<MonitoringView connectionId="conn-1" />, { wrapper: DialogProvider });
     fireEvent.click(await screen.findByTestId('op-row-42'));
     const modal = await screen.findByTestId('monitoring-detail');
     expect(modal).toBeInTheDocument();
@@ -164,7 +168,7 @@ describe('MonitoringView', () => {
   });
 
   it('switches between the Current operations and Profiler tabs', async () => {
-    render(<MonitoringView connectionId="conn-1" />);
+    render(<MonitoringView connectionId="conn-1" />, { wrapper: DialogProvider });
     // Current operations is the default tab.
     expect(await screen.findByTestId('current-ops-table')).toBeInTheDocument();
     expect(screen.queryByTestId('mon-panel-profiler')).toBeNull();
@@ -175,7 +179,7 @@ describe('MonitoringView', () => {
   });
 
   it('sets the profiling level via the controls (on the Profiler tab)', async () => {
-    render(<MonitoringView connectionId="conn-1" />);
+    render(<MonitoringView connectionId="conn-1" />, { wrapper: DialogProvider });
     fireEvent.click(await screen.findByTestId('mon-tab-profiler'));
     fireEvent.click(await screen.findByTestId('profiler-level-1'));
     await waitFor(() => {
@@ -183,8 +187,41 @@ describe('MonitoringView', () => {
     });
   });
 
+  it('groups profiled operations by query shape, with count and total, average, max and min duration', async () => {
+    const run = (millis: number, tier: string) => ({
+      op: 'query', ns: 'sales_db.customers', millis, tsMs: millis, planSummary: 'COLLSCAN',
+      command: `{ "find": "customers", "filter": { "tier": "${tier}" }, "lsid": { "id": 1 } }`,
+    });
+    const other = { op: 'update', ns: 'sales_db.products', millis: 15, tsMs: 1, planSummary: 'IXSCAN', command: '{ "update": "products" }' };
+    const base = mockInvoke.getMockImplementation()!;
+    mockInvoke.mockImplementation((cmd: string, args: unknown) =>
+      cmd === 'read_profile' ? Promise.resolve([run(120, 'gold'), other, run(40, 'free'), run(200, 'silver')]) : base(cmd, args)
+    );
+    render(<MonitoringView connectionId="conn-1" />, { wrapper: DialogProvider });
+    fireEvent.click(await screen.findByTestId('mon-tab-profiler'));
+    expect(await screen.findByTestId('profile-row-3')).toBeInTheDocument();
+
+    const toggle = screen.getByTestId('profiler-group-toggle');
+    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.queryByTestId('profile-table')).toBeNull();
+    const first = await screen.findByTestId('profile-group-0');
+    const cells = Array.from(first.querySelectorAll('td')).map((td) => td.textContent);
+    // count, total, avg, max, min, op, ns, shape
+    expect(cells.slice(0, 5)).toEqual(['3', '360', '120', '200', '40']);
+    expect(cells[6]).toBe('sales_db.customers');
+    expect(cells[7]).toBe('{find: "customers", filter: {tier: ?}}');
+    expect(screen.getByTestId('profile-group-1')).toHaveTextContent('sales_db.products');
+    expect(screen.queryByTestId('profile-group-2')).toBeNull();
+
+    // Opening a group shows its slowest run.
+    fireEvent.click(first);
+    expect(await screen.findByTestId('monitoring-detail')).toHaveTextContent('silver');
+  });
+
   it('does not fetch replica-set status until the Cluster tab is active', async () => {
-    render(<MonitoringView connectionId="conn-1" />);
+    render(<MonitoringView connectionId="conn-1" />, { wrapper: DialogProvider });
     expect(await screen.findByTestId('current-ops-table')).toBeInTheDocument();
     expect(mockInvoke).not.toHaveBeenCalledWith('repl_set_status', expect.anything());
     fireEvent.click(screen.getByTestId('mon-tab-cluster'));
@@ -195,7 +232,7 @@ describe('MonitoringView', () => {
   });
 
   it('renders replica-set members with roles and lag warning styling', async () => {
-    render(<MonitoringView connectionId="conn-1" />);
+    render(<MonitoringView connectionId="conn-1" />, { wrapper: DialogProvider });
     fireEvent.click(await screen.findByTestId('mon-tab-cluster'));
 
     const summary = await screen.findByTestId('cluster-summary');
@@ -226,7 +263,7 @@ describe('MonitoringView', () => {
         return Promise.resolve({ isReplicaSet: false, clusterType: 'standalone', set: '', myStateStr: '', mongoVersion: '', members: [] });
       return Promise.resolve(null);
     });
-    render(<MonitoringView connectionId="conn-1" />);
+    render(<MonitoringView connectionId="conn-1" />, { wrapper: DialogProvider });
     fireEvent.click(await screen.findByTestId('mon-tab-cluster'));
     expect(await screen.findByTestId('cluster-not-replset')).toBeInTheDocument();
     expect(screen.queryByTestId('cluster-members-table')).toBeNull();
@@ -240,7 +277,7 @@ describe('MonitoringView', () => {
         return Promise.resolve({ isReplicaSet: false, clusterType: 'sharded', set: '', myStateStr: '', mongoVersion: '', members: [] });
       return Promise.resolve(null);
     });
-    render(<MonitoringView connectionId="conn-1" />);
+    render(<MonitoringView connectionId="conn-1" />, { wrapper: DialogProvider });
     fireEvent.click(await screen.findByTestId('mon-tab-cluster'));
     expect(await screen.findByTestId('cluster-sharded')).toBeInTheDocument();
     expect(screen.queryByTestId('cluster-not-replset')).toBeNull();
@@ -252,7 +289,7 @@ describe('MonitoringView: commands a server connection cannot run', () => {
   const BLOCKED = ['current_ops', 'kill_op', 'read_profile', 'set_profiling_level'];
 
   it('does not ask for them, and says why', async () => {
-    render(<MonitoringView connectionId="c1" blockedCommands={BLOCKED} />);
+    render(<MonitoringView connectionId="c1" blockedCommands={BLOCKED} />, { wrapper: DialogProvider });
 
     const ops = await screen.findByTestId('mon-panel-ops');
     await waitFor(() => expect(ops).toHaveTextContent('Not available on MQLens Server yet'));
@@ -267,7 +304,7 @@ describe('MonitoringView: commands a server connection cannot run', () => {
 describe('MonitoringView: a server connection without the metrics', () => {
   it('does not ask for server status, replica set status or profiling status when blocked', async () => {
     const BLOCKED = ['server_status', 'repl_set_status', 'get_profiling_status'];
-    render(<MonitoringView connectionId="c1" blockedCommands={BLOCKED} />);
+    render(<MonitoringView connectionId="c1" blockedCommands={BLOCKED} />, { wrapper: DialogProvider });
 
     fireEvent.click(await screen.findByTestId('mon-tab-profiler'));
     await screen.findByTestId('mon-panel-profiler');
@@ -280,7 +317,7 @@ describe('MonitoringView: a server connection without the metrics', () => {
 describe('MonitoringView: commands the role rules out', () => {
   it('says the role is why', async () => {
     const BLOCKED = ['current_ops', 'kill_op', 'read_profile', 'set_profiling_level'];
-    render(<MonitoringView connectionId="c1" blockedCommands={BLOCKED} roleBlockedCommands={BLOCKED} />);
+    render(<MonitoringView connectionId="c1" blockedCommands={BLOCKED} roleBlockedCommands={BLOCKED} />, { wrapper: DialogProvider });
 
     const ops = await screen.findByTestId('mon-panel-ops');
     await waitFor(() =>

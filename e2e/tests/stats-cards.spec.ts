@@ -56,6 +56,32 @@ test.describe('Stats cards', () => {
   });
 });
 
+test.describe('Collection menu', () => {
+  test('opens the indexes view and the stats card from Indexes and Statistics', async ({ app, page }) => {
+    await openCustomers(app, page);
+    const collection = sidebar(page).getByText('customers', { exact: true }).first();
+
+    await collection.click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Statistics' }).click();
+    await expect(page.getByTestId('coll-stats-card')).toContainText('sales_db.customers');
+    await expect(page.getByTestId('coll-stats-card')).toContainText('Documents');
+    // Opened on purpose, it stays when the pointer passes through it and
+    // moves away, until dismissed.
+    await page.getByTestId('coll-stats-card').hover();
+    await page.mouse.move(5, 5);
+    await page.waitForTimeout(500);
+    await expect(page.getByTestId('coll-stats-card')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('coll-stats-card')).toHaveCount(0);
+
+    await collection.click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Indexes', exact: true }).click();
+    await dismissHoverCards(page);
+    await expect(view(page).getByTestId('collection-indexes')).toBeVisible();
+    await expect(page.getByTestId('workspace-tab-strip').getByText('Indexes: customers')).toHaveCount(1);
+  });
+});
+
 test.describe('Schema analysis failures', () => {
   test('says why a schema could not be analyzed', async ({ app, page }) => {
     await openCustomers(app, page);

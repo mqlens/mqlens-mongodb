@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { save } from '@tauri-apps/plugin-dialog';
 import { useTranslation } from 'react-i18next';
+import { useDialogs } from './dialogs/DialogProvider';
 import { Download, RefreshCw, Trash2, ChevronDown, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -78,6 +79,7 @@ function namespaceOf(ev: AuditEvent): string {
 
 export const ActivityPanel: React.FC = () => {
   const { t } = useTranslation('shell');
+  const dialogs = useDialogs();
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [locked, setLocked] = useState(false);
@@ -151,10 +153,10 @@ export const ActivityPanel: React.FC = () => {
         filters: [{ name: t('activity.exportFileType'), extensions: ['jsonl'] }],
       });
       if (!path) return;
-      if (!window.confirm(t('activity.exportPlaintextWarning'))) return;
+      if (!(await dialogs.confirm({ title: t('activity.exportPlaintextTitle'), message: t('activity.exportPlaintextWarning') }))) return;
       const n = await invoke<number>('audit_export', { filter: buildExportFilter(), path });
       setError(null);
-      window.alert(t('activity.exportDone', { count: n }));
+      dialogs.toast(t('activity.exportDone', { count: n }), 'success');
     } catch (err) {
       if (isVaultLockedError(err)) setLocked(true);
       else setError(String(err));
@@ -167,12 +169,12 @@ export const ActivityPanel: React.FC = () => {
   // way to erase an intact log: retention removes old events on its own, and a
   // one-click wipe would defeat the integrity checks it sits behind.
   const onDiscardDamaged = async () => {
-    if (!window.confirm(t('activity.discardConfirm'))) return;
+    if (!(await dialogs.confirm({ title: t('activity.discardTitle'), message: t('activity.discardConfirm'), destructive: true }))) return;
     setBusy(true);
     try {
       const removed = await invoke<number>('audit_discard_damaged_log');
       await load();
-      window.alert(t('activity.discardDone', { count: removed }));
+      dialogs.toast(t('activity.discardDone', { count: removed }), 'success');
     } catch (err) {
       if (isVaultLockedError(err)) setLocked(true);
       else setError(String(err));

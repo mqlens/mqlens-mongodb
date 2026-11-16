@@ -890,58 +890,52 @@ describe('DataGrid table header/body scroll sync (#219)', () => {
     fireEvent.click(screen.getByRole('button', { name: /table/i }));
 
     const header = screen.getByTestId('table-header');
-    const body = screen.getByTestId('table-body-scroll');
+    // The virtualized List is the box that scrolls; its scroll events don't
+    // bubble, so they reach the header's listener only in capture.
+    const list = screen.getByTestId('table-body-scroll').firstElementChild as HTMLElement;
 
     // jsdom has no layout: fake the overflow that makes a box scrollable, since
     // only a horizontally-scrollable element is allowed to drive the header.
-    const overflowing = (el: HTMLElement) => {
-      Object.defineProperty(el, 'clientWidth', { value: 500, configurable: true });
-      Object.defineProperty(el, 'scrollWidth', { value: 1400, configurable: true });
-    };
-    overflowing(body);
+    Object.defineProperty(list, 'clientWidth', { value: 500, configurable: true });
+    Object.defineProperty(list, 'scrollWidth', { value: 1400, configurable: true });
 
-    body.scrollLeft = 240;
-    fireEvent.scroll(body);
+    list.scrollLeft = 240;
+    fireEvent.scroll(list);
     expect(header.scrollLeft).toBe(240);
 
-    body.scrollLeft = 0;
-    fireEvent.scroll(body);
+    list.scrollLeft = 0;
+    fireEvent.scroll(list);
     expect(header.scrollLeft).toBe(0);
   });
 
-  it('syncs from the virtualized list\'s inner scroller too (scroll does not bubble)', () => {
-    render(<DataGrid documents={mockDocuments} />);
+  it('opens a differently shaped result scrolled back to the left', () => {
+    const { rerender } = render(<DataGrid documents={mockDocuments} />);
     fireEvent.click(screen.getByRole('button', { name: /table/i }));
 
-    const header = screen.getByTestId('table-header');
-    const body = screen.getByTestId('table-body-scroll');
-    // react-window renders its own overflow:auto element inside the wrapper; a
-    // scroll there must still reach the header, which only works via capture.
-    const inner = body.firstElementChild as HTMLElement;
-    expect(inner).toBeTruthy();
-    Object.defineProperty(inner, 'clientWidth', { value: 500, configurable: true });
-    Object.defineProperty(inner, 'scrollWidth', { value: 1400, configurable: true });
+    // The virtualized list is the box that scrolls, both ways.
+    const list = screen.getByTestId('table-body-scroll').firstElementChild as HTMLElement;
+    list.scrollLeft = 300;
 
-    inner.scrollLeft = 310;
-    fireEvent.scroll(inner);
-    expect(header.scrollLeft).toBe(310);
+    rerender(<DataGrid documents={[{ _id: 1, other: 'x' }]} />);
+    expect(list.scrollLeft).toBe(0);
+    expect(screen.getByTestId('table-header').scrollLeft).toBe(0);
   });
 
-  it('ignores a purely vertical scroller so it cannot reset the header', () => {
+  it('ignores a box with no sideways overflow so it cannot reset the header', () => {
     render(<DataGrid documents={mockDocuments} />);
     fireEvent.click(screen.getByRole('button', { name: /table/i }));
 
     const header = screen.getByTestId('table-header');
-    const body = screen.getByTestId('table-body-scroll');
-    Object.defineProperty(body, 'clientWidth', { value: 500, configurable: true });
-    Object.defineProperty(body, 'scrollWidth', { value: 1400, configurable: true });
-    body.scrollLeft = 200;
-    fireEvent.scroll(body);
+    const list = screen.getByTestId('table-body-scroll').firstElementChild as HTMLElement;
+    Object.defineProperty(list, 'clientWidth', { value: 500, configurable: true });
+    Object.defineProperty(list, 'scrollWidth', { value: 1400, configurable: true });
+    list.scrollLeft = 200;
+    fireEvent.scroll(list);
     expect(header.scrollLeft).toBe(200);
 
-    // A sibling box that only scrolls vertically (scrollWidth == clientWidth)
-    // must not drag the header back to 0.
-    const inner = body.firstElementChild as HTMLElement;
+    // A box inside the list that cannot scroll sideways (scrollWidth ==
+    // clientWidth) must not drag the header back to 0.
+    const inner = list.firstElementChild as HTMLElement;
     Object.defineProperty(inner, 'clientWidth', { value: 500, configurable: true });
     Object.defineProperty(inner, 'scrollWidth', { value: 500, configurable: true });
     inner.scrollLeft = 0;
@@ -1300,7 +1294,8 @@ describe('find scrolls the matched table column into view (#280 review)', () => 
 
     // jsdom has no layout, so the overflow the real table has is stubbed: the
     // body is 1000px of content in a 300px viewport.
-    const body = screen.getByTestId('table-body-scroll');
+    // The virtualized List is the box that scrolls.
+    const body = screen.getByTestId('table-body-scroll').firstElementChild as HTMLElement;
     let scrollLeft = 0;
     Object.defineProperty(body, 'scrollWidth', { value: 1000, configurable: true });
     Object.defineProperty(body, 'clientWidth', { value: 300, configurable: true });
@@ -1325,7 +1320,8 @@ describe('find scrolls the matched table column into view (#280 review)', () => 
     render(<DataGrid documents={mockDocuments} />);
     fireEvent.click(screen.getByRole('button', { name: /table/i }));
 
-    const body = screen.getByTestId('table-body-scroll');
+    // The virtualized List is the box that scrolls.
+    const body = screen.getByTestId('table-body-scroll').firstElementChild as HTMLElement;
     let scrollLeft = 0;
     Object.defineProperty(body, 'scrollWidth', { value: 1000, configurable: true });
     Object.defineProperty(body, 'clientWidth', { value: 900, configurable: true });
@@ -2930,5 +2926,140 @@ describe('DataGrid — in-place cell edit', () => {
     fireEvent.click(screen.getByRole('button', { name: /table/i }));
     fireEvent.doubleClick(cell('free'));
     expect(screen.queryByTestId('cell-editor')).toBeNull();
+  });
+});
+
+describe('DataGrid — table column sort, hide and reorder', () => {
+  const openTable = () => fireEvent.click(screen.getByRole('button', { name: /table/i }));
+  const headerCells = () =>
+    Array.from(screen.getByTestId('table-header').querySelectorAll('[data-column]')).map(
+      (el) => el.getAttribute('data-column')
+    );
+  // Row order as the body shows it.
+  const rowNames = () => {
+    const text = screen.getByTestId('table-body-scroll').textContent ?? '';
+    return ['Alice Smith', 'Bob Johnson', 'Charlie Brown'].sort((a, b) => text.indexOf(a) - text.indexOf(b));
+  };
+  const headerMenu = (col: string) =>
+    fireEvent.contextMenu(screen.getByRole('button', { name: new RegExp(`^${col}`) }));
+
+  it('sorts the rows by a column when its header is clicked, then reverses, then clears', () => {
+    render(<DataGrid documents={mockDocuments} />);
+    openTable();
+    const price = () => screen.getByRole('button', { name: /^price/ });
+
+    fireEvent.click(price());
+    expect(rowNames()).toEqual(['Bob Johnson', 'Charlie Brown', 'Alice Smith']);
+    expect(price().closest('[aria-sort]')?.getAttribute('aria-sort')).toBe('ascending');
+
+    fireEvent.click(price());
+    expect(rowNames()).toEqual(['Alice Smith', 'Charlie Brown', 'Bob Johnson']);
+    expect(price().closest('[aria-sort]')?.getAttribute('aria-sort')).toBe('descending');
+
+    fireEvent.click(price());
+    expect(rowNames()).toEqual(['Alice Smith', 'Bob Johnson', 'Charlie Brown']);
+  });
+
+  it('opens its own menu on a header right-click and hides a column from it', () => {
+    render(<DataGrid documents={mockDocuments} />);
+    openTable();
+
+    headerMenu('category');
+    fireEvent.click(screen.getByText('Hide column'));
+
+    expect(headerCells()).toEqual(['_id', 'name', 'price']);
+    expect(screen.queryByText('Office')).not.toBeInTheDocument();
+  });
+
+  it('brings hidden columns back with Show all columns', () => {
+    render(<DataGrid documents={mockDocuments} />);
+    openTable();
+    headerMenu('category');
+    fireEvent.click(screen.getByText('Hide column'));
+
+    headerMenu('name');
+    fireEvent.click(screen.getByText(/Show all columns/));
+
+    expect(headerCells()).toEqual(['_id', 'name', 'category', 'price']);
+  });
+
+  it('moves a column left and right from the header menu', () => {
+    render(<DataGrid documents={mockDocuments} />);
+    openTable();
+
+    headerMenu('price');
+    fireEvent.click(screen.getByText('Move left'));
+    expect(headerCells()).toEqual(['_id', 'name', 'price', 'category']);
+
+    headerMenu('_id');
+    fireEvent.click(screen.getByText('Move right'));
+    expect(headerCells()).toEqual(['name', '_id', 'price', 'category']);
+  });
+
+  it('sorts from the header menu too', () => {
+    render(<DataGrid documents={mockDocuments} />);
+    openTable();
+
+    headerMenu('price');
+    fireEvent.click(screen.getByText('Sort descending'));
+
+    expect(rowNames()).toEqual(['Alice Smith', 'Charlie Brown', 'Bob Johnson']);
+  });
+
+  it('reports the layout to a caller that owns it, and renders the one it is given', () => {
+    const onColumnLayoutChange = vi.fn();
+    const { unmount } = render(
+      <DataGrid documents={mockDocuments} columnLayout={{}} onColumnLayoutChange={onColumnLayoutChange} />
+    );
+    openTable();
+    headerMenu('category');
+    fireEvent.click(screen.getByText('Hide column'));
+    expect(onColumnLayoutChange).toHaveBeenLastCalledWith(expect.objectContaining({ hidden: ['category'] }));
+    unmount();
+
+    // A remount (switching tabs) comes back with the layout the caller kept.
+    render(
+      <DataGrid
+        documents={mockDocuments}
+        columnLayout={{ hidden: ['category'], order: ['price'], sort: { column: 'price', direction: 1 } }}
+      />
+    );
+    openTable();
+    expect(headerCells()).toEqual(['price', '_id', 'name']);
+    expect(rowNames()).toEqual(['Bob Johnson', 'Charlie Brown', 'Alice Smith']);
+  });
+
+  it('edits the document of the row clicked, not the one that used to be there', async () => {
+    const onEditField = vi.fn().mockResolvedValue(undefined);
+    render(<DataGrid documents={mockDocuments} onEditField={onEditField} />);
+    openTable();
+    fireEvent.click(screen.getByRole('button', { name: /^price/ }));
+
+    // Bob is now the first row; his category is the first "Electronics" on screen.
+    fireEvent.doubleClick(screen.getAllByText('Electronics')[0]);
+    const editor = screen.getByTestId('cell-editor') as HTMLInputElement;
+    fireEvent.change(editor, { target: { value: '"Toys"' } });
+    fireEvent.keyDown(editor, { key: 'Enter' });
+
+    await vi.waitFor(() => expect(onEditField).toHaveBeenCalledTimes(1));
+    expect(onEditField.mock.calls[0][0]).toBe(mockDocuments[1]);
+  });
+});
+
+describe('DataGrid — table columns, review fixes', () => {
+  it('shows every column rather than none when the page has only hidden ones', () => {
+    // Hidden while other columns showed; this page has nothing else.
+    render(<DataGrid documents={[{ _id: 1 }]} columnLayout={{ hidden: ['_id'] }} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+
+    expect(screen.getByRole('columnheader', { name: /_id/ })).toBeInTheDocument();
+  });
+
+  it('marks headers as column headers, so the sort direction is announced', () => {
+    render(<DataGrid documents={mockDocuments} columnLayout={{ sort: { column: 'price', direction: -1 } }} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+
+    expect(screen.getByRole('columnheader', { name: /price/ })).toHaveAttribute('aria-sort', 'descending');
+    expect(screen.getByRole('columnheader', { name: /name/ })).toHaveAttribute('aria-sort', 'none');
   });
 });

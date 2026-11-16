@@ -302,7 +302,8 @@
       "youBadge": "（当前）"
     },
     "confirm": {
-      "killOperation": "要终止 {{ns}} 上的操作 {{opid}} 吗？"
+      "killOperation": "要终止 {{ns}} 上的操作 {{opid}} 吗？",
+      "killOperationTitle": "终止操作 {{opid}}？"
     },
     "detail": {
       "opTitle": "操作详情",
@@ -353,6 +354,7 @@
       "residentVirt": "虚拟内存 {{mb}} MB"
     },
     "profiler": {
+      "groupByShape": "按查询形态分组",
       "levelLabel": "级别：",
       "slowThreshold": "慢操作 ≥ {{slowMs}} 毫秒"
     },
@@ -369,11 +371,17 @@
       "uptimeClause": " · 已运行 {{hours}} 小时"
     },
     "table": {
+      "avgMs": "平均 ms",
       "client": "客户端",
       "command": "命令",
+      "count": "次数",
+      "maxMs": "最大 ms",
       "millis": "毫秒",
+      "minMs": "最小 ms",
       "plan": "执行计划",
-      "secs": "秒"
+      "secs": "秒",
+      "shape": "查询形态",
+      "totalMs": "总计 ms"
     },
     "tabs": {
       "cluster": "集群",

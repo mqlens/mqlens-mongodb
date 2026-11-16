@@ -37,6 +37,7 @@
       "clickToAddQueryRules": "+ Klicken, um Abfrageregeln hinzuzufügen",
       "clickToAddSort": "+ Klicken, um Sortierkriterien hinzuzufügen",
       "customField": "Benutzerdefiniertes Feld...",
+      "dateValue": "Datumswert (UTC)",
       "descOption": "Absteigend ({{n}})",
       "excludeOption": "Ausschließen ({{n}})",
       "fieldPathPlaceholder": "field.path",
@@ -391,7 +392,8 @@
       "insert": "Ein neues Dokument einfügen",
       "readOnly": "Verbindung ist schreibgeschützt",
       "resizeColumn": "Spalte {{label}} anpassen",
-      "dateTimezone": "Zeitzone für Datumsanzeige umschalten"
+      "dateTimezone": "Zeitzone für Datumsanzeige umschalten",
+      "sortColumn": "Diese Seite nach dieser Spalte sortieren (Rechtsklick für mehr)"
     },
     "viewModes": {
       "chart": "Diagramm",
@@ -400,6 +402,16 @@
       "table": "Tabelle",
       "tree": "Baum",
       "visualTree": "Baumdiagramm"
+    },
+    "columnMenu": {
+      "sortAscending": "Aufsteigend sortieren",
+      "sortDescending": "Absteigend sortieren",
+      "clearSort": "Sortierung aufheben",
+      "moveLeft": "Nach links",
+      "moveRight": "Nach rechts",
+      "hide": "Spalte ausblenden",
+      "showAll_one": "Alle Spalten anzeigen ({{count}} ausgeblendet)",
+      "showAll_other": "Alle Spalten anzeigen ({{count}} ausgeblendet)"
     }
   },
   "schemaView": {
