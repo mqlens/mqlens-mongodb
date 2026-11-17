@@ -289,6 +289,20 @@ test.describe('In-place cell edit', () => {
     expect(await saved.getByRole('button', { name: 'Undo' }).count()).toBe(0);
   });
 
+  test('a document dialog save that adds a dotted field name has no Undo, as a filter cannot guard it', async ({ app, page }) => {
+    await openCustomers(app, page);
+    await view(page).getByRole('button', { name: 'Tree', exact: true }).click();
+    await view(page).getByTestId('edit-doc-btn').first().click();
+    const modal = page.getByTestId('document-edit-modal');
+    await expect(modal).toContainText('alice@example.com');
+    await setEditorText(page, modal, '{ "_id": ObjectId("603d779f4f102e3a105c3120"), "name": "Alice Smith", "email": "alice@example.com", "tier": "Premium", "joined": "2024-01-10", "address": { "city": "New York", "state": "NY" }, "a.b": 1 }');
+    await modal.getByTestId('document-save-btn').click();
+    await expect(modal).toHaveCount(0);
+    const saved = toast(page, 'Saved').last();
+    await expect(saved).toBeVisible();
+    expect(await saved.getByRole('button', { name: 'Undo' }).count()).toBe(0);
+  });
+
   test('an Undo on another document leaves a document dialog its Undo', async ({ app, page }) => {
     await openCustomers(app, page);
     await view(page).getByRole('button', { name: 'Table', exact: true }).click();
