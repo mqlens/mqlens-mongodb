@@ -681,6 +681,9 @@ function Workspace() {
   // edits go with it, so all of its Undos here retire for good.
   // ponytail: one entry per save for the window's lifetime; prune if it matters.
   const undoTabsRef = useRef(new Map<number, string>());
+  // The document each offered Undo restores (see docKey), so deleting it can
+  // retire that Undo and no other.
+  const undoDocsRef = useRef(new Map<number, string>());
   const retireUndoForTab = (tabId: string) => {
     for (const [token, id] of undoTabsRef.current) if (id === tabId) undoTabsRef.current.delete(token);
   };
@@ -4657,6 +4660,9 @@ function Workspace() {
         collection: tab.collection,
         filter: JSON.stringify({ _id: doc._id }),
       });
+      // A document inserted since with the same _id and the saved values would
+      // match that document's Undo: deleting it retires the Undo.
+      if (undoDocsRef.current.get(latestUndoRef.current) === docKey(tab, doc)) latestUndoRef.current++;
       await refreshTabResults(tab);
       toast(t('toast.documentDeletedFrom', { collection: tab.collection }), 'success', { title: t('toast.deletedTitle') });
     } catch (err: any) {
@@ -4734,6 +4740,8 @@ function Workspace() {
         filter,
         confirmed,
       });
+      // As in handleDeleteDocument, for any document of this collection.
+      if (undoDocsRef.current.get(latestUndoRef.current)?.startsWith(`${bulkKey(tab)}\u0000`)) latestUndoRef.current++;
       await refreshTabResults(tab);
       toast(t('toast.deletedDocuments', { count: deleted }), 'success', { title: t('toast.deletedTitle') });
     } catch (err: any) {
@@ -4966,6 +4974,16 @@ function Workspace() {
     before: Record<string, any> | null | undefined,
     savedJson: string
   ) => {
+    // Only while the saved values are still there: anything else that changed
+    // them since, which this window may not have seen (another window or
+    // client, a delete, a drop), leaves the write matching nothing, rather
+    // than old values written over newer ones. A change a filter cannot guard
+    // gets no Undo.
+    const restored = shellToEjson(docToShell(before));
+    const saved = JSON.parse(savedJson);
+    const condition = undoCondition(saved, JSON.parse(restored));
+    if (condition === null) return undefined;
+    undoDocsRef.current.set(token, docKey(tab, before));
     return {
       label: t('toast.undo'),
       onClick: async () => {
@@ -4985,13 +5003,7 @@ function Workspace() {
         const written = docKey(tab, before);
         beginWrite(written);
         try {
-          const restored = shellToEjson(docToShell(before));
-          // Only while the saved values are still there: anything else that
-          // changed them since, which this window may not have seen (another
-          // window or client, a delete, a drop), leaves the write matching
-          // nothing, rather than old values written over newer ones.
-          const saved = JSON.parse(savedJson);
-          const write = writeDocumentUpdate(tab, undoBaseline(saved, before ?? {}), restored, undoCondition(saved, JSON.parse(restored))).finally(
+          const write = writeDocumentUpdate(tab, undoBaseline(saved, before ?? {}), restored, condition).finally(
             () => writeLanded(written)
           );
           undoWriteRef.current = write.catch(() => {});

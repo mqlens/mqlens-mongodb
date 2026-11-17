@@ -28,31 +28,55 @@ export function undoBaseline(saved: Doc, before: Doc): Doc {
   return out;
 }
 
+// A value holding a `$` name a filter would read as an operator (a typed
+// value's own wrapper aside).
+const holdsOperatorName = (v: unknown): boolean =>
+  Array.isArray(v)
+    ? v.some(holdsOperatorName)
+    : isDocument(v) && Object.entries(v).some(([key, inner]) => key.startsWith('$') || holdsOperatorName(inner));
+
+// The value exactly: not an array holding it, not missing for null, not an
+// array nested in another.
+const exactly = (v: unknown): unknown =>
+  v === null
+    ? { $type: 'null', $not: { $type: 'array' } }
+    : Array.isArray(v)
+      ? { $eq: v, $size: v.length }
+      : { $eq: v, $not: { $type: 'array' } };
+
 /**
  * The filter an undo adds to `_id`: every value the save wrote must still be
- * there, so an undo after anything else changed them (another window, another
- * client, a delete or a drop) matches nothing instead of writing old values
- * over the newer ones. Sub-documents are compared by path, so fields a
+ * there, exactly, so an undo after anything else changed them (another window,
+ * another client, a delete or a drop) matches nothing instead of writing old
+ * values over the newer ones. Sub-documents are compared by path, so fields a
  * projection hid are not; typed values and arrays are compared whole. Both
- * sides must come through the same EJSON conversion, so unchanged values
- * read the same.
+ * sides must come through the same EJSON conversion, so unchanged values read
+ * the same.
+ *
+ * null when a change cannot be guarded this way: a dotted or `$` name a filter
+ * cannot address, or a saved value holding a `$` name a filter would read as an
+ * operator. Such a save gets no Undo.
  */
-export function undoCondition(saved: Doc, before: Doc, prefix = ''): Doc {
+export function undoCondition(saved: Doc, before: Doc, prefix = ''): Doc | null {
   const out: Doc = {};
   for (const key of new Set([...Object.keys(saved), ...Object.keys(before)])) {
-    // `_id` is the filter already; a dotted or `$` name cannot be addressed.
-    if ((!prefix && key === '_id') || key.includes('.') || key.startsWith('$')) continue;
+    if (!prefix && key === '_id') continue; // the filter already
+    if (key in saved && key in before && JSON.stringify(saved[key]) === JSON.stringify(before[key])) continue;
+    if (key.includes('.') || key.startsWith('$')) return null;
     const path = prefix + key;
-    if (!(key in saved)) {
-      // A removed sub-document is checked field by field: under a projection
-      // that showed part of it, only those fields were removed.
-      if (isParent(before[key])) Object.assign(out, undoCondition({}, before[key] as Doc, `${path}.`));
-      else out[path] = { $exists: false };
-    } else if (key in before && isDocument(saved[key]) && isDocument(before[key])) {
-      Object.assign(out, undoCondition(saved[key] as Doc, before[key] as Doc, `${path}.`));
-    } else if (!(key in before) || JSON.stringify(saved[key]) !== JSON.stringify(before[key])) {
-      out[path] = saved[key];
-    }
+    // A removed sub-document is checked field by field: under a projection
+    // that showed part of it, only those fields were removed.
+    const inner = !(key in saved)
+      ? isParent(before[key])
+        ? undoCondition({}, before[key] as Doc, `${path}.`)
+        : { [path]: { $exists: false } }
+      : key in before && isDocument(saved[key]) && isDocument(before[key])
+        ? undoCondition(saved[key] as Doc, before[key] as Doc, `${path}.`)
+        : holdsOperatorName(saved[key])
+          ? null
+          : { [path]: exactly(saved[key]) };
+    if (inner === null) return null;
+    Object.assign(out, inner);
   }
   return out;
 }

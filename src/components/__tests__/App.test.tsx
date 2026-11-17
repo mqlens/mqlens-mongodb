@@ -1434,6 +1434,31 @@ describe('App Component', () => {
     });
   });
 
+  it('offers no Undo for a save whose change a filter cannot guard, such as a dotted name', async () => {
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'execute_mql_query') {
+        return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+      }
+      if (cmd === 'update_document') return Promise.resolve(1);
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent } = await import('@testing-library/react');
+
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+    fireEvent.click(screen.getByTestId('select-collection-btn'));
+    expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByTestId('edit-doc-btn')[0]);
+    const input = await screen.findByTestId('document-json-input');
+    fireEvent.change(input, { target: { value: '{"_id":"1","name":"John Doe","a.b":1}' } });
+    fireEvent.click(screen.getByTestId('document-save-btn'));
+
+    expect(await screen.findByText(/Document saved in customers/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument();
+  });
+
   it('undoes a saved edit from its toast by writing the old fields back', async () => {
     const calls: any[] = [];
     mockInvoke.mockImplementation((cmd, args) => {
@@ -1467,7 +1492,12 @@ describe('App Component', () => {
       // The undo is the save run backwards: what was written is now the
       // original, and the document as loaded is what to write.
       // Only while what the save wrote is still there.
-      expect(JSON.parse(undo.args.filter)).toEqual({ _id: '1', name: 'Ada', vip: true, tier: { $exists: false } });
+      expect(JSON.parse(undo.args.filter)).toEqual({
+        _id: '1',
+        name: { $eq: 'Ada', $not: { $type: 'array' } },
+        vip: { $eq: true, $not: { $type: 'array' } },
+        tier: { $exists: false },
+      });
       expect(JSON.parse(undo.args.original)).toEqual(JSON.parse(save.args.edited));
       expect(JSON.parse(undo.args.edited)).toEqual({ _id: '1', name: 'John Doe', tier: 'free' });
       expect(undo.args.projection).toBe(save.args.projection);

@@ -589,8 +589,8 @@ test.describe('In-place cell edit', () => {
     await callFrom(app, 'delete_document', () => page.getByTestId('dialog-confirm').click());
     await toast(page, 'Saved').getByRole('button', { name: 'Undo' }).click();
     await expect(toast(page, 'This edit can no longer be undone')).toBeVisible();
-    // The undo was sent, conditioned on the saved value, and matched nothing.
-    expect(await app.calls('update_document')).toHaveLength(2);
+    // Deleting the document retired its Undo: nothing is written.
+    expect(await app.calls('update_document')).toHaveLength(1);
   });
 
   test('an Undo after a Delete Many removed its document says so too', async ({ app, page }) => {
@@ -606,8 +606,8 @@ test.describe('In-place cell edit', () => {
     await callFrom(app, 'delete_many', () => page.getByTestId('dialog-confirm').click());
     await toast(page, 'Saved').getByRole('button', { name: 'Undo' }).click();
     await expect(toast(page, 'This edit can no longer be undone')).toBeVisible();
-    // The undo was sent, conditioned on the saved value, and matched nothing.
-    expect(await app.calls('update_document')).toHaveLength(2);
+    // Deleting the document retired its Undo: nothing is written.
+    expect(await app.calls('update_document')).toHaveLength(1);
   });
 
   const saveB = async (app: App, page: Page) => {
@@ -679,6 +679,50 @@ test.describe('In-place cell edit', () => {
     await expect(toast(page, 'This edit can no longer be undone')).toBeVisible();
     await view(page).getByRole('button', { name: 'Run', exact: true }).click();
     await expect(view(page).getByText('c@example.com', { exact: true })).toBeVisible();
+  });
+
+  /** What another window, whose writes this one does not see, sends to the backend. */
+  const writeElsewhere = (page: Page, connection: string, cmd: string, args: Record<string, unknown>) =>
+    page.evaluate(([c, a]) => window.__MQLENS_E2E__!.handle(c, a as never), [cmd, { id: connection, database: 'sales_db', collection: 'customers', ...args }] as const);
+  const aliceId = { $oid: '603d779f4f102e3a105c3120' };
+
+  test('an Undo after another window made the saved value an array says so', async ({ app, page }) => {
+    await saveB(app, page);
+    const [save] = await app.calls('update_document');
+    // ["b@", "c@"] holds b@, but is not the b@ the save wrote.
+    await writeElsewhere(page, String(save.args.id), 'update_document', {
+      filter: JSON.stringify({ _id: aliceId }),
+      original: JSON.stringify({ _id: aliceId, email: 'b@example.com' }),
+      edited: JSON.stringify({ _id: aliceId, email: ['b@example.com', 'c@example.com'] }),
+      projection: '{}',
+    });
+
+    await toast(page, 'Saved').getByRole('button', { name: 'Undo' }).click();
+    await expect(toast(page, 'This edit can no longer be undone')).toBeVisible();
+  });
+
+  test('an Undo after its document was deleted and inserted again says so', async ({ app, page }) => {
+    await saveB(app, page);
+    const [save] = await app.calls('update_document');
+    await view(page).getByTestId('delete-doc-btn').first().click();
+    await callFrom(app, 'delete_document', () => page.getByTestId('dialog-confirm').click());
+    // A different document, with the same _id and the saved value.
+    await writeElsewhere(page, String(save.args.id), 'insert_document', {
+      document: JSON.stringify({ _id: aliceId, name: 'Alice Again', email: 'b@example.com' }),
+    });
+
+    await toast(page, 'Saved').getByRole('button', { name: 'Undo' }).click();
+    await expect(toast(page, 'This edit can no longer be undone')).toBeVisible();
+    expect(await app.calls('update_document')).toHaveLength(1);
+  });
+
+  test('deleting another document leaves the Undo working', async ({ app, page }) => {
+    await saveB(app, page);
+    await view(page).getByTestId('delete-doc-btn').nth(1).click();
+    await callFrom(app, 'delete_document', () => page.getByTestId('dialog-confirm').click());
+
+    await toast(page, 'Saved').getByRole('button', { name: 'Undo' }).click();
+    await expect(toast(page, 'Edit undone in customers')).toBeVisible();
   });
 
   test('dropping another collection leaves the Undo working', async ({ app, page }) => {
