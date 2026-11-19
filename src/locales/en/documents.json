@@ -323,6 +323,17 @@
       "regexFlagsIgnored": "Regex flag {{flags}} has no effect in MongoDB and was ignored."
     },
     "pipeline": {
+      "preview": {
+        "caption_one": "First document in and out",
+        "caption_other": "First {{count}} documents in and out",
+        "docCount_one": "{{count}} doc",
+        "docCount_other": "{{count}} docs",
+        "empty": "No documents",
+        "input": "Input",
+        "output": "Output",
+        "refresh": "Refresh preview",
+        "sampled": "An earlier $sample picks new documents on each run, so input and output come from different samples."
+      },
       "stageCount_one": "{{count}} stage",
       "stageCount_other": "{{count}} stages",
       "stageGroups": {
@@ -352,12 +363,15 @@
       "moveStageDown": "Move stage {{n}} down",
       "moveStageUp": "Move stage {{n}} up",
       "openExportWorkspace": "Open export workspace",
+      "previewStage": "Preview stage {{n}}",
+      "previewWriteStage": "A stage that writes is not previewed",
       "redoPipelineChange": "Redo pipeline change",
       "removeFromFavorites": "Remove from favorites",
       "removeRule": "Remove Rule",
       "removeStage": "Remove stage {{n}}",
       "runDisabled": "Fix the query syntax to run",
       "runPipelineToStage": "Run pipeline to stage {{n}}",
+      "stageDocs": "{{operator}} documentation",
       "undoPipelineChange": "Undo pipeline change"
     }
   },
