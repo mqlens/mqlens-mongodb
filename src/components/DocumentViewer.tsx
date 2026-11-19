@@ -159,12 +159,16 @@ export const DEFAULT_BUILDER_STATE: BuilderState = {
   stages: [{ id: 'stage-1', operator: '$match', content: '{\n  \n}' }],
 };
 
+// Unique per stage, so state keyed by stage id (previews) never lands on a
+// stage from another pipeline that a load, undo or redo swapped in.
+const newStageId = () => `stage-${Math.random().toString(36).substr(2, 9)}`;
+
 const stagesFromPipeline = (pipeline: unknown[]): PipelineStage[] =>
-  pipeline.map((stage, i) => {
+  pipeline.map((stage) => {
     const obj = (stage && typeof stage === 'object' ? stage : {}) as Record<string, unknown>;
     const operator = Object.keys(obj)[0] ?? '$match';
     return {
-      id: `stage-${i + 1}`,
+      id: newStageId(),
       operator,
       content: JSON.stringify(obj[operator] ?? {}, null, 2),
     };
@@ -859,7 +863,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
 
   const addStage = () => {
     const newStage = {
-      id: `stage-${Math.random().toString(36).substr(2, 9)}`,
+      id: newStageId(),
       operator: '$match',
       content: '{\n  \n}'
     };
@@ -1022,10 +1026,6 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   const handleInsertQuery = (query: GeneratedQuery) => {
     if (query.queryType === 'aggregate') {
       const pipeline = query.pipeline && query.pipeline.length > 0 ? query.pipeline : [{ $match: {} }];
-      // The new stages reuse ids like stage-1: drop the old previews so none
-      // shows under a stage it was not run for. A run still out finds its
-      // panel gone, or outdated by the new stage's own run.
-      setStagePreviews({});
       commitStages(stagesFromPipeline(pipeline));
       setQueryMode('aggregate');
       toast(t('toast.aggregationPipelineApplied'), 'success');

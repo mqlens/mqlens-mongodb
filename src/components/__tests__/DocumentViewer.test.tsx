@@ -2014,6 +2014,29 @@ describe('Aggregation stage input/output preview', () => {
     pending[3]([{ name: 'Ada', tier: 'pro' }]);
     await waitFor(() => expect(screen.getByTestId('stage-preview-output-0')).toHaveTextContent('"tier" : "pro"'));
   });
+
+  it("does not show a loaded pipeline's preview under the stage that undo brings back (#578 review)", async () => {
+    mockInvoke.mockImplementation((cmd: string) =>
+      Promise.resolve(cmd === 'load_collection_queries'
+        ? {
+            saved: [{ id: 'sq-agg', name: 'By tier', query: { queryType: 'aggregate', pipeline: [{ $match: { tier: 'pro' } }] }, createdAt: '2026-11-01T00:00:00Z' }],
+            history: [],
+            default: null,
+          }
+        : undefined),
+    );
+    renderAgg(vi.fn().mockResolvedValue([{ name: 'Loaded pipeline doc' }]));
+
+    fireEvent.click(screen.getByText('Load query'));
+    fireEvent.click(await screen.findByText('By tier'));
+    await waitFor(() => expect(screen.getByTestId('pipeline-stage-0').querySelector('textarea')!.value).toContain('"tier"'));
+    fireEvent.click(screen.getByLabelText('Preview stage 1'));
+    await waitFor(() => expect(screen.getByTestId('stage-preview-output-0')).toHaveTextContent('Loaded pipeline doc'));
+
+    fireEvent.click(screen.getByLabelText('Undo pipeline change'));
+    await waitFor(() => expect(screen.getByTestId('pipeline-stage-0').querySelector('textarea')!.value).not.toContain('"tier"'));
+    expect(screen.queryByTestId('stage-preview-0')).toBeNull();
+  });
 });
 
 describe('Visual query builder: date values', () => {
