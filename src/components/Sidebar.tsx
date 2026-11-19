@@ -740,6 +740,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const ensureDbExpanded = async (connId: string, dbName: string) => {
     const key = `${connId}/${dbName}`;
+    // Settings → Behavior applies to a database opened from a pinned or
+    // favorite shortcut too, not only to a click on its row.
+    if (!expandedDbs[key] && getBehaviorSettings().expandCollectionsOnDbOpen) {
+      setExpandedCollectionsFolders((prev) => ({ ...prev, [`${key}/collections`]: true }));
+    }
     setExpandedDbs((prev) => ({ ...prev, [key]: true }));
     if (!collections[key]) await loadCollectionsInto(connId, dbName);
   };

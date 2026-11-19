@@ -105,3 +105,15 @@ describe('resolveFindFilter', () => {
     expect(() => resolveFindFilter(A, schema, OFF)).toThrow();
   });
 });
+
+describe('rewriting the filter text', () => {
+  it('rewrites every id of a long $in list, leaving other hex strings alone', () => {
+    const ids = Array.from({ length: 4000 }, (_, i) => i.toString(16).padStart(24, '0'));
+    const text = `{ userId: { $in: [${ids.map((id) => `"${id}"`).join(', ')}] }, token: "${A}" }`;
+    const resolved = resolveFindFilter(text, schema, ON);
+    expect(resolved.text).toContain(`ObjectId("${ids[3999]}")`);
+    expect(resolved.text).toContain(`token: "${A}"`);
+    expect((resolved.filter.userId as { $in: unknown[] }).$in[3999]).toEqual({ $oid: ids[3999] });
+    expect(resolved.filter.token).toBe(A);
+  });
+});

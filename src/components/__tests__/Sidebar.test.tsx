@@ -2616,6 +2616,33 @@ describe('Sidebar: monitoring with some of its reads blocked', () => {
       expect(screen.queryByText('events')).not.toBeInTheDocument();
     });
 
+    it('opens the Collections folder for a database opened from its pinned shortcut', async () => {
+      localStorage.setItem('mqlens.behavior', JSON.stringify({ expandCollectionsOnDbOpen: true }));
+      localStorage.setItem(
+        'mqlens_pinned_collections',
+        JSON.stringify([{ kind: 'database', connectionName: 'Mock DB', db: 'analytics' }]),
+      );
+      mockInvoke.mockImplementation((cmd) => {
+        if (cmd === 'list_databases') return Promise.resolve(['analytics']);
+        if (cmd === 'list_collections') return Promise.resolve([{ name: 'events', type: 'collection' }]);
+        return Promise.reject(new Error(`Unhandled: ${cmd}`));
+      });
+      render(
+        <Sidebar
+          onSelectCollection={() => {}}
+          onSelectIndex={() => {}}
+          activeCollection={null}
+          activeConnections={[{ id: 'conn-1', name: 'Mock DB', uri: 'mongodb://mock' }]}
+          onOpenConnectionManager={() => {}}
+          onDisconnect={() => {}}
+          onOpenSettings={() => {}}
+        />
+      );
+      fireEvent.click(screen.getByRole('button', { name: /pinned/i }));
+      fireEvent.click(await screen.findByTestId(/^pinned-item-/));
+      expect(await screen.findByText('events')).toBeInTheDocument();
+    });
+
     it('opens the Collections folder with the database when enabled', async () => {
       localStorage.setItem('mqlens.behavior', JSON.stringify({ expandCollectionsOnDbOpen: true }));
       await openDatabase();

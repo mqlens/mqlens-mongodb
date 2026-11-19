@@ -79,12 +79,14 @@ export function convertObjectIdStrings(
  *  user's formatting. Falls back to plain EJSON when a textual swap would not
  *  describe exactly `filter` (the same hex also sits under a non-ObjectId field). */
 function rewriteFilterText(text: string, filter: Record<string, unknown>, hexes: string[]): string {
-  let out = text;
-  for (const hex of new Set(hexes)) {
-    out = out.replace(new RegExp(`(["'])${hex}\\1`, 'g'), (match, _q, offset: number, whole: string) =>
-      /ObjectId\(\s*$/.test(whole.slice(0, offset)) ? match : `ObjectId("${hex}")`,
-    );
-  }
+  // One pass over the text, whatever the number of ids: a long `$in` list
+  // would otherwise be scanned and copied once per id.
+  const wanted = new Set(hexes);
+  const out = text.replace(/(["'])([0-9a-fA-F]{24})\1/g, (match, _q, hex: string, offset: number, whole: string) =>
+    !wanted.has(hex) || /ObjectId\(\s*$/.test(whole.slice(Math.max(0, offset - 32), offset))
+      ? match
+      : `ObjectId("${hex}")`,
+  );
   try {
     if (JSON.stringify(parseQueryObject(out)) === JSON.stringify(filter)) return out;
   } catch {

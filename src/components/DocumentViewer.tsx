@@ -939,7 +939,9 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
         filter: JSON.stringify(query.filter ?? {}),
         sort: JSON.stringify(query.sort ?? {}),
         projection: JSON.stringify(query.projection ?? {}),
-        limit: 50,
+        // The tab's page size, as Run would use: a fixed 50 here reset the
+        // pager while the limit field went on showing the tab's own value.
+        limit: Number(limit) || getBehaviorSettings().pageSize,
         skip: 0,
       });
     }
