@@ -890,58 +890,52 @@ describe('DataGrid table header/body scroll sync (#219)', () => {
     fireEvent.click(screen.getByRole('button', { name: /table/i }));
 
     const header = screen.getByTestId('table-header');
-    const body = screen.getByTestId('table-body-scroll');
+    // The virtualized List is the box that scrolls; its scroll events don't
+    // bubble, so they reach the header's listener only in capture.
+    const list = screen.getByTestId('table-body-scroll').firstElementChild as HTMLElement;
 
     // jsdom has no layout: fake the overflow that makes a box scrollable, since
     // only a horizontally-scrollable element is allowed to drive the header.
-    const overflowing = (el: HTMLElement) => {
-      Object.defineProperty(el, 'clientWidth', { value: 500, configurable: true });
-      Object.defineProperty(el, 'scrollWidth', { value: 1400, configurable: true });
-    };
-    overflowing(body);
+    Object.defineProperty(list, 'clientWidth', { value: 500, configurable: true });
+    Object.defineProperty(list, 'scrollWidth', { value: 1400, configurable: true });
 
-    body.scrollLeft = 240;
-    fireEvent.scroll(body);
+    list.scrollLeft = 240;
+    fireEvent.scroll(list);
     expect(header.scrollLeft).toBe(240);
 
-    body.scrollLeft = 0;
-    fireEvent.scroll(body);
+    list.scrollLeft = 0;
+    fireEvent.scroll(list);
     expect(header.scrollLeft).toBe(0);
   });
 
-  it('syncs from the virtualized list\'s inner scroller too (scroll does not bubble)', () => {
-    render(<DataGrid documents={mockDocuments} />);
+  it('opens a differently shaped result scrolled back to the left', () => {
+    const { rerender } = render(<DataGrid documents={mockDocuments} />);
     fireEvent.click(screen.getByRole('button', { name: /table/i }));
 
-    const header = screen.getByTestId('table-header');
-    const body = screen.getByTestId('table-body-scroll');
-    // react-window renders its own overflow:auto element inside the wrapper; a
-    // scroll there must still reach the header, which only works via capture.
-    const inner = body.firstElementChild as HTMLElement;
-    expect(inner).toBeTruthy();
-    Object.defineProperty(inner, 'clientWidth', { value: 500, configurable: true });
-    Object.defineProperty(inner, 'scrollWidth', { value: 1400, configurable: true });
+    // The virtualized list is the box that scrolls, both ways.
+    const list = screen.getByTestId('table-body-scroll').firstElementChild as HTMLElement;
+    list.scrollLeft = 300;
 
-    inner.scrollLeft = 310;
-    fireEvent.scroll(inner);
-    expect(header.scrollLeft).toBe(310);
+    rerender(<DataGrid documents={[{ _id: 1, other: 'x' }]} />);
+    expect(list.scrollLeft).toBe(0);
+    expect(screen.getByTestId('table-header').scrollLeft).toBe(0);
   });
 
-  it('ignores a purely vertical scroller so it cannot reset the header', () => {
+  it('ignores a box with no sideways overflow so it cannot reset the header', () => {
     render(<DataGrid documents={mockDocuments} />);
     fireEvent.click(screen.getByRole('button', { name: /table/i }));
 
     const header = screen.getByTestId('table-header');
-    const body = screen.getByTestId('table-body-scroll');
-    Object.defineProperty(body, 'clientWidth', { value: 500, configurable: true });
-    Object.defineProperty(body, 'scrollWidth', { value: 1400, configurable: true });
-    body.scrollLeft = 200;
-    fireEvent.scroll(body);
+    const list = screen.getByTestId('table-body-scroll').firstElementChild as HTMLElement;
+    Object.defineProperty(list, 'clientWidth', { value: 500, configurable: true });
+    Object.defineProperty(list, 'scrollWidth', { value: 1400, configurable: true });
+    list.scrollLeft = 200;
+    fireEvent.scroll(list);
     expect(header.scrollLeft).toBe(200);
 
-    // A sibling box that only scrolls vertically (scrollWidth == clientWidth)
-    // must not drag the header back to 0.
-    const inner = body.firstElementChild as HTMLElement;
+    // A box inside the list that cannot scroll sideways (scrollWidth ==
+    // clientWidth) must not drag the header back to 0.
+    const inner = list.firstElementChild as HTMLElement;
     Object.defineProperty(inner, 'clientWidth', { value: 500, configurable: true });
     Object.defineProperty(inner, 'scrollWidth', { value: 500, configurable: true });
     inner.scrollLeft = 0;
@@ -1300,7 +1294,8 @@ describe('find scrolls the matched table column into view (#280 review)', () => 
 
     // jsdom has no layout, so the overflow the real table has is stubbed: the
     // body is 1000px of content in a 300px viewport.
-    const body = screen.getByTestId('table-body-scroll');
+    // The virtualized List is the box that scrolls.
+    const body = screen.getByTestId('table-body-scroll').firstElementChild as HTMLElement;
     let scrollLeft = 0;
     Object.defineProperty(body, 'scrollWidth', { value: 1000, configurable: true });
     Object.defineProperty(body, 'clientWidth', { value: 300, configurable: true });
@@ -1325,7 +1320,8 @@ describe('find scrolls the matched table column into view (#280 review)', () => 
     render(<DataGrid documents={mockDocuments} />);
     fireEvent.click(screen.getByRole('button', { name: /table/i }));
 
-    const body = screen.getByTestId('table-body-scroll');
+    // The virtualized List is the box that scrolls.
+    const body = screen.getByTestId('table-body-scroll').firstElementChild as HTMLElement;
     let scrollLeft = 0;
     Object.defineProperty(body, 'scrollWidth', { value: 1000, configurable: true });
     Object.defineProperty(body, 'clientWidth', { value: 900, configurable: true });

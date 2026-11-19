@@ -1,4 +1,4 @@
-import { parse, tokenizer } from 'acorn';
+import { parse, tokenizer, type Options } from 'acorn';
 import { maskLiterals } from './jsLiterals';
 
 // A whole line that is a mongosh helper command, which JavaScript cannot read.
@@ -20,15 +20,18 @@ function atTopLevel(code: string): boolean {
   return depth === 0;
 }
 
+// A mongosh script: top-level await and return are allowed there.
+const PARSE_OPTIONS: Options = {
+  ecmaVersion: 'latest',
+  allowAwaitOutsideFunction: true,
+  allowReturnOutsideFunction: true,
+  allowHashBang: true,
+};
+
 /** Each top-level statement's offsets, from acorn's parser; null when the text is not plain JavaScript. */
 function parsedSpans(text: string): Array<[number, number]> | null {
   try {
-    const program = parse(text, {
-      ecmaVersion: 'latest',
-      allowAwaitOutsideFunction: true,
-      allowReturnOutsideFunction: true,
-      allowHashBang: true,
-    });
+    const program = parse(text, PARSE_OPTIONS);
     return program.body.map((s): [number, number] => [s.start, s.end]);
   } catch {
     return null;
@@ -263,4 +266,53 @@ export function statementAt(text: string, offset: number): string {
     [...trimmed].reverse().find(([, e]) => e <= offset) ??
     trimmed[0];
   return hit ? text.slice(hit[0], hit[1]) : '';
+}
+
+// Calls that print or end the script themselves and return nothing to show:
+// they are left as written.
+const QUIET_CALL = /^(?:print|printjson|quit|exit)$/;
+
+/**
+ * `text` with each top-level expression statement wrapped to print its value,
+ * as the REPL does: `mongosh --file` and `load()` print nothing for a bare
+ * expression, so running two counts showed neither. Every statement stays on
+ * the lines it was on, so mongosh's error positions still match the editor.
+ * Text that is not plain JavaScript comes back unchanged, for mongosh to report.
+ */
+export function echoValues(text: string): string {
+  // Helper lines (`use sales`) are blanked for the parser and kept as they are.
+  let js = text;
+  for (const m of text.matchAll(HELPER_LINE)) {
+    if (!atTopLevel(js.slice(0, m.index))) continue;
+    js = js.slice(0, m.index) + ' '.repeat(m[0].length) + js.slice(m.index + m[0].length);
+  }
+  let body;
+  try {
+    body = parse(js, PARSE_OPTIONS).body;
+  } catch {
+    return text;
+  }
+  // acorn files every leading string as a directive. Only "use strict" means
+  // anything, and wrapping the strings before it would end its prologue, so a
+  // strict prologue stays as written; other leading strings are values.
+  const strict = body.some((s) => s.type === 'ExpressionStatement' && s.directive === 'use strict');
+  // A name the script does not use, so the wrapper cannot shadow one of its own.
+  let name = '__mqlensValue';
+  while (text.includes(name)) name += '_';
+  let out = text;
+  for (const statement of [...body].reverse()) {
+    if (statement.type !== 'ExpressionStatement' || (strict && statement.directive)) continue;
+    const value = statement.expression;
+    if (value.type === 'CallExpression') {
+      const callee = value.callee;
+      if (callee.type === 'Identifier' && QUIET_CALL.test(callee.name)) continue;
+      if (callee.type === 'MemberExpression' && callee.object.type === 'Identifier' && callee.object.name === 'console') continue;
+    }
+    // The whole statement, not just the expression: parentheses around it, and
+    // the newlines inside them, stay where they were. Only its `;` goes.
+    const source = text.slice(statement.start, statement.end).replace(/;$/, '');
+    const wrapped = `{ const ${name} = (${source}); if (${name} !== undefined) print(${name}); }`;
+    out = out.slice(0, statement.start) + wrapped + out.slice(statement.end);
+  }
+  return out;
 }

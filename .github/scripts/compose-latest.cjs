@@ -38,6 +38,11 @@ for (const f of sigFiles) {
   else if (/(x64|x86_64)\.app\.tar\.gz$/.test(artifact)) add('darwin-x86_64', artifact);
   else if (/\.app\.tar\.gz$/.test(artifact)) add('darwin-x86_64', artifact); // mac, no arch suffix
   else if (/\.AppImage(\.tar\.gz)?$/.test(artifact)) add('linux-x86_64', artifact);
+  // A .deb or .rpm install looks up `linux-x86_64-deb` / `linux-x86_64-rpm`
+  // first and only then falls back to `linux-x86_64`. Without its own entry it
+  // downloads the AppImage, which its package installer then rejects.
+  else if (/(amd64|x86_64)\.deb$/.test(artifact)) add('linux-x86_64-deb', artifact);
+  else if (/(amd64|x86_64)\.rpm$/.test(artifact)) add('linux-x86_64-rpm', artifact);
   else if (/(-setup\.exe|\.nsis\.zip)$/.test(artifact)) add('windows-x86_64', artifact);
   else if (/\.msi(\.zip)?$/.test(artifact)) add('windows-x86_64', artifact); // MSI fallback
 }

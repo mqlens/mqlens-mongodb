@@ -37,7 +37,8 @@ type Phase =
   | 'downloading'
   | 'uptodate'
   | 'offline'
-  | 'check-failed';
+  | 'check-failed'
+  | 'install-failed';
 
 const renderInline = (text: string): React.ReactNode[] => {
   const out: React.ReactNode[] = [];
@@ -218,8 +219,11 @@ export const UpdatePrompt: React.FC = () => {
       await invoke('update_install', { channel });
       await relaunch();
     } catch (e: unknown) {
+      // Not 'check-failed': the check already reached the server and found
+      // this update, so "couldn't reach the update server" would send the user
+      // after the wrong problem when the download or install step failed.
       setError(String((e as { message?: string })?.message || e));
-      setPhase('check-failed');
+      setPhase('install-failed');
     } finally {
       unlisten?.();
     }
@@ -278,11 +282,13 @@ export const UpdatePrompt: React.FC = () => {
       </div>
     );
   }
-  if (phase === 'check-failed') {
+  if (phase === 'check-failed' || phase === 'install-failed') {
     return (
       <div className={cn(toastClassName, 'border-destructive/30 text-destructive')} data-testid="update-toast" title={error ?? undefined}>
         <AlertTriangle size={14} />
-        {t('updatePrompt.toast.checkFailed')}
+        {phase === 'install-failed'
+          ? t('updatePrompt.toast.installFailed')
+          : t('updatePrompt.toast.checkFailed')}
         <Button
           type="button"
           variant="ghost"

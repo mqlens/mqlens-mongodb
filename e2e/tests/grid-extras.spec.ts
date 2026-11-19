@@ -263,6 +263,52 @@ test.describe('Typed values and find', () => {
     await expect.poll(() => header.evaluate((el) => el.scrollLeft)).toBeLessThan(far);
   });
 
+  test('the table body scrolls both ways in one box, its vertical bar on screen', async ({ app, page }) => {
+    // Wider and taller than the viewport, so both axes overflow.
+    const wide = Object.fromEntries(Array.from({ length: 20 }, (_, i) => [`field_${String(i).padStart(2, '0')}`, `v${i}`]));
+    await openThings(app, page, Array.from({ length: 200 }, (_, n) => ({ _id: n, ...wide })));
+    await viewButton(page, 'Table').click();
+    const header = view(page).getByTestId('table-header');
+    await expect(header).toContainText(/field_00/i);
+
+    const body = view(page).getByTestId('table-body-scroll');
+    const scrollers = () =>
+      body.evaluate((wrapper) =>
+        [wrapper, ...Array.from(wrapper.querySelectorAll<HTMLElement>('*'))]
+          .filter((el) => {
+            const cs = getComputedStyle(el);
+            const scrolls = (o: string) => o === 'auto' || o === 'scroll';
+            return (
+              (scrolls(cs.overflowX) && el.scrollWidth > el.clientWidth) ||
+              (scrolls(cs.overflowY) && el.scrollHeight > el.clientHeight)
+            );
+          })
+          .map((el) => {
+            const box = el.getBoundingClientRect();
+            return {
+              x: el.scrollWidth > el.clientWidth,
+              y: el.scrollHeight > el.clientHeight,
+              rightOverflow: box.right - wrapper.getBoundingClientRect().right,
+            };
+          }),
+      );
+    // One box scrolls both ways, and it is no wider than what is on screen, so
+    // its vertical scroll bar is at the visible right edge, not off past the columns.
+    const found = await scrollers();
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatchObject({ x: true, y: true });
+    expect(found[0].rightOverflow).toBeLessThanOrEqual(1);
+
+    // Scrolling it sideways carries the header along.
+    await body.evaluate((wrapper) => {
+      const scroller = [wrapper, ...Array.from(wrapper.querySelectorAll<HTMLElement>('*'))].find(
+        (el) => el.scrollWidth > el.clientWidth && getComputedStyle(el).overflowX !== 'hidden',
+      )!;
+      scroller.scrollLeft = 300;
+    });
+    await expect.poll(() => header.evaluate((el) => el.scrollLeft)).toBe(300);
+  });
+
   test('Ctrl+F opens results find from the results only', async ({ app, page }) => {
     await openThings(app, page, [
       { _id: 1, name: 'alpha' },
@@ -413,5 +459,26 @@ test.describe('Table columns', () => {
     await headerMenu(page, 'v', 'Clear sort');
     await expect(view(page).locator('[data-column="v"]')).toHaveAttribute('aria-sort', 'none');
     expect(await tableCellText(page, 1, '_id')).toBe(String(values.length));
+  });
+});
+
+test.describe('Date display', () => {
+  test('switching dates to local time carries to every open result, and back', async ({ app, page }) => {
+    const docs = [{ _id: 1, when: { $date: '2025-05-01T12:00:00Z' } }];
+    await connectStaging(app, page, { servers: { [STAGING_URI]: { databases: { shop: { things: { docs }, other: { docs } } } } } });
+    await openCollection(page, 'shop', 'things');
+    await openInNewTab(page, 'other');
+    const toggle = () => view(page).getByTestId('date-timezone-toggle');
+    await expect(toggle()).toHaveText('UTC');
+
+    await toggle().click();
+    await expect(toggle()).toHaveText('Local');
+    // The other tab's grid stays mounted, and hears of the change.
+    await switchTab(page, 'things');
+    await expect(toggle()).toHaveText('Local');
+
+    await toggle().click();
+    await switchTab(page, 'other');
+    await expect(toggle()).toHaveText('UTC');
   });
 });

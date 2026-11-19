@@ -26,7 +26,7 @@ import { shellCollectionAt } from '../lib/mongoCompletions';
 import { fetchSchema, type SchemaMap } from '../lib/useCollectionSchema';
 import { useMonacoTheme, useMonacoFontSize } from '../lib/useMonacoTheme';
 import { useMonacoValue } from '../lib/useMonacoValue';
-import { statementAt } from '../lib/shellStatement';
+import { echoValues, statementAt } from '../lib/shellStatement';
 import { attachMonaco } from '../lib/monacoAppTheme';
 import { formatShortcut, shortcutById } from '@/lib/shortcuts';
 import { windowLabel } from '../workspace/workspaceStore';
@@ -1366,9 +1366,13 @@ export const MongoShell: React.FC<MongoShellProps> = ({
       // An OIDC shell's session takes the script instead: a one-shot mongosh is
       // a new process with no token, and would open a browser sign-in every run
       // (#518). The backend runs it there as one unit, as `--file` would.
-      const ranExternally = raw.includes('\n') && !isOidcUri(connectionUri)
-        ? await runMongoshScriptOnce(raw)
-        : await runExternalMongoshCommand(raw);
+      // Either way a multi-line script runs as a unit, which prints nothing for
+      // a bare expression; it is sent with each one printing its value.
+      const multiLine = raw.includes('\n');
+      const sent = multiLine ? echoValues(raw) : raw;
+      const ranExternally = multiLine && !isOidcUri(connectionUri)
+        ? await runMongoshScriptOnce(sent)
+        : await runExternalMongoshCommand(sent);
       // Whatever follows — a driver call for a recognised command, or nothing —
       // is not something Stop can end. Read live: Stop may have been pressed,
       // and `stopRequested` must not be lost by overwriting the record.
