@@ -30,11 +30,23 @@ const isOperatorObject = (v: unknown): v is QueryDoc =>
  *  any single value, but not a missing field, an array or a sub-document. */
 export function isFilterableValue(value: unknown): boolean {
   if (value === undefined) return false;
+  // The Tree and JSON views show a relaxed parse, where a 64-bit integer past
+  // 2^53 has already been rounded: the number in hand is not the stored one.
+  if (typeof value === 'number') return !Number.isInteger(value) || Number.isSafeInteger(value);
   if (value === null || typeof value !== 'object') return true;
   if (Array.isArray(value)) return false;
+  // `field: /abc/` is a pattern match against strings, not equality with a
+  // stored regular expression.
+  if (isRegexValue(value)) return false;
   if (value instanceof Date || isBsonInstance(value)) return true;
   return isEjsonWrapper(value as Record<string, unknown>);
 }
+
+const isRegexValue = (value: object): boolean =>
+  value instanceof RegExp
+  || (value as { _bsontype?: unknown })._bsontype === 'BSONRegExp'
+  || '$regularExpression' in value
+  || '$regex' in value;
 
 /** The Extended JSON shape of a cell value. The grid hands over raw Extended
  *  JSON from the Table view and BSON instances from the Tree and JSON views. */
@@ -95,8 +107,8 @@ const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.str
  * Add `field = value` (`mode: 'eq'`) or `field ≠ value` (`mode: 'ne'`) to a
  * filter. Other fields' conditions are kept, so repeated use narrows the
  * results. On the same field, an equality replaces what was there; an
- * exclusion joins the field's other operators, and a second excluded value
- * turns `$ne` into `$nin`.
+ * exclusion joins the field's other operators, a second excluded value turns
+ * `$ne` into `$nin`, and an equality with another value is left as it is.
  */
 export function addFilterCondition(
   text: string,
@@ -115,7 +127,12 @@ export function addFilterCondition(
   const rx = regexParts(filter[field]);
   if (rx) filter[field] = { $regex: rx.pattern, ...(rx.options && { $options: rx.options }) };
   const existing = filter[field];
-  if (!isOperatorObject(existing)) {
+  if (existing !== undefined && !isOperatorObject(existing)) {
+    // An equality on the field. One with another value already leaves this
+    // value out, and replacing it would widen the results; one with this very
+    // value is the opposite of what is asked, so it gives way.
+    if (same(existing, v)) filter[field] = { $ne: v };
+  } else if (existing === undefined) {
     filter[field] = { $ne: v };
   } else if (Array.isArray(existing.$nin)) {
     if (!existing.$nin.some((x: unknown) => same(x, v))) existing.$nin = [...existing.$nin, v];

@@ -3168,6 +3168,21 @@ describe('DataGrid — sending a cell to the find query', () => {
     expect(screen.queryByText('Add field to projection')).not.toBeInTheDocument();
   });
 
+  it('has no query entries for a value inside an array of arrays', () => {
+    // { matrix: 7 } does not match [[7]]: a path does not reach into the inner array.
+    renderWithDoc({ matrix: [[7]] });
+    fireEvent.contextMenu(screen.getByText('7'));
+    expect(screen.getByTestId('context-menu')).toBeInTheDocument();
+    expect(screen.queryByText('Filter by this value')).not.toBeInTheDocument();
+    expect(screen.queryByText('Add field to projection')).not.toBeInTheDocument();
+  });
+
+  it('still offers them for a value directly inside an array', () => {
+    renderWithDoc({ flat: [8] });
+    fireEvent.contextMenu(screen.getByText('8'));
+    expect(screen.getByText('Filter by this value')).toBeInTheDocument();
+  });
+
   it('has no query entries for a table column whose name contains a dot', () => {
     renderWithDoc({ 'a.b': 'dotted', plain: 'fine' });
     fireEvent.click(screen.getByRole('button', { name: /table/i }));

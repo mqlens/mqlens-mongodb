@@ -476,11 +476,17 @@ interface JsonEndpoint {
  * `parent` ('' for the document itself). Array indexes are left out, so a
  * value inside an array gets the path that matches it in any element. Null
  * when a query cannot name the value: a key that contains a dot reads as a
- * nested path, and one that starts with `$` as an operator.
+ * nested path, one that starts with `$` as an operator, and a path does not
+ * reach into an array that is itself an element of an array.
  */
-function childQueryPath(parent: string | null, key: string, parentIsArray: boolean): string | null {
+function childQueryPath(
+  parent: string | null,
+  key: string,
+  parentIsArray: boolean,
+  parentIsArrayElement = false,
+): string | null {
   if (parent === null) return null;
-  if (parentIsArray) return parent;
+  if (parentIsArray) return parentIsArrayElement ? null : parent;
   if (key.includes('.') || key.startsWith('$')) return null;
   return parent ? `${parent}.${key}` : key;
 }
@@ -1722,7 +1728,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
       const childAncestors = [...ancestors, foldId];
       entries.forEach(([k, v], idx) => {
         const last = idx === entries.length - 1;
-        walk(v, isArr ? null : k, depth + 1, !last, childAncestors, docIndex, false, undefined, childQueryPath(queryPath, k, isArr));
+        walk(v, isArr ? null : k, depth + 1, !last, childAncestors, docIndex, false, undefined, childQueryPath(queryPath, k, isArr, keyName === null && !isDocRoot));
       });
 
       track(depth, 2);
@@ -2201,7 +2207,8 @@ export const DataGrid: React.FC<DataGridProps> = ({
       isDocRoot: boolean,
       rawDoc?: Record<string, any>,
       underArray = false,
-      queryPath: string | null = ''
+      queryPath: string | null = '',
+      isArrayElement = false
     ) => {
       const isArr = Array.isArray(value);
       const isObj = value !== null && typeof value === 'object' && !isBsonObject(value) && !isArr;
@@ -2248,7 +2255,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
       });
 
       const childAncestors = [...ancestors, foldId];
-      entries.forEach(([k, v]) => walk(v, k, [...path, k], depth + 1, childAncestors, docIndex, false, undefined, underArray || isArr, childQueryPath(queryPath, k, isArr)));
+      entries.forEach(([k, v]) => walk(v, k, [...path, k], depth + 1, childAncestors, docIndex, false, undefined, underArray || isArr, childQueryPath(queryPath, k, isArr, isArrayElement), isArr));
     };
 
     parsedDocs.forEach((doc, di) => {

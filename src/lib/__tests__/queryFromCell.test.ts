@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ObjectId, Long } from 'bson';
+import { ObjectId, Long, BSONRegExp } from 'bson';
 import {
   addFilterCondition,
   addProjectionField,
@@ -17,6 +17,22 @@ describe('isFilterableValue', () => {
     for (const v of ['a', 0, false, null, { $oid: OID }, { $date: '2024-01-01T00:00:00Z' }, new ObjectId(OID), new Date(0)]) {
       expect(isFilterableValue(v)).toBe(true);
     }
+  });
+
+  it('rejects a stored regular expression, which a filter would read as a pattern', () => {
+    for (const v of [/abc/, new BSONRegExp('abc', 'i'), { $regularExpression: { pattern: 'abc', options: '' } }]) {
+      expect(isFilterableValue(v)).toBe(false);
+    }
+  });
+
+  it('rejects an integer too large to have survived the relaxed parse', () => {
+    // NumberLong("9007199254740993") reaches the Tree view as 9007199254740992.
+    expect(isFilterableValue(9007199254740992)).toBe(false);
+    expect(isFilterableValue(Number.MAX_SAFE_INTEGER)).toBe(true);
+    expect(isFilterableValue(1.5e300)).toBe(false);
+    expect(isFilterableValue(0.1)).toBe(true);
+    // As a typed value it is exact.
+    expect(isFilterableValue({ $numberLong: '9007199254740993' })).toBe(true);
   });
 
   it('rejects a missing field, arrays and sub-documents', () => {
@@ -94,6 +110,15 @@ describe('addFilterCondition', () => {
     let text = addFilterCondition('', 'owner', { $oid: OID }, 'eq');
     text = addFilterCondition(text, 'owner', { $oid: OID }, 'ne');
     expect(run(text)).toEqual({ owner: { $ne: { $oid: OID } } });
+  });
+
+  it('does not widen an equality on the field when another value is excluded', () => {
+    // status = "active" already leaves "inactive" out.
+    expect(run(addFilterCondition('{ status: "active", n: 1 }', 'status', 'inactive', 'ne')))
+      .toEqual({ status: 'active', n: 1 });
+    // Excluding the value the filter asks for turns the condition round.
+    expect(run(addFilterCondition('{ status: "active" }', 'status', 'active', 'ne')))
+      .toEqual({ status: { $ne: 'active' } });
   });
 
   it('adds the exclusion beside other operators on the field', () => {
