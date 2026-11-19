@@ -1717,8 +1717,15 @@ function Workspace() {
       // results on screen never disagree with the fields above them.
       if (def) {
         const json = (v: unknown) => JSON.stringify(v ?? {}, null, 2);
-        const seeded = def.queryType === 'aggregate'
-          ? builderStateFromQueryTab(undefined, def.pipeline)
+        // An aggregation saved with every stage disabled has an empty
+        // pipeline. It still runs as an aggregation, so it stays one in the
+        // bar: `builderStateFromQueryTab` alone reads "no stages" as a find.
+        const seeded: BuilderState = def.queryType === 'aggregate'
+          ? {
+              ...builderStateFromQueryTab(undefined, def.pipeline),
+              queryMode: 'aggregate',
+              ...(def.pipeline.length === 0 && { stages: [] }),
+            }
           : builderStateFromQueryTab({
               filter: json(def.filter),
               sort: json(def.sort),
