@@ -112,10 +112,13 @@ describe('addFilterCondition', () => {
     expect(run(text)).toEqual({ owner: { $ne: { $oid: OID } } });
   });
 
-  it('does not widen an equality on the field when another value is excluded', () => {
-    // status = "active" already leaves "inactive" out.
-    expect(run(addFilterCondition('{ status: "active", n: 1 }', 'status', 'inactive', 'ne')))
-      .toEqual({ status: 'active', n: 1 });
+  it('keeps an equality on the field beside the exclusion of another value', () => {
+    // Not replaced, which would widen the results; and not left alone, since
+    // for an array field tags = "red" does not rule out "blue".
+    expect(run(addFilterCondition('{ tags: "red", n: 1 }', 'tags', 'blue', 'ne')))
+      .toEqual({ tags: { $eq: 'red', $ne: 'blue' }, n: 1 });
+    expect(run(addFilterCondition('{ tags: { $eq: "red", $ne: "blue" } }', 'tags', 'green', 'ne')))
+      .toEqual({ tags: { $eq: 'red', $nin: ['blue', 'green'] } });
     // Excluding the value the filter asks for turns the condition round.
     expect(run(addFilterCondition('{ status: "active" }', 'status', 'active', 'ne')))
       .toEqual({ status: { $ne: 'active' } });

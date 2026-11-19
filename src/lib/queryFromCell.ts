@@ -115,7 +115,7 @@ const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.str
  * filter. Other fields' conditions are kept, so repeated use narrows the
  * results. On the same field, an equality replaces what was there; an
  * exclusion joins the field's other operators, a second excluded value turns
- * `$ne` into `$nin`, and an equality with another value is left as it is.
+ * `$ne` into `$nin`, and an equality with another value is kept as `$eq`.
  */
 export function addFilterCondition(
   text: string,
@@ -135,10 +135,12 @@ export function addFilterCondition(
   if (rx) filter[field] = { $regex: rx.pattern, ...(rx.options && { $options: rx.options }) };
   const existing = filter[field];
   if (existing !== undefined && !isOperatorObject(existing)) {
-    // An equality on the field. One with another value already leaves this
-    // value out, and replacing it would widen the results; one with this very
-    // value is the opposite of what is asked, so it gives way.
-    if (same(existing, v)) filter[field] = { $ne: v };
+    // An equality on the field. With this very value it is the opposite of
+    // what is asked, so it gives way. With another value it stays, spelled as
+    // `$eq` beside the exclusion: replacing it would widen the results, and
+    // dropping the exclusion would be wrong for an array field, where
+    // matching one element does not rule out another.
+    filter[field] = same(existing, v) ? { $ne: v } : { $eq: existing, $ne: v };
   } else if (existing === undefined) {
     filter[field] = { $ne: v };
   } else if (Array.isArray(existing.$nin)) {
