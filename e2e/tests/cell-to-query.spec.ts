@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from '../fixtures';
-import { callFrom, connectStaging, getEditorText, openCollection, view } from '../helpers';
+import { callFrom, connectStaging, getEditorText, openCollection, setEditorText, STAGING_URI, view } from '../helpers';
 
 // The results' context menu sends a cell to the find query bar: its value to
 // the filter, its field to the projection or the sort. Nothing runs until Run.
@@ -10,6 +10,8 @@ const runButton = (page: Page) => view(page).getByRole('button', { name: 'Run', 
 const editorText = (page: Page, testId: string) => getEditorText(page, view(page).getByTestId(testId));
 /** The query bar field's text parsed as the JSON the menu writes. */
 const field = async (page: Page, testId: string) => JSON.parse((await editorText(page, testId)) || '{}');
+const setField = (page: Page, testId: string, text: string) => setEditorText(page, view(page).getByTestId(testId), text);
+const jsonLine = (page: Page, text: string) => view(page).locator('[data-json-line]').filter({ hasText: text }).first();
 
 async function fromCell(page: Page, cellText: string, entry: string): Promise<void> {
   await view(page).getByText(cellText, { exact: true }).first().click({ button: 'right' });
@@ -99,5 +101,101 @@ test.describe('A result cell sent to the query', () => {
     await view(page).getByText('Premium', { exact: true }).first().click({ button: 'right' });
     await expect(menu(page).getByText('Copy value', { exact: true })).toBeVisible();
     await expect(menu(page).getByText('Filter by this value', { exact: true })).toHaveCount(0);
+  });
+
+  test('collects excluded values, and keeps the conditions already on the field', async ({ app, page }) => {
+    const docs = [
+      { _id: 1, name: 'Ada', tier: 'Gold' },
+      { _id: 2, name: 'Ben', tier: 'Silver' },
+      { _id: 3, name: 'Cy', tier: 'Bronze' },
+    ];
+    await connectStaging(app, page, { servers: { [STAGING_URI]: { databases: { shop: { things: { docs } } } } } });
+    await openCollection(page, 'shop', 'things');
+    await view(page).getByRole('button', { name: 'Table', exact: true }).click();
+    await expect(view(page).getByTestId('table-header')).toContainText(/tier/i);
+    const filter = () => field(page, 'query-filter-input');
+
+    // One excluded value is `$ne`, a second turns it into `$nin`, a third joins the list.
+    await fromCell(page, 'Gold', 'Exclude this value');
+    await expect.poll(filter).toEqual({ tier: { $ne: 'Gold' } });
+    await fromCell(page, 'Silver', 'Exclude this value');
+    await expect.poll(filter).toEqual({ tier: { $nin: ['Gold', 'Silver'] } });
+    await fromCell(page, 'Bronze', 'Exclude this value');
+    await expect.poll(filter).toEqual({ tier: { $nin: ['Gold', 'Silver', 'Bronze'] } });
+    // Excluding a listed value again changes nothing.
+    await fromCell(page, 'Silver', 'Exclude this value');
+    await expect.poll(filter).toEqual({ tier: { $nin: ['Gold', 'Silver', 'Bronze'] } });
+
+    // An equality with another value stays beside the exclusion; with the same value it gives way.
+    await setField(page, 'query-filter-input', '{ tier: "Gold" }');
+    await fromCell(page, 'Silver', 'Exclude this value');
+    await expect.poll(filter).toEqual({ tier: { $eq: 'Gold', $ne: 'Silver' } });
+    await setField(page, 'query-filter-input', '{ tier: "Gold" }');
+    await fromCell(page, 'Gold', 'Exclude this value');
+    await expect.poll(filter).toEqual({ tier: { $ne: 'Gold' } });
+
+    // Another operator on the field is kept.
+    await setField(page, 'query-filter-input', '{ tier: { $exists: true } }');
+    await fromCell(page, 'Gold', 'Exclude this value');
+    await expect.poll(filter).toEqual({ tier: { $exists: true, $ne: 'Gold' } });
+  });
+
+  test('keeps a regex in the filter: as typed beside another field, as $regex beside an exclusion', async ({ app, page }) => {
+    await connectStaging(app, page);
+    await openCollection(page, 'sales_db', 'customers');
+    await view(page).getByRole('button', { name: 'Table', exact: true }).click();
+    await expect(view(page).getByTestId('table-header')).toContainText(/tier/i);
+
+    await setField(page, 'query-filter-input', '{ email: /^a.*\\/x$/i }');
+    await fromCell(page, 'Premium', 'Filter by this value');
+    await expect.poll(() => editorText(page, 'query-filter-input')).toBe('{ "email" : /^a.*\\/x$/i, "tier" : "Premium" }');
+
+    await setField(page, 'query-filter-input', '{ name: /^A/i }');
+    await fromCell(page, 'Alice Smith', 'Exclude this value');
+    await expect.poll(() => field(page, 'query-filter-input')).toEqual({ name: { $regex: '^A', $options: 'i', $ne: 'Alice Smith' } });
+
+    // A pattern JavaScript cannot read back as a literal stays in its Extended JSON form.
+    await setField(page, 'query-filter-input', '{ name: { $regularExpression: { pattern: "(?i)^a", options: "" } } }');
+    await fromCell(page, 'Premium', 'Filter by this value');
+    await expect.poll(() => field(page, 'query-filter-input')).toEqual({
+      name: { $regularExpression: { pattern: '(?i)^a', options: '' } },
+      tier: 'Premium',
+    });
+  });
+
+  test('un-hides a field in a projection that hides fields', async ({ app, page }) => {
+    await connectStaging(app, page);
+    await openCollection(page, 'sales_db', 'customers');
+    await view(page).getByRole('button', { name: 'Table', exact: true }).click();
+    await expect(view(page).getByTestId('table-header')).toContainText(/tier/i);
+
+    // The first entry opens the options row, where the projection can be typed.
+    await fromCell(page, 'Alice Smith', 'Add field to projection');
+    await expect(view(page).getByTestId('query-options-section')).toBeVisible();
+    await setField(page, 'projection-query-input', '{ name: 0, tier: 0 }');
+    await fromCell(page, 'Premium', 'Add field to projection');
+    await expect.poll(() => field(page, 'projection-query-input')).toEqual({ name: 0 });
+
+    const ran = await callFrom(app, 'execute_mql_query', () => runButton(page).click());
+    expect(ran).toMatchObject({ projection: '{"name":0}' });
+  });
+
+  test('takes typed and empty values from the JSON view', async ({ app, page }) => {
+    const docs = [{ _id: { $oid: '603d779f4f102e3a105c3120' }, name: 'Ada', tags: [], meta: {} }];
+    await connectStaging(app, page, { servers: { [STAGING_URI]: { databases: { shop: { things: { docs } } } } } });
+    await openCollection(page, 'shop', 'things');
+    await expect(jsonLine(page, 'Ada')).toBeVisible();
+
+    // The JSON view holds the id as an ObjectId; the filter keeps it one.
+    await jsonLine(page, '603d779f4f102e3a105c3120').click({ button: 'right' });
+    await menu(page).getByText('Filter by this value', { exact: true }).click();
+    await expect.poll(() => editorText(page, 'query-filter-input')).toBe('{ "_id" : ObjectId("603d779f4f102e3a105c3120") }');
+
+    // An empty array has no value to filter by, but its field can be projected.
+    await jsonLine(page, 'tags').click({ button: 'right' });
+    await expect(menu(page).getByText('Add field to projection', { exact: true })).toBeVisible();
+    await expect(menu(page).getByText('Filter by this value', { exact: true })).toHaveCount(0);
+    await menu(page).getByText('Add field to projection', { exact: true }).click();
+    await expect.poll(() => field(page, 'projection-query-input')).toEqual({ tags: 1 });
   });
 });
