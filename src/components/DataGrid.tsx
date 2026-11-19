@@ -471,13 +471,27 @@ interface JsonEndpoint {
   offset: number;
 }
 
+/**
+ * The dotted query path of the value under key `key` of a container at
+ * `parent` ('' for the document itself). Array indexes are left out, so a
+ * value inside an array gets the path that matches it in any element. Null
+ * when a query cannot name the value: a key that contains a dot reads as a
+ * nested path, and one that starts with `$` as an operator.
+ */
+function childQueryPath(parent: string | null, key: string, parentIsArray: boolean): string | null {
+  if (parent === null) return null;
+  if (parentIsArray) return parent;
+  if (key.includes('.') || key.startsWith('$')) return null;
+  return parent ? `${parent}.${key}` : key;
+}
+
 interface JsonLine {
   num: number;
   depth: number;
   kind: 'scalar' | 'open' | 'close' | 'empty';
   keyName: string | null;
   value?: any;
-  /** Dotted query path of a scalar line, array indexes left out. */
+  /** Dotted query path of the value this line starts (see `childQueryPath`). */
   queryPath?: string;
   bracket?: string; // open/close bracket char
   brackets?: string; // empty '{}' / '[]'
@@ -516,9 +530,9 @@ interface TreeRow {
   keyName: string;
   /** Keys from the document root down to this value; empty for the root. */
   path: string[];
-  /** `path` as a dotted query path: array indexes left out, so a value inside
-   *  an array gives the path that matches it in any element. */
-  queryPath: string;
+  /** `path` as a dotted query path (see `childQueryPath`); undefined when a
+   *  query cannot name this value, and for the document root. */
+  queryPath?: string;
   /** Inside an array, which the backend writes back whole: not edited in place,
    *  so a save cannot overwrite another element changed since the results loaded. */
   underArray?: boolean;
@@ -668,7 +682,7 @@ const JsonRow = ({
       // after virtualization has unmounted the rows it started on (#311).
       data-json-line={index}
       data-doc-even={line.docIndex % 2 === 0}
-      onContextMenu={(e) => openCtxMenu(e, documents[line.docIndex], line.kind === 'scalar' ? line.keyName ?? undefined : undefined, line.value, line.kind === 'scalar' ? line.queryPath : undefined)}
+      onContextMenu={(e) => openCtxMenu(e, documents[line.docIndex], line.kind === 'scalar' ? line.keyName ?? undefined : undefined, line.value, line.queryPath)}
     >
       <span
         className="json-view-gutter sticky left-0 w-[52px] shrink-0 select-none bg-inherit pr-3 text-right text-[10px] text-muted-foreground before:content-[attr(data-num)]"
@@ -884,7 +898,7 @@ const TableRow = ({
             findHighlightClass(index, col)
           )}
           style={{ width: `${colWidth(col)}px`, flexShrink: 0 }}
-          onContextMenu={(e) => openCtxMenu(e, rawDoc, col, cellValue(rawDoc, col), cellPath(col).join('.'))}
+          onContextMenu={(e) => openCtxMenu(e, rawDoc, col, cellValue(rawDoc, col), cellPath(col).reduce<string | null>((path, key) => childQueryPath(path, key, false), '') || undefined)}
           onDoubleClick={startCellEdit && editable(col) ? () => startCellEdit({ docIndex, path: cellPath(col) }) : undefined}
         >
           {isCellEditing(cellEdit, docIndex, cellPath(col)) ? renderCellEditor() : renderCell(cellValue(rawDoc, col))}
@@ -1663,7 +1677,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
       docIndex: number,
       isDocRoot: boolean,
       rawDoc?: Record<string, any>,
-      queryPath = ''
+      queryPath: string | null = ''
     ) => {
       const keyChars = keyName !== null ? keyName.length + 5 : 0;
       const isArr = Array.isArray(value);
@@ -1683,7 +1697,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
 
       if (entries.length === 0) {
         track(depth, keyChars + 2 + (trailingComma ? 1 : 0));
-        lines.push({ num: lines.length + 1, depth, kind: 'empty', keyName, brackets: open + close, hasComma: trailingComma, ancestors, docIndex });
+        lines.push({ num: lines.length + 1, depth, kind: 'empty', keyName, brackets: open + close, queryPath: queryPath || undefined, hasComma: trailingComma, ancestors, docIndex });
         return;
       }
 
@@ -1694,6 +1708,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
         depth,
         kind: 'open',
         keyName,
+        queryPath: queryPath || undefined,
         bracket: open,
         hasComma: trailingComma,
         ancestors,
@@ -1707,7 +1722,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
       const childAncestors = [...ancestors, foldId];
       entries.forEach(([k, v], idx) => {
         const last = idx === entries.length - 1;
-        walk(v, isArr ? null : k, depth + 1, !last, childAncestors, docIndex, false, undefined, isArr ? queryPath : queryPath ? `${queryPath}.${k}` : k);
+        walk(v, isArr ? null : k, depth + 1, !last, childAncestors, docIndex, false, undefined, childQueryPath(queryPath, k, isArr));
       });
 
       track(depth, 2);
@@ -2186,7 +2201,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
       isDocRoot: boolean,
       rawDoc?: Record<string, any>,
       underArray = false,
-      queryPath = ''
+      queryPath: string | null = ''
     ) => {
       const isArr = Array.isArray(value);
       const isObj = value !== null && typeof value === 'object' && !isBsonObject(value) && !isArr;
@@ -2197,7 +2212,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
           depth,
           keyName,
           path,
-          queryPath,
+          queryPath: queryPath || undefined,
           kind: 'scalar',
           value,
           childCount: 0,
@@ -2221,7 +2236,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
         depth,
         keyName,
         path,
-        queryPath,
+        queryPath: queryPath || undefined,
         kind: isArr ? 'array' : 'object',
         childCount: entries.length,
         type: isArr ? 'Array' : 'Object',
@@ -2233,7 +2248,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
       });
 
       const childAncestors = [...ancestors, foldId];
-      entries.forEach(([k, v]) => walk(v, k, [...path, k], depth + 1, childAncestors, docIndex, false, undefined, underArray || isArr, isArr ? queryPath : queryPath ? `${queryPath}.${k}` : k));
+      entries.forEach(([k, v]) => walk(v, k, [...path, k], depth + 1, childAncestors, docIndex, false, undefined, underArray || isArr, childQueryPath(queryPath, k, isArr)));
     };
 
     parsedDocs.forEach((doc, di) => {

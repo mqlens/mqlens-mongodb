@@ -1536,6 +1536,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
       if (action.kind === 'filter' || action.kind === 'exclude') {
         const next = addFilterCondition(filterQuery, action.field, action.value, action.kind === 'filter' ? 'eq' : 'ne');
         setFilterQuery(next);
+        setIsQueryEnabled(true);
         if (isQueryBuilderOpen) syncFilterRulesFromInput(next);
         return;
       }
@@ -1545,10 +1546,14 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
       if (action.kind === 'project') {
         const next = addProjectionField(projectionQuery, action.field);
         setProjectionQuery(next);
+        // The builder's "projection" switch may be off from an earlier
+        // session with it; Run sends no projection while it is.
+        setIsProjectionEnabled(true);
         if (isQueryBuilderOpen) syncProjectionRulesFromInput(next);
       } else {
         const next = sortByField(action.field, action.kind === 'sortAsc' ? 1 : -1);
         setSortQuery(next);
+        setIsSortEnabled(true);
         if (isQueryBuilderOpen) syncSortRulesFromInput(next);
       }
     } catch {

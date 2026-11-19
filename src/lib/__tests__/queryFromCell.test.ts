@@ -103,6 +103,24 @@ describe('addFilterCondition', () => {
       .toEqual({ name: { $regex: '^a', $ne: 'abe' } });
   });
 
+  it('keeps a regex typed as /…/ when a value of that field is excluded', () => {
+    const text = addFilterCondition('{ name: /^a/i }', 'name', 'abe', 'ne');
+    expect(run(text)).toEqual({ name: { $regex: '^a', $options: 'i', $ne: 'abe' } });
+    expect(run(addFilterCondition('{ name: /^a/ }', 'name', 'abe', 'ne')))
+      .toEqual({ name: { $regex: '^a', $ne: 'abe' } });
+  });
+
+  it('keeps operator objects on one line', () => {
+    expect(addFilterCondition('{ name: { $regex: "^a" }, at: { $type: "date" } }', 'n', 1, 'eq'))
+      .toBe('{ "name" : { "$regex" : "^a" }, "at" : { "$type" : "date" }, "n" : 1 }');
+  });
+
+  it('writes a regex elsewhere in the filter back as the literal it was typed as', () => {
+    const text = addFilterCondition('{ name: /^a\\/b/i, tags: { $in: [/x/, "y"] } }', 'n', 1, 'eq');
+    expect(text).toBe('{ "name" : /^a\\/b/i, "tags" : { "$in" : [ /x/, "y" ] }, "n" : 1 }');
+    expect(run(text)).toEqual(run('{ name: /^a\\/b/i, tags: { $in: [/x/, "y"] }, n: 1 }'));
+  });
+
   it('throws on text that is not a query, leaving the caller to keep it', () => {
     expect(() => addFilterCondition('{ status: ', 'a', 1, 'eq')).toThrow();
   });
@@ -120,6 +138,20 @@ describe('addProjectionField', () => {
     // Already returned: adding `price: 1` would make MongoDB reject the mix.
     expect(run(addProjectionField('{ secret: 0 }', 'price'))).toEqual({ secret: 0 });
     expect(addProjectionField('{ name: 0 }', 'name')).toBe('');
+  });
+});
+
+describe('addProjectionField on nested paths', () => {
+  it('does not name a path and one under it', () => {
+    // MongoDB rejects { address: 1, "address.city": 1 } as a path collision.
+    expect(run(addProjectionField('{ address: 1 }', 'address.city'))).toEqual({ address: 1 });
+    expect(run(addProjectionField('{ "address.city": 1, name: 1 }', 'address'))).toEqual({ name: 1, address: 1 });
+    expect(run(addProjectionField('{ addressee: 1 }', 'address'))).toEqual({ addressee: 1, address: 1 });
+  });
+
+  it('un-hides a field hidden through its parent or its parts', () => {
+    expect(run(addProjectionField('{ address: 0, secret: 0 }', 'address.city'))).toEqual({ secret: 0 });
+    expect(run(addProjectionField('{ "address.city": 0, secret: 0 }', 'address'))).toEqual({ secret: 0 });
   });
 });
 

@@ -3082,6 +3082,13 @@ describe('DataGrid — sending a cell to the find query', () => {
       </DocumentViewerContext.Provider>,
     );
 
+  const renderWithDoc = (doc: Record<string, unknown>) =>
+    render(
+      <DocumentViewerContext.Provider value={{ handleExplain: () => {}, explainLoading: false, addCellToQuery: vi.fn() }}>
+        <DataGrid documents={[doc]} />
+      </DocumentViewerContext.Provider>,
+    );
+
   it('offers the query entries on a table cell and sends its field and value', () => {
     const add = vi.fn();
     renderInViewer(add);
@@ -3132,6 +3139,42 @@ describe('DataGrid — sending a cell to the find query', () => {
     fireEvent.contextMenu(screen.getByText(shown));
     fireEvent.click(screen.getByText('Filter by this value'));
     expect(add).toHaveBeenLastCalledWith({ kind: 'filter', field, value });
+  });
+
+  it('offers projection and sort on an array or sub-document line of the JSON view', () => {
+    const add = vi.fn();
+    render(
+      <DocumentViewerContext.Provider value={{ handleExplain: () => {}, explainLoading: false, addCellToQuery: add }}>
+        <DataGrid documents={[{ address: { city: 'Oslo' } }]} />
+      </DocumentViewerContext.Provider>,
+    );
+    // The line that opens the sub-document: `"address" : {`.
+    fireEvent.contextMenu(screen.getByText('"address"'));
+    expect(screen.queryByText('Filter by this value')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText('Add field to projection'));
+    expect(add).toHaveBeenLastCalledWith({ kind: 'project', field: 'address' });
+  });
+
+  it.each([
+    [{ 'a.b': 'dotted' }, 'dotted'],
+    [{ outer: { 'a.b': 'inner-dotted' } }, 'inner-dotted'],
+    [{ $where: 'dollar' }, 'dollar'],
+  ])('has no query entries for a value a query path cannot name: %j', (doc, shown) => {
+    // `a.b` in a query means field b inside a, not the key "a.b".
+    renderWithDoc(doc);
+    fireEvent.contextMenu(screen.getByText(`"${shown}"`));
+    expect(screen.getByText('Copy value')).toBeInTheDocument();
+    expect(screen.queryByText('Filter by this value')).not.toBeInTheDocument();
+    expect(screen.queryByText('Add field to projection')).not.toBeInTheDocument();
+  });
+
+  it('has no query entries for a table column whose name contains a dot', () => {
+    renderWithDoc({ 'a.b': 'dotted', plain: 'fine' });
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+    fireEvent.contextMenu(screen.getByText('dotted'));
+    expect(screen.queryByText('Filter by this value')).not.toBeInTheDocument();
+    fireEvent.contextMenu(screen.getByText('fine'));
+    expect(screen.getByText('Filter by this value')).toBeInTheDocument();
   });
 
   it('has no query entries outside a find query (shell results, aggregation)', () => {

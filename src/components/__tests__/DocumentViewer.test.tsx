@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import React, { type ReactElement } from 'react';
-import { render as rtlRender, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { render as rtlRender, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
 import { DocumentViewer, DocumentViewerContext, builderStateToQuery, type CellQueryAction } from '../DocumentViewer';
 import { parseQueryObject } from '@/lib/shellDoc';
 import { DialogProvider } from '../dialogs/DialogProvider';
@@ -2028,6 +2028,20 @@ describe('DocumentViewer — a results cell sent to the query', () => {
     expect(screen.getByTestId('query-options-section')).not.toHaveClass('hidden');
     const projection = screen.getByTestId('projection-query-input') as HTMLInputElement;
     expect(parseQueryObject(projection.value)).toEqual({ 'address.city': 1 });
+  });
+
+  it('sends the projection it added even if the builder had switched projection off', async () => {
+    renderWith({ kind: 'project', field: 'name' });
+    // Switch projection off in the visual builder, then close the builder.
+    fireEvent.click(screen.getByRole('button', { name: 'Visual Query Builder' }));
+    const toggle = within(await screen.findByTestId('projection-card')).getByRole('checkbox');
+    fireEvent.click(toggle);
+    expect(toggle).not.toBeChecked();
+    fireEvent.click(screen.getByRole('button', { name: 'Visual Query Builder' }));
+
+    fireEvent.click(screen.getByTestId('send'));
+    fireEvent.click(screen.getByRole('button', { name: 'Run' }));
+    expect(onExecute).toHaveBeenCalledWith(expect.objectContaining({ projection: '{"name":1}' }));
   });
 
   it('replaces the sort', () => {

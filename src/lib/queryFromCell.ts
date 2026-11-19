@@ -46,10 +46,49 @@ function toEjsonValue(value: unknown): unknown {
 }
 
 const parse = (text: string): QueryDoc => (text.trim() ? parseQueryObject(text) : {});
-// On one line, as the query bar shows it. Safe to collapse: `docToShell` escapes
-// newlines inside strings, so every raw newline is layout.
-const print = (doc: QueryDoc): string =>
-  Object.keys(doc).length ? docToShell(doc).replace(/\n\s*/g, ' ') : '';
+
+/** `{ $regularExpression: { pattern, options } }`, how a parsed `/…/` arrives. */
+const regexParts = (v: unknown): { pattern: string; options: string } | null => {
+  if (!isPlainObject(v) || Object.keys(v).length !== 1) return null;
+  const rx = v.$regularExpression;
+  if (!isPlainObject(rx) || typeof rx.pattern !== 'string') return null;
+  return { pattern: rx.pattern, options: typeof rx.options === 'string' ? rx.options : '' };
+};
+
+/** A regex as the `/pattern/flags` it was typed as, or null when that literal
+ *  would not read back as the same regex (flags JavaScript has no letter for,
+ *  an empty or multi-line pattern). */
+function regexLiteral(pattern: string, options: string): string | null {
+  if (!pattern || /[\n\r]/.test(pattern) || /[^imsu]/.test(options)) return null;
+  let out = '';
+  for (let i = 0; i < pattern.length; i++) {
+    const c = pattern[i];
+    if (c === '\\') out += c + (pattern[++i] ?? '');
+    else out += c === '/' ? '\\/' : c;
+  }
+  return `/${out}/${options}`;
+}
+
+const SHELL_TYPED_KEYS = new Set(['$oid', '$date', '$numberLong', '$numberDecimal', '$numberInt', '$numberDouble']);
+
+// On one line, as the query bar shows it. `docToShell` prints the values; the
+// containers are joined here so nothing has to be collapsed afterwards.
+function print(doc: QueryDoc): string {
+  const show = (v: unknown): string => {
+    if (Array.isArray(v)) return v.length ? `[ ${v.map(show).join(', ')} ]` : '[]';
+    if (isPlainObject(v) && !isBsonInstance(v)) {
+      const rx = regexParts(v);
+      const literal = rx && regexLiteral(rx.pattern, rx.options);
+      if (literal) return literal;
+      const keys = Object.keys(v);
+      // One typed value docToShell has a constructor for.
+      if (keys.length === 1 && SHELL_TYPED_KEYS.has(keys[0])) return docToShell(v);
+      return keys.length ? `{ ${keys.map((k) => `${JSON.stringify(k)} : ${show(v[k])}`).join(', ')} }` : '{}';
+    }
+    return docToShell(v);
+  };
+  return Object.keys(doc).length ? show(doc) : '';
+}
 const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
 
 /**
@@ -71,6 +110,10 @@ export function addFilterCondition(
     filter[field] = v;
     return print(filter);
   }
+  // A regex typed as `/…/` is a condition of its own; spell it as `$regex` so
+  // the exclusion can sit beside it instead of replacing it.
+  const rx = regexParts(filter[field]);
+  if (rx) filter[field] = { $regex: rx.pattern, ...(rx.options && { $options: rx.options }) };
   const existing = filter[field];
   if (!isOperatorObject(existing)) {
     filter[field] = { $ne: v };
@@ -88,18 +131,29 @@ export function addFilterCondition(
 }
 
 const isExcluded = (v: unknown): boolean => v === 0 || v === false;
+/** `a.b` is under `a`. */
+const isUnder = (path: string, parent: string): boolean => path.startsWith(`${parent}.`);
 
 /**
  * Make sure `field` is returned. An including projection gains `field: 1`. A
  * projection that works by hiding fields cannot also include one (MongoDB
  * rejects the mix), so there the field is un-hidden instead.
+ *
+ * A projection may not name both a path and one under it, so the entries on
+ * the same branch are reconciled: a field already covered by an included
+ * parent needs nothing, and an included field replaces entries for its parts.
+ * Un-hiding drops the exclusion of the field, of its parts, and of a parent
+ * that hides it (which also brings back that parent's other fields).
  */
 export function addProjectionField(text: string, field: string): string {
   const projection = parse(text);
-  const excluding = Object.entries(projection).some(([k, v]) => k !== '_id' && isExcluded(v));
+  const keys = Object.keys(projection);
+  const excluding = keys.some((k) => k !== '_id' && isExcluded(projection[k]));
+  const sameBranch = keys.filter((k) => k === field || isUnder(k, field) || isUnder(field, k));
   if (excluding) {
-    delete projection[field];
-  } else {
+    for (const k of sameBranch) if (isExcluded(projection[k])) delete projection[k];
+  } else if (!keys.some((k) => isUnder(field, k) && !isExcluded(projection[k]))) {
+    for (const k of sameBranch) if (k !== field && isUnder(k, field)) delete projection[k];
     projection[field] = 1;
   }
   return print(projection);
