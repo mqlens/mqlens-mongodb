@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import React, { type ReactElement } from 'react';
 import { render as rtlRender, screen, fireEvent, waitFor, act } from '@testing-library/react';
-import { DocumentViewer, DocumentViewerContext, builderStateToQuery } from '../DocumentViewer';
+import { DocumentViewer, DocumentViewerContext, builderStateToQuery, type CellQueryAction } from '../DocumentViewer';
+import { parseQueryObject } from '@/lib/shellDoc';
 import { DialogProvider } from '../dialogs/DialogProvider';
 import { recordHistory } from '@/lib/queryStore';
 
@@ -1973,5 +1974,66 @@ describe('Visual query builder: date values', () => {
 
     expect(dateInput(container)).toBeNull();
     expect((textValue(container) as HTMLInputElement).value).toBe('{"$date":{"$numberLong":"253402300800000"}}');
+  });
+});
+
+describe('DocumentViewer — a results cell sent to the query', () => {
+  // Stands in for DataGrid's context menu, which reaches the query bar
+  // through this context.
+  const Sender: React.FC<{ action: CellQueryAction }> = ({ action }) => {
+    const ctx = React.useContext(DocumentViewerContext);
+    return (
+      <button data-testid="send" disabled={!ctx?.addCellToQuery} onClick={() => ctx?.addCellToQuery?.(action)}>
+        send
+      </button>
+    );
+  };
+  const onExecute = vi.fn();
+  const renderWith = (action: CellQueryAction) =>
+    render(
+      <DocumentViewer
+        connectionName="test-conn"
+        databaseName="test-db"
+        collectionName="test-coll"
+        onExecute={onExecute}
+        onExplain={vi.fn()}
+        loading={false}
+      >
+        <Sender action={action} />
+      </DocumentViewer>
+    );
+  const filterText = () => (screen.getByTestId('query-filter-input') as HTMLInputElement).value;
+
+  beforeEach(() => onExecute.mockClear());
+
+  it('adds the condition to the filter already typed, without running it', () => {
+    renderWith({ kind: 'filter', field: 'status', value: 'active' });
+    fireEvent.change(screen.getByTestId('query-filter-input'), { target: { value: '{ age: { $gt: 21 } }' } });
+    fireEvent.click(screen.getByTestId('send'));
+    expect(parseQueryObject(filterText())).toEqual({ age: { $gt: 21 }, status: 'active' });
+    expect(onExecute).not.toHaveBeenCalled();
+  });
+
+  it('leaves a filter it cannot parse as typed', () => {
+    renderWith({ kind: 'exclude', field: 'status', value: 'active' });
+    fireEvent.change(screen.getByTestId('query-filter-input'), { target: { value: '{ age: ' } });
+    fireEvent.click(screen.getByTestId('send'));
+    expect(filterText()).toBe('{ age: ');
+  });
+
+  it('opens the options row to show a projection or sort it filled in', () => {
+    renderWith({ kind: 'project', field: 'address.city' });
+    expect(screen.getByTestId('query-options-section')).toHaveClass('hidden');
+    fireEvent.click(screen.getByTestId('send'));
+    expect(screen.getByTestId('query-options-section')).not.toHaveClass('hidden');
+    const projection = screen.getByTestId('projection-query-input') as HTMLInputElement;
+    expect(parseQueryObject(projection.value)).toEqual({ 'address.city': 1 });
+  });
+
+  it('replaces the sort', () => {
+    renderWith({ kind: 'sortDesc', field: 'price' });
+    fireEvent.click(screen.getByTestId('send'));
+    const sort = screen.getByTestId('sort-query-input') as HTMLInputElement;
+    expect(parseQueryObject(sort.value)).toEqual({ price: -1 });
   });
 });

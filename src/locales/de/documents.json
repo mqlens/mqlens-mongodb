@@ -250,6 +250,7 @@
   },
   "dataGrid": {
     "actions": {
+      "addToProjection": "Feld zur Projektion hinzufügen",
       "cancelCompareSelection": "Vergleichsauswahl abbrechen",
       "compareWith": "Vergleichen mit…",
       "compareWithReplaceSelection": "Vergleichen mit… (Auswahl ersetzen)",
@@ -265,10 +266,14 @@
       "deleteMany": "Mehrere löschen",
       "duplicateDocument": "Dokument duplizieren",
       "editDocument": "Dokument bearbeiten",
+      "excludeValue": "Diesen Wert ausschließen",
+      "filterByValue": "Nach diesem Wert filtern",
       "insert": "Einfügen",
       "next": "Weiter",
       "prev": "Zurück",
       "schema": "Schema",
+      "sortAscending": "Aufsteigend nach diesem Feld sortieren",
+      "sortDescending": "Absteigend nach diesem Feld sortieren",
       "updateMany": "Mehrere aktualisieren",
       "updateOrDelete": "Aktualisieren oder Löschen"
     },

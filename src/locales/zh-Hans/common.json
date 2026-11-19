@@ -80,6 +80,7 @@
     "fileUploaded": "已上传 {{filename}}",
     "filesFailedToUpload_other": "{{count}} 个文件上传失败。",
     "filterCleared": "已清除筛选条件",
+    "fixQueryBeforeAdding": "请先修正查询文本，再向其中添加内容",
     "generateFailedToStart": "生成数据启动失败：{{detail}}",
     "importFailedToStart": "导入启动失败：{{detail}}",
     "indexNotPutBack": "更改失败，且无法恢复索引：{{detail}}。其定义为 {{spec}}",

@@ -37,6 +37,7 @@ vi.mock('@/hooks/use-theme', () => ({
 }));
 
 import { DataGrid, getExplainTree } from '../DataGrid';
+import { DocumentViewerContext, type CellQueryAction } from '../DocumentViewer';
 import { TabVisibleContext } from '../../workspace/tabVisibility';
 import { resetResultsFindShortcutForTests } from '@/lib/resultsFindShortcut';
 
@@ -3061,5 +3062,84 @@ describe('DataGrid — table columns, review fixes', () => {
 
     expect(screen.getByRole('columnheader', { name: /price/ })).toHaveAttribute('aria-sort', 'descending');
     expect(screen.getByRole('columnheader', { name: /name/ })).toHaveAttribute('aria-sort', 'none');
+  });
+});
+
+describe('DataGrid — sending a cell to the find query', () => {
+  const docs = [
+    {
+      _id: { $oid: '603d779f4f102e3a185c3220' },
+      name: 'Alice Smith',
+      address: { city: 'Oslo' },
+      items: [{ sku: 'A-1' }],
+      tags: ['red'],
+    },
+  ];
+  const renderInViewer = (addCellToQuery?: (a: CellQueryAction) => void) =>
+    render(
+      <DocumentViewerContext.Provider value={{ handleExplain: () => {}, explainLoading: false, addCellToQuery }}>
+        <DataGrid documents={docs} />
+      </DocumentViewerContext.Provider>,
+    );
+
+  it('offers the query entries on a table cell and sends its field and value', () => {
+    const add = vi.fn();
+    renderInViewer(add);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+
+    fireEvent.contextMenu(screen.getByText('Alice Smith'));
+    fireEvent.click(screen.getByText('Filter by this value'));
+    expect(add).toHaveBeenLastCalledWith({ kind: 'filter', field: 'name', value: 'Alice Smith' });
+
+    // The typed value goes over as stored, not as the text the cell shows.
+    fireEvent.contextMenu(screen.getByText('603d779f4f102e3a185c3220'));
+    fireEvent.click(screen.getByText('Exclude this value'));
+    expect(add).toHaveBeenLastCalledWith({ kind: 'exclude', field: '_id', value: docs[0]._id });
+
+    fireEvent.contextMenu(screen.getByText('Alice Smith'));
+    fireEvent.click(screen.getByText('Add field to projection'));
+    expect(add).toHaveBeenLastCalledWith({ kind: 'project', field: 'name' });
+
+    fireEvent.contextMenu(screen.getByText('Alice Smith'));
+    fireEvent.click(screen.getByText('Sort descending by this field'));
+    expect(add).toHaveBeenLastCalledWith({ kind: 'sortDesc', field: 'name' });
+  });
+
+  it('does not offer to filter by an array or a sub-document, only to project and sort', () => {
+    renderInViewer(vi.fn());
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+    fireEvent.contextMenu(screen.getByText('["red"]'));
+    expect(screen.queryByText('Filter by this value')).not.toBeInTheDocument();
+    expect(screen.queryByText('Exclude this value')).not.toBeInTheDocument();
+    expect(screen.getByText('Add field to projection')).toBeInTheDocument();
+    expect(screen.getByText('Sort ascending by this field')).toBeInTheDocument();
+  });
+
+  // One small document per case: the virtualized list renders only its first
+  // few rows under jsdom.
+  it.each([
+    [{ address: { city: 'Oslo' } }, '"Oslo"', 'address.city', 'Oslo'],
+    [{ items: [{ sku: 'A-1' }] }, '"A-1"', 'items.sku', 'A-1'],
+    [{ tags: ['red'] }, '"red"', 'tags', 'red'],
+  ])('gives a nested value its dotted path, leaving array indexes out: %j', (doc, shown, field, value) => {
+    const add = vi.fn();
+    render(
+      <DocumentViewerContext.Provider value={{ handleExplain: () => {}, explainLoading: false, addCellToQuery: add }}>
+        <DataGrid documents={[doc]} />
+      </DocumentViewerContext.Provider>,
+    );
+    // JSON view (the default): everything is expanded.
+    fireEvent.contextMenu(screen.getByText(shown));
+    fireEvent.click(screen.getByText('Filter by this value'));
+    expect(add).toHaveBeenLastCalledWith({ kind: 'filter', field, value });
+  });
+
+  it('has no query entries outside a find query (shell results, aggregation)', () => {
+    renderInViewer(undefined);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+    fireEvent.contextMenu(screen.getByText('Alice Smith'));
+    expect(screen.getByText('Copy value')).toBeInTheDocument();
+    expect(screen.queryByText('Filter by this value')).not.toBeInTheDocument();
+    expect(screen.queryByText('Add field to projection')).not.toBeInTheDocument();
   });
 });

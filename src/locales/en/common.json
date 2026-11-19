@@ -85,6 +85,7 @@
     "filesFailedToUpload_other": "{{count}} files failed to upload.",
     "fileUploaded": "Uploaded {{filename}}",
     "filterCleared": "Cleared filter parameters",
+    "fixQueryBeforeAdding": "Fix the query text before adding to it",
     "generateFailedToStart": "Generate failed to start: {{detail}}",
     "importFailedToStart": "Import failed to start: {{detail}}",
     "indexNotPutBack": "The change failed and the index could not be put back: {{detail}}. Its definition was {{spec}}",
