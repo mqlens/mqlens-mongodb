@@ -85,6 +85,17 @@ export function WorkspaceTabBar({
                       : "border-transparent bg-transparent text-muted-foreground hover:bg-accent/50 hover:text-foreground"
                   )}
                   onClick={() => onSelectTab(tab.id)}
+                  // Middle-click closes the tab, browser-style. Middle button
+                  // fires `auxclick`, not `click`.
+                  onAuxClick={(e) => {
+                    if (e.button !== 1) return;
+                    e.preventDefault();
+                    onCloseTab(tab.id);
+                  }}
+                  // Keep the middle press from starting autoscroll on the strip.
+                  onMouseDown={(e) => {
+                    if (e.button === 1) e.preventDefault();
+                  }}
                   draggable={draggable}
                   onDragStart={(e) => onTabDragStart?.(tab.id, e)}
                   onContextMenu={(e) => {
