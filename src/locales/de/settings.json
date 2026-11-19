@@ -139,6 +139,26 @@
     },
     "importFailed": "Diese Theme-Datei konnte nicht importiert werden. Prüfe, ob es sich um gültiges MQLens-Theme-JSON handelt."
   },
+  "behavior": {
+    "autoConvertObjectIdDescription": "Wenn eine Abfrage ein Feld mit ObjectIds mit einer 24-stelligen Hex-Zeichenfolge vergleicht, wird sie stattdessen mit ObjectId(\"…\") ausgeführt. Gilt für eingegebene Abfragen und den visuellen Abfrage-Editor; der Abfragetext wird beim Ausführen aktualisiert.",
+    "autoConvertObjectIdLabel": "ObjectId-ähnliche Zeichenfolgen automatisch umwandeln",
+    "autoConvertObjectIdTitle": "ObjectId-Umwandlung",
+    "defaultIdSearchDescription": "Nur eine ObjectId in das Abfragefeld einfügen und ausführen, um das Dokument über _id zu finden, als { _id: ObjectId(\"…\") }.",
+    "defaultIdSearchLabel": "Eine einzelne ObjectId als _id-Suche behandeln",
+    "defaultIdSearchTitle": "Suche nach _id",
+    "defaultViewDescription": "Die Ansicht, in der Ergebnisse geöffnet werden. Ein Tab behält die Ansicht, auf die du ihn umschaltest; dies gilt für Tabs, in denen du noch keine gewählt hast.",
+    "defaultViewLabel": "Standardansicht",
+    "defaultViewTitle": "Ergebnisansicht",
+    "expandCollectionsDescription": "Die Collections einer Datenbank anzeigen, sobald sie in der Seitenleiste geöffnet wird, ohne zusätzlich auf den Ordner „Collections“ zu klicken.",
+    "expandCollectionsLabel": "Collections beim Öffnen einer Datenbank aufklappen",
+    "expandCollectionsTitle": "Datenbankbaum",
+    "pageSizeDescription": "Wie viele Dokumente pro Seite geladen werden, wenn eine Collection geöffnet wird. Bereits geöffnete Tabs behalten ihre aktuelle Seitengröße.",
+    "pageSizeLabel": "Standard-Seitengröße",
+    "pageSizeOption": "{{size}} Dokumente",
+    "pageSizeTitle": "Dokumente pro Seite",
+    "tabDescription": "Voreinstellungen dafür, wie Collections geöffnet und Abfragen interpretiert werden.",
+    "tabLabel": "Verhalten"
+  },
   "footer": {
     "saveChanges": "Änderungen speichern",
     "saving": "Wird gespeichert...",

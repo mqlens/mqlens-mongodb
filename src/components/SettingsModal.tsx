@@ -16,6 +16,7 @@ import {
   Languages,
   ScrollText,
   type LucideIcon,
+  SlidersHorizontal,
 } from 'lucide-react';
 import {
   changeVaultPassword,
@@ -46,6 +47,12 @@ import { AiProviderManager, type AiProvider } from '@/components/AiProviderManag
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
+import {
+  PAGE_SIZE_OPTIONS,
+  updateBehaviorSettings,
+  useBehaviorSettings,
+  type DefaultViewMode,
+} from '@/lib/behaviorSettings';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Select,
@@ -130,6 +137,7 @@ const PROVIDER_LABELS: Record<string, string> = {
 
 type SettingsTabId =
   | 'appearance'
+  | 'behavior'
   | 'ai'
   | 'mcp'
   | 'tools'
@@ -151,6 +159,12 @@ const SETTINGS_TABS: {
     labelKey: 'appearance.tabLabel',
     descriptionKey: 'appearance.tabDescription',
     Icon: LayoutGrid,
+  },
+  {
+    id: 'behavior',
+    labelKey: 'behavior.tabLabel',
+    descriptionKey: 'behavior.tabDescription',
+    Icon: SlidersHorizontal,
   },
   {
     id: 'ai',
@@ -620,6 +634,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
   const dialogs = useDialogs();
   const { localeSetting, setLocale } = useLocale();
   const [tab, setTab] = useState<SettingsTabId>(initialTab ?? 'appearance');
+  const behavior = useBehaviorSettings();
   const [mongoshPath, setMongoshPath] = useState('');
   const [managedTools, setManagedTools] = useState<ManagedToolStatusUi[] | null>(null);
   const [mongoToolsDir, setMongoToolsDir] = useState(() => {
@@ -1497,6 +1512,113 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
                     onCheckedChange={setAuditIncludePayloads}
                   />
                   <Label className="font-normal">{t('audit.payloadsLabel')}</Label>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        );
+
+      case 'behavior':
+        return (
+          <div className="grid gap-6 xl:grid-cols-2" data-testid="behavior-settings">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">{t('behavior.pageSizeTitle')}</CardTitle>
+                <CardDescription>{t('behavior.pageSizeDescription')}</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                <Label htmlFor="behavior-page-size">{t('behavior.pageSizeLabel')}</Label>
+                <Select
+                  value={String(behavior.pageSize)}
+                  onValueChange={(v) => updateBehaviorSettings({ pageSize: Number(v) })}
+                >
+                  <SelectTrigger id="behavior-page-size" data-testid="behavior-page-size-select">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PAGE_SIZE_OPTIONS.map((size) => (
+                      <SelectItem key={size} value={String(size)}>
+                        {t('behavior.pageSizeOption', { size })}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">{t('behavior.defaultViewTitle')}</CardTitle>
+                <CardDescription>{t('behavior.defaultViewDescription')}</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                <Label htmlFor="behavior-default-view">{t('behavior.defaultViewLabel')}</Label>
+                <Select
+                  value={behavior.defaultViewMode}
+                  onValueChange={(v) => updateBehaviorSettings({ defaultViewMode: v as DefaultViewMode })}
+                >
+                  <SelectTrigger id="behavior-default-view" data-testid="behavior-default-view-select">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="table">{t('documents:dataGrid.viewModes.table')}</SelectItem>
+                    <SelectItem value="tree">{t('documents:dataGrid.viewModes.tree')}</SelectItem>
+                    <SelectItem value="json">{t('documents:dataGrid.viewModes.json')}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">{t('behavior.expandCollectionsTitle')}</CardTitle>
+                <CardDescription>{t('behavior.expandCollectionsDescription')}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-center gap-3">
+                  <Switch
+                    id="behavior-expand-collections"
+                    data-testid="behavior-expand-collections-toggle"
+                    checked={behavior.expandCollectionsOnDbOpen}
+                    onCheckedChange={(v) => updateBehaviorSettings({ expandCollectionsOnDbOpen: v })}
+                  />
+                  <Label htmlFor="behavior-expand-collections" className="font-normal">{t('behavior.expandCollectionsLabel')}</Label>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">{t('behavior.autoConvertObjectIdTitle')}</CardTitle>
+                <CardDescription>{t('behavior.autoConvertObjectIdDescription')}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-center gap-3">
+                  <Switch
+                    id="behavior-auto-convert-objectid"
+                    data-testid="behavior-auto-convert-objectid-toggle"
+                    checked={behavior.autoConvertObjectId}
+                    onCheckedChange={(v) => updateBehaviorSettings({ autoConvertObjectId: v })}
+                  />
+                  <Label htmlFor="behavior-auto-convert-objectid" className="font-normal">{t('behavior.autoConvertObjectIdLabel')}</Label>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">{t('behavior.defaultIdSearchTitle')}</CardTitle>
+                <CardDescription>{t('behavior.defaultIdSearchDescription')}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-center gap-3">
+                  <Switch
+                    id="behavior-default-id-search"
+                    data-testid="behavior-default-id-search-toggle"
+                    checked={behavior.defaultIdSearch}
+                    onCheckedChange={(v) => updateBehaviorSettings({ defaultIdSearch: v })}
+                  />
+                  <Label htmlFor="behavior-default-id-search" className="font-normal">{t('behavior.defaultIdSearchLabel')}</Label>
                 </div>
               </CardContent>
             </Card>

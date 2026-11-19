@@ -136,6 +136,26 @@
     "uiFont": "界面字体",
     "zoomShortcutHint": "快捷键：{{shortcut}} 可重置"
   },
+  "behavior": {
+    "autoConvertObjectIdDescription": "当查询将存储 ObjectId 的字段与 24 位十六进制字符串比较时，改用 ObjectId(\"…\") 执行。适用于手动输入的查询和可视化查询构建器；运行时会更新查询文本。",
+    "autoConvertObjectIdLabel": "自动转换类似 ObjectId 的字符串",
+    "autoConvertObjectIdTitle": "ObjectId 转换",
+    "defaultIdSearchDescription": "只在查询框中粘贴一个 ObjectId 并运行，即可按 _id 查找文档，即 { _id: ObjectId(\"…\") }。",
+    "defaultIdSearchLabel": "将单独的 ObjectId 视为 _id 搜索",
+    "defaultIdSearchTitle": "按 _id 搜索",
+    "defaultViewDescription": "结果打开时使用的视图。标签页会保留你切换到的视图；此设置适用于尚未选择视图的标签页。",
+    "defaultViewLabel": "默认视图",
+    "defaultViewTitle": "结果视图",
+    "expandCollectionsDescription": "在侧边栏中打开数据库时立即显示其集合，无需再点击“集合”文件夹。",
+    "expandCollectionsLabel": "打开数据库时展开集合",
+    "expandCollectionsTitle": "数据库树",
+    "pageSizeDescription": "打开集合时每页加载的文档数量。已打开的标签页保持其当前的每页数量。",
+    "pageSizeLabel": "默认每页数量",
+    "pageSizeOption": "{{size}} 个文档",
+    "pageSizeTitle": "每页文档数",
+    "tabDescription": "集合的打开方式和查询解析方式的默认设置。",
+    "tabLabel": "行为"
+  },
   "footer": {
     "saveChanges": "保存更改",
     "saving": "正在保存…",
