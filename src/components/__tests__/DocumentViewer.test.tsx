@@ -2011,6 +2011,23 @@ describe('DocumentViewer — Settings → Behavior', () => {
     await waitFor(() => expect(filterInput.value).toBe(`{ _id: ObjectId("${HEX}") }`));
   });
 
+  it('pins a bare ObjectId that was never run as the _id search it will run as', async () => {
+    render(viewer());
+    const filterInput = screen.getByTestId('query-filter-input') as HTMLTextAreaElement;
+    // Quoted: read as plain query text this is a string, not a filter.
+    fireEvent.change(filterInput, { target: { value: `"${HEX}"` } });
+    await waitFor(() => expect(screen.queryByText('Invalid query')).not.toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Set default query' }));
+    fireEvent.click(await screen.findByTestId('set-default-item'));
+
+    await waitFor(() => {
+      const call = mockInvoke.mock.calls.find(([cmd]) => cmd === 'set_default_query');
+      expect(call?.[1]).toMatchObject({ default: { queryType: 'find', filter: { _id: { $oid: HEX } } } });
+    });
+    expect(filterInput.value).toBe(`{ _id: ObjectId("${HEX}") }`);
+  });
+
   it('rejects a bare ObjectId when the _id search setting is off', async () => {
     localStorage.setItem('mqlens.behavior', JSON.stringify({ defaultIdSearch: false }));
     render(viewer());

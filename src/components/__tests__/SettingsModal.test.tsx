@@ -660,6 +660,11 @@ describe('SettingsView Component', () => {
     const expand = screen.getByTestId('behavior-expand-collections-toggle');
     const convert = screen.getByTestId('behavior-auto-convert-objectid-toggle');
     const idSearch = screen.getByTestId('behavior-default-id-search-toggle');
+    // Each switch is named by its label, for a screen reader and for a click
+    // on the label text.
+    expect(screen.getByRole('switch', { name: 'Expand collections when a database is opened' })).toBe(expand);
+    expect(screen.getByRole('switch', { name: 'Convert ObjectId-like strings automatically' })).toBe(convert);
+    expect(screen.getByRole('switch', { name: 'Treat a bare ObjectId as an _id search' })).toBe(idSearch);
     expect(expand).toHaveAttribute('aria-checked', 'false');
     expect(convert).toHaveAttribute('aria-checked', 'true');
     expect(idSearch).toHaveAttribute('aria-checked', 'true');

@@ -1315,8 +1315,21 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
     toast(t(key, options), kind);
   };
 
-  const currentBuilderQuery = (): GeneratedQuery =>
-    builderStateToQuery({ queryMode, filterQuery, sortQuery, projectionQuery, limit, skip, stages });
+  // What Save and Set default store. The filter goes through the same ObjectId
+  // conveniences as Run, so a search saved before it was ever run means what it
+  // will mean when it runs; the field is rewritten to match, as on Run.
+  const currentBuilderQuery = (): GeneratedQuery => {
+    let filter = filterQuery;
+    if (queryMode === 'find') {
+      try {
+        filter = resolveFindFilter(filterQuery, schema, behavior).text;
+        if (filter !== filterQuery) setFilterQuery(filter);
+      } catch {
+        // Not a valid filter: stored as builderStateToQuery reads it.
+      }
+    }
+    return builderStateToQuery({ queryMode, filterQuery: filter, sortQuery, projectionQuery, limit, skip, stages });
+  };
 
   const handleSaveQuery = async (alsoFavorite = false) => {
     const name = await prompt({

@@ -1577,11 +1577,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
               <CardContent>
                 <div className="flex items-center gap-3">
                   <Switch
+                    id="behavior-expand-collections"
                     data-testid="behavior-expand-collections-toggle"
                     checked={behavior.expandCollectionsOnDbOpen}
                     onCheckedChange={(v) => updateBehaviorSettings({ expandCollectionsOnDbOpen: v })}
                   />
-                  <Label className="font-normal">{t('behavior.expandCollectionsLabel')}</Label>
+                  <Label htmlFor="behavior-expand-collections" className="font-normal">{t('behavior.expandCollectionsLabel')}</Label>
                 </div>
               </CardContent>
             </Card>
@@ -1594,11 +1595,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
               <CardContent>
                 <div className="flex items-center gap-3">
                   <Switch
+                    id="behavior-auto-convert-objectid"
                     data-testid="behavior-auto-convert-objectid-toggle"
                     checked={behavior.autoConvertObjectId}
                     onCheckedChange={(v) => updateBehaviorSettings({ autoConvertObjectId: v })}
                   />
-                  <Label className="font-normal">{t('behavior.autoConvertObjectIdLabel')}</Label>
+                  <Label htmlFor="behavior-auto-convert-objectid" className="font-normal">{t('behavior.autoConvertObjectIdLabel')}</Label>
                 </div>
               </CardContent>
             </Card>
@@ -1611,11 +1613,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
               <CardContent>
                 <div className="flex items-center gap-3">
                   <Switch
+                    id="behavior-default-id-search"
                     data-testid="behavior-default-id-search-toggle"
                     checked={behavior.defaultIdSearch}
                     onCheckedChange={(v) => updateBehaviorSettings({ defaultIdSearch: v })}
                   />
-                  <Label className="font-normal">{t('behavior.defaultIdSearchLabel')}</Label>
+                  <Label htmlFor="behavior-default-id-search" className="font-normal">{t('behavior.defaultIdSearchLabel')}</Label>
                 </div>
               </CardContent>
             </Card>
