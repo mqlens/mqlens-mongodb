@@ -135,6 +135,14 @@ describe('addFilterCondition', () => {
       .toEqual({ name: { $regex: '^a', $ne: 'abe' } });
   });
 
+  it('keeps a regex JavaScript cannot write as a literal in its Extended JSON form', () => {
+    // Inline flags are valid for MongoDB, not in a JavaScript regex literal.
+    const typed = '{ name: { $regularExpression: { pattern: "(?i)foo", options: "" } } }';
+    const text = addFilterCondition(typed, 'n', 1, 'eq');
+    expect(text).not.toContain('/(?i)foo/');
+    expect(run(text)).toEqual({ name: { $regularExpression: { pattern: '(?i)foo', options: '' } }, n: 1 });
+  });
+
   it('keeps operator objects on one line', () => {
     expect(addFilterCondition('{ name: { $regex: "^a" }, at: { $type: "date" } }', 'n', 1, 'eq'))
       .toBe('{ "name" : { "$regex" : "^a" }, "at" : { "$type" : "date" }, "n" : 1 }');

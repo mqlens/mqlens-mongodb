@@ -69,9 +69,16 @@ const regexParts = (v: unknown): { pattern: string; options: string } | null => 
 
 /** A regex as the `/pattern/flags` it was typed as, or null when that literal
  *  would not read back as the same regex (flags JavaScript has no letter for,
- *  an empty or multi-line pattern). */
+ *  an empty or multi-line pattern, a pattern JavaScript cannot parse). */
 function regexLiteral(pattern: string, options: string): string | null {
   if (!pattern || /[\n\r]/.test(pattern) || /[^imsu]/.test(options)) return null;
+  // MongoDB's regex dialect accepts patterns JavaScript rejects, inline flags
+  // such as `(?i)foo` among them. Those stay in their Extended JSON form.
+  try {
+    new RegExp(pattern, options);
+  } catch {
+    return null;
+  }
   let out = '';
   for (let i = 0; i < pattern.length; i++) {
     const c = pattern[i];
