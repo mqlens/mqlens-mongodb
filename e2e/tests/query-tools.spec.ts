@@ -151,6 +151,24 @@ test.describe('Query tools', () => {
     expect(cleared.default).toBeNull();
   });
 
+  test('a collection that opens with its default query shows that query in the bar', async ({ app, page }) => {
+    await openCustomers(app, page);
+    await runFilter(page, '{ tier: "Standard" }');
+    await expect(view(page)).not.toContainText('Alice Smith');
+    await view(page).getByRole('button', { name: 'Set default query', exact: true }).click();
+    await callFrom(app, 'set_default_query', () => page.getByTestId('set-default-item').click());
+
+    // The new tab mounts before the default has loaded. Once it has run, the
+    // bar has to show it: results filtered by a query nobody can see mislead.
+    await openInNewTab(page, 'customers');
+    await expect(view(page)).toContainText('customers');
+    await expect(view(page).locator('[data-json-line]').first()).toBeVisible();
+    await expect(view(page)).not.toContainText('Alice Smith');
+    await expect
+      .poll(async () => (await getEditorText(page, view(page).getByTestId('query-filter-input'))).replace(/\s/g, ''))
+      .toBe('{"tier":"Standard"}');
+  });
+
   test('query history lists earlier queries and applies one', async ({ app, page }) => {
     await openCustomers(app, page);
     await runFilter(page, '{ tier: "Standard" }');

@@ -1806,6 +1806,12 @@ describe('App Component', () => {
       expect(run).toBeTruthy();
     });
     expect(await screen.findByText(/"VIP Vic"/)).toBeInTheDocument();
+    // The bar shows the query that ran, not the blank it mounted with before
+    // the default had loaded.
+    await waitFor(() => {
+      const filter = screen.getByTestId('query-filter-input') as HTMLTextAreaElement;
+      expect(JSON.parse(filter.value)).toEqual({ vip: true });
+    });
   });
 
   it('opens the Import tab and starts a background import task', async () => {

@@ -224,6 +224,10 @@ export interface QueryTab {
   // so the builder can never observe a new revision beside a stale page size —
   // see DocumentViewer's pagerRequest prop.
   pagerRequest?: { limit: number; skip: number; revision: number };
+  // Bumped when App itself decides what the query bar shows (a pinned default
+  // or a saved query loaded on open). Part of the viewer's key, so the bar is
+  // rebuilt from the seeded builder state instead of keeping what it mounted with.
+  builderSeed?: number;
   // Pagination count state.
   totalCount?: number;
   countLoading?: boolean;
@@ -299,13 +303,13 @@ const DEFAULT_QUERY = { filter: '{}', sort: '{}', projection: '{}', limit: 50, s
 export type ClosedTabSnapshot = Omit<
   QueryTab,
   | 'results' | 'loading' | 'error' | 'explainResult' | 'documentEdit' | 'pagerRequest'
-  | 'totalCount' | 'countLoading' | 'estimated' | 'initialShellCommand'
+  | 'builderSeed' | 'totalCount' | 'countLoading' | 'estimated' | 'initialShellCommand'
 >;
 
 export function closedTabSnapshot(tab: QueryTab): ClosedTabSnapshot {
   const {
     results, loading, error, explainResult, documentEdit, pagerRequest,
-    totalCount, countLoading, estimated, initialShellCommand, ...snapshot
+    builderSeed, totalCount, countLoading, estimated, initialShellCommand, ...snapshot
   } = tab;
   return snapshot;
 }
@@ -1707,6 +1711,23 @@ function Workspace() {
         } catch {
           def = null;
         }
+      }
+      // The viewer mounted with a blank bar before the default was known (it
+      // loads asynchronously). Show the query that is about to run, so the
+      // results on screen never disagree with the fields above them.
+      if (def) {
+        const json = (v: unknown) => JSON.stringify(v ?? {}, null, 2);
+        const seeded = def.queryType === 'aggregate'
+          ? builderStateFromQueryTab(undefined, def.pipeline)
+          : builderStateFromQueryTab({
+              filter: json(def.filter),
+              sort: json(def.sort),
+              projection: json(def.projection),
+              limit: def.limit ?? 50,
+              skip: def.skip ?? 0,
+            });
+        handleBuilderStateChange(tabId, seeded);
+        setTabs(prev => prev.map(t => t.id === tabId ? { ...t, builderSeed: (t.builderSeed ?? 0) + 1 } : t));
       }
       await loadTabResults(tabId, connectionId, dbName, collName, def);
     } else {
@@ -4976,7 +4997,7 @@ function Workspace() {
           const connectionUser = activeConnection ? usernameFromUri(activeConnection.uri) : '';
           return (
             <DocumentViewer
-              key={tab.id}
+              key={`${tab.id}:${tab.builderSeed ?? 0}`}
               connectionId={tab.connectionId}
               connectionName={connectionName}
               queryStoreKey={connectionQueryKeyFor(tab.connectionId)}
