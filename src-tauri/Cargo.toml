@@ -74,7 +74,7 @@ rmcp = { version = "=3.9.0", features = ["server", "transport-streamable-http-se
 # proven-compatible pairing rather than a guess.
 axum = { version = "=0.8.9", default-features = false, features = ["http1", "tokio"] }
 # Bundled SQLite for local audit log (#272) — no system libsqlite required.
-rusqlite = { version = "0.41", features = ["bundled"] }
+rusqlite = { version = "0.43", features = ["bundled"] }
 # MQLens Server client (server mode). The generated code in src/server/pb is
 # produced by the buf plugins pinned in buf.gen.yaml, which target this tonic and
 # prost line; bump them together. TLS uses ring explicitly: the lock file already
