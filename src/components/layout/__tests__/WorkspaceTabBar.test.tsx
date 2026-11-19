@@ -36,6 +36,19 @@ describe('WorkspaceTabBar middle-click', () => {
     expect(onCloseTab).not.toHaveBeenCalled();
   });
 
+  it('cancels the middle press, so the strip does not start autoscroll', () => {
+    renderBar();
+    const press = (button: number) => {
+      const event = new MouseEvent('mousedown', { bubbles: true, cancelable: true, button });
+      fireEvent(screen.getByText('Beta'), event);
+      return event.defaultPrevented;
+    };
+    expect(press(1)).toBe(true);
+    // Left and right presses keep their defaults (focus, drag, context menu).
+    expect(press(0)).toBe(false);
+    expect(press(2)).toBe(false);
+  });
+
   it('does not close on a plain left click', () => {
     const { onSelectTab, onCloseTab } = renderBar();
     fireEvent.click(screen.getByText('Beta'));
