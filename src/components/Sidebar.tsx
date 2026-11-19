@@ -84,6 +84,7 @@ import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { ClusterHealthCard } from '@/components/ClusterHealthCard';
 import { DbStatsCard, CollStatsCard, IndexStatsCard } from '@/components/StatsCards';
 import { ThemePicker } from '@/components/theme/ThemePicker';
+import { getBehaviorSettings } from '@/lib/behaviorSettings';
 import {
   Database,
   Folder,
@@ -969,6 +970,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
     const key = `${connectionId}/${dbName}`;
     const isExpanding = !expandedDbs[key];
     setExpandedDbs((prev) => ({ ...prev, [key]: !prev[key] }));
+    // Settings → Behavior: opening a database goes straight to its collections.
+    if (isExpanding && getBehaviorSettings().expandCollectionsOnDbOpen) {
+      setExpandedCollectionsFolders((prev) => ({ ...prev, [`${key}/collections`]: true }));
+    }
 
     if (isExpanding && !collections[key]) await loadCollectionsInto(connectionId, dbName);
   };

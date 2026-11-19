@@ -908,6 +908,22 @@ describe('DataGrid table header/body scroll sync (#219)', () => {
     expect(header.scrollLeft).toBe(0);
   });
 
+  it('syncs when the grid opened in table view before any rows had loaded', () => {
+    // A tab that opens straight into table view mounts with no rows, so the
+    // body does not exist yet; the sync must attach once it appears.
+    const { rerender } = render(<DataGrid documents={[]} viewMode="table" onViewModeChange={() => {}} />);
+    rerender(<DataGrid documents={mockDocuments} viewMode="table" onViewModeChange={() => {}} />);
+
+    const header = screen.getByTestId('table-header');
+    const list = screen.getByTestId('table-body-scroll').firstElementChild as HTMLElement;
+    Object.defineProperty(list, 'clientWidth', { value: 500, configurable: true });
+    Object.defineProperty(list, 'scrollWidth', { value: 1400, configurable: true });
+
+    list.scrollLeft = 240;
+    fireEvent.scroll(list);
+    expect(header.scrollLeft).toBe(240);
+  });
+
   it('opens a differently shaped result scrolled back to the left', () => {
     const { rerender } = render(<DataGrid documents={mockDocuments} />);
     fireEvent.click(screen.getByRole('button', { name: /table/i }));
@@ -3063,3 +3079,21 @@ describe('DataGrid — table columns, review fixes', () => {
     expect(screen.getByRole('columnheader', { name: /name/ })).toHaveAttribute('aria-sort', 'none');
   });
 });
+
+describe('DataGrid default view (Settings → Behavior)', () => {
+  it('opens an uncontrolled grid in the configured view', () => {
+    localStorage.setItem('mqlens.behavior', JSON.stringify({ defaultViewMode: 'table' }));
+    try {
+      render(<DataGrid documents={[{ _id: 1, name: 'a' }]} />);
+      expect(screen.queryByTestId('json-view')).not.toBeInTheDocument();
+    } finally {
+      localStorage.removeItem('mqlens.behavior');
+    }
+  });
+
+  it('defaults to JSON', () => {
+    render(<DataGrid documents={[{ _id: 1, name: 'a' }]} />);
+    expect(screen.getByTestId('json-view')).toBeInTheDocument();
+  });
+});
+
