@@ -598,7 +598,9 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
       const plan = buildFieldUpdate(before, after, parseProjection(projection));
       if (plan === null) return 0;
       if (isMock(state, id)) return 1;
-      const found = collection(id, db, coll);
+      // As in MongoDB, an update in a namespace that doesn't exist matches nothing.
+      const found = server(id).databases[String(db)]?.[String(coll)];
+      if (!found) return 0;
       const at = found.docs.findIndex((doc) => matches(doc, where));
       if (at < 0) return 0;
       // A changed field name an update operator can't address is saved by

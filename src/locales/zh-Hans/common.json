@@ -105,7 +105,12 @@
     "uploadFailedFor": "{{filename}} 上传失败：{{detail}}",
     "userCreated": "已创建用户 {{name}}",
     "userDropped": "已删除用户 {{name}}",
-    "userUpdated": "已更新用户 {{name}}"
+    "userUpdated": "已更新用户 {{name}}",
+    "undo": "撤销",
+    "undoneTitle": "已撤销",
+    "undoSuperseded": "此编辑已无法撤销",
+    "editUndoneIn": "已撤销在 {{collection}} 中的编辑",
+    "undoFailed": "无法撤销编辑：{{detail}}"
   },
   "typedNameConfirm": {
     "confirmLabel": "删除",
