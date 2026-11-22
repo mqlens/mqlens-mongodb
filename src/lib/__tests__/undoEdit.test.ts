@@ -91,3 +91,25 @@ describe('undoCondition — removed sub-documents', () => {
     expect(undoCondition(saved, before)).toEqual({ 'address.city': gone, 'address.geo.lat': gone });
   });
 });
+
+// Field names that are also Object.prototype members are fields like any
+// other. The documents come from JSON.parse, which makes them own properties.
+describe('field names shared with Object.prototype', () => {
+  it('guards the removal of a field named like an inherited member', () => {
+    const before = JSON.parse('{"_id":1,"constructor":"A","toString":"B"}');
+    const saved = { _id: 1 };
+    expect(undoCondition(saved, before)).toEqual({ constructor: gone, toString: gone });
+  });
+
+  it('keeps the guard on a changed __proto__ field, as an own field of the filter', () => {
+    const before = JSON.parse('{"_id":1,"__proto__":"A"}');
+    const saved = JSON.parse('{"_id":1,"__proto__":"B"}');
+    expect(JSON.stringify(undoCondition(saved, before))).toBe('{"__proto__":{"$eq":"B","$not":{"$type":"array"}}}');
+  });
+
+  it('gives a removed __proto__ or constructor sub-document back as an empty parent', () => {
+    const before = JSON.parse('{"_id":1,"__proto__":{"a":1},"constructor":{"b":1}}');
+    const saved = { _id: 1 };
+    expect(JSON.stringify(undoBaseline(saved, before))).toBe('{"_id":1,"__proto__":{},"constructor":{}}');
+  });
+});

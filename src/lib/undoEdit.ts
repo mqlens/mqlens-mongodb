@@ -7,6 +7,11 @@ const isDocument = (v: unknown): v is Doc =>
   v !== null && typeof v === 'object' && !Array.isArray(v) && !isEjsonWrapper(v as Doc);
 // One with fields: an empty document is a value to restore, not a parent.
 const isParent = (v: unknown): v is Doc => isDocument(v) && Object.keys(v).length > 0;
+// Fields are own properties: `constructor` or `__proto__` is a field like any
+// other, so membership is checked without the prototype, and documents built
+// here have none, so assigning `__proto__` sets a field.
+const has = (d: Doc, key: string) => Object.hasOwn(d, key);
+const bare = (): Doc => Object.create(null);
 
 /**
  * The `original` side of an undo's write: the document as saved, plus an empty
@@ -19,10 +24,10 @@ const isParent = (v: unknown): v is Doc => isDocument(v) && Object.keys(v).lengt
  * addition per shown field instead, the same as the removal it reverses.
  */
 export function undoBaseline(saved: Doc, before: Doc): Doc {
-  const out: Doc = { ...saved };
+  const out: Doc = Object.assign(bare(), saved);
   for (const [key, value] of Object.entries(before)) {
     if (!isParent(value)) continue;
-    if (!(key in saved)) out[key] = undoBaseline({}, value);
+    if (!has(saved, key)) out[key] = undoBaseline({}, value);
     else if (isDocument(saved[key])) out[key] = undoBaseline(saved[key] as Doc, value);
   }
   return out;
@@ -58,19 +63,19 @@ const exactly = (v: unknown): unknown =>
  * operator. Such a save gets no Undo.
  */
 export function undoCondition(saved: Doc, before: Doc, prefix = ''): Doc | null {
-  const out: Doc = {};
+  const out: Doc = bare();
   for (const key of new Set([...Object.keys(saved), ...Object.keys(before)])) {
     if (!prefix && key === '_id') continue; // the filter already
-    if (key in saved && key in before && JSON.stringify(saved[key]) === JSON.stringify(before[key])) continue;
+    if (has(saved, key) && has(before, key) && JSON.stringify(saved[key]) === JSON.stringify(before[key])) continue;
     if (key.includes('.') || key.startsWith('$')) return null;
     const path = prefix + key;
     // A removed sub-document is checked field by field: under a projection
     // that showed part of it, only those fields were removed.
-    const inner = !(key in saved)
+    const inner = !has(saved, key)
       ? isParent(before[key])
         ? undoCondition({}, before[key] as Doc, `${path}.`)
         : { [path]: { $exists: false } }
-      : key in before && isDocument(saved[key]) && isDocument(before[key])
+      : has(before, key) && isDocument(saved[key]) && isDocument(before[key])
         ? undoCondition(saved[key] as Doc, before[key] as Doc, `${path}.`)
         : holdsOperatorName(saved[key])
           ? null
