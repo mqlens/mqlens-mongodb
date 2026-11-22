@@ -2217,7 +2217,8 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                               size="icon"
                               className={cn('h-6 w-6', stage.id in stagePreviews && 'bg-accent text-primary')}
                               onClick={() => toggleStagePreview(index)}
-                              disabled={stage.disabled || WRITE_STAGES.has(stage.operator)}
+                              // Only opening is blocked: an open preview can always be closed.
+                              disabled={!(stage.id in stagePreviews) && (stage.disabled || WRITE_STAGES.has(stage.operator))}
                               aria-pressed={stage.id in stagePreviews}
                               title={WRITE_STAGES.has(stage.operator) ? td('documentViewer.tooltips.previewWriteStage') : td('documentViewer.tooltips.previewStage', { n: index + 1 })}
                               aria-label={td('documentViewer.tooltips.previewStage', { n: index + 1 })}

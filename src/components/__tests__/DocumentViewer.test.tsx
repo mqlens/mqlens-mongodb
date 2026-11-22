@@ -1955,6 +1955,25 @@ describe('Aggregation stage input/output preview', () => {
     expect(onPreviewAggregate).not.toHaveBeenCalled();
   });
 
+  it('still closes an open preview after its stage is disabled or turned into a write (#578 review)', async () => {
+    renderAgg();
+    const first = screen.getByTestId('pipeline-stage-0');
+
+    fireEvent.click(screen.getByLabelText('Preview stage 1'));
+    await waitFor(() => expect(screen.getByTestId('stage-preview-0')).toBeInTheDocument());
+    fireEvent.click(screen.getByLabelText('Disable stage 1'));
+    fireEvent.click(screen.getByLabelText('Preview stage 1'));
+    expect(screen.queryByTestId('stage-preview-0')).toBeNull();
+    expect(screen.getByLabelText('Preview stage 1')).toBeDisabled();
+
+    fireEvent.click(screen.getByLabelText(/Enable stage 1/));
+    fireEvent.click(screen.getByLabelText('Preview stage 1'));
+    await waitFor(() => expect(screen.getByTestId('stage-preview-0')).toBeInTheDocument());
+    fireEvent.change(first.querySelector('select')!, { target: { value: '$out' } });
+    fireEvent.click(screen.getByLabelText('Preview stage 1'));
+    expect(screen.queryByTestId('stage-preview-0')).toBeNull();
+  });
+
   it('warns that the sides are different samples when an earlier stage is $sample (#578 review)', async () => {
     renderAgg();
     const first = screen.getByTestId('pipeline-stage-0');
