@@ -1806,6 +1806,41 @@ describe('App Component', () => {
       expect(run).toBeTruthy();
     });
     expect(await screen.findByText(/"VIP Vic"/)).toBeInTheDocument();
+    // The bar shows the query that ran, not the blank it mounted with before
+    // the default had loaded.
+    await waitFor(() => {
+      const filter = screen.getByTestId('query-filter-input') as HTMLTextAreaElement;
+      expect(JSON.parse(filter.value)).toEqual({ vip: true });
+    });
+  });
+
+  it('keeps a pinned aggregation with no stages an aggregation in the query bar', async () => {
+    // Saved with every stage disabled: the pipeline is empty, but what runs is
+    // still an aggregation, so the bar must not fall back to a find.
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      calls.push({ cmd, args });
+      if (cmd === 'load_collection_queries') {
+        return Promise.resolve({ saved: [], history: [], default: { queryType: 'aggregate', pipeline: [] } });
+      }
+      if (cmd === 'execute_aggregate') {
+        return Promise.resolve([JSON.stringify({ _id: '9', name: 'Agg Ada' })]);
+      }
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+    fireEvent.click(screen.getByTestId('select-collection-btn'));
+
+    await waitFor(() => expect(calls.some((c) => c.cmd === 'execute_aggregate')).toBe(true));
+    expect(await screen.findByText(/"Agg Ada"/)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByTestId('query-filter-input')).not.toBeInTheDocument();
+      expect(screen.getByTestId('mode-aggregate-tab')).toHaveClass('border-primary');
+    });
+    expect(screen.queryByTestId('pipeline-stage-0')).not.toBeInTheDocument();
   });
 
   it('opens the Import tab and starts a background import task', async () => {
