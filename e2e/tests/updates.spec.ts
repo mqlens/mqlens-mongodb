@@ -55,7 +55,9 @@ test.describe('Update checks', () => {
     await expect(dialog).toBeVisible();
     await app.failNext('update_install', 'connection reset by peer');
     await dialog.getByTestId('update-now').click();
-    await expect(page.getByTestId('update-toast')).toContainText(/reach the update server/);
+    // The check had reached the server, so the toast must not blame it.
+    await expect(page.getByTestId('update-toast')).toContainText(/install the update/);
+    await expect(page.getByTestId('update-toast')).not.toContainText(/reach the update server/);
   });
 
   test('retries a startup check that could not reach the server', async ({ app, page }) => {

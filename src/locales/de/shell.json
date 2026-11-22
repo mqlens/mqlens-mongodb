@@ -505,6 +505,7 @@
       "checkFailed": "Update-Server nicht erreichbar. Versuche es später erneut.",
       "checking": "Suche nach Updates…",
       "dismiss": "Verwerfen",
+      "installFailed": "Das Update konnte nicht installiert werden. Lade die neue Version von der Release-Seite herunter.",
       "offline": "Du bist offline. Verbinde dich mit dem Internet und versuche es erneut.",
       "uptodate": "Du bist auf der neuesten Version."
     },

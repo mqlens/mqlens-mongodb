@@ -1975,3 +1975,113 @@ describe('Visual query builder: date values', () => {
     expect((textValue(container) as HTMLInputElement).value).toBe('{"$date":{"$numberLong":"253402300800000"}}');
   });
 });
+
+describe('DocumentViewer — Settings → Behavior', () => {
+  const mockOnExecute = vi.fn();
+  const mockOnExplain = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  const HEX = '64f1a2b3c4d5e6f708091a2b';
+  const viewer = () => (
+    <DocumentViewer
+      connectionName="test-conn"
+      databaseName="test-db"
+      collectionName="test-coll"
+      onExecute={mockOnExecute}
+      onExplain={mockOnExplain}
+      loading={false}
+    />
+  );
+
+  it('runs a bare ObjectId as an _id search and rewrites the query field', async () => {
+    render(viewer());
+    const filterInput = screen.getByTestId('query-filter-input') as HTMLTextAreaElement;
+    fireEvent.change(filterInput, { target: { value: HEX } });
+    await waitFor(() => expect(screen.queryByText('Invalid query')).not.toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Run' }));
+
+    expect(mockOnExecute).toHaveBeenCalledWith(
+      expect.objectContaining({ filter: JSON.stringify({ _id: { $oid: HEX } }) }),
+    );
+    await waitFor(() => expect(filterInput.value).toBe(`{ _id: ObjectId("${HEX}") }`));
+  });
+
+  it('pins a bare ObjectId that was never run as the _id search it will run as', async () => {
+    render(viewer());
+    const filterInput = screen.getByTestId('query-filter-input') as HTMLTextAreaElement;
+    // Quoted: read as plain query text this is a string, not a filter.
+    fireEvent.change(filterInput, { target: { value: `"${HEX}"` } });
+    await waitFor(() => expect(screen.queryByText('Invalid query')).not.toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Set default query' }));
+    fireEvent.click(await screen.findByTestId('set-default-item'));
+
+    await waitFor(() => {
+      const call = mockInvoke.mock.calls.find(([cmd]) => cmd === 'set_default_query');
+      expect(call?.[1]).toMatchObject({ default: { queryType: 'find', filter: { _id: { $oid: HEX } } } });
+    });
+    expect(filterInput.value).toBe(`{ _id: ObjectId("${HEX}") }`);
+  });
+
+  it('rejects a bare ObjectId when the _id search setting is off', async () => {
+    localStorage.setItem('mqlens.behavior', JSON.stringify({ defaultIdSearch: false }));
+    render(viewer());
+    fireEvent.change(screen.getByTestId('query-filter-input'), { target: { value: HEX } });
+    await waitFor(() => expect(screen.getByText('Invalid query')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Run' }));
+    expect(mockOnExecute).not.toHaveBeenCalled();
+  });
+
+  it('sends a hex string as an ObjectId for a field the schema types as objectId', async () => {
+    mockInvoke.mockImplementation((cmd: string) =>
+      cmd === 'analyze_schema'
+        ? Promise.resolve(
+            JSON.stringify({
+              sampled: 1,
+              fields: [
+                { path: 'ownerId', types: [{ type: 'objectId', count: 1 }] },
+                { path: 'token', types: [{ type: 'string', count: 1 }] },
+              ],
+            }),
+          )
+        : Promise.resolve(undefined),
+    );
+    // A namespace of its own: the sampled schema is cached per collection.
+    render(
+      <DocumentViewer
+        connectionId="conn-oid"
+        connectionName="test-conn"
+        databaseName="test-db"
+        collectionName="oid-coll"
+        onExecute={mockOnExecute}
+        onExplain={mockOnExplain}
+        loading={false}
+      />,
+    );
+    await waitFor(() => expect(mockInvoke).toHaveBeenCalledWith('analyze_schema', expect.anything()));
+    await act(async () => {});
+
+    const filterInput = screen.getByTestId('query-filter-input') as HTMLTextAreaElement;
+    fireEvent.change(filterInput, { target: { value: `{ ownerId: "${HEX}", token: "abc" }` } });
+    fireEvent.click(screen.getByRole('button', { name: 'Run' }));
+
+    expect(mockOnExecute).toHaveBeenCalledWith(
+      expect.objectContaining({ filter: JSON.stringify({ ownerId: { $oid: HEX }, token: 'abc' }) }),
+    );
+    await waitFor(() => expect(filterInput.value).toBe(`{ ownerId: ObjectId("${HEX}"), token: "abc" }`));
+  });
+
+  it('uses the configured page size when the limit field is empty', () => {
+    localStorage.setItem('mqlens.behavior', JSON.stringify({ pageSize: 200 }));
+    render(viewer());
+    const limit = screen.getByDisplayValue('50');
+    fireEvent.change(limit, { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Run' }));
+    expect(mockOnExecute).toHaveBeenCalledWith(expect.objectContaining({ limit: 200 }));
+  });
+});

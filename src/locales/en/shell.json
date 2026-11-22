@@ -564,6 +564,7 @@
       "checkFailed": "Couldn’t reach the update server. Try again later.",
       "checking": "Checking for updates…",
       "dismiss": "Dismiss",
+      "installFailed": "Couldn’t install the update. Download the new version from the releases page.",
       "offline": "You’re offline. Connect to the internet and try again.",
       "uptodate": "You’re on the latest version."
     },

@@ -73,6 +73,15 @@ test.describe('Tab shortcuts', () => {
     await expect(view(page)).toHaveAttribute('data-testid', /transactions/);
   });
 
+  test('closes a tab on middle-click without switching to it', async ({ app, page }) => {
+    await openThreeTabs(app, page);
+
+    await strip(page).getByText('customers').click({ button: 'middle' });
+    await expect(strip(page).getByText('customers')).toHaveCount(0);
+    await expect(strip(page).getByText('products')).toHaveCount(1);
+    await expect(view(page)).toHaveAttribute('data-testid', /transactions/);
+  });
+
   test('closes a tab and brings it back with its query', async ({ app, page }) => {
     await openThreeTabs(app, page);
 

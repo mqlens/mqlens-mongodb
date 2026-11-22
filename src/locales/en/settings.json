@@ -139,6 +139,26 @@
     "tabDescription": "Local operation logging for investigating accidental wipes and destructive changes.",
     "tabLabel": "Activity"
   },
+  "behavior": {
+    "autoConvertObjectIdDescription": "When a query compares a field that holds ObjectIds with a 24-character hex string, run it with ObjectId(\"…\") instead. Applies to typed queries and to the visual query builder; the query text is updated when it runs.",
+    "autoConvertObjectIdLabel": "Convert ObjectId-like strings automatically",
+    "autoConvertObjectIdTitle": "ObjectId conversion",
+    "defaultIdSearchDescription": "Paste just an ObjectId into the query field and run it to look the document up by _id, as { _id: ObjectId(\"…\") }.",
+    "defaultIdSearchLabel": "Treat a bare ObjectId as an _id search",
+    "defaultIdSearchTitle": "Search by _id",
+    "defaultViewDescription": "The view results open in. A tab keeps the view you switch it to; this applies to tabs where you haven't picked one.",
+    "defaultViewLabel": "Default view",
+    "defaultViewTitle": "Results view",
+    "expandCollectionsDescription": "Show a database's collections as soon as it is opened in the sidebar, without also clicking the Collections folder.",
+    "expandCollectionsLabel": "Expand collections when a database is opened",
+    "expandCollectionsTitle": "Database tree",
+    "pageSizeDescription": "How many documents load per page when a collection is opened. Tabs that are already open keep their current page size.",
+    "pageSizeLabel": "Default page size",
+    "pageSizeOption": "{{size}} documents",
+    "pageSizeTitle": "Documents per page",
+    "tabDescription": "Defaults for how collections open and how queries are interpreted.",
+    "tabLabel": "Behavior"
+  },
   "footer": {
     "saveChanges": "Save changes",
     "saving": "Saving...",

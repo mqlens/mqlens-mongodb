@@ -47,6 +47,7 @@ import { getScaledRowHeight } from '@/lib/themes/ui-scale';
 import { cn } from '@/lib/utils';
 import { useTabVisible } from '@/workspace/tabVisibility';
 import type { SpacingDensity } from '@/lib/themes/schema';
+import { getBehaviorSettings, PAGE_SIZE_OPTIONS } from '@/lib/behaviorSettings';
 
 /** A document's identity for comparing result sets, tolerant of any `_id` shape. */
 function stableDocId(doc: Record<string, any>): string {
@@ -1134,7 +1135,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
     return items;
   };
   const docViewerContext = useContext(DocumentViewerContext);
-  const [uncontrolledViewMode, setUncontrolledViewMode] = useState<ViewMode>('json');
+  const [uncontrolledViewMode, setUncontrolledViewMode] = useState<ViewMode>(() => getBehaviorSettings().defaultViewMode);
   // Chromeless has no switcher, so JSON is the only mode reachable — and the
   // right one for a single document nobody queried for.
   const viewMode = chromeless ? 'json' : (controlledViewMode ?? uncontrolledViewMode);
@@ -1177,13 +1178,21 @@ export const DataGrid: React.FC<DataGridProps> = ({
   // put and its cells would sit at a different x-offset than the rows, so mirror
   // the body's horizontal scroll onto the header.
   const tableHeaderRef = React.useRef<HTMLDivElement>(null);
-  const tableBodyRef = React.useRef<HTMLDivElement>(null);
+  const tableBodyRef = React.useRef<HTMLDivElement | null>(null);
+  // The body only exists while there are rows to show, so it can appear long
+  // after mount (a tab that opens straight into table view is still loading).
+  // Tracking the element itself re-runs the scroll sync whenever it does.
+  const [tableBodyEl, setTableBodyEl] = useState<HTMLDivElement | null>(null);
+  const attachTableBody = React.useCallback((el: HTMLDivElement | null) => {
+    tableBodyRef.current = el;
+    setTableBodyEl(el);
+  }, []);
   // The JSON view's horizontal scroller is the overflow-auto wrapper around its
   // list, not the list element: the list is widened to `jsonMaxWidthPx`, so the
   // wrapper is what carries scrollLeft.
   const jsonScrollRef = React.useRef<HTMLDivElement>(null);
   useEffect(() => {
-    const body = tableBodyRef.current;
+    const body = tableBodyEl;
     if (!body) return;
     // Scroll events don't bubble, but they DO propagate during the capture
     // phase, so listening here in capture catches the virtualized List, which
@@ -1197,7 +1206,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
     };
     body.addEventListener('scroll', onScroll, true);
     return () => body.removeEventListener('scroll', onScroll, true);
-  }, [viewMode]);
+  }, [tableBodyEl]);
   const [treeKeyWidth, setTreeKeyWidth] = useState<number>(() => {
     const saved = Number(localStorage.getItem('mqlens-treekey-width'));
     return saved >= 140 && saved <= 800 ? saved : 320;
@@ -2929,7 +2938,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
                 Its stable gutter matches the header's, keeping the two the
                 same usable width. */}
             <div
-              ref={tableBodyRef}
+              ref={attachTableBody}
               data-testid="table-body-scroll"
               className="min-h-0 flex-1 min-w-0 overflow-hidden"
             >
@@ -3134,7 +3143,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
                 onChange={(e) => onPageSizeChange(Number(e.target.value))}
                 className="h-7 rounded-md border border-border bg-background px-2 text-[11px] text-foreground"
               >
-                {[25, 50, 100, 200].map((s) => (
+                {PAGE_SIZE_OPTIONS.map((s) => (
                   <option key={s} value={s}>{t('dataGrid.labels.perPageOption', { size: s })}</option>
                 ))}
               </select>

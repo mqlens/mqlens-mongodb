@@ -18,11 +18,14 @@ const ScrollArea = React.forwardRef<
     {/* Radix's default content wrapper is `display:table` so it can grow past the
         viewport for horizontal scrolling. Force `block` only for vertical lists
         (its original behavior); leaving it `table` is what lets a horizontal
-        strip overflow and scroll. */}
+        strip overflow and scroll. Radix sets `display:table` as an inline
+        style, so the override needs `!important` to take effect — without it
+        wide content (e.g. a <select> sized to its longest option) pushes the
+        wrapper past the viewport and gets clipped. */}
     <ScrollAreaPrimitive.Viewport
       className={cn(
         "size-full rounded-[inherit]",
-        orientation === "vertical" && "[&>div]:block"
+        orientation === "vertical" && "[&>div]:!block"
       )}
     >
       {children}
