@@ -64,7 +64,7 @@ sha2 = "0.11.0"
 zip = "9.0.5"
 tar = "0.4.46"
 flate2 = "1.1.9"
-rmcp = { version = "=3.9.0", features = ["server", "transport-streamable-http-server"] }
+rmcp = { version = "=3.10.0", features = ["server", "transport-streamable-http-server"] }
 # Serves rmcp's `StreamableHttpService` (a plain `tower_service::Service`) on our
 # already-bound `TcpListener`. Minimal, no-default-features build: "http1" (we only
 # need HTTP/1.1 for a loopback MCP endpoint, no h2) + "tokio" (required to enable
@@ -74,7 +74,7 @@ rmcp = { version = "=3.9.0", features = ["server", "transport-streamable-http-se
 # proven-compatible pairing rather than a guess.
 axum = { version = "=0.8.9", default-features = false, features = ["http1", "tokio"] }
 # Bundled SQLite for local audit log (#272) — no system libsqlite required.
-rusqlite = { version = "0.41", features = ["bundled"] }
+rusqlite = { version = "0.43", features = ["bundled"] }
 # MQLens Server client (server mode). The generated code in src/server/pb is
 # produced by the buf plugins pinned in buf.gen.yaml, which target this tonic and
 # prost line; bump them together. TLS uses ring explicitly: the lock file already
@@ -91,7 +91,7 @@ zeroize = "1"
 [dev-dependencies]
 # Parses the app menu accelerators in tests; Tauri drops one that fails to
 # parse without an error. Already locked via tauri, so this adds no crate.
-muda = { version = "0.20", default-features = false }
+muda = { version = "0.21", default-features = false }
 tiny_http = "0.12.0"
 # Matches capability window patterns in tests the way Tauri's ACL does.
 glob = "0.3"
@@ -99,7 +99,7 @@ glob = "0.3"
 # runtime dependency: production never mints tokens, it only receives them.
 # 10.x makes the crypto backend a feature. aws_lc_rs is already built (via
 # rustls and russh); rust_crypto would add a second RSA/ECDSA stack.
-jsonwebtoken = { version = "11.1", features = ["aws_lc_rs"] }
+jsonwebtoken = { version = "12.0", features = ["aws_lc_rs"] }
 # Derives the JWKS `n`/`e` fields from the mock IdP's test-only RSA key
 # (#430). Pinned to the exact version already locked transitively (via
 # mongodb's aws-auth) so this addition cannot change resolution elsewhere.
