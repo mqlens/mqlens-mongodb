@@ -2014,6 +2014,25 @@ describe('DocumentViewer — a results cell sent to the query', () => {
     expect(onExecute).not.toHaveBeenCalled();
   });
 
+  it('adds to the _id search a bare ObjectId stands for', () => {
+    renderWith({ kind: 'filter', field: 'status', value: 'active' });
+    fireEvent.change(screen.getByTestId('query-filter-input'), { target: { value: '603d779f4f102e3a105c3120' } });
+    fireEvent.click(screen.getByTestId('send'));
+    expect(parseQueryObject(filterText())).toEqual({ _id: { $oid: '603d779f4f102e3a105c3120' }, status: 'active' });
+  });
+
+  it('leaves a bare ObjectId as typed when the _id search setting is off', () => {
+    localStorage.setItem('mqlens.behavior', JSON.stringify({ defaultIdSearch: false }));
+    try {
+      renderWith({ kind: 'filter', field: 'status', value: 'active' });
+      fireEvent.change(screen.getByTestId('query-filter-input'), { target: { value: '603d779f4f102e3a105c3120' } });
+      fireEvent.click(screen.getByTestId('send'));
+      expect(filterText()).toBe('603d779f4f102e3a105c3120');
+    } finally {
+      localStorage.removeItem('mqlens.behavior');
+    }
+  });
+
   it('leaves a filter it cannot parse as typed', () => {
     renderWith({ kind: 'exclude', field: 'status', value: 'active' });
     fireEvent.change(screen.getByTestId('query-filter-input'), { target: { value: '{ age: ' } });

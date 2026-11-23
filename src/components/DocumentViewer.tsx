@@ -1565,7 +1565,9 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   const addCellToQuery = (action: CellQueryAction) => {
     try {
       if (action.kind === 'filter' || action.kind === 'exclude') {
-        const next = addFilterCondition(filterQuery, action.field, action.value, action.kind === 'filter' ? 'eq' : 'ne');
+        // A bare ObjectId is an _id lookup when it runs; add to that query.
+        const current = (behavior.defaultIdSearch && bareObjectIdFilter(filterQuery)) || filterQuery;
+        const next = addFilterCondition(current, action.field, action.value, action.kind === 'filter' ? 'eq' : 'ne');
         setFilterQuery(next);
         setIsQueryEnabled(true);
         if (isQueryBuilderOpen) syncFilterRulesFromInput(next);
