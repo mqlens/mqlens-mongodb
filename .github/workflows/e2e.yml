@@ -93,6 +93,9 @@ jobs:
           pattern: coverage-raw-*
           path: coverage-shards
       - name: Merge coverage and apply the gate
+        # Merging every shard's raw coverage outgrew Node's default ~4 GB heap.
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
         run: npm run test:e2e:merge-coverage -- coverage-shards
       - name: E2E coverage summary
         if: always()
