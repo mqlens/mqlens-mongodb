@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 import { test, expect, type App } from '../fixtures';
-import { callFrom, connectStaging, openCollection, view } from '../helpers';
+import { callFrom, connectStaging, openCollection, setEditorText, view } from '../helpers';
 
 // Rename, add and remove a field from the Tree view's context menu or a
 // focused row's keys (Shift+F2, Ctrl+K, Del). Each goes through the same
@@ -120,6 +120,42 @@ test.describe('Tree field operations', () => {
     await expect(key(page, 'referrer')).toBeVisible();
   });
 
+  test('refuses a rename to a name the projection hid', async ({ app, page }) => {
+    await connectStaging(app, page);
+    await openCollection(page, 'sales_db', 'customers');
+    await view(page).getByTestId('query-options-toggle').click();
+    await setEditorText(page, view(page).getByTestId('projection-query-input'), '{ name: 1 }');
+    await view(page).getByRole('button', { name: 'Run', exact: true }).click();
+    await view(page).getByRole('button', { name: 'Tree', exact: true }).click();
+    await expect(key(page, 'tier')).toHaveCount(0);
+
+    // The stored document may already have an `email`, which a $set would overwrite.
+    await key(page, 'name').click({ button: 'right' });
+    await page.getByRole('menuitem', { name: /Rename field/ }).click();
+    await dialogInput(page).fill('email');
+    await page.getByTestId('dialog-confirm').click();
+    await expect(toast(page, /cannot add field\(s\) email/)).toBeVisible();
+    await expect(key(page, 'name')).toBeVisible();
+  });
+
+  test('offers nothing inside an array, and nothing writable on a read-only connection', async ({ app, page }) => {
+    await connectStaging(app, page, {}, { connection_mode: 'read_only' });
+    await openCollection(page, 'sales_db', 'transactions');
+    await view(page).getByRole('button', { name: 'Tree', exact: true }).click();
+
+    await key(page, '0').click({ button: 'right' }); // items[0]
+    await expect(page.getByRole('menuitem', { name: /Copy value/ })).toBeVisible();
+    await expect(page.getByRole('menuitem', { name: /(Rename|Add|Remove) field/ })).toHaveCount(0);
+    await page.keyboard.press('Escape');
+
+    await key(page, 'status').click({ button: 'right' });
+    await expect(page.getByRole('menuitem', { name: /Remove field/ })).toBeDisabled();
+    await page.keyboard.press('Escape');
+    await key(page, 'status').click();
+    await page.keyboard.press('Delete');
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+  });
+
   test('writes each type the picker offers, as that type', async ({ app, page }) => {
     await openCustomersTree(app, page);
     const cases: [type: string, value: string | null, stored: string][] = [
@@ -145,6 +181,19 @@ test.describe('Tree field operations', () => {
       expect(JSON.stringify(edited(call)[name])).toContain(stored);
       await expect(key(page, name)).toBeVisible();
     }
+
+    // Backing out of the name or the value writes nothing.
+    await key(page, 'tier').click({ button: 'right' });
+    await page.getByRole('menuitem', { name: /Add field/ }).click();
+    await page.getByTestId('dialog-cancel').click();
+    await key(page, 'tier').click({ button: 'right' });
+    await page.getByRole('menuitem', { name: /Add field/ }).click();
+    await dialogInput(page).fill('later');
+    await page.getByTestId('dialog-confirm').click();
+    await page.getByTestId('dialog-choice-string').click();
+    await expect(dialogInput(page)).toHaveValue('');
+    await page.getByTestId('dialog-cancel').click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
 
     // Keeping the name is not a rename, and other keys on a row do nothing.
     const writes = (await app.calls('update_document')).length;

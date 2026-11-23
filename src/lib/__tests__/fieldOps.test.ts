@@ -56,6 +56,8 @@ describe('fieldValue', () => {
     ['string', '', ''],
     ['number', '42', 42],
     ['number', '1.5', 1.5],
+    // Past 2^53 a JS number would round it; kept exact, as the in-place editor keeps it.
+    ['number', '9007199254740993', { $numberLong: '9007199254740993' }],
     ['long', '9007199254740993', { $numberLong: '9007199254740993' }],
     ['decimal', '1.10', { $numberDecimal: '1.10' }],
     ['boolean', 'true', true],

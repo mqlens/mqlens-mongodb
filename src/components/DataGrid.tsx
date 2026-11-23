@@ -2514,8 +2514,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
     };
   };
   const onTreeFieldKey = (e: React.KeyboardEvent, row: TreeRow) => {
-    if (isReadOnly || cellSaving) return;
-    const ops = fieldOps(row);
+    const ops = isReadOnly || cellSaving ? null : fieldOps(row);
     const op = e.key === 'F2' && e.shiftKey ? ops?.rename
       : (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k' ? ops?.add
       : e.key === 'Delete' ? ops?.remove

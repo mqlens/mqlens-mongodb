@@ -162,7 +162,6 @@
       "rename": "Rename",
       "renameField": "Rename field…",
       "renameTitle": "Rename field {{field}}",
-      "typeTitle": "Type of {{field}}",
       "types": {
         "array": "Array",
         "boolean": "Boolean",
@@ -175,6 +174,7 @@
         "objectId": "ObjectId",
         "string": "String"
       },
+      "typeTitle": "Type of {{field}}",
       "valueTitle": "{{type}} value of {{field}}"
     },
     "find": {

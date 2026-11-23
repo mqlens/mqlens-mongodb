@@ -64,7 +64,8 @@ export function fieldValue(type: FieldType, text: string): unknown {
   const bad = () => { throw new Error(`not a ${type}`); };
   switch (type) {
     case 'string': return text;
-    case 'number': return NUMBER.test(s) ? Number(s) : bad();
+    // Through the shell parser, so an integer past 2^53 is kept exact as Int64.
+    case 'number': return NUMBER.test(s) ? parseShellJson(s) : bad();
     case 'long': return /^-?\d+$/.test(s) ? parseShellJson(`NumberLong("${s}")`) : bad();
     case 'decimal': return NUMBER.test(s) ? parseShellJson(`NumberDecimal("${s}")`) : bad();
     case 'boolean': return /^(true|false)$/i.test(s) ? s.toLowerCase() === 'true' : bad();
