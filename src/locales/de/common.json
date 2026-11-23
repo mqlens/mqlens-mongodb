@@ -111,7 +111,12 @@
     "uploadFailedFor": "Hochladen von {{filename}} fehlgeschlagen: {{detail}}",
     "userCreated": "Benutzer {{name}} erstellt",
     "userDropped": "Benutzer {{name}} gelöscht",
-    "userUpdated": "Benutzer {{name}} aktualisiert"
+    "userUpdated": "Benutzer {{name}} aktualisiert",
+    "undo": "Rückgängig",
+    "undoneTitle": "Rückgängig gemacht",
+    "undoSuperseded": "Diese Bearbeitung kann nicht mehr rückgängig gemacht werden",
+    "editUndoneIn": "Bearbeitung in {{collection}} rückgängig gemacht",
+    "undoFailed": "Bearbeitung konnte nicht rückgängig gemacht werden: {{detail}}"
   },
   "typedNameConfirm": {
     "confirmLabel": "Löschen",

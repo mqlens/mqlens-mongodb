@@ -214,3 +214,93 @@ test.describe('Tabs another window holds', () => {
     await expect(sidebar(page).getByRole('button', { name: 'Connection Staging' })).toBeVisible();
   });
 });
+
+test.describe('Undo of an edit in a tab that changes windows', () => {
+  /** Staging's customers in the table, a second window, and an edit saved in place. */
+  async function savedEdit(app: App, page: Page): Promise<void> {
+    await connectStaging(app, page);
+    await openCollection(page, 'sales_db', 'customers');
+    await expect(view(page).getByText('Alice Smith').first()).toBeVisible();
+    await announceSecondWindow(app, 70, [stagingTab('transactions')]);
+    await view(page).getByRole('button', { name: 'Table', exact: true }).click();
+    await view(page).getByText('alice@example.com', { exact: true }).dblclick();
+    await view(page).getByTestId('cell-editor').fill('"ada@example.com"');
+    await view(page).getByTestId('cell-editor').press('Enter');
+    await expect(view(page).getByText('ada@example.com', { exact: true })).toBeVisible();
+  }
+
+  test('moving the tab to another window retires its Undo, which would write over a save made there', async ({ app, page }) => {
+    await savedEdit(app, page);
+    await openTabMenu(page, 'customers');
+    await page.getByTestId('context-menu').getByRole('menuitem', { name: /^Move to win-2/ }).click();
+    await expect.poll(async () => (await ops(app)).some((op) => op.type === 'move_tab_to_window')).toBe(true);
+
+    await toast(page, 'Saved').getByRole('button', { name: 'Undo' }).click();
+    await expect(toast(page, 'This edit can no longer be undone')).toBeVisible();
+    expect(await app.calls('update_document')).toHaveLength(1);
+  });
+
+  test('a save refused after the move does not bring the Undo of the tab that moved', async ({ app, page }) => {
+    await savedEdit(app, page);
+    // A second tab on the same collection, with a save on its way.
+    await openInNewTab(page, 'customers');
+    await view(page).getByRole('button', { name: 'Table', exact: true }).click();
+    const release = await app.hold('update_document');
+    await view(page).getByText('bob@example.com', { exact: true }).dblclick();
+    await view(page).getByTestId('cell-editor').fill('"bo@example.com"');
+    await view(page).getByTestId('cell-editor').press('Enter');
+    await expect.poll(async () => (await app.calls('update_document')).length).toBe(2);
+    await app.failNext('update_document', 'Document failed validation');
+
+    // The first tab, whose edit the Saved toast can undo, goes to win-2.
+    await openTabMenu(page, 'Staging / sales_db:customers');
+    await page.getByTestId('context-menu').getByRole('menuitem', { name: /^Move to win-2/ }).click();
+    await expect.poll(async () => (await ops(app)).some((op) => op.type === 'move_tab_to_window')).toBe(true);
+    await release();
+    await expect(toast(page, 'Document failed validation')).toBeVisible();
+
+    await toast(page, 'Saved').getByRole('button', { name: 'Undo' }).click();
+    await expect(toast(page, 'This edit can no longer be undone')).toBeVisible();
+    expect(await app.calls('update_document')).toHaveLength(2);
+  });
+
+  test('a document dialog that arrives from another window saves with no Undo', async ({ app, page }) => {
+    await connectStaging(app, page);
+    await openCollection(page, 'sales_db', 'products');
+    // Opened over there, on a row this window never saw written: what it was
+    // opened on, and what was written since, are not known here.
+    const doc = { _id: { $oid: '603d779f4f102e3a105c3120' }, name: 'Alice Smith', email: 'alice@example.com' };
+    const customers = {
+      ...stagingTab('customers'),
+      documentEdit: { id: 'edit-from-win-2', mode: 'edit', initialJson: JSON.stringify(doc), targetDoc: doc, draft: JSON.stringify({ ...doc, email: 'c@example.com' }) },
+    };
+    await app.emit('workspace-changed', {
+      revision: 90,
+      origin: 'win-2',
+      crossWindow: true,
+      workspace: workspace(90, [customers, stagingTab('products')], [stagingTab('transactions')]),
+    });
+    const modal = page.getByTestId('document-edit-modal');
+    await expect(modal).toBeVisible();
+
+    await callFrom(app, 'update_document', () => modal.getByTestId('document-save-btn').click());
+    const saved = toast(page, 'Saved');
+    await expect(saved).toBeVisible();
+    expect(await saved.getByRole('button', { name: 'Undo' }).count()).toBe(0);
+  });
+
+  test('another window taking the tab retires its Undo too', async ({ app, page }) => {
+    await savedEdit(app, page);
+    await app.emit('workspace-changed', {
+      revision: 80,
+      origin: 'win-2',
+      crossWindow: true,
+      workspace: workspace(80, [stagingTab('products')], [stagingTab('transactions'), stagingTab('customers')]),
+    });
+    await expect(strip(page).getByText('customers', { exact: true })).toHaveCount(0);
+
+    await toast(page, 'Saved').getByRole('button', { name: 'Undo' }).click();
+    await expect(toast(page, 'This edit can no longer be undone')).toBeVisible();
+    expect(await app.calls('update_document')).toHaveLength(1);
+  });
+});
