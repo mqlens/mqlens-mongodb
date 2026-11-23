@@ -7,6 +7,8 @@ import { useCollectionSchema } from '../lib/useCollectionSchema';
 import { collectionRef, type GeneratedQuery } from '../lib/mongoCommand';
 import { parseShellJson, parseQueryObject, shellDocErrorKey, shellDocErrorParams, type ShellDocNotices } from '../lib/shellDoc';
 import { addFilterCondition, addProjectionField, sortByField } from '../lib/queryFromCell';
+import { getBehaviorSettings, useBehaviorSettings } from '../lib/behaviorSettings';
+import { bareObjectIdFilter, resolveFindFilter } from '../lib/objectIdQuery';
 import {
   loadCollectionQueries,
   saveQuery,
@@ -175,6 +177,7 @@ export function builderStateFromQueryTab(
   if (lastAggregate && lastAggregate.length > 0) {
     return {
       ...DEFAULT_BUILDER_STATE,
+      limit: String(getBehaviorSettings().pageSize),
       queryMode: 'aggregate',
       stages: stagesFromPipeline(lastAggregate),
     };
@@ -192,7 +195,7 @@ export function builderStateFromQueryTab(
       skip: String(lastQuery.skip),
     };
   }
-  return DEFAULT_BUILDER_STATE;
+  return { ...DEFAULT_BUILDER_STATE, limit: String(getBehaviorSettings().pageSize) };
 }
 
 // Serialize the current builder state into a GeneratedQuery — the same value
@@ -217,7 +220,7 @@ export function builderStateToQuery(state: BuilderState): GeneratedQuery {
     filter: parse(state.filterQuery),
     sort: parse(state.sortQuery),
     projection: parse(state.projectionQuery),
-    limit: Number(state.limit) || 50,
+    limit: Number(state.limit) || getBehaviorSettings().pageSize,
     skip: Number(state.skip) || 0,
   };
 }
@@ -655,6 +658,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   const { t } = useTranslation('common');
   const { t: td } = useTranslation('documents');
   const { schema } = useCollectionSchema(connectionId, databaseName, collectionName);
+  const behavior = useBehaviorSettings();
   const [filterQuery, setFilterQuery] = useState(initialBuilderState.filterQuery);
   const [projectionQuery, setProjectionQuery] = useState(initialBuilderState.projectionQuery);
   const [sortQuery, setSortQuery] = useState(initialBuilderState.sortQuery);
@@ -946,7 +950,9 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
         filter: JSON.stringify(query.filter ?? {}),
         sort: JSON.stringify(query.sort ?? {}),
         projection: JSON.stringify(query.projection ?? {}),
-        limit: 50,
+        // The tab's page size, as Run would use: a fixed 50 here reset the
+        // pager while the limit field went on showing the tab's own value.
+        limit: Number(limit) || getBehaviorSettings().pageSize,
         skip: 0,
       });
     }
@@ -1011,7 +1017,9 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   useEffect(() => {
     try {
       const notices: ShellDocNotices = { droppedRegexFlags: [] };
-      if (filterQuery.trim()) {
+      // A bare ObjectId is not a document, but Run turns it into an _id lookup.
+      const isIdSearch = behavior.defaultIdSearch && bareObjectIdFilter(filterQuery) !== null;
+      if (filterQuery.trim() && !isIdSearch) {
         parseQueryObject(filterQuery, notices);
       }
       setIsFilterValid(true);
@@ -1037,7 +1045,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
     // `td` too: switching the interface language re-renders this component but
     // would not re-run the effect, leaving an existing tooltip frozen in the
     // old language while everything around it changed.
-  }, [filterQuery, td]);
+  }, [filterQuery, td, behavior.defaultIdSearch]);
 
   useEffect(() => {
     try {
@@ -1320,8 +1328,21 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
     toast(t(key, options), kind);
   };
 
-  const currentBuilderQuery = (): GeneratedQuery =>
-    builderStateToQuery({ queryMode, filterQuery, sortQuery, projectionQuery, limit, skip, stages });
+  // What Save and Set default store. The filter goes through the same ObjectId
+  // conveniences as Run, so a search saved before it was ever run means what it
+  // will mean when it runs; the field is rewritten to match, as on Run.
+  const currentBuilderQuery = (): GeneratedQuery => {
+    let filter = filterQuery;
+    if (queryMode === 'find') {
+      try {
+        filter = resolveFindFilter(filterQuery, schema, behavior).text;
+        if (filter !== filterQuery) setFilterQuery(filter);
+      } catch {
+        // Not a valid filter: stored as builderStateToQuery reads it.
+      }
+    }
+    return builderStateToQuery({ queryMode, filterQuery: filter, sortQuery, projectionQuery, limit, skip, stages });
+  };
 
   const handleSaveQuery = async (alsoFavorite = false) => {
     const name = await prompt({
@@ -1413,12 +1434,22 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
       ? true
       : isFilterValid && isSortValid && (!isProjectionEnabled || isProjectionValid);
 
+  // The filter as it will execute: parsed, with the Settings → Behavior
+  // ObjectId conveniences applied. When one of them changed the query, the
+  // field is rewritten to match, so what is on screen (and what Save, Copy and
+  // the pager reuse) is what ran. The visual builder's rules are left as typed.
+  const resolveFilter = (): Record<string, unknown> => {
+    const resolved = resolveFindFilter(filterQuery, schema, behavior);
+    if (resolved.text !== filterQuery) setFilterQuery(resolved.text);
+    return resolved.filter;
+  };
+
   const handleRun = () => {
     if (!canRun) return;
     setError(null);
     try {
       if (queryMode === 'find') {
-        const parsedFilter = filterQuery.trim() ? parseQueryObject(filterQuery) : {};
+        const parsedFilter = resolveFilter();
         const parsedSort = sortQuery.trim() ? parseQueryObject(sortQuery) : {};
         // Only send a projection when the user has enabled one.
         const parsedProjection =
@@ -1430,7 +1461,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
           filter: JSON.stringify(parsedFilter),
           sort: JSON.stringify(parsedSort),
           projection: JSON.stringify(parsedProjection),
-          limit: Number(limit) || 50,
+          limit: Number(limit) || getBehaviorSettings().pageSize,
           skip: Number(skip) || 0
         });
       } else {
@@ -1481,7 +1512,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
         ? `.sort(${JSON.stringify(parsedSort)})`
         : '';
 
-    return `${dbRef}.find(${JSON.stringify(parsedFilter)}${projectionPart})${sortPart}.skip(${Number(skip) || 0}).limit(${Number(limit) || 50})`;
+    return `${dbRef}.find(${JSON.stringify(parsedFilter)}${projectionPart})${sortPart}.skip(${Number(skip) || 0}).limit(${Number(limit) || getBehaviorSettings().pageSize})`;
   };
 
   const handleExplain = async () => {
@@ -1490,7 +1521,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
     setExplainLoading(true);
     try {
       if (queryMode === 'find') {
-        const parsedFilter = filterQuery.trim() ? parseQueryObject(filterQuery) : {};
+        const parsedFilter = resolveFilter();
         await onExplain(JSON.stringify(parsedFilter));
       } else {
         // The FULL pipeline (M1), not just a collapsed $match.

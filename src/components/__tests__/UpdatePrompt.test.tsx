@@ -66,6 +66,25 @@ describe('UpdatePrompt', () => {
     await waitFor(() => expect(mockRelaunch).toHaveBeenCalled());
   });
 
+  it('reports a failed install as an install failure, not an unreachable server', async () => {
+    // The check succeeded, so the server was reachable; only the install step
+    // failed (e.g. an RPM install handed an AppImage).
+    routeInvoke({
+      update_check: { version: '0.3.0', current_version: '0.2.0', notes: '', date: null },
+      update_install: () => Promise.reject('invalid updater binary format'),
+    });
+
+    render(<UpdatePrompt />);
+    triggerManualCheck();
+    fireEvent.click(await screen.findByTestId('update-now'));
+
+    const toast = await screen.findByTestId('update-toast');
+    expect(toast).toHaveTextContent(/install the update/i);
+    expect(toast).not.toHaveTextContent(/reach the update server/i);
+    expect(toast).toHaveAttribute('title', 'invalid updater binary format');
+    expect(mockRelaunch).not.toHaveBeenCalled();
+  });
+
   it('renders release-note markdown as headings, bullets, and links', async () => {
     routeInvoke({
       update_check: {

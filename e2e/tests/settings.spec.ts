@@ -26,7 +26,7 @@ test.describe('Settings', () => {
     await app.open();
     await openSettings(page);
 
-    for (const id of ['appearance', 'ai', 'mcp', 'tools', 'updates', 'shortcuts', 'security', 'audit', 'language']) {
+    for (const id of ['appearance', 'behavior', 'ai', 'mcp', 'tools', 'updates', 'shortcuts', 'security', 'audit', 'language']) {
       const nav = settings(page).getByTestId(`settings-tab-${id}`);
       await nav.click();
       await expect(settings(page).getByRole('heading', { level: 1 })).toHaveText((await nav.innerText()).trim());

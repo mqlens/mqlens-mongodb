@@ -103,6 +103,8 @@ export default defineConfig({
       'shell:watch.status.error',
       'settings:appearance.tabLabel',
       'settings:appearance.tabDescription',
+      'settings:behavior.tabLabel',
+      'settings:behavior.tabDescription',
       'settings:ai.tabLabel',
       'settings:ai.tabDescription',
       'settings:mcp.tabLabel',

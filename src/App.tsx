@@ -143,6 +143,7 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { FolderCode, KeyRound, Radio, X, ChevronsRight, XSquare, Play, Settings, Terminal, Rocket, Download, Upload, Table2, Eye, HardDrive, Activity, Copy, Users, ListChecks, DatabaseBackup, DatabaseZap, ShieldCheck, ExternalLink, MoveRight, Wand2, Lock, ShieldAlert, ScrollText } from 'lucide-react';
 import logoMark from './assets/logo-mark.svg';
+import { getBehaviorSettings, useBehaviorSettings } from './lib/behaviorSettings';
 import { loadTabColors, saveTabColor, TAB_COLORS, tabColorCss, type TabColorId } from './lib/tabColors';
 
 /** An edit or insert in progress, with everything true of it while it lasts.
@@ -224,6 +225,10 @@ export interface QueryTab {
   // so the builder can never observe a new revision beside a stale page size —
   // see DocumentViewer's pagerRequest prop.
   pagerRequest?: { limit: number; skip: number; revision: number };
+  // Bumped when App itself decides what the query bar shows (a pinned default
+  // or a saved query loaded on open). Part of the viewer's key, so the bar is
+  // rebuilt from the seeded builder state instead of keeping what it mounted with.
+  builderSeed?: number;
   // Pagination count state.
   totalCount?: number;
   countLoading?: boolean;
@@ -292,20 +297,28 @@ function rowsAreStoredDocuments(tab: {
 const EMPTY_COLUMN_WIDTHS: Record<string, number> = {};
 const EMPTY_COLUMN_LAYOUT: ColumnLayout = {};
 
-const DEFAULT_QUERY = { filter: '{}', sort: '{}', projection: '{}', limit: 50, skip: 0 };
+/** The query a collection opens with. A function, not a constant: the page
+ *  size comes from Settings → Behavior and must be read when the tab opens. */
+const defaultQuery = () => ({
+  filter: '{}',
+  sort: '{}',
+  projection: '{}',
+  limit: getBehaviorSettings().pageSize,
+  skip: 0,
+});
 
 /** What "Reopen Closed Tab" keeps of a tab: where it pointed and how it was
  *  queried, never its results, plan or draft (up to 20 of them stay in memory). */
 export type ClosedTabSnapshot = Omit<
   QueryTab,
   | 'results' | 'loading' | 'error' | 'explainResult' | 'documentEdit' | 'pagerRequest'
-  | 'totalCount' | 'countLoading' | 'estimated' | 'initialShellCommand'
+  | 'builderSeed' | 'totalCount' | 'countLoading' | 'estimated' | 'initialShellCommand'
 >;
 
 export function closedTabSnapshot(tab: QueryTab): ClosedTabSnapshot {
   const {
     results, loading, error, explainResult, documentEdit, pagerRequest,
-    totalCount, countLoading, estimated, initialShellCommand, ...snapshot
+    builderSeed, totalCount, countLoading, estimated, initialShellCommand, ...snapshot
   } = tab;
   return snapshot;
 }
@@ -652,6 +665,8 @@ function activeTabHintFor(win: PersistedWindow, allTabs: PersistedTab[], t: TFun
 function Workspace() {
   const { toast, confirm, prompt } = useDialogs();
   const { t } = useTranslation('common');
+  // Settings → Behavior: the view a tab shows until it picks one of its own.
+  const { defaultViewMode } = useBehaviorSettings();
   // Command palette action titles/keywords live in `shell` alongside the
   // rest of the palette's copy (see src/locales/{en,de}/shell.json), not
   // `common` — a second hook since `t` above is bound to `common`.
@@ -1620,10 +1635,10 @@ function Workspace() {
               filter: JSON.stringify(def.filter ?? {}),
               sort: JSON.stringify(def.sort ?? {}),
               projection: JSON.stringify(def.projection ?? {}),
-              limit: def.limit ?? 50,
+              limit: def.limit ?? getBehaviorSettings().pageSize,
               skip: def.skip ?? 0,
             }
-          : { filter: '{}', sort: '{}', projection: '{}', limit: 50, skip: 0 };
+          : defaultQuery();
         const resultStrs = await invoke<string[]>('execute_mql_query', {
           id: connectionId,
           database: dbName,
@@ -1689,7 +1704,7 @@ function Workspace() {
           loading: true,
           error: null,
           explainResult: null,
-          lastQuery: DEFAULT_QUERY,
+          lastQuery: defaultQuery(),
         };
         setTabs(prev => [...prev, newTab as QueryTab]);
       } else {
@@ -1707,6 +1722,30 @@ function Workspace() {
         } catch {
           def = null;
         }
+      }
+      // The viewer mounted with a blank bar before the default was known (it
+      // loads asynchronously). Show the query that is about to run, so the
+      // results on screen never disagree with the fields above them.
+      if (def) {
+        const json = (v: unknown) => JSON.stringify(v ?? {}, null, 2);
+        // An aggregation saved with every stage disabled has an empty
+        // pipeline. It still runs as an aggregation, so it stays one in the
+        // bar: `builderStateFromQueryTab` alone reads "no stages" as a find.
+        const seeded: BuilderState = def.queryType === 'aggregate'
+          ? {
+              ...builderStateFromQueryTab(undefined, def.pipeline),
+              queryMode: 'aggregate',
+              ...(def.pipeline.length === 0 && { stages: [] }),
+            }
+          : builderStateFromQueryTab({
+              filter: json(def.filter),
+              sort: json(def.sort),
+              projection: json(def.projection),
+              limit: def.limit ?? 50,
+              skip: def.skip ?? 0,
+            });
+        handleBuilderStateChange(tabId, seeded);
+        setTabs(prev => prev.map(t => t.id === tabId ? { ...t, builderSeed: (t.builderSeed ?? 0) + 1 } : t));
       }
       await loadTabResults(tabId, connectionId, dbName, collName, def);
     } else {
@@ -1751,7 +1790,7 @@ function Workspace() {
       loading: true,
       error: null,
       explainResult: null,
-      lastQuery: src.lastQuery ?? DEFAULT_QUERY,
+      lastQuery: src.lastQuery ?? defaultQuery(),
       lastAggregate: src.lastAggregate,
     };
     setTabs((prev) => [...prev, newTab]);
@@ -3738,7 +3777,7 @@ function Workspace() {
         setTabs(prev => prev.map(t => t.id === tab.id ? { ...t, results: parsedResults } : t));
         return;
       }
-      const query = tab.lastQuery || DEFAULT_QUERY;
+      const query = tab.lastQuery || defaultQuery();
       const resultStrs = await invoke<string[]>('execute_mql_query', {
         id: tab.connectionId,
         database: tab.db,
@@ -4976,7 +5015,7 @@ function Workspace() {
           const connectionUser = activeConnection ? usernameFromUri(activeConnection.uri) : '';
           return (
             <DocumentViewer
-              key={tab.id}
+              key={`${tab.id}:${tab.builderSeed ?? 0}`}
               connectionId={tab.connectionId}
               connectionName={connectionName}
               queryStoreKey={connectionQueryKeyFor(tab.connectionId)}
@@ -5048,8 +5087,8 @@ function Workspace() {
                     estimated={tab.estimated}
                     countLoading={tab.countLoading}
                     skip={tab.lastQuery?.skip ?? 0}
-                    limit={tab.lastQuery?.limit ?? 50}
-                    viewMode={tab.viewMode ?? 'json'}
+                    limit={tab.lastQuery?.limit ?? getBehaviorSettings().pageSize}
+                    viewMode={tab.viewMode ?? defaultViewMode}
                     onViewModeChange={(mode) => handleViewModeChange(tab.id, mode)}
                     activeTab={tab.resultsTab ?? 'results'}
                     onActiveTabChange={(t) => handleResultsTabChange(tab.id, t)}

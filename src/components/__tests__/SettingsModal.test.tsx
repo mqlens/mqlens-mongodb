@@ -652,4 +652,36 @@ describe('SettingsView Component', () => {
       await waitFor(() => expect(screen.queryByTestId('mcp-agent-prompt')).not.toBeInTheDocument());
     });
   });
+
+  it('toggles Behavior settings and persists them immediately', async () => {
+    renderSettings();
+    await openTab('settings-tab-behavior');
+
+    const expand = screen.getByTestId('behavior-expand-collections-toggle');
+    const convert = screen.getByTestId('behavior-auto-convert-objectid-toggle');
+    const idSearch = screen.getByTestId('behavior-default-id-search-toggle');
+    // Each switch is named by its label, for a screen reader and for a click
+    // on the label text.
+    expect(screen.getByRole('switch', { name: 'Expand collections when a database is opened' })).toBe(expand);
+    expect(screen.getByRole('switch', { name: 'Convert ObjectId-like strings automatically' })).toBe(convert);
+    expect(screen.getByRole('switch', { name: 'Treat a bare ObjectId as an _id search' })).toBe(idSearch);
+    expect(expand).toHaveAttribute('aria-checked', 'false');
+    expect(convert).toHaveAttribute('aria-checked', 'true');
+    expect(idSearch).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByTestId('behavior-page-size-select')).toHaveTextContent('50 documents');
+
+    fireEvent.click(expand);
+    fireEvent.click(idSearch);
+
+    await waitFor(() => expect(expand).toHaveAttribute('aria-checked', 'true'));
+    expect(idSearch).toHaveAttribute('aria-checked', 'false');
+    expect(screen.getByTestId('behavior-default-view-select')).toHaveTextContent('JSON');
+    expect(JSON.parse(localStorage.getItem('mqlens.behavior')!)).toEqual({
+      defaultViewMode: 'json',
+      pageSize: 50,
+      expandCollectionsOnDbOpen: true,
+      autoConvertObjectId: true,
+      defaultIdSearch: false,
+    });
+  });
 });
