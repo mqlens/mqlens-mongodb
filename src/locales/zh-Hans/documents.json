@@ -127,6 +127,41 @@
         "returned": "返回 {{n}} 条"
       }
     },
+    "fieldOps": {
+      "add": "添加",
+      "addField": "添加字段…",
+      "addIn": "位于 {{field}} 内",
+      "addTitle": "添加字段",
+      "invalidValue": "不是有效的 {{type}} 值。",
+      "nameErrors": {
+        "dollar": "字段名不能以 $ 开头。",
+        "dot": "字段名不能包含点号。",
+        "empty": "请输入字段名。",
+        "exists": "此处已有同名字段。"
+      },
+      "next": "下一步",
+      "remove": "删除",
+      "removeField": "删除字段",
+      "removeMessage": "要从此文档中删除字段“{{field}}”吗？",
+      "removeTitle": "删除字段",
+      "rename": "重命名",
+      "renameField": "重命名字段…",
+      "renameTitle": "重命名字段 {{field}}",
+      "typeTitle": "{{field}} 的类型",
+      "types": {
+        "array": "数组",
+        "boolean": "布尔值",
+        "date": "日期",
+        "decimal": "Decimal128",
+        "long": "Int64",
+        "null": "Null",
+        "number": "数字",
+        "object": "对象",
+        "objectId": "ObjectId",
+        "string": "字符串"
+      },
+      "valueTitle": "{{field}} 的{{type}}值"
+    },
     "find": {
       "close": "关闭查找（Esc）",
       "count": "第 {{current}} 个，共 {{total}} 个",

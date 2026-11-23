@@ -54,6 +54,12 @@ export function useDialogs(): DialogApi {
   return ctx;
 }
 
+/** The dialog API, or null outside a <DialogProvider> — for a component that
+ *  is also mounted on its own and offers less there. */
+export function useDialogsOptional(): DialogApi | null {
+  return useContext(DialogContext);
+}
+
 interface ActiveModal {
   request: ModalRequest;
   resolve: (value: boolean | string | null) => void;

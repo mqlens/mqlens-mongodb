@@ -37,6 +37,7 @@ vi.mock('@/hooks/use-theme', () => ({
 }));
 
 import { DataGrid, getExplainTree } from '../DataGrid';
+import { DialogProvider } from '../dialogs/DialogProvider';
 import { TabVisibleContext } from '../../workspace/tabVisibility';
 import { resetResultsFindShortcutForTests } from '@/lib/resultsFindShortcut';
 
@@ -2942,6 +2943,200 @@ describe('DataGrid — in-place cell edit', () => {
     fireEvent.click(screen.getByRole('button', { name: /table/i }));
     fireEvent.doubleClick(cell('free'));
     expect(screen.queryByTestId('cell-editor')).toBeNull();
+  });
+});
+
+describe('DataGrid — tree field rename, add and remove', () => {
+  // Nested field first: jsdom lays out only the first few virtualized rows.
+  const docs = () => [{ address: { city: 'Berlin', zip: '10115' }, _id: 1 }];
+  const arrayDocs = [{ tags: ['a'], _id: 2 }];
+  const renderTree = (props: Partial<React.ComponentProps<typeof DataGrid>> = {}) => {
+    const onEditField = vi.fn().mockResolvedValue(undefined);
+    const input = docs();
+    render(
+      <DialogProvider>
+        <DataGrid documents={input} onEditField={onEditField} {...props} />
+      </DialogProvider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /tree/i }));
+    return { onEditField, input };
+  };
+  const menuFor = (key: string) => fireEvent.contextMenu(screen.getByText(key, { selector: 'span' }));
+  const item = (name: RegExp) => screen.queryByRole('menuitem', { name });
+  const dialogInput = () => screen.getByTestId('dialog-input') as HTMLInputElement;
+  const type = (value: string) => fireEvent.change(dialogInput(), { target: { value } });
+  const confirm = () => fireEvent.click(screen.getByTestId('dialog-confirm'));
+
+  it('renames a nested field to the name typed', async () => {
+    const { onEditField, input } = renderTree();
+    menuFor('city');
+    fireEvent.click(item(/rename field/i)!);
+    expect(dialogInput().value).toBe('city');
+    type('town');
+    confirm();
+
+    await vi.waitFor(() => expect(onEditField).toHaveBeenCalledTimes(1));
+    const [original, edited] = onEditField.mock.calls[0];
+    expect(original).toBe(input[0]);
+    expect(edited.address).toEqual({ zip: '10115', town: 'Berlin' });
+    expect(input[0].address.city).toBe('Berlin');
+  });
+
+  it('refuses a name a sibling already has, and writes nothing', async () => {
+    const { onEditField } = renderTree();
+    menuFor('city');
+    fireEvent.click(item(/rename field/i)!);
+    type('zip');
+    confirm();
+
+    expect(await screen.findByTestId('dialog-error')).toBeInTheDocument();
+    expect(onEditField).not.toHaveBeenCalled();
+  });
+
+  it('writes nothing when the name is left as it was', async () => {
+    const { onEditField } = renderTree();
+    menuFor('city');
+    fireEvent.click(item(/rename field/i)!);
+    confirm();
+
+    await vi.waitFor(() => expect(screen.queryByTestId('dialog-input')).toBeNull());
+    expect(onEditField).not.toHaveBeenCalled();
+  });
+
+  it('removes a field after the app confirm dialog', async () => {
+    const { onEditField } = renderTree();
+    menuFor('zip');
+    fireEvent.click(item(/remove field/i)!);
+    expect(screen.getByTestId('dialog-title')).toHaveTextContent(/remove field/i);
+    confirm();
+
+    await vi.waitFor(() => expect(onEditField).toHaveBeenCalledTimes(1));
+    expect(onEditField.mock.calls[0][1].address).toEqual({ city: 'Berlin' });
+  });
+
+  it('removes nothing when the confirm is cancelled', async () => {
+    const { onEditField } = renderTree();
+    menuFor('zip');
+    fireEvent.click(item(/remove field/i)!);
+    fireEvent.click(screen.getByTestId('dialog-cancel'));
+
+    await vi.waitFor(() => expect(screen.queryByTestId('dialog-title')).toBeNull());
+    expect(onEditField).not.toHaveBeenCalled();
+  });
+
+  it('adds a typed field inside a sub-document', async () => {
+    const { onEditField } = renderTree();
+    menuFor('address');
+    fireEvent.click(item(/add field/i)!);
+    type('since');
+    confirm();
+    fireEvent.click(await screen.findByTestId('dialog-choice-date'));
+    await vi.waitFor(() => expect(screen.queryByTestId('dialog-choice-date')).toBeNull());
+    await screen.findByTestId('dialog-input');
+    type('2024-01-01T00:00:00Z');
+    confirm();
+
+    await vi.waitFor(() => expect(onEditField).toHaveBeenCalledTimes(1));
+    expect(onEditField.mock.calls[0][1].address).toEqual({
+      city: 'Berlin',
+      zip: '10115',
+      since: { $date: '2024-01-01T00:00:00Z' },
+    });
+  });
+
+  it('adds next to a scalar field, asking no value for null', async () => {
+    const { onEditField } = renderTree();
+    menuFor('city');
+    fireEvent.click(item(/add field/i)!);
+    type('country');
+    confirm();
+    fireEvent.click(await screen.findByTestId('dialog-choice-null'));
+
+    await vi.waitFor(() => expect(onEditField).toHaveBeenCalledTimes(1));
+    expect(onEditField.mock.calls[0][1].address).toEqual({ city: 'Berlin', zip: '10115', country: null });
+  });
+
+  it('keeps the value prompt open on a value that is not of the type', async () => {
+    const { onEditField } = renderTree();
+    menuFor('city');
+    fireEvent.click(item(/add field/i)!);
+    type('count');
+    confirm();
+    fireEvent.click(await screen.findByTestId('dialog-choice-number'));
+    await vi.waitFor(() => expect(screen.queryByTestId('dialog-choice-number')).toBeNull());
+    await screen.findByTestId('dialog-input');
+    type('many');
+    confirm();
+
+    expect(await screen.findByTestId('dialog-error')).toBeInTheDocument();
+    expect(onEditField).not.toHaveBeenCalled();
+  });
+
+  it('offers only Add on a document, and nothing on _id or inside an array', () => {
+    renderTree();
+    menuFor('1');
+    expect(item(/add field/i)).not.toBeNull();
+    expect(item(/rename field/i)).toBeNull();
+    expect(item(/remove field/i)).toBeNull();
+    cleanup();
+
+    renderTree({ documents: arrayDocs });
+    menuFor('0'); // tags[0]
+    expect(item(/(rename|add|remove) field/i)).toBeNull();
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    menuFor('_id');
+    expect(item(/rename field/i)).toBeNull();
+    expect(item(/remove field/i)).toBeNull();
+  });
+
+  it('removes a whole array field', async () => {
+    const { onEditField } = renderTree({ documents: arrayDocs });
+    menuFor('tags');
+    fireEvent.click(item(/remove field/i)!);
+    confirm();
+
+    await vi.waitFor(() => expect(onEditField).toHaveBeenCalledTimes(1));
+    expect(onEditField.mock.calls[0][1]).not.toHaveProperty('tags');
+  });
+
+  it('disables the field operations on a read-only grid', () => {
+    renderTree({ connectionMode: 'read_only' });
+    menuFor('city');
+    expect(item(/rename field/i)).toBeDisabled();
+    expect(item(/add field/i)).toBeDisabled();
+    expect(item(/remove field/i)).toBeDisabled();
+  });
+
+  it('offers no field operations without a field writer', () => {
+    renderTree({ onEditField: undefined });
+    menuFor('city');
+    expect(item(/rename field/i)).toBeNull();
+  });
+
+  it('opens them from a focused row with Shift+F2, Ctrl+K and Delete', async () => {
+    renderTree();
+    const row = screen.getByText('city', { selector: 'span' }).closest('[tabindex]') as HTMLElement;
+    const palette = vi.fn();
+    window.addEventListener('keydown', palette);
+    try {
+      fireEvent.keyDown(row, { key: 'F2', shiftKey: true });
+      expect(await screen.findByTestId('dialog-title')).toHaveTextContent(/rename field/i);
+      fireEvent.click(screen.getByTestId('dialog-cancel'));
+      await vi.waitFor(() => expect(screen.queryByTestId('dialog-title')).toBeNull());
+
+      fireEvent.keyDown(row, { key: 'k', ctrlKey: true });
+      expect(await screen.findByTestId('dialog-title')).toHaveTextContent(/add field/i);
+      // The command palette's Ctrl+K must not open over it.
+      expect(palette).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByTestId('dialog-cancel'));
+      await vi.waitFor(() => expect(screen.queryByTestId('dialog-title')).toBeNull());
+
+      fireEvent.keyDown(row, { key: 'Delete' });
+      expect(await screen.findByTestId('dialog-title')).toHaveTextContent(/remove field/i);
+    } finally {
+      window.removeEventListener('keydown', palette);
+    }
   });
 });
 
