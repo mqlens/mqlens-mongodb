@@ -197,3 +197,21 @@ describe('sortByField', () => {
     expect(run(sortByField('price', -1))).toEqual({ price: -1 });
   });
 });
+
+describe('fields named like something every object inherits', () => {
+  it('excludes a value without taking an inherited member for a condition', () => {
+    expect(addFilterCondition('', 'constructor', 'x', 'ne')).toBe('{ "constructor" : { "$ne" : "x" } }');
+    expect(addFilterCondition('', 'toString', 'x', 'ne')).toBe('{ "toString" : { "$ne" : "x" } }');
+    expect(addFilterCondition('{ constructor: "y" }', 'constructor', 'x', 'ne')).toBe(
+      '{ "constructor" : { "$eq" : "y", "$ne" : "x" } }',
+    );
+  });
+
+  it('keeps a condition, projection or sort on __proto__', () => {
+    expect(addFilterCondition('', '__proto__', 'x', 'eq')).toBe('{ "__proto__" : "x" }');
+    expect(addFilterCondition('', '__proto__', 'x', 'ne')).toBe('{ "__proto__" : { "$ne" : "x" } }');
+    expect(addFilterCondition('{ a: 1 }', '__proto__', 'x', 'eq')).toBe('{ "a" : 1, "__proto__" : "x" }');
+    expect(addProjectionField('', '__proto__')).toBe('{ "__proto__" : 1 }');
+    expect(sortByField('__proto__', 1)).toBe('{ "__proto__" : 1 }');
+  });
+});

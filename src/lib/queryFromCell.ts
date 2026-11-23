@@ -110,6 +110,16 @@ function print(doc: QueryDoc): string {
 }
 const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
 
+// A field may be named like something every object inherits (`constructor`,
+// `toString`, `__proto__`). Reading it plainly would find the inherited member
+// and take it for a condition, and assigning `__proto__` would set the
+// prototype instead of adding a key. So fields are read and written as own
+// properties only.
+const own = (doc: QueryDoc, key: string): unknown => (Object.hasOwn(doc, key) ? doc[key] : undefined);
+const put = (doc: QueryDoc, key: string, value: unknown): void => {
+  Object.defineProperty(doc, key, { value, enumerable: true, writable: true, configurable: true });
+};
+
 /**
  * Add `field = value` (`mode: 'eq'`) or `field ≠ value` (`mode: 'ne'`) to a
  * filter. Other fields' conditions are kept, so repeated use narrows the
@@ -126,32 +136,32 @@ export function addFilterCondition(
   const filter = parse(text);
   const v = toEjsonValue(value);
   if (mode === 'eq') {
-    filter[field] = v;
+    put(filter, field, v);
     return print(filter);
   }
   // A regex typed as `/…/` is a condition of its own; spell it as `$regex` so
   // the exclusion can sit beside it instead of replacing it.
-  const rx = regexParts(filter[field]);
-  if (rx) filter[field] = { $regex: rx.pattern, ...(rx.options && { $options: rx.options }) };
-  const existing = filter[field];
-  if (existing !== undefined && !isOperatorObject(existing)) {
+  const rx = regexParts(own(filter, field));
+  if (rx) put(filter, field, { $regex: rx.pattern, ...(rx.options && { $options: rx.options }) });
+  const existing = own(filter, field);
+  if (existing === undefined) {
+    put(filter, field, { $ne: v });
+  } else if (!isOperatorObject(existing)) {
     // An equality on the field. With this very value it is the opposite of
     // what is asked, so it gives way. With another value it stays, spelled as
     // `$eq` beside the exclusion: replacing it would widen the results, and
     // dropping the exclusion would be wrong for an array field, where
     // matching one element does not rule out another.
-    filter[field] = same(existing, v) ? { $ne: v } : { $eq: existing, $ne: v };
-  } else if (existing === undefined) {
-    filter[field] = { $ne: v };
+    put(filter, field, same(existing, v) ? { $ne: v } : { $eq: existing, $ne: v });
   } else if (Array.isArray(existing.$nin)) {
     if (!existing.$nin.some((x: unknown) => same(x, v))) existing.$nin = [...existing.$nin, v];
   } else if ('$ne' in existing) {
     if (!same(existing.$ne, v)) {
       const { $ne, ...rest } = existing;
-      filter[field] = { ...rest, $nin: [$ne, v] };
+      put(filter, field, { ...rest, $nin: [$ne, v] });
     }
   } else {
-    filter[field] = { ...existing, $ne: v };
+    put(filter, field, { ...existing, $ne: v });
   }
   return print(filter);
 }
@@ -180,7 +190,7 @@ export function addProjectionField(text: string, field: string): string {
     for (const k of sameBranch) if (isExcluded(projection[k])) delete projection[k];
   } else if (!keys.some((k) => isUnder(field, k) && !isExcluded(projection[k]))) {
     for (const k of sameBranch) if (k !== field && isUnder(k, field)) delete projection[k];
-    projection[field] = 1;
+    put(projection, field, 1);
   }
   return print(projection);
 }
