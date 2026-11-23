@@ -579,6 +579,27 @@ mod tests {
         assert!(writes(&env).is_empty());
     }
 
+    // MQLens Server reads update_json as a document, so a pipeline update is
+    // refused by the desktop, saying why, before any request.
+    #[tokio::test]
+    async fn a_pipeline_update_is_refused_before_any_request() {
+        let env = Env::new().await;
+        let (state, id) = connected(&env).await;
+        let err = update_many_impl(
+            &state,
+            &id,
+            "orders",
+            "customers",
+            "{}",
+            r#"[{"$set": {"x": "$y"}}]"#,
+            false,
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("MQLens Server"), "{err}");
+        assert!(writes(&env).is_empty());
+    }
+
     // A user who may only read is refused by the desktop, naming the role it
     // lacks, before any request.
     #[tokio::test]

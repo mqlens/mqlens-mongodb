@@ -5802,7 +5802,7 @@ describe('App Component', () => {
         fireEvent.pointerDown(screen.getByTestId('bulk-write-menu-btn'), { button: 0, pointerType: 'mouse' });
         fireEvent.click(screen.getByTestId('update-many-btn'));
         expect(
-          await screen.findByText('Dokument aktualisieren (Operatoren, z. B. {"$set": {...}}):'),
+          await screen.findByText('Dokument aktualisieren (Operatoren, z. B. {"$set": {...}}) oder Pipeline ([{"$set": {...}}]):'),
         ).toBeInTheDocument();
         expect(screen.getByTestId('update-many-submit')).toHaveTextContent('Aktualisieren');
       } finally {

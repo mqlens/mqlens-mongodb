@@ -60,6 +60,32 @@ describe('UpdateManyModal', () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
+  it('submits a top-level array as an aggregation-pipeline update', () => {
+    const onSubmit = vi.fn();
+    render(<UpdateManyModal {...props} onSubmit={onSubmit} />);
+    fireEvent.change(screen.getByTestId('update-many-editor'), {
+      target: { value: '[\n  { $set: { total: { $add: ["$a", "$b"] }, at: ISODate("2024-01-01") } }\n]' },
+    });
+    expect(screen.queryByTestId('update-many-error')).toBeNull();
+    fireEvent.click(screen.getByTestId('update-many-submit'));
+    expect(JSON.parse(onSubmit.mock.calls[0][0])).toEqual([
+      { $set: { total: { $add: ['$a', '$b'] }, at: { $date: '2024-01-01T00:00:00Z' } } },
+    ]);
+  });
+
+  it.each([
+    ['an empty pipeline', '[]'],
+    ['a stage without an operator', '[{ tier: "gold" }]'],
+    ['a stage naming two operators', '[{ $set: { a: 1 }, $unset: "b" }]'],
+    ['a stage that is not a document', '[1]'],
+  ])('refuses %s', (_, value) => {
+    const onSubmit = vi.fn();
+    render(<UpdateManyModal {...props} onSubmit={onSubmit} />);
+    fireEvent.change(screen.getByTestId('update-many-editor'), { target: { value } });
+    expect(screen.getByTestId('update-many-error')).toBeInTheDocument();
+    expect(screen.getByTestId('update-many-submit')).toBeDisabled();
+  });
+
   it('scrolls a long filter in a bounded area, so the editor keeps its room', () => {
     const filter = JSON.stringify({ _id: { $in: Array.from({ length: 400 }, (_, i) => i) } });
     render(<UpdateManyModal {...props} filter={filter} />);

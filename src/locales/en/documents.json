@@ -100,12 +100,12 @@
         "body_one": "Apply this update to {{count}} document(s) matching:\n{{filter}}",
         "body_other": "Apply this update to {{count}} document(s) matching:\n{{filter}}",
         "confirmLabel": "Update",
-        "hint": "Shell syntax works here: unquoted keys, ISODate(), ObjectId(). Ctrl+Enter applies the update.",
-        "promptMessage": "Update document (operators, e.g. {\"$set\": {...}}):",
+        "hint": "Shell syntax works here: unquoted keys, ISODate(), ObjectId(). Wrap stages in [ ] for a pipeline update, where \"$field\" reads the document. Ctrl+Enter applies the update.",
+        "promptMessage": "Update document (operators, e.g. {\"$set\": {...}}) or pipeline ([{\"$set\": {...}}]):",
         "title": "Update many",
         "validation": {
           "invalidJson": "Invalid JSON",
-          "mustBeObject": "Update must be a JSON object",
+          "mustBeObject": "Update must be a JSON object or a pipeline array",
           "mustUseOperators": "Update must use operators like $set"
         }
       }

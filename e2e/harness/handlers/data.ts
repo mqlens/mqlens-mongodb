@@ -637,10 +637,15 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
     update_many: ({ id, database: db, collection: coll, filter, update, confirmed }) => {
       guardWritable(state, id, { destructive: true, confirmed });
       const where = parseJson<Doc>(filter, {}, 'filter');
-      const change = parseJson<Doc>(update, {}, 'update');
-      const keys = Object.keys(change);
-      if (keys.length === 0 || keys.some((key) => !key.startsWith('$'))) {
-        throw 'Update must use operators like $set (e.g. { "$set": { … } })';
+      const change = parseJson<Doc | Doc[]>(update, {}, 'update');
+      // A top-level array is a pipeline update: each stage one operator.
+      const pipeline = Array.isArray(change);
+      const stages = pipeline ? change : [change];
+      const operatorsOnly = (doc: Doc) => Object.keys(doc).length > 0 && Object.keys(doc).every((key) => key.startsWith('$'));
+      if (stages.length === 0 || !stages.every(operatorsOnly) || (pipeline && stages.some((s) => Object.keys(s).length !== 1))) {
+        throw pipeline
+          ? 'A pipeline update needs stages that each use one operator, like [{ "$set": { … } }]'
+          : 'Update must use operators like $set (e.g. { "$set": { … } })';
       }
       if (isMock(state, id)) return 0;
       const found = collection(id, db, coll);
@@ -654,7 +659,7 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
         if (!matches(doc, where)) continue;
         let next: Doc;
         try {
-          next = applyUpdate(doc, change);
+          next = pipeline ? aggregate([doc], stages)[0] : applyUpdate(doc, change as Doc);
         } catch (error) {
           throw `Failed to update documents: ${String(error)}`;
         }
