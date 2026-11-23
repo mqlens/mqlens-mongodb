@@ -40,6 +40,11 @@ describe('undoBaseline — emptied sub-documents', () => {
 const is = (value: unknown) => ({ $eq: value, $not: { $type: 'array' } });
 const isNull = { $type: 'null', $not: { $type: 'array' } };
 const gone = { $exists: false };
+// A parent the filter reaches into by path is still a sub-document, not an
+// array (whose elements a numeric path would reach), or for a removed one,
+// missing or a sub-document.
+const subDoc = { $type: 'object', $not: { $type: 'array' } };
+const notArray = { $not: { $type: 'array' } };
 
 describe('undoCondition', () => {
   it('requires each value the save wrote to still be there exactly, field by field', () => {
@@ -51,7 +56,13 @@ describe('undoCondition', () => {
   it('reaches into sub-documents by path, so fields a projection hid are not compared', () => {
     const before = { _id: 1, address: { city: 'X', zip: '1' } };
     const saved = { _id: 1, address: { city: 'Y' } };
-    expect(undoCondition(saved, before)).toEqual({ 'address.city': is('Y'), 'address.zip': gone });
+    expect(undoCondition(saved, before)).toEqual({ address: subDoc, 'address.city': is('Y'), 'address.zip': gone });
+  });
+
+  it('requires a parent reached by path to still be a sub-document, not an array put there since', () => {
+    const before = { _id: 1, profile: { '0': 'A' } };
+    const saved = { _id: 1, profile: { '0': 'B' } };
+    expect(undoCondition(saved, before)).toEqual({ profile: subDoc, 'profile.0': is('B') });
   });
 
   it('compares typed values whole, and arrays whole and by length', () => {
@@ -88,7 +99,7 @@ describe('undoCondition — removed sub-documents', () => {
   it('checks each field of a removed sub-document, as fields a projection hid may remain', () => {
     const before = { _id: 1, address: { city: 'X', geo: { lat: 1 } } };
     const saved = { _id: 1 };
-    expect(undoCondition(saved, before)).toEqual({ 'address.city': gone, 'address.geo.lat': gone });
+    expect(undoCondition(saved, before)).toEqual({ address: notArray, 'address.city': gone, 'address.geo': notArray, 'address.geo.lat': gone });
   });
 });
 

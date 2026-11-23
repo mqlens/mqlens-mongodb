@@ -49,6 +49,15 @@ const exactly = (v: unknown): unknown =>
       ? { $eq: v, $size: v.length }
       : { $eq: v, $not: { $type: 'array' } };
 
+// The conditions on the fields of a sub-document, reached by path, plus one on
+// the sub-document itself: an array put there since would be reached by a
+// numeric path (`profile.0`) and written into.
+const under = (path: string, guard: Doc, inner: Doc | null): Doc | null =>
+  inner && Object.assign(bare(), { [path]: guard }, inner);
+const KEPT = { $type: 'object', $not: { $type: 'array' } };
+// A removed one may also be missing.
+const REMOVED = { $not: { $type: 'array' } };
+
 /**
  * The filter an undo adds to `_id`: every value the save wrote must still be
  * there, exactly, so an undo after anything else changed them (another window,
@@ -73,10 +82,10 @@ export function undoCondition(saved: Doc, before: Doc, prefix = ''): Doc | null 
     // that showed part of it, only those fields were removed.
     const inner = !has(saved, key)
       ? isParent(before[key])
-        ? undoCondition({}, before[key] as Doc, `${path}.`)
+        ? under(path, REMOVED, undoCondition({}, before[key] as Doc, `${path}.`))
         : { [path]: { $exists: false } }
       : has(before, key) && isDocument(saved[key]) && isDocument(before[key])
-        ? undoCondition(saved[key] as Doc, before[key] as Doc, `${path}.`)
+        ? under(path, KEPT, undoCondition(saved[key] as Doc, before[key] as Doc, `${path}.`))
         : holdsOperatorName(saved[key])
           ? null
           : { [path]: exactly(saved[key]) };
