@@ -328,13 +328,34 @@ async fn update_many_inner(
 ) -> Result<u64, String> {
     guard_writable(state, id, WriteOp::UpdateMany, confirmed)?;
 
+    use mongodb::options::UpdateModifications;
     let filter_doc = json_to_bson_document(filter)?;
-    let update_doc = json_to_bson_document(update)?;
-    // Require an operator-keyed update ({ "$set": … }); reject bare replacements
-    // / empty updates so a bulk op can't silently overwrite whole documents.
-    if update_doc.is_empty() || !update_doc.keys().all(|k| k.starts_with('$')) {
-        return Err("Update must use operators like $set (e.g. { \"$set\": { … } })".to_string());
-    }
+    // A top-level array is an aggregation-pipeline update, as in mongosh: one
+    // operator per stage. Never a replacement.
+    let update_mods: UpdateModifications = if update.trim_start().starts_with('[') {
+        let stages = parse_json_array_docs(update)?;
+        if stages.is_empty()
+            || !stages
+                .iter()
+                .all(|s| s.len() == 1 && s.keys().all(|k| k.starts_with('$')))
+        {
+            return Err(
+                "A pipeline update needs stages that each use one operator, like [{ \"$set\": { … } }]"
+                    .to_string(),
+            );
+        }
+        stages.into()
+    } else {
+        let update_doc = json_to_bson_document(update)?;
+        // Require an operator-keyed update ({ "$set": … }); reject bare replacements
+        // / empty updates so a bulk op can't silently overwrite whole documents.
+        if update_doc.is_empty() || !update_doc.keys().all(|k| k.starts_with('$')) {
+            return Err(
+                "Update must use operators like $set (e.g. { \"$set\": { … } })".to_string(),
+            );
+        }
+        update_doc.into()
+    };
     if connection_is_mock(state, id)? {
         return Ok(0); // mock connections don't persist updates
     }
@@ -342,21 +363,18 @@ async fn update_many_inner(
         crate::server::remote::Route::Local(client) => client,
         crate::server::remote::Route::Remote(conn) => {
             use crate::server::ops::write;
-            return write::update_many(
-                state,
-                &conn,
-                database,
-                collection,
-                &filter_doc,
-                &update_doc,
-            )
-            .await;
+            // MQLens Server parses update_json as a document only.
+            let UpdateModifications::Document(update_doc) = &update_mods else {
+                return Err("Pipeline updates are not supported over MQLens Server yet".to_string());
+            };
+            return write::update_many(state, &conn, database, collection, &filter_doc, update_doc)
+                .await;
         }
     };
     let res = client
         .database(database)
         .collection::<mongodb::bson::Document>(collection)
-        .update_many(filter_doc, update_doc)
+        .update_many(filter_doc, update_mods)
         .await
         .map_err(|e| format!("Failed to update documents: {}", e))?;
     Ok(res.modified_count)

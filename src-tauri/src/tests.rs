@@ -3781,6 +3781,30 @@ print(2)"], "the script was staged and sent");
         .await
         .expect("mock update_many ok");
         assert_eq!(upd, 0);
+
+        // update_many: an aggregation-pipeline update is accepted (no-op on mock).
+        let pipeline = update_many_impl(
+            &state,
+            &conn_id,
+            "sales_db",
+            "customers",
+            "{}",
+            r#"[{"$set":{"total":{"$add":["$a","$b"]}}}]"#,
+            true,
+        )
+        .await
+        .expect("mock pipeline update_many ok");
+        assert_eq!(pipeline, 0);
+
+        // update_many: an empty pipeline, or a stage without exactly one operator, is rejected.
+        for bad in [r#"[]"#, r#"[{"x":1}]"#, r#"[{"$set":{"a":1},"$unset":"b"}]"#] {
+            assert!(
+                update_many_impl(&state, &conn_id, "sales_db", "customers", "{}", bad, true)
+                    .await
+                    .is_err(),
+                "{bad} should be rejected"
+            );
+        }
     }
 
     // GO-LIVE M6: pure schema inference over sampled documents.

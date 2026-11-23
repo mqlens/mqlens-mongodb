@@ -85,12 +85,12 @@
       "updateMany": {
         "body_other": "将此更新应用到匹配以下条件的 {{count}} 个文档：\n{{filter}}",
         "confirmLabel": "更新",
-        "hint": "此处支持 Shell 语法：不带引号的键、ISODate()、ObjectId()。按 Ctrl+Enter 执行更新。",
-        "promptMessage": "更新内容（使用操作符，例如 {\"$set\": {...}}）：",
+        "hint": "此处支持 Shell 语法：不带引号的键、ISODate()、ObjectId()。用 [ ] 包裹阶段即为管道更新，其中 \"$field\" 读取文档字段。按 Ctrl+Enter 执行更新。",
+        "promptMessage": "更新内容（使用操作符，例如 {\"$set\": {...}}）或管道（[{\"$set\": {...}}]）：",
         "title": "批量更新",
         "validation": {
           "invalidJson": "JSON 无效",
-          "mustBeObject": "更新内容必须是一个 JSON 对象",
+          "mustBeObject": "更新内容必须是一个 JSON 对象或管道数组",
           "mustUseOperators": "更新内容必须使用 $set 等操作符"
         }
       }

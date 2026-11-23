@@ -140,6 +140,27 @@ test.describe('Documents in a collection', () => {
     expect(args.confirmed).toBe(false);
   });
 
+  test('Update Many sends a top-level array as a pipeline update, which can read the document', async ({ app, page }) => {
+    await runFilter(page, '{ tier: "Premium" }');
+    await view(page).getByTestId('bulk-write-menu-btn').click();
+    await page.getByTestId('update-many-btn').click();
+    // A stage with two operators is refused before anything is sent.
+    await setEditorText(page, page.getByTestId('update-many-editor'), '[{ $set: { tier: "$email" }, $unset: "joined" }]');
+    await expect(page.getByTestId('update-many-error')).toBeVisible();
+    await expect(page.getByTestId('update-many-submit')).toBeDisabled();
+    // As a pipeline, "$email" is the document's email, not the literal string.
+    await setEditorText(page, page.getByTestId('update-many-editor'), '[\n  { $set: { tier: "$email" } }\n]');
+    await page.getByTestId('update-many-submit').click();
+
+    await expect(view(page).getByText('Alice Smith')).toHaveCount(0);
+    const updates = await app.calls('update_many');
+    expect(updates).toHaveLength(1);
+    expect(JSON.parse((updates[0].args as { update: string }).update)).toEqual([{ $set: { tier: '$email' } }]);
+
+    await runFilter(page, '{ tier: "alice@example.com" }');
+    await expect(view(page).getByText('Alice Smith').first()).toBeVisible();
+  });
+
   test('Update Many rejects an update that is not valid JSON, without writing', async ({ app, page }) => {
     await view(page).getByTestId('bulk-write-menu-btn').click();
     await page.getByTestId('update-many-btn').click();

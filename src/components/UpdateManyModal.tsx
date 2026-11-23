@@ -24,7 +24,15 @@ function parseUpdate(text: string, t: TFunction): { update: string } | { error: 
   } catch {
     return { error: t('documents:dataGrid.dialogs.updateMany.validation.invalidJson') };
   }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+  // A top-level array is an aggregation-pipeline update, as in mongosh: one operator per stage.
+  const isStage = (s: any) => typeof s === 'object' && s !== null && !Array.isArray(s)
+    && Object.keys(s).length === 1 && Object.keys(s)[0].startsWith('$');
+  if (Array.isArray(parsed)) {
+    return parsed.length > 0 && parsed.every(isStage)
+      ? { update: JSON.stringify(parsed) }
+      : { error: t('documents:dataGrid.dialogs.updateMany.validation.mustUseOperators') };
+  }
+  if (typeof parsed !== 'object' || parsed === null) {
     return { error: t('documents:dataGrid.dialogs.updateMany.validation.mustBeObject') };
   }
   if (Object.keys(parsed).length === 0 || !Object.keys(parsed).every((k) => k.startsWith('$'))) {

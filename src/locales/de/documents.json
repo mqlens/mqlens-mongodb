@@ -305,12 +305,12 @@
         "body_one": "Diese Aktualisierung auf {{count}} Dokument anwenden, das folgendem Filter entspricht?\n{{filter}}",
         "body_other": "Diese Aktualisierung auf {{count}} Dokumente anwenden, die folgendem Filter entsprechen?\n{{filter}}",
         "confirmLabel": "Aktualisieren",
-        "hint": "Shell-Syntax funktioniert hier: Schlüssel ohne Anführungszeichen, ISODate(), ObjectId(). Strg+Enter wendet die Aktualisierung an.",
-        "promptMessage": "Dokument aktualisieren (Operatoren, z. B. {\"$set\": {...}}):",
+        "hint": "Shell-Syntax funktioniert hier: Schlüssel ohne Anführungszeichen, ISODate(), ObjectId(). Stufen in [ ] ergeben ein Pipeline-Update, in dem \"$field\" das Dokument liest. Strg+Enter wendet die Aktualisierung an.",
+        "promptMessage": "Dokument aktualisieren (Operatoren, z. B. {\"$set\": {...}}) oder Pipeline ([{\"$set\": {...}}]):",
         "title": "Mehrere aktualisieren",
         "validation": {
           "invalidJson": "Ungültiges JSON",
-          "mustBeObject": "Die Aktualisierung muss ein JSON-Objekt sein",
+          "mustBeObject": "Die Aktualisierung muss ein JSON-Objekt oder ein Pipeline-Array sein",
           "mustUseOperators": "Die Aktualisierung muss Operatoren wie $set verwenden"
         }
       }
