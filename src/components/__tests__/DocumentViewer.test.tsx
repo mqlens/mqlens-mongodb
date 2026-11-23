@@ -1530,6 +1530,24 @@ describe('page size resync from the pager (#218)', () => {
     expect(onExecute).toHaveBeenCalledWith(expect.objectContaining({ limit: 100 }));
   });
 
+  it('runs from the first page again after the pager moved to a later page', () => {
+    const onExecute = vi.fn();
+    const { rerender } = render(
+      <DocumentViewer {...baseProps} onExecute={onExecute} pagerRequest={{ limit: 50, skip: 0, revision: 0 }} />
+    );
+
+    // User pages forward to page 3.
+    rerender(
+      <DialogProvider>
+        <DocumentViewer {...baseProps} onExecute={onExecute} pagerRequest={{ limit: 50, skip: 100, revision: 1 }} />
+      </DialogProvider>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Run' }));
+
+    expect(onExecute).toHaveBeenCalledWith(expect.objectContaining({ limit: 50, skip: 0 }));
+  });
+
   it('leaves the limit alone on a re-render that did not change what was executed', () => {
     const onExecute = vi.fn();
     const { rerender } = render(

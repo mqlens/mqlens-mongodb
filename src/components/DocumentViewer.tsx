@@ -731,12 +731,15 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   // the revision present on mount, so mounting never applies — otherwise
   // switching tabs would overwrite a restored-but-unrun edit. Everything else
   // that changes the executed query leaves these fields alone.
+  //
+  // Only the page size follows the pager. `skip` deliberately does not: it is
+  // the query's own starting offset, so paging to page 3 and pressing Run
+  // starts again from the first page instead of re-running page 3.
   const appliedPagerRevision = useRef(pagerRequest?.revision);
   useEffect(() => {
     if (!pagerRequest || pagerRequest.revision === appliedPagerRevision.current) return;
     appliedPagerRevision.current = pagerRequest.revision;
     setLimit(String(pagerRequest.limit));
-    setSkip(String(pagerRequest.skip));
   }, [pagerRequest]);
   const [explainLoading, setExplainLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
