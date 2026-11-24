@@ -182,12 +182,12 @@ test.describe('A result cell sent to the query', () => {
     const ran = await callFrom(app, 'execute_mql_query', () => runButton(page).click());
     expect(ran).toMatchObject({ projection: '{"name":0}' });
 
-    // A parent written as a sub-document lists its parts; the field joins them.
+    // A parent written as a sub-document is spelled as dotted paths, and the field joins them.
     await setField(page, 'projection-query-input', '{ address: { state: 1 } }');
     await view(page).getByRole('button', { name: 'JSON', exact: true }).click();
     await jsonLine(page, 'Seattle').click({ button: 'right' });
     await menu(page).getByText('Add field to projection', { exact: true }).click();
-    await expect.poll(() => field(page, 'projection-query-input')).toEqual({ address: { state: 1, city: 1 } });
+    await expect.poll(() => field(page, 'projection-query-input')).toEqual({ 'address.state': 1, 'address.city': 1 });
   });
 
   test('takes typed and empty values from the JSON view', async ({ app, page }) => {
