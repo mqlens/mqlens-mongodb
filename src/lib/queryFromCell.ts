@@ -169,6 +169,16 @@ export function addFilterCondition(
 const isExcluded = (v: unknown): boolean => v === 0 || v === false;
 /** `a.b` is under `a`. */
 const isUnder = (path: string, parent: string): boolean => path.startsWith(`${parent}.`);
+/** `address: { city: 1 }`, the nested way to write `"address.city": 1`. Not
+ *  an operator such as `{ $slice: 2 }`, which applies to the field as a whole. */
+const isNestedProjection = (v: unknown): v is QueryDoc =>
+  isPlainObject(v)
+  && !isBsonInstance(v)
+  && Object.keys(v).length > 0
+  && !Object.keys(v).some((k) => k.startsWith('$'));
+/** Hidden, as a whole or in one of its parts. */
+const hides = (v: unknown): boolean =>
+  isExcluded(v) || (isNestedProjection(v) && Object.values(v).some(hides));
 
 /**
  * Make sure `field` is returned. An including projection gains `field: 1`. A
@@ -179,20 +189,33 @@ const isUnder = (path: string, parent: string): boolean => path.startsWith(`${pa
  * the same branch are reconciled: a field already covered by an included
  * parent needs nothing, and an included field replaces entries for its parts.
  * Un-hiding drops the exclusion of the field, of its parts, and of a parent
- * that hides it (which also brings back that parent's other fields).
+ * that hides it (which also brings back that parent's other fields). A parent
+ * written as a sub-document lists its parts, so the field is added inside it.
  */
 export function addProjectionField(text: string, field: string): string {
   const projection = parse(text);
+  includeField(projection, field, true);
+  return print(projection);
+}
+
+function includeField(projection: QueryDoc, field: string, topLevel: boolean): void {
   const keys = Object.keys(projection);
-  const excluding = keys.some((k) => k !== '_id' && isExcluded(projection[k]));
+  const nestedParent = keys.find((k) => isUnder(field, k) && isNestedProjection(projection[k]));
+  if (nestedParent !== undefined) {
+    const parts = projection[nestedParent] as QueryDoc;
+    includeField(parts, field.slice(nestedParent.length + 1), false);
+    // Un-hiding its last part leaves nothing to say about the parent.
+    if (Object.keys(parts).length === 0) delete projection[nestedParent];
+    return;
+  }
+  const excluding = keys.some((k) => !(topLevel && k === '_id') && hides(projection[k]));
   const sameBranch = keys.filter((k) => k === field || isUnder(k, field) || isUnder(field, k));
   if (excluding) {
-    for (const k of sameBranch) if (isExcluded(projection[k])) delete projection[k];
+    for (const k of sameBranch) if (hides(projection[k])) delete projection[k];
   } else if (!keys.some((k) => isUnder(field, k) && !isExcluded(projection[k]))) {
     for (const k of sameBranch) if (k !== field && isUnder(k, field)) delete projection[k];
     put(projection, field, 1);
   }
-  return print(projection);
 }
 
 /** A sort by `field` alone, replacing any existing sort. */

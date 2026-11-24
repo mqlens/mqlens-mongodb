@@ -191,6 +191,30 @@ describe('addProjectionField on nested paths', () => {
   });
 });
 
+describe('addProjectionField with a parent written as a sub-document', () => {
+  it('adds the field among the parts the parent lists', () => {
+    expect(run(addProjectionField('{ address: { city: 1 } }', 'address.zip'))).toEqual({ address: { city: 1, zip: 1 } });
+    expect(run(addProjectionField('{ a: { b: { c: 1 } } }', 'a.b.d'))).toEqual({ a: { b: { c: 1, d: 1 } } });
+    expect(run(addProjectionField('{ address: { city: 1 } }', 'address.city'))).toEqual({ address: { city: 1 } });
+  });
+
+  it('replaces the listed parts when the whole parent is asked for', () => {
+    expect(run(addProjectionField('{ address: { city: 1 } }', 'address'))).toEqual({ address: 1 });
+  });
+
+  it('un-hides a part hidden inside the parent, and does not mix in an inclusion', () => {
+    expect(run(addProjectionField('{ address: { city: 0, zip: 0 } }', 'address.city'))).toEqual({ address: { zip: 0 } });
+    expect(addProjectionField('{ address: { city: 0 } }', 'address.city')).toBe('');
+    expect(run(addProjectionField('{ address: { city: 0 } }', 'address.zip'))).toEqual({ address: { city: 0 } });
+    expect(run(addProjectionField('{ address: { city: 0 } }', 'name'))).toEqual({ address: { city: 0 } });
+    expect(run(addProjectionField('{ address: { city: 0 }, secret: 0 }', 'address'))).toEqual({ secret: 0 });
+  });
+
+  it('takes an operator on the parent as including it whole', () => {
+    expect(run(addProjectionField('{ items: { $slice: 2 } }', 'items.sku'))).toEqual({ items: { $slice: 2 } });
+  });
+});
+
 describe('sortByField', () => {
   it('sorts by that field alone', () => {
     expect(run(sortByField('address.city', 1))).toEqual({ 'address.city': 1 });
