@@ -49,6 +49,7 @@
   },
   "dataGrid": {
     "actions": {
+      "addToProjection": "Add field to projection",
       "cancelCompareSelection": "Cancel compare selection",
       "compareWith": "Compare with…",
       "compareWithReplaceSelection": "Compare with… (replace selection)",
@@ -64,10 +65,14 @@
       "deleteMany": "Delete Many",
       "duplicateDocument": "Duplicate document",
       "editDocument": "Edit document",
+      "excludeValue": "Exclude this value",
+      "filterByValue": "Filter by this value",
       "insert": "Insert",
       "next": "Next",
       "prev": "Prev",
       "schema": "Schema",
+      "sortAscending": "Sort ascending by this field",
+      "sortDescending": "Sort descending by this field",
       "updateMany": "Update Many",
       "updateOrDelete": "Update or Delete"
     },

@@ -47,6 +47,7 @@
   },
   "dataGrid": {
     "actions": {
+      "addToProjection": "将字段添加到投影",
       "cancelCompareSelection": "取消对比选择",
       "compareWith": "与…对比",
       "compareWithReplaceSelection": "与…对比（替换所选）",
@@ -62,10 +63,14 @@
       "deleteMany": "批量删除",
       "duplicateDocument": "复制文档",
       "editDocument": "编辑文档",
+      "excludeValue": "排除此值",
+      "filterByValue": "按此值筛选",
       "insert": "插入",
       "next": "下一页",
       "prev": "上一页",
       "schema": "结构",
+      "sortAscending": "按此字段升序排序",
+      "sortDescending": "按此字段降序排序",
       "updateMany": "批量更新",
       "updateOrDelete": "更新或删除"
     },

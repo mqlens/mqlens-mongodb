@@ -7,6 +7,7 @@ import { useCollectionSchema } from '../lib/useCollectionSchema';
 import { collectionRef, type GeneratedQuery } from '../lib/mongoCommand';
 import { docToShell, parseShellJson, parseQueryObject, shellDocErrorKey, shellDocErrorParams, type ShellDocNotices } from '../lib/shellDoc';
 import { openUrl } from '@tauri-apps/plugin-opener';
+import { addFilterCondition, addProjectionField, sortByField } from '../lib/queryFromCell';
 import { getBehaviorSettings, useBehaviorSettings } from '../lib/behaviorSettings';
 import { bareObjectIdFilter, resolveFindFilter } from '../lib/objectIdQuery';
 import {
@@ -674,9 +675,19 @@ const syncSortFromQuery = (jsonStr: string): SortRule[] => {
   }
 };
 
+/** A results-grid cell sent to the find query from the grid's context menu.
+ *  `field` is a dotted query path; `value` is the cell's value, for the two
+ *  filter kinds. */
+export type CellQueryAction =
+  | { kind: 'filter' | 'exclude'; field: string; value: unknown }
+  | { kind: 'project' | 'sortAsc' | 'sortDesc'; field: string };
+
 export interface DocumentViewerContextType {
   handleExplain: () => void;
   explainLoading: boolean;
+  /** Adds a cell to the find query's filter, projection or sort. Absent while
+   *  the tab is building an aggregation, which has no such fields. */
+  addCellToQuery?: (action: CellQueryAction) => void;
 }
 
 export const DocumentViewerContext = React.createContext<DocumentViewerContextType | null>(null);
@@ -1674,9 +1685,59 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
     handleExplainRef.current = handleExplain;
   });
   const stableHandleExplain = React.useCallback(() => handleExplainRef.current(), []);
+  // A cell from the results grid's context menu, merged into the query bar.
+  // Nothing runs: the text changes and Run is left to the user, as with the
+  // visual builder. An open builder is re-synced from the new text, the same
+  // as when the text is typed.
+  const addCellToQuery = (action: CellQueryAction) => {
+    try {
+      if (action.kind === 'filter' || action.kind === 'exclude') {
+        // A bare ObjectId is an _id lookup when it runs; add to that query.
+        const current = (behavior.defaultIdSearch && bareObjectIdFilter(filterQuery)) || filterQuery;
+        const next = addFilterCondition(current, action.field, action.value, action.kind === 'filter' ? 'eq' : 'ne');
+        setFilterQuery(next);
+        setIsQueryEnabled(true);
+        if (isQueryBuilderOpen) syncFilterRulesFromInput(next);
+        return;
+      }
+      // Projection and sort sit in the collapsible options row; a change made
+      // while it is folded away would be invisible.
+      setOptionsOpen(true);
+      if (action.kind === 'project') {
+        const next = addProjectionField(projectionQuery, action.field);
+        setProjectionQuery(next);
+        // The builder's "projection" switch may be off from an earlier
+        // session with it; Run sends no projection while it is.
+        setIsProjectionEnabled(true);
+        if (isQueryBuilderOpen) syncProjectionRulesFromInput(next);
+      } else {
+        const next = sortByField(action.field, action.kind === 'sortAsc' ? 1 : -1);
+        setSortQuery(next);
+        setIsSortEnabled(true);
+        if (isQueryBuilderOpen) syncSortRulesFromInput(next);
+      }
+    } catch {
+      // The text already there does not parse, so there is nothing to add to.
+      // Left as typed rather than overwritten.
+      toast(t('toast.fixQueryBeforeAdding'), 'error');
+    }
+  };
+  const addCellToQueryRef = useRef(addCellToQuery);
+  useEffect(() => {
+    addCellToQueryRef.current = addCellToQuery;
+  });
+  const stableAddCellToQuery = React.useCallback(
+    (action: CellQueryAction) => addCellToQueryRef.current(action),
+    []
+  );
+
   const documentViewerContextValue = useMemo(
-    () => ({ handleExplain: stableHandleExplain, explainLoading }),
-    [stableHandleExplain, explainLoading]
+    () => ({
+      handleExplain: stableHandleExplain,
+      explainLoading,
+      addCellToQuery: queryMode === 'find' ? stableAddCellToQuery : undefined,
+    }),
+    [stableHandleExplain, explainLoading, queryMode, stableAddCellToQuery]
   );
 
   const handleClearField = (field: 'filter' | 'projection' | 'sort') => {

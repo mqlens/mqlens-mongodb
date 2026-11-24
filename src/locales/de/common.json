@@ -85,6 +85,7 @@
     "filesFailedToUpload_one": "{{count}} Datei konnte nicht hochgeladen werden.",
     "filesFailedToUpload_other": "{{count}} Dateien konnten nicht hochgeladen werden.",
     "filterCleared": "Filterparameter geleert",
+    "fixQueryBeforeAdding": "Abfragetext korrigieren, bevor etwas hinzugefügt wird",
     "generateFailedToStart": "Generierung konnte nicht gestartet werden: {{detail}}",
     "importFailedToStart": "Import konnte nicht gestartet werden: {{detail}}",
     "indexNotPutBack": "Die Änderung ist fehlgeschlagen und der Index konnte nicht wiederhergestellt werden: {{detail}}. Seine Definition war {{spec}}",

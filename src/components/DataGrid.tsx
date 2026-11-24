@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useContext } from 'react';
 import { useTranslation, Trans } from 'react-i18next';
 import { DocumentViewerContext } from './DocumentViewer';
 import { List } from 'react-window';
-import { Table, Braces, ChevronRight, ChevronDown, ListFilter, Copy, Check, Edit, Trash2, Plus, Table2, BarChart3, Lightbulb, GitCompareArrows, AlertTriangle, ArrowUp, ArrowDown, EyeOff, Eye, ArrowLeft, ArrowRight } from 'lucide-react';
+import { Table, Braces, ChevronRight, ChevronDown, ListFilter, Copy, Check, Edit, Trash2, Plus, Table2, BarChart3, Lightbulb, GitCompareArrows, AlertTriangle, ArrowUp, ArrowDown, EyeOff, Eye, ArrowLeft, ArrowRight, Filter, FilterX, Columns3, ArrowUpNarrowWide, ArrowDownWideNarrow } from 'lucide-react';
 import { ChartView } from './ChartView';
 import { ContextMenu, type ContextMenuItem } from './ContextMenu';
 import { DocumentDiffModal } from './DocumentDiffModal';
@@ -13,6 +13,7 @@ import { useMonacoTheme, useMonacoFontSize } from '../lib/useMonacoTheme';
 import { EJSON } from 'bson';
 import { toPlainJson } from '../lib/plainJson';
 import { copyValueToText } from '../lib/copyValue';
+import { isFilterableValue } from '../lib/queryFromCell';
 import { docToShell, parseShellJson } from '../lib/shellDoc';
 import { ResultsFindBar } from './ResultsFindBar';
 import {
@@ -471,12 +472,34 @@ interface JsonEndpoint {
   offset: number;
 }
 
+/**
+ * The dotted query path of the value under key `key` of a container at
+ * `parent` ('' for the document itself). Array indexes are left out, so a
+ * value inside an array gets the path that matches it in any element. Null
+ * when a query cannot name the value: a key that contains a dot reads as a
+ * nested path, one that starts with `$` as an operator, and a path does not
+ * reach into an array that is itself an element of an array.
+ */
+function childQueryPath(
+  parent: string | null,
+  key: string,
+  parentIsArray: boolean,
+  parentIsArrayElement = false,
+): string | null {
+  if (parent === null) return null;
+  if (parentIsArray) return parentIsArrayElement ? null : parent;
+  if (key.includes('.') || key.startsWith('$')) return null;
+  return parent ? `${parent}.${key}` : key;
+}
+
 interface JsonLine {
   num: number;
   depth: number;
   kind: 'scalar' | 'open' | 'close' | 'empty';
   keyName: string | null;
   value?: any;
+  /** Dotted query path of the value this line starts (see `childQueryPath`). */
+  queryPath?: string;
   bracket?: string; // open/close bracket char
   brackets?: string; // empty '{}' / '[]'
   hasComma: boolean;
@@ -514,6 +537,9 @@ interface TreeRow {
   keyName: string;
   /** Keys from the document root down to this value; empty for the root. */
   path: string[];
+  /** `path` as a dotted query path (see `childQueryPath`); undefined when a
+   *  query cannot name this value, and for the document root. */
+  queryPath?: string;
   /** Inside an array, which the backend writes back whole: not edited in place,
    *  so a save cannot overwrite another element changed since the results loaded. */
   underArray?: boolean;
@@ -542,6 +568,7 @@ interface JsonRowExtra {
     doc: Record<string, any> | undefined,
     field?: string,
     value?: any,
+    queryPath?: string,
   ) => void;
   renderContent: (line: JsonLine) => React.ReactNode;
   hasRowActions: boolean;
@@ -662,7 +689,7 @@ const JsonRow = ({
       // after virtualization has unmounted the rows it started on (#311).
       data-json-line={index}
       data-doc-even={line.docIndex % 2 === 0}
-      onContextMenu={(e) => openCtxMenu(e, documents[line.docIndex], line.kind === 'scalar' ? line.keyName ?? undefined : undefined, line.value)}
+      onContextMenu={(e) => openCtxMenu(e, documents[line.docIndex], line.kind === 'scalar' ? line.keyName ?? undefined : undefined, line.value, line.queryPath)}
     >
       <span
         className="json-view-gutter sticky left-0 w-[52px] shrink-0 select-none bg-inherit pr-3 text-right text-[10px] text-muted-foreground before:content-[attr(data-num)]"
@@ -878,7 +905,7 @@ const TableRow = ({
             findHighlightClass(index, col)
           )}
           style={{ width: `${colWidth(col)}px`, flexShrink: 0 }}
-          onContextMenu={(e) => openCtxMenu(e, rawDoc, col, cellValue(rawDoc, col))}
+          onContextMenu={(e) => openCtxMenu(e, rawDoc, col, cellValue(rawDoc, col), cellPath(col).reduce<string | null>((path, key) => childQueryPath(path, key, false), '') || undefined)}
           onDoubleClick={startCellEdit && editable(col) ? () => startCellEdit({ docIndex, path: cellPath(col) }) : undefined}
         >
           {isCellEditing(cellEdit, docIndex, cellPath(col)) ? renderCellEditor() : renderCell(cellValue(rawDoc, col))}
@@ -946,7 +973,7 @@ const TreeRowComponent = ({
         findHighlightClass(row.num)
       )}
       data-doc-even={row.docIndex % 2 === 0}
-      onContextMenu={(e) => openCtxMenu(e, documents[row.docIndex], row.kind === 'scalar' ? row.keyName : undefined, row.value)}
+      onContextMenu={(e) => openCtxMenu(e, documents[row.docIndex], row.kind === 'scalar' ? row.keyName : undefined, row.value, row.queryPath)}
     >
       <div className="flex min-w-0 items-center border-r border-border" style={{ width: keyWidth, paddingLeft: 6 + row.depth * 14 }}>
         {row.foldId !== undefined ? (
@@ -1039,7 +1066,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   }, [loading]);
 
   const [ctxMenu, setCtxMenu] = useState<
-    { x: number; y: number; doc: Record<string, any>; field?: string; value?: any } | null
+    { x: number; y: number; doc: Record<string, any>; field?: string; value?: any; queryPath?: string } | null
   >(null);
 
   // Two-step "Compare with…" flow: the first pick is held here as the armed
@@ -1086,11 +1113,12 @@ export const DataGrid: React.FC<DataGridProps> = ({
     doc: Record<string, any> | undefined,
     field?: string,
     value?: any,
+    queryPath?: string,
   ) => {
     if (!doc) return;
     e.preventDefault();
     e.stopPropagation();
-    setCtxMenu({ x: e.clientX, y: e.clientY, doc, field, value });
+    setCtxMenu({ x: e.clientX, y: e.clientY, doc, field, value, queryPath });
   };
   const buildCtxItems = (m: NonNullable<typeof ctxMenu>): ContextMenuItem[] => {
     const items: ContextMenuItem[] = [];
@@ -1130,6 +1158,26 @@ export const DataGrid: React.FC<DataGridProps> = ({
     if (m.field) {
       items.push({ label: t('dataGrid.actions.copyValue'), icon: <Copy size={13} />, separatorBefore: true, onClick: () => writeClipboard(copyValueToText(m.value)) });
       items.push({ label: t('dataGrid.actions.copyFieldName'), icon: <Copy size={13} />, onClick: () => writeClipboard(m.field!) });
+    }
+    // Send the cell to the find query bar. Only inside a collection tab in
+    // find mode (the shell and an aggregation have no such fields to fill).
+    const addCellToQuery = docViewerContext?.addCellToQuery;
+    if (addCellToQuery && m.queryPath) {
+      const field = m.queryPath;
+      let first = true;
+      const add = (label: string, icon: React.ReactNode, onClick: () => void) => {
+        items.push({ label, icon, onClick, separatorBefore: first });
+        first = false;
+      };
+      // Plain JSON shows typed values as bare strings and numbers, so a value
+      // taken from that view would no longer match what is stored.
+      if (isFilterableValue(m.value) && !usePlainJson) {
+        add(t('dataGrid.actions.filterByValue'), <Filter size={13} />, () => addCellToQuery({ kind: 'filter', field, value: m.value }));
+        add(t('dataGrid.actions.excludeValue'), <FilterX size={13} />, () => addCellToQuery({ kind: 'exclude', field, value: m.value }));
+      }
+      add(t('dataGrid.actions.addToProjection'), <Columns3 size={13} />, () => addCellToQuery({ kind: 'project', field }));
+      add(t('dataGrid.actions.sortAscending'), <ArrowUpNarrowWide size={13} />, () => addCellToQuery({ kind: 'sortAsc', field }));
+      add(t('dataGrid.actions.sortDescending'), <ArrowDownWideNarrow size={13} />, () => addCellToQuery({ kind: 'sortDesc', field }));
     }
     if (onDeleteDocument) items.push({ label: t('dataGrid.actions.deleteDocument'), icon: <Trash2 size={13} />, danger: true, separatorBefore: true, onClick: () => onDeleteDocument(m.doc), disabled: isReadOnly, title: isReadOnly ? t('dataGrid.tooltips.readOnly') : undefined });
     return items;
@@ -1643,7 +1691,8 @@ export const DataGrid: React.FC<DataGridProps> = ({
       ancestors: number[],
       docIndex: number,
       isDocRoot: boolean,
-      rawDoc?: Record<string, any>
+      rawDoc?: Record<string, any>,
+      queryPath: string | null = ''
     ) => {
       const keyChars = keyName !== null ? keyName.length + 5 : 0;
       const isArr = Array.isArray(value);
@@ -1651,7 +1700,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
 
       if (!isObj && !isArr) {
         track(depth, keyChars + valueLen(value) + (trailingComma ? 1 : 0));
-        lines.push({ num: lines.length + 1, depth, kind: 'scalar', keyName, value, hasComma: trailingComma, ancestors, docIndex });
+        lines.push({ num: lines.length + 1, depth, kind: 'scalar', keyName, value, queryPath: queryPath || undefined, hasComma: trailingComma, ancestors, docIndex });
         return;
       }
 
@@ -1663,7 +1712,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
 
       if (entries.length === 0) {
         track(depth, keyChars + 2 + (trailingComma ? 1 : 0));
-        lines.push({ num: lines.length + 1, depth, kind: 'empty', keyName, brackets: open + close, hasComma: trailingComma, ancestors, docIndex });
+        lines.push({ num: lines.length + 1, depth, kind: 'empty', keyName, brackets: open + close, queryPath: queryPath || undefined, hasComma: trailingComma, ancestors, docIndex });
         return;
       }
 
@@ -1674,6 +1723,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
         depth,
         kind: 'open',
         keyName,
+        queryPath: queryPath || undefined,
         bracket: open,
         hasComma: trailingComma,
         ancestors,
@@ -1687,7 +1737,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
       const childAncestors = [...ancestors, foldId];
       entries.forEach(([k, v], idx) => {
         const last = idx === entries.length - 1;
-        walk(v, isArr ? null : k, depth + 1, !last, childAncestors, docIndex, false);
+        walk(v, isArr ? null : k, depth + 1, !last, childAncestors, docIndex, false, undefined, childQueryPath(queryPath, k, isArr, keyName === null && !isDocRoot));
       });
 
       track(depth, 2);
@@ -2165,7 +2215,9 @@ export const DataGrid: React.FC<DataGridProps> = ({
       docIndex: number,
       isDocRoot: boolean,
       rawDoc?: Record<string, any>,
-      underArray = false
+      underArray = false,
+      queryPath: string | null = '',
+      isArrayElement = false
     ) => {
       const isArr = Array.isArray(value);
       const isObj = value !== null && typeof value === 'object' && !isBsonObject(value) && !isArr;
@@ -2176,6 +2228,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
           depth,
           keyName,
           path,
+          queryPath: queryPath || undefined,
           kind: 'scalar',
           value,
           childCount: 0,
@@ -2199,6 +2252,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
         depth,
         keyName,
         path,
+        queryPath: queryPath || undefined,
         kind: isArr ? 'array' : 'object',
         childCount: entries.length,
         type: isArr ? 'Array' : 'Object',
@@ -2210,7 +2264,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
       });
 
       const childAncestors = [...ancestors, foldId];
-      entries.forEach(([k, v]) => walk(v, k, [...path, k], depth + 1, childAncestors, docIndex, false, undefined, underArray || isArr));
+      entries.forEach(([k, v]) => walk(v, k, [...path, k], depth + 1, childAncestors, docIndex, false, undefined, underArray || isArr, childQueryPath(queryPath, k, isArr, isArrayElement), isArr));
     };
 
     parsedDocs.forEach((doc, di) => {
