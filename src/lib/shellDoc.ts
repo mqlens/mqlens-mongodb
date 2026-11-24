@@ -37,13 +37,12 @@ export function docToShell(v: any, indent = 0): string {
       if (ks[0] === '$oid') return `ObjectId("${v.$oid}")`;
       if (ks[0] === '$date') {
         const d = v.$date;
-        const iso =
-          typeof d === 'string'
-            ? d
-            : d && typeof d === 'object' && '$numberLong' in d
-              ? new Date(Number(d.$numberLong)).toISOString()
-              : '';
-        return `ISODate("${iso}")`;
+        const ms = d && typeof d === 'object' && '$numberLong' in d ? new Date(Number(d.$numberLong)) : null;
+        // Past JavaScript's date range there is no ISO form: fall through and
+        // show `{ "$date" : NumberLong("…") }`, which shellToEjson reads back.
+        if (!ms || !Number.isNaN(ms.getTime())) {
+          return `ISODate("${typeof d === 'string' ? d : ms ? ms.toISOString() : ''}")`;
+        }
       }
       if (ks[0] === '$numberLong') return `NumberLong("${v.$numberLong}")`;
       if (ks[0] === '$numberDecimal') return `NumberDecimal("${v.$numberDecimal}")`;

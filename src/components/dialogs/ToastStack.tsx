@@ -10,11 +10,22 @@ export interface Toast {
   message: string;
   kind: ToastKind;
   title?: string;
+  action?: ToastAction;
+}
+
+/** One button on the toast, such as Undo. Clicking it also dismisses the toast. */
+export interface ToastAction {
+  label: string;
+  onClick: () => void;
 }
 
 export interface ToastOptions {
   title?: string;
+  action?: ToastAction;
 }
+
+// A toast with an action stays long enough to reach for the button.
+const ACTION_DURATION = 10000;
 
 // Errors linger longer so they aren't missed; successes/info clear quickly.
 const DURATION: Record<ToastKind, number> = {
@@ -66,7 +77,7 @@ const ToastItem: React.FC<{ toast: Toast; onDismiss: (id: number) => void }> = (
   onDismiss,
 }) => {
   const { t } = useTranslation('shell');
-  const duration = DURATION[toast.kind];
+  const duration = toast.action ? ACTION_DURATION : DURATION[toast.kind];
   const styles = KIND_STYLES[toast.kind];
   const Icon = ICON[toast.kind];
   const title = toast.title ?? t(DEFAULT_TITLE_KEY[toast.kind]);
@@ -101,6 +112,19 @@ const ToastItem: React.FC<{ toast: Toast; onDismiss: (id: number) => void }> = (
           <p className={cn('text-xs font-semibold uppercase tracking-wide', styles.label)}>{title}</p>
           <p className="dialog-toast-msg mt-0.5 text-sm leading-snug text-foreground">{toast.message}</p>
         </div>
+        {toast.action && (
+          <button
+            type="button"
+            className="shrink-0 self-center rounded-md border border-border bg-background/60 px-2.5 py-1 text-xs font-semibold text-foreground transition-colors hover:bg-background"
+            data-testid="dialog-toast-action"
+            onClick={() => {
+              onDismiss(toast.id);
+              toast.action!.onClick();
+            }}
+          >
+            {toast.action.label}
+          </button>
+        )}
         <button
           type="button"
           className="shrink-0 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground"

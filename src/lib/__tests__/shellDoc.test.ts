@@ -53,6 +53,12 @@ describe('shellToEjson', () => {
     expect(parsed.note).toBe('run ISODate(now) please');
   });
 
+  it('keeps a $date outside the JavaScript date range as its number, and round-trips it (#578 review)', () => {
+    const doc = { d: { $date: { $numberLong: '8640000000000001' } } };
+    expect(docToShell(doc)).toContain('8640000000000001');
+    expect(JSON.parse(shellToEjson(docToShell(doc)))).toEqual(doc);
+  });
+
   it('round-trips docToShell -> shellToEjson', () => {
     const doc = { _id: { $oid: '507f1f77bcf86cd799439011' }, when: { $date: '2025-01-04T00:00:00.000Z' }, tags: ['a', 'b'] };
     expect(JSON.parse(shellToEjson(docToShell(doc)))).toEqual(doc);

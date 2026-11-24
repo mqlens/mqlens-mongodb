@@ -112,6 +112,35 @@ test.describe('Query tools', () => {
     await expect(view(page)).not.toContainText('Bob Johnson');
   });
 
+  test('Run starts again from the first page after paging forward', async ({ app, page }) => {
+    await openCustomers(app, page);
+    await view(page).getByTestId('query-options-toggle').click();
+    const options = view(page).getByTestId('query-options-section');
+    const skipField = options.getByRole('spinbutton').nth(0);
+    await options.getByRole('spinbutton').nth(1).fill('1');
+    await callFrom(app, 'execute_mql_query', () => runButton(page).click());
+
+    // Page forward twice: the pager asks for the third document.
+    await callFrom(app, 'execute_mql_query', () => view(page).getByTestId('pager-next').click());
+    const third = await callFrom(app, 'execute_mql_query', () => view(page).getByTestId('pager-next').click());
+    expect(third).toMatchObject({ skip: 2, limit: 1 });
+
+    // Skip is the query's own starting offset, not the pager's position: it
+    // stays as typed, and Run goes back to the start.
+    await expect(skipField).toHaveValue('0');
+    const rerun = await callFrom(app, 'execute_mql_query', () => runButton(page).click());
+    expect(rerun).toMatchObject({ skip: 0, limit: 1 });
+
+    // A skip the user typed is kept across paging, and Run returns to it.
+    await skipField.fill('1');
+    await callFrom(app, 'execute_mql_query', () => runButton(page).click());
+    const next = await callFrom(app, 'execute_mql_query', () => view(page).getByTestId('pager-next').click());
+    expect(next).toMatchObject({ skip: 2, limit: 1 });
+    await expect(skipField).toHaveValue('1');
+    const back = await callFrom(app, 'execute_mql_query', () => runButton(page).click());
+    expect(back).toMatchObject({ skip: 1, limit: 1 });
+  });
+
   test('saves, loads and deletes a query, and pins a default', async ({ app, page }) => {
     await openCustomers(app, page);
     await runFilter(page, '{ tier: "Premium" }');
