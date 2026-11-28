@@ -100,6 +100,15 @@ const ALLOWED_IDENTICAL_VALUES = new Set([
   'connections:auth.methodLdap', // LDAP (PLAIN)
   'connections:advanced.compressionSnappy', // Snappy
   'connections:advanced.compressionZlib', // Zlib
+  // BSON type names in the tree's Add field type picker, spelled as the tree's
+  // own Type column spells them (and the shell, and the docs).
+  'documents:dataGrid.fieldOps.types.array', // Array
+  'documents:dataGrid.fieldOps.types.boolean', // Boolean
+  'documents:dataGrid.fieldOps.types.decimal', // Decimal128
+  'documents:dataGrid.fieldOps.types.long', // Int64
+  'documents:dataGrid.fieldOps.types.null', // Null
+  'documents:dataGrid.fieldOps.types.objectId', // ObjectId
+  'documents:dataGrid.fieldOps.types.string', // String
   // Connection colour-tag names whose German spelling IS the English one. The
   // other six in the same set are genuinely translated (Rot, Bernstein, Grün,
   // Blau, Violett, Schiefer), so this is a property of these two words, not a

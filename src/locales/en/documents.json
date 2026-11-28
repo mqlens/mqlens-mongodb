@@ -142,6 +142,41 @@
         "returned": "{{n}} returned"
       }
     },
+    "fieldOps": {
+      "add": "Add",
+      "addField": "Add field…",
+      "addIn": "Inside {{field}}",
+      "addTitle": "Add field",
+      "invalidValue": "Not a valid {{type}} value.",
+      "nameErrors": {
+        "dollar": "A field name cannot start with $.",
+        "dot": "A field name cannot contain a dot.",
+        "empty": "Enter a field name.",
+        "exists": "A field with this name is already here."
+      },
+      "next": "Next",
+      "remove": "Remove",
+      "removeField": "Remove field",
+      "removeMessage": "Remove the field \"{{field}}\" from this document?",
+      "removeTitle": "Remove field",
+      "rename": "Rename",
+      "renameField": "Rename field…",
+      "renameTitle": "Rename field {{field}}",
+      "types": {
+        "array": "Array",
+        "boolean": "Boolean",
+        "date": "Date",
+        "decimal": "Decimal128",
+        "long": "Int64",
+        "null": "Null",
+        "number": "Number",
+        "object": "Object",
+        "objectId": "ObjectId",
+        "string": "String"
+      },
+      "typeTitle": "Type of {{field}}",
+      "valueTitle": "{{type}} value of {{field}}"
+    },
     "find": {
       "close": "Close find (Esc)",
       "count": "{{current}} of {{total}}",

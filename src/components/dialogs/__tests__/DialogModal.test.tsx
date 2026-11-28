@@ -3,6 +3,19 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { DialogModal } from '../DialogModal';
 
 describe('DialogModal', () => {
+  // The provider keeps one modal mounted when a dialog opens in the same render
+  // that closes the one before it, as a browser click does: Add field's name
+  // prompt, then its type, then its value. The value prompt opened holding the
+  // name typed into the first.
+  it('starts a new prompt from its own value, not the one typed into the request before', () => {
+    const { rerender } = render(<DialogModal request={{ type: 'prompt', title: 'First' }} onResolve={vi.fn()} />);
+    fireEvent.change(screen.getByTestId('dialog-input'), { target: { value: 'typed first' } });
+
+    rerender(<DialogModal request={{ type: 'prompt', title: 'Second', defaultValue: 'own' }} onResolve={vi.fn()} />);
+
+    expect(screen.getByTestId('dialog-input')).toHaveValue('own');
+  });
+
   // Regression test for Critical 2 (final review, task-6-report.md):
   // DialogModal had no `useTranslation` at all, so `cancelLabel ?? 'Cancel'`
   // and `confirmLabel ?? 'Confirm'` rendered hardcoded English regardless of

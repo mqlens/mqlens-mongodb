@@ -347,6 +347,41 @@
         "returned": "{{n}} zurückgegeben"
       }
     },
+    "fieldOps": {
+      "add": "Hinzufügen",
+      "addField": "Feld hinzufügen…",
+      "addIn": "In {{field}}",
+      "addTitle": "Feld hinzufügen",
+      "invalidValue": "Kein gültiger Wert vom Typ {{type}}.",
+      "nameErrors": {
+        "dollar": "Ein Feldname darf nicht mit $ beginnen.",
+        "dot": "Ein Feldname darf keinen Punkt enthalten.",
+        "empty": "Gib einen Feldnamen ein.",
+        "exists": "Ein Feld mit diesem Namen gibt es hier schon."
+      },
+      "next": "Weiter",
+      "remove": "Entfernen",
+      "removeField": "Feld entfernen",
+      "removeMessage": "Das Feld „{{field}}“ aus diesem Dokument entfernen?",
+      "removeTitle": "Feld entfernen",
+      "rename": "Umbenennen",
+      "renameField": "Feld umbenennen…",
+      "renameTitle": "Feld {{field}} umbenennen",
+      "typeTitle": "Typ von {{field}}",
+      "types": {
+        "array": "Array",
+        "boolean": "Boolean",
+        "date": "Datum",
+        "decimal": "Decimal128",
+        "long": "Int64",
+        "null": "Null",
+        "number": "Zahl",
+        "object": "Objekt",
+        "objectId": "ObjectId",
+        "string": "String"
+      },
+      "valueTitle": "{{type}}-Wert von {{field}}"
+    },
     "find": {
       "close": "Suche schließen (Esc)",
       "count": "{{current}} von {{total}}",

@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useContext } from 'react';
 import { useTranslation, Trans } from 'react-i18next';
 import { DocumentViewerContext } from './DocumentViewer';
 import { List } from 'react-window';
-import { Table, Braces, ChevronRight, ChevronDown, ListFilter, Copy, Check, Edit, Trash2, Plus, Table2, BarChart3, Lightbulb, GitCompareArrows, AlertTriangle, ArrowUp, ArrowDown, EyeOff, Eye, ArrowLeft, ArrowRight } from 'lucide-react';
+import { Table, Braces, ChevronRight, ChevronDown, ListFilter, Copy, Check, Edit, Trash2, Plus, PencilLine, Table2, BarChart3, Lightbulb, GitCompareArrows, AlertTriangle, ArrowUp, ArrowDown, EyeOff, Eye, ArrowLeft, ArrowRight } from 'lucide-react';
 import { ChartView } from './ChartView';
 import { ContextMenu, type ContextMenuItem } from './ContextMenu';
 import { DocumentDiffModal } from './DocumentDiffModal';
@@ -14,6 +14,9 @@ import { EJSON } from 'bson';
 import { toPlainJson } from '../lib/plainJson';
 import { copyValueToText } from '../lib/copyValue';
 import { docToShell, parseShellJson } from '../lib/shellDoc';
+import { addField, fieldNameError, fieldValue, removeField, renameField, FIELD_TYPES, FIELD_VALUE_EXAMPLES, VALUELESS_TYPES, type FieldType } from '../lib/fieldOps';
+import { formatShortcutChord } from '../lib/shortcuts';
+import { useDialogsOptional } from './dialogs/DialogProvider';
 import { ResultsFindBar } from './ResultsFindBar';
 import {
   isTextEntryContext,
@@ -542,6 +545,8 @@ interface JsonRowExtra {
     doc: Record<string, any> | undefined,
     field?: string,
     value?: any,
+    /** The tree row clicked, for the field operations. */
+    row?: TreeRow,
   ) => void;
   renderContent: (line: JsonLine) => React.ReactNode;
   hasRowActions: boolean;
@@ -909,6 +914,8 @@ interface TreeRowExtra {
   hasRowActions: boolean;
   rowActions: RowActionsContext;
   t: (key: string) => string;
+  /** Rename, add and remove from a focused row. Undefined when this grid cannot write. */
+  onFieldKey?: (e: React.KeyboardEvent, row: TreeRow) => void;
 }
 
 // Virtualized row for the tree-table view (Key | Value | Type). Module scope
@@ -930,6 +937,7 @@ const TreeRowComponent = ({
   hasRowActions,
   rowActions,
   t,
+  onFieldKey,
 }: { index: number; style: React.CSSProperties } & TreeRowExtra) => {
   const row = rows[index];
   if (!row) return null;
@@ -943,10 +951,13 @@ const TreeRowComponent = ({
         'flex items-center border-b border-border font-mono text-[11.5px] hover:bg-accent',
         row.docIndex % 2 === 0 ? 'bg-background' : 'bg-card',
         row.isDocRoot && row.docIndex > 0 && 'border-t border-border',
-        findHighlightClass(row.num)
+        findHighlightClass(row.num),
+        onFieldKey && 'focus:bg-accent focus:outline-none'
       )}
       data-doc-even={row.docIndex % 2 === 0}
-      onContextMenu={(e) => openCtxMenu(e, documents[row.docIndex], row.kind === 'scalar' ? row.keyName : undefined, row.value)}
+      tabIndex={onFieldKey ? -1 : undefined}
+      onKeyDown={onFieldKey ? (e) => onFieldKey(e, row) : undefined}
+      onContextMenu={(e) => openCtxMenu(e, documents[row.docIndex], row.kind === 'scalar' ? row.keyName : undefined, row.value, row)}
     >
       <div className="flex min-w-0 items-center border-r border-border" style={{ width: keyWidth, paddingLeft: 6 + row.depth * 14 }}>
         {row.foldId !== undefined ? (
@@ -1039,7 +1050,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   }, [loading]);
 
   const [ctxMenu, setCtxMenu] = useState<
-    { x: number; y: number; doc: Record<string, any>; field?: string; value?: any } | null
+    { x: number; y: number; doc: Record<string, any>; field?: string; value?: any; row?: TreeRow } | null
   >(null);
 
   // Two-step "Compare with…" flow: the first pick is held here as the armed
@@ -1086,11 +1097,12 @@ export const DataGrid: React.FC<DataGridProps> = ({
     doc: Record<string, any> | undefined,
     field?: string,
     value?: any,
+    row?: TreeRow,
   ) => {
     if (!doc) return;
     e.preventDefault();
     e.stopPropagation();
-    setCtxMenu({ x: e.clientX, y: e.clientY, doc, field, value });
+    setCtxMenu({ x: e.clientX, y: e.clientY, doc, field, value, row });
   };
   const buildCtxItems = (m: NonNullable<typeof ctxMenu>): ContextMenuItem[] => {
     const items: ContextMenuItem[] = [];
@@ -1130,6 +1142,19 @@ export const DataGrid: React.FC<DataGridProps> = ({
     if (m.field) {
       items.push({ label: t('dataGrid.actions.copyValue'), icon: <Copy size={13} />, separatorBefore: true, onClick: () => writeClipboard(copyValueToText(m.value)) });
       items.push({ label: t('dataGrid.actions.copyFieldName'), icon: <Copy size={13} />, onClick: () => writeClipboard(m.field!) });
+    }
+    const ops = m.row && fieldOps(m.row);
+    if (ops) {
+      const fieldItems: ContextMenuItem[] = [];
+      if (ops.rename) fieldItems.push({ label: t('dataGrid.fieldOps.renameField'), icon: <PencilLine size={13} />, shortcut: formatShortcutChord({ shift: true, key: 'F2' }), onClick: ops.rename });
+      if (ops.add) fieldItems.push({ label: t('dataGrid.fieldOps.addField'), icon: <Plus size={13} />, shortcut: formatShortcutChord({ mod: true, key: 'K' }), onClick: ops.add });
+      if (ops.remove) fieldItems.push({ label: t('dataGrid.fieldOps.removeField'), icon: <Trash2 size={13} />, shortcut: formatShortcutChord({ key: 'Del' }), danger: true, onClick: ops.remove });
+      fieldItems.forEach((it, i) => items.push({
+        ...it,
+        separatorBefore: i === 0,
+        disabled: isReadOnly || cellSaving,
+        title: isReadOnly ? t('dataGrid.tooltips.readOnly') : undefined,
+      }));
     }
     if (onDeleteDocument) items.push({ label: t('dataGrid.actions.deleteDocument'), icon: <Trash2 size={13} />, danger: true, separatorBefore: true, onClick: () => onDeleteDocument(m.doc), disabled: isReadOnly, title: isReadOnly ? t('dataGrid.tooltips.readOnly') : undefined });
     return items;
@@ -2400,6 +2425,107 @@ export const DataGrid: React.FC<DataGridProps> = ({
       />
     );
 
+  // Rename, add and remove one field from the Tree view. Each is written like an
+  // in-place value edit: the document as loaded and as edited go to onEditField,
+  // whose field-level update_document sends only the changed paths ($set and
+  // $unset in one updateOne by _id), so a rename is a $set of the new name and
+  // an $unset of the old one.
+  const dialogs = useDialogsOptional();
+  const writeField = async (doc: Record<string, any>, edited: Record<string, any>) => {
+    setCellSaving(true);
+    try {
+      await onEditField!(doc, edited);
+    } catch {
+      // The caller has already said why the write failed.
+    } finally {
+      setCellSaving(false);
+    }
+  };
+  const fieldNameMessage = (name: string, siblings: Record<string, any>) => {
+    const error = fieldNameError(name, siblings);
+    return error ? t(`dataGrid.fieldOps.nameErrors.${error}`) : null;
+  };
+  const renameFieldAt = async (doc: Record<string, any>, path: string[]) => {
+    const old = path[path.length - 1];
+    const siblings = valueAtPath(doc, path.slice(0, -1));
+    const name = await dialogs!.prompt({
+      title: t('dataGrid.fieldOps.renameTitle', { field: path.join('.') }),
+      defaultValue: old,
+      confirmLabel: t('dataGrid.fieldOps.rename'),
+      validate: (n) => (n === old ? null : fieldNameMessage(n, siblings)),
+    });
+    if (name === null || name === old) return;
+    await writeField(doc, renameField(doc, path, name));
+  };
+  const removeFieldAt = async (doc: Record<string, any>, path: string[]) => {
+    const ok = await dialogs!.confirm({
+      title: t('dataGrid.fieldOps.removeTitle'),
+      message: t('dataGrid.fieldOps.removeMessage', { field: path.join('.') }),
+      confirmLabel: t('dataGrid.fieldOps.remove'),
+      destructive: true,
+    });
+    if (ok) await writeField(doc, removeField(doc, path));
+  };
+  const addFieldAt = async (doc: Record<string, any>, parentPath: string[]) => {
+    const siblings = valueAtPath(doc, parentPath);
+    const name = await dialogs!.prompt({
+      title: t('dataGrid.fieldOps.addTitle'),
+      message: parentPath.length ? t('dataGrid.fieldOps.addIn', { field: parentPath.join('.') }) : undefined,
+      confirmLabel: t('dataGrid.fieldOps.next'),
+      validate: (n) => fieldNameMessage(n, siblings),
+    });
+    if (name === null) return;
+    const type = (await dialogs!.choose({
+      title: t('dataGrid.fieldOps.typeTitle', { field: name }),
+      choices: FIELD_TYPES.map((value) => ({ value, label: t(`dataGrid.fieldOps.types.${value}`) })),
+    })) as FieldType | null;
+    if (!type) return;
+    let text: string | null = '';
+    if (!VALUELESS_TYPES.includes(type)) {
+      const typeLabel = t(`dataGrid.fieldOps.types.${type}`);
+      text = await dialogs!.prompt({
+        title: t('dataGrid.fieldOps.valueTitle', { field: name, type: typeLabel }),
+        placeholder: FIELD_VALUE_EXAMPLES[type],
+        confirmLabel: t('dataGrid.fieldOps.add'),
+        validate: (v) => {
+          try {
+            fieldValue(type, v);
+            return null;
+          } catch {
+            return t('dataGrid.fieldOps.invalidValue', { type: typeLabel });
+          }
+        },
+      });
+      if (text === null) return;
+    }
+    await writeField(doc, addField(doc, parentPath, name, fieldValue(type, text)));
+  };
+  // What a tree row offers. Nothing inside an array, which the backend writes
+  // whole; no rename or remove of a document or its immutable _id.
+  const fieldOps = (row: TreeRow) => {
+    if (!onEditField || !dialogs || row.underArray) return null;
+    const doc = documents[row.docIndex];
+    const named = !row.isDocRoot && isEditablePath(row.path);
+    const parentPath = row.kind === 'object' ? row.path : row.path.slice(0, -1);
+    return {
+      rename: named ? () => void renameFieldAt(doc, row.path) : undefined,
+      remove: named ? () => void removeFieldAt(doc, row.path) : undefined,
+      add: parentPath[0] !== '_id' ? () => void addFieldAt(doc, parentPath) : undefined,
+    };
+  };
+  const onTreeFieldKey = (e: React.KeyboardEvent, row: TreeRow) => {
+    const ops = isReadOnly || cellSaving ? null : fieldOps(row);
+    const op = e.key === 'F2' && e.shiftKey ? ops?.rename
+      : (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k' ? ops?.add
+      : e.key === 'Delete' ? ops?.remove
+      : undefined;
+    if (!op) return;
+    // Ctrl+K is also the command palette, which must not open over the dialog.
+    e.preventDefault();
+    e.stopPropagation();
+    op();
+  };
+
   // Bring the matched column into view as well as the matched row. The table
   // scrolls in both directions once resized columns overflow, so a vertical jump
   // alone can leave the highlighted cell off the side of the viewport while the
@@ -2865,6 +2991,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
                   hasRowActions,
                   rowActions,
                   t,
+                  onFieldKey: onEditField && dialogs ? onTreeFieldKey : undefined,
                 }}
                 style={{ height: '100%', width: '100%' }}
               />

@@ -13,6 +13,8 @@ export interface ContextMenuItem {
   /** Native HTML `title` attribute (hover tooltip) — e.g. explaining why a
    *  disabled item is disabled (Phase 3 Task 5's unmirrored-tab menu entry). */
   title?: string;
+  /** Key hint shown at the right edge, e.g. "Shift F2". */
+  shortcut?: string;
 }
 
 interface ContextMenuProps {
@@ -105,6 +107,9 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose }
               </span>
             )}
             <span>{it.label}</span>
+            {it.shortcut && (
+              <span className="ml-auto pl-6 text-xs tracking-widest text-muted-foreground">{it.shortcut}</span>
+            )}
           </button>
         </React.Fragment>
       ))}

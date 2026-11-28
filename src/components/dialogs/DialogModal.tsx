@@ -59,6 +59,14 @@ export const DialogModal: React.FC<DialogModalProps> = ({ request, onResolve }) 
   const { t } = useTranslation('common');
   const [value, setValue] = useState(request.type === 'prompt' ? request.defaultValue ?? '' : '');
   const [error, setError] = useState<string | null>(null);
+  // A dialog opened in the same render that closes the one before it reuses
+  // this mount, so a new request starts over rather than keeping what was typed.
+  const [shownRequest, setShownRequest] = useState(request);
+  if (shownRequest !== request) {
+    setShownRequest(request);
+    setValue(request.type === 'prompt' ? request.defaultValue ?? '' : '');
+    setError(null);
+  }
   const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
   const confirmRef = useRef<HTMLButtonElement>(null);
 
